@@ -4,12 +4,13 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, Elaborated, MethodSpecializationRequest,
-    NESTED_MARKER_INFIX, StructInstanceRequest, TStringSpecializationRequest,
-    TupleSpecializationRequest, TupleTransformRequest, UnservedTemplateUse,
-    bound_generic_template_names, comptime_generic_template_names, dtype_generic_template_names,
-    elaborate_prepared, pack_generic_template_names, prepare, template_display_name,
-    tuple_materialized_callables, unserved_template_parameter, variadic_struct_template_names,
+    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
+    MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
+    TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
+    UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
+    dtype_generic_template_names, elaborate_prepared, generated_names, instance_traces,
+    pack_generic_template_names, prepare, template_display_name, tuple_materialized_callables,
+    unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -318,10 +319,17 @@ impl Compiler {
                 def_traces,
                 method_traces,
                 generated,
+                ctfe_template_stats,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[])
-                    .map_err(CompilerError::Comptime)?
+                elaborate_prepared(
+                    &prepared,
+                    ElaborationInputs {
+                        templates: Some(&templates_catalog),
+                        ..ElaborationInputs::default()
+                    },
+                )
+                .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
             unserved_template_uses = unserved;
@@ -329,6 +337,7 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
+            templates_catalog.stats_mut().absorb(ctfe_template_stats);
             templates_catalog.set_traces(instance_traces(def_traces, method_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("discovery.initial.check");
@@ -471,16 +480,20 @@ impl Compiler {
                 def_traces,
                 method_traces,
                 generated,
+                ctfe_template_stats,
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_prepared(
                     &prepared,
-                    &tuple_requests,
-                    &tstring_requests,
-                    &def_requests,
-                    &method_requests,
-                    &struct_requests,
-                    &hash_leaf_requests,
+                    ElaborationInputs {
+                        tuple_requests: &tuple_requests,
+                        tstring_requests: &tstring_requests,
+                        def_requests: &def_requests,
+                        method_requests: &method_requests,
+                        struct_requests: &struct_requests,
+                        hash_leaf_types: &hash_leaf_requests,
+                        templates: Some(&templates_catalog),
+                    },
                 )
                 .map_err(CompilerError::Comptime)?
             };
@@ -498,6 +511,7 @@ impl Compiler {
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
+            templates_catalog.stats_mut().absorb(ctfe_template_stats);
             templates_catalog.set_traces(instance_traces(def_traces, method_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("check");
@@ -715,75 +729,6 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
         }),
     );
     requests
-}
-
-/// The elaborator's declaration-level clone traces in the checker's terms.
-/// The driver carries them across because neither phase may name the other's
-/// vocabulary here: the elaborator records what it generated, and the checker
-/// decides what that lets it derive.
-fn instance_traces(
-    defs: Vec<crate::comptime::DefInstanceTrace>,
-    methods: Vec<crate::comptime::MethodInstanceTrace>,
-) -> Vec<(
-    crate::templates::InstanceName,
-    crate::templates::InstanceTrace,
-)> {
-    use crate::templates::{InstanceName, InstanceTrace, TemplateId};
-    let defs = defs.into_iter().map(|trace| {
-        (
-            InstanceName {
-                module: Some(trace.clone_module),
-                owner: None,
-                name: trace.clone_name,
-                body: None,
-            },
-            InstanceTrace {
-                template: TemplateId {
-                    module: trace.template_module,
-                    owner: None,
-                    name: trace.template_name,
-                    declaration: trace.template_span,
-                },
-                type_bindings: trace.type_bindings,
-                value_bindings: trace.value_bindings,
-                pack_bindings: trace.pack_bindings,
-                residual: trace.residual,
-            },
-        )
-    });
-    let methods = methods.into_iter().map(|trace| {
-        (
-            InstanceName {
-                module: Some(trace.clone_module),
-                owner: Some(trace.owner.clone()),
-                name: trace.clone_name,
-                body: Some(trace.clone_body),
-            },
-            InstanceTrace {
-                template: TemplateId {
-                    module: trace.owner_module,
-                    owner: Some(trace.template_owner),
-                    name: trace.template_name,
-                    declaration: trace.body,
-                },
-                type_bindings: trace.type_bindings,
-                value_bindings: trace.value_bindings,
-                pack_bindings: trace.pack_bindings,
-                residual: Vec::new(),
-            },
-        )
-    });
-    defs.chain(methods).collect()
-}
-
-fn generated_names(
-    generated: crate::comptime::GeneratedDeclarations,
-) -> crate::templates::GeneratedNames {
-    crate::templates::GeneratedNames {
-        defs: generated.defs.into_iter().collect(),
-        structs: generated.structs.into_iter().collect(),
-        methods: generated.methods.into_iter().collect(),
-    }
 }
 
 /// Reject a reference the discovery fixpoint left on an abstract path that

@@ -1074,6 +1074,12 @@ comparison `T == Int` is replaced with a `Bool` literal. After this rewrite,
 the cloned helper program is ordinary AST and can be lowered through the same
 HIR/MIR/VM machinery as runtime code.
 
+The helper program is checked (once as a typing probe for a general
+expression, then by `VmBackend::run_function_value`) over a catalog the
+elaborator builds from the compilation's checked templates: the per-call
+clones the subprogram mints are traced like the program's own, and a clone
+of a certified template derives its facts instead of being inferred.
+
 The VM has a narrow CTFE entry point:
 
 ```rust

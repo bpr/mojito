@@ -56,6 +56,7 @@ impl Elab<'_> {
                 def_traces: Vec::new(),
                 method_traces: Vec::new(),
                 generated: super::GeneratedDeclarations::default(),
+                ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
             });
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
@@ -407,6 +408,7 @@ impl Elab<'_> {
             def_traces: Vec::new(),
             method_traces: Vec::new(),
             generated: super::GeneratedDeclarations::default(),
+            ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
         })
     }
 
@@ -3388,8 +3390,8 @@ impl Elab<'_> {
 /// the instance clone's explicit receiver type, the struct whose method
 /// list the clone joins under its own source tag, which a trace names, and
 /// the origin binders the instance declares on every clone of it. A
-/// clone minted into a struct specialized whole, or into the CTFE
-/// subprogram, names no owner and leaves no trace.
+/// clone minted into a struct specialized whole names no owner and leaves
+/// no trace.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PerCallBase<'a> {
     pub(super) values: &'a [CtValue],

@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 mojito-ast = { path = "../mojito-ast" }
+mojito-checked = { path = "../mojito-checked" }
 mojito-checker = { path = "../mojito-checker" }
 mojito-common = { path = "../mojito-common" }
 mojito-symbol = { path = "../mojito-symbol" }

@@ -155,7 +155,7 @@ impl Elab<'_> {
         }
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(needed);
-        let mut program = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
         self.rewrite_vm_ctfe_program(&mut program, name, locals)?;
         if program.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -165,8 +165,16 @@ impl Elab<'_> {
         // Preserve declaration order: the ordinary checker intentionally uses
         // source-order visibility for traits and sibling helpers. Execution
         // selects `name` explicitly and does not require it to be first.
-        let (value, remaining_fuel) = vm
-            .run_function_value(&program, name, args, value_params, self.fuel.get())
+        let run = vm.run_function_value(
+            &program,
+            &mut templates,
+            name,
+            args,
+            value_params,
+            self.fuel.get(),
+        );
+        self.absorb_ctfe_templates(templates);
+        let (value, remaining_fuel) = run
             .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
         self.fuel.set(remaining_fuel);
         Ok(Some(self.freeze_vm_result(&vm, value)?))
@@ -289,21 +297,22 @@ impl Elab<'_> {
         );
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let mut program = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
         program.push(entry);
-        let (value, remaining_fuel) = vm
-            .run_function_value(
-                &program,
-                CTFE_STRUCT_ENTRY,
-                Vec::new(),
-                &[],
-                self.fuel.get(),
-            )
-            .map_err(|e| {
-                ComptimeError::NotComptime(format!(
-                    "VM CTFE failed for '{struct_name}' construction: {e}"
-                ))
-            })?;
+        let run = vm.run_function_value(
+            &program,
+            &mut templates,
+            CTFE_STRUCT_ENTRY,
+            Vec::new(),
+            &[],
+            self.fuel.get(),
+        );
+        self.absorb_ctfe_templates(templates);
+        let (value, remaining_fuel) = run.map_err(|e| {
+            ComptimeError::NotComptime(format!(
+                "VM CTFE failed for '{struct_name}' construction: {e}"
+            ))
+        })?;
         self.fuel.set(remaining_fuel);
         self.freeze_vm_result(&vm, value)
     }
@@ -453,16 +462,18 @@ impl Elab<'_> {
         );
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let mut program = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
         program.push(entry);
-        let (value, remaining_fuel) = vm
-            .run_function_value(
-                &program,
-                CTFE_STRUCT_ENTRY,
-                Vec::new(),
-                &[],
-                self.fuel.get(),
-            )
+        let run = vm.run_function_value(
+            &program,
+            &mut templates,
+            CTFE_STRUCT_ENTRY,
+            Vec::new(),
+            &[],
+            self.fuel.get(),
+        );
+        self.absorb_ctfe_templates(templates);
+        let (value, remaining_fuel) = run
             .map_err(|e| ComptimeError::NotComptime(format!("VM CTFE failed for '{name}': {e}")))?;
         self.fuel.set(remaining_fuel);
         self.freeze_vm_result(&vm, value)
@@ -532,7 +543,7 @@ impl Elab<'_> {
             ));
         }
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let mut program = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
         // The typing probe: `var $r = <expr>` inside a non-raising def. The
         // expression's own node gets a fresh identity — a rewritten chain may
         // share syntax ids among its nodes, and the checker re-keys
@@ -549,7 +560,12 @@ impl Elab<'_> {
             span,
         ));
         program.push(synthesized_entry(CTFE_PROBE, None, probe_body, span));
-        let checked = mojito_checker::checker::check_program(&program).map_err(|error| {
+        let probe = mojito_checker::checker::check_program_with_templates(
+            &program,
+            &HashMap::new(),
+            &mut templates,
+        );
+        let checked = probe.map_err(|error| {
             ComptimeError::NotComptime(match error {
                 mojito_common::error::TypeError::UnhandledRaise(_) => {
                     "cannot call raising function in comptime initializer".to_string()
@@ -587,13 +603,18 @@ impl Elab<'_> {
             span,
         ));
         let mut vm = VmBackend::new();
-        let (value, remaining_fuel) = vm
-            .run_function_value(&program, CTFE_EXPR_ENTRY, Vec::new(), &[], self.fuel.get())
-            .map_err(|e| {
-                ComptimeError::NotComptime(format!(
-                    "VM CTFE failed for a compile-time expression: {e}"
-                ))
-            })?;
+        let run = vm.run_function_value(
+            &program,
+            &mut templates,
+            CTFE_EXPR_ENTRY,
+            Vec::new(),
+            &[],
+            self.fuel.get(),
+        );
+        self.absorb_ctfe_templates(templates);
+        let (value, remaining_fuel) = run.map_err(|e| {
+            ComptimeError::NotComptime(format!("VM CTFE failed for a compile-time expression: {e}"))
+        })?;
         self.fuel.set(remaining_fuel);
         self.vm_value_to_ct(value).map_err(|error| {
             ComptimeError::NotComptime(format!(
@@ -1287,7 +1308,10 @@ impl Elab<'_> {
     /// trait, and literal constant so trait bounds, struct types, overloads,
     /// and helper calls resolve exactly, then fold module-scope type aliases
     /// into the retained statements. The VM still executes only the entry.
-    fn vm_ctfe_subprogram(&self, declarations: &HashSet<String>) -> Vec<Stmt> {
+    fn vm_ctfe_subprogram(
+        &self,
+        declarations: &HashSet<String>,
+    ) -> (Vec<Stmt>, mojito_checked::templates::TemplateCatalog) {
         let program = self
             .program
             .iter()
@@ -1428,24 +1452,38 @@ impl Elab<'_> {
         }
         // A SIMD-keyed hasher method crosses as its stub plus the eager
         // per-leaf clones: the subprogram has no discovery loop to mint them.
+        // Each clone is stamped and traced as the driver's elaboration mints
+        // it, so the subprogram's check derives it from its template.
         let consts = self.top_consts.borrow().clone();
+        let first_trace = self.method_traces.borrow().len();
+        let mut generated = GeneratedDeclarations::default();
         for statement in &mut program {
             let requests = super::synth::hasher_leaf_requests(statement, &self.hash_leaf_types);
+            let module = statement.module.clone();
             let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
                 continue;
+            };
+            let base = super::specialize::PerCallBase {
+                owner: Some(super::specialize::PerCallOwner {
+                    name,
+                    module: module.as_deref(),
+                    template: name,
+                }),
+                ..super::specialize::PerCallBase::default()
             };
             let mut clones = Vec::new();
             for method in methods.iter_mut() {
                 if super::synth::is_simd_keyed_method(method) {
-                    clones.extend(self.per_call_method_clones(
-                        name,
-                        method,
-                        &requests,
-                        &super::specialize::PerCallBase::default(),
-                        &consts,
-                    ));
+                    clones.extend(
+                        self.per_call_method_clones(name, method, &requests, &base, &consts),
+                    );
                     method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
                 }
+            }
+            for clone in &mut clones {
+                let tag = clone_source_tag(module.as_deref(), name, &clone.name);
+                mojito_ast::ast::stamp_source(&mut clone.body, &tag);
+                generated.methods.push((name.clone(), clone.name.clone()));
             }
             methods.extend(clones);
         }
@@ -1465,6 +1503,9 @@ impl Elab<'_> {
             let Ok(spec) = self.generate_value_struct_spec(&orig, &vals) else {
                 continue;
             };
+            if let StmtKind::Struct { name, .. } = &spec.kind {
+                generated.structs.push(name.clone());
+            }
             // The clone sits where its template was declared, so a retained
             // declaration that names it resolves in order at the boundary.
             let template_position = self
@@ -1493,7 +1534,27 @@ impl Elab<'_> {
                 *statement = super::rewrite::rewrite_stmt_cloned(statement, &subs, true);
             }
         }
-        program
+        // The clones minted here are the subprogram's, never the
+        // elaboration's: the driver's program mints its own.
+        let traces = self.method_traces.borrow_mut().split_off(first_trace);
+        let templates = self.templates.map_or_else(
+            || mojito_checked::templates::TemplateCatalog::new(false),
+            |catalog| {
+                catalog.for_subprogram(
+                    instance_traces(Vec::new(), traces),
+                    generated_names(generated),
+                )
+            },
+        );
+        (program, templates)
+    }
+
+    /// Fold what a VM-CTFE subprogram's checks derived and inferred into
+    /// this elaboration's report.
+    fn absorb_ctfe_templates(&self, mut templates: mojito_checked::templates::TemplateCatalog) {
+        self.ctfe_template_stats
+            .borrow_mut()
+            .absorb(std::mem::take(templates.stats_mut()));
     }
 
     /// The module-scope type aliases (`comptime default_hasher = AHasher`)

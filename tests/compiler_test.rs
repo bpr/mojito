@@ -3877,3 +3877,47 @@ fn template_field_of_field_derives() {
         ],
     );
 }
+
+#[test]
+fn ctfe_subprogram_hasher_leaves_derive() {
+    // Every compile-time `hash` checks its VM-CTFE subprogram twice (the
+    // typing probe, then the run), and each check mints the hasher leaves
+    // again. They derive from the compilation's validated templates; the
+    // driver's own passes alone derive each leaf only a handful of times.
+    let source = include_str!("../assets/ok/comptime_hash.mojo");
+    let program = compile_entry(&Compiler::default(), source);
+    let stats = program.template_stats();
+    let leaf = "__module$$fnv1a$Fnv1a._update_with_simd$y3:Int";
+    let derived = stats.derived.iter().filter(|name| *name == leaf).count();
+    assert!(derived >= 20, "{leaf} derived {derived} times");
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .all(|name| !name.contains("._update_with_simd$")),
+        "no hasher leaf is inferred: {:?}",
+        stats.inferred_clones
+    );
+    assert!(
+        stats
+            .refused
+            .iter()
+            .all(|(name, _)| !name.contains("._update_with_simd$")),
+        "no hasher leaf is refused: {:?}",
+        stats.refused
+    );
+    let verified = compile_entry(
+        &Compiler::default().with_template_verification(true),
+        source,
+    );
+    assert_eq!(
+        Compiler::default()
+            .execute(&verified)
+            .expect("execute")
+            .output,
+        Compiler::default()
+            .execute(&program)
+            .expect("execute")
+            .output
+    );
+}

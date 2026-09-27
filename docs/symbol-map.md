@@ -494,8 +494,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   or pack `TypeList` use keeps (`rewrite.rs:rewrite_expr`). A pack struct's
   `__RuntimeTuple(*args^)` initializer, which each instance writes as
   `args^`, is laid over the instance by `template_facts.rs:relocate_packs`
-  from the template's `PackRelocation`. `compiler.rs:instance_traces` carries
-  one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
+  from the template's `PackRelocation`. `mojito-comptime`'s
+  `comptime.rs:instance_traces` carries one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.
 - `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
@@ -807,8 +807,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/ctfe.rs` owns VM-driven compile-time evaluation — `ctfe_call`,
   `ctfe_struct_entry`, `ctfe_generic_def_entry`, and the general
   `ctfe_expr_entry` (collection bindings as display-initialized locals, a
-  checked typing probe, then the typed entry) — the VM-CTFE program rewrite,
-  and the effect walk (`vm_ctfe_safe_*`: deterministic bodies run, only
+  checked typing probe, then the typed entry) — the VM-CTFE program rewrite
+  (`vm_ctfe_subprogram`, which also returns the catalog its checks derive
+  its traced clones from: `TemplateCatalog::for_subprogram` over the
+  driver's catalog that `elaborate_prepared` receives), and the effect walk (`vm_ctfe_safe_*`: deterministic bodies run, only
   `print`/`input` reject).
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become

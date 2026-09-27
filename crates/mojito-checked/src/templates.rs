@@ -2350,6 +2350,21 @@ pub struct TemplateStats {
     pub no_verdict: Vec<(String, String)>,
 }
 
+impl TemplateStats {
+    /// Append what another catalog did: a subprogram checked apart from the
+    /// compilation (the CTFE subprogram) reports through its own catalog.
+    pub fn absorb(&mut self, other: Self) {
+        self.certified.extend(other.certified);
+        self.derived.extend(other.derived);
+        self.reused.extend(other.reused);
+        self.carried.extend(other.carried);
+        self.inferred_clones.extend(other.inferred_clones);
+        self.verified.extend(other.verified);
+        self.refused.extend(other.refused);
+        self.no_verdict.extend(other.no_verdict);
+    }
+}
+
 /// An elaborated clone's declaration identity.
 ///
 /// A `def` clone is the module tag the elaborator stamped it with and its
@@ -2372,6 +2387,34 @@ impl TemplateCatalog {
             param_context: mojito_types::param_expr::ParamContext::new(),
             ..Self::default()
         }
+    }
+
+    /// The catalog of a subprogram checked apart from this compilation (the
+    /// CTFE subprogram): the templates its own clone traces name, under this
+    /// compilation's parameter context and verification mode. Nothing it
+    /// records reaches this catalog, and no previous pass is carried.
+    #[must_use]
+    pub fn for_subprogram(
+        &self,
+        traces: Vec<(InstanceName, InstanceTrace)>,
+        generated: GeneratedNames,
+    ) -> Self {
+        let templates = traces
+            .iter()
+            .filter_map(|(_, trace)| self.templates.get(&trace.template))
+            .map(|template| (template.id.clone(), template.clone()))
+            .collect();
+        let mut catalog = Self {
+            templates,
+            validation_aborted: self.validation_aborted,
+            verify: self.verify,
+            body_fact_reuse: false,
+            param_context: self.param_context.clone(),
+            ..Self::default()
+        };
+        catalog.set_traces(traces);
+        catalog.set_generated(generated);
+        catalog
     }
 
     /// Whether a body whose inputs are unchanged since the previous checker

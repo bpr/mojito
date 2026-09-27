@@ -593,7 +593,7 @@ impl std::fmt::Display for ComptimeError {
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let prepared = prepare(program)?;
     mojito_checker::checker::validate_comptime_templates(&prepared).map_err(ComptimeError::Type)?;
-    elaborate_prepared(&prepared, &[], &[], &[], &[], &[], &[]).map(|elaborated| elaborated.program)
+    elaborate_prepared(&prepared, ElaborationInputs::default()).map(|elaborated| elaborated.program)
 }
 
 /// Prepare a linked program for source validation and elaboration: qualify
@@ -640,6 +640,27 @@ pub struct Elaborated {
     /// consumer asks this list, never a `$` in a name, since a
     /// module-qualified source name carries one too.
     pub generated: GeneratedDeclarations,
+    /// What the checks of this elaboration's VM CTFE subprograms derived
+    /// and inferred, for the compilation's own template statistics.
+    pub ctfe_template_stats: mojito_checked::templates::TemplateStats,
+}
+
+/// What the driver's discovery loop hands one elaboration.
+///
+/// The requests are the ones the previous round's check discovered; the
+/// templates are the compilation's checked templates, which VM CTFE's
+/// subprogram checks derive their traced clones from. The default is a
+/// first elaboration outside the driver.
+#[derive(Clone, Copy, Default)]
+pub struct ElaborationInputs<'a> {
+    pub tuple_requests: &'a [TupleSpecializationRequest],
+    pub tstring_requests: &'a [TStringSpecializationRequest],
+    pub def_requests: &'a [DefSpecializationRequest],
+    pub method_requests: &'a [MethodSpecializationRequest],
+    pub struct_requests: &'a [StructInstanceRequest],
+    /// Hashed vector types beyond the eager width-1 set.
+    pub hash_leaf_types: &'a [Ty],
+    pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
 }
 
 /// The declarations an elaboration generated.
@@ -722,6 +743,77 @@ pub struct DefInstanceTrace {
     pub pack_bindings: Vec<(String, Vec<Type>)>,
     /// Parameters the clone still declares.
     pub residual: Vec<String>,
+}
+
+/// The elaborator's declaration-level clone traces in the checker's terms.
+///
+/// The elaborator records what it generated, and the checker decides what
+/// that lets it derive. The driver hands them to the program's check, and
+/// VM CTFE to its subprogram's.
+pub fn instance_traces(
+    defs: Vec<DefInstanceTrace>,
+    methods: Vec<MethodInstanceTrace>,
+) -> Vec<(
+    mojito_checked::templates::InstanceName,
+    mojito_checked::templates::InstanceTrace,
+)> {
+    use mojito_checked::templates::{InstanceName, InstanceTrace, TemplateId};
+    let defs = defs.into_iter().map(|trace| {
+        (
+            InstanceName {
+                module: Some(trace.clone_module),
+                owner: None,
+                name: trace.clone_name,
+                body: None,
+            },
+            InstanceTrace {
+                template: TemplateId {
+                    module: trace.template_module,
+                    owner: None,
+                    name: trace.template_name,
+                    declaration: trace.template_span,
+                },
+                type_bindings: trace.type_bindings,
+                value_bindings: trace.value_bindings,
+                pack_bindings: trace.pack_bindings,
+                residual: trace.residual,
+            },
+        )
+    });
+    let methods = methods.into_iter().map(|trace| {
+        (
+            InstanceName {
+                module: Some(trace.clone_module),
+                owner: Some(trace.owner.clone()),
+                name: trace.clone_name,
+                body: Some(trace.clone_body),
+            },
+            InstanceTrace {
+                template: TemplateId {
+                    module: trace.owner_module,
+                    owner: Some(trace.template_owner),
+                    name: trace.template_name,
+                    declaration: trace.body,
+                },
+                type_bindings: trace.type_bindings,
+                value_bindings: trace.value_bindings,
+                pack_bindings: trace.pack_bindings,
+                residual: Vec::new(),
+            },
+        )
+    });
+    defs.chain(methods).collect()
+}
+
+/// The elaborator's generated-declaration list in the checker's terms.
+pub fn generated_names(
+    generated: GeneratedDeclarations,
+) -> mojito_checked::templates::GeneratedNames {
+    mojito_checked::templates::GeneratedNames {
+        defs: generated.defs.into_iter().collect(),
+        structs: generated.structs.into_iter().collect(),
+        methods: generated.methods.into_iter().collect(),
+    }
 }
 
 /// A reference to a template that stays on its abstract path and can run a
@@ -903,13 +995,17 @@ fn declaration_type_params<'a>(
 /// once — supplies requests here each round.
 pub fn elaborate_prepared(
     program: &[Stmt],
-    tuple_requests: &[TupleSpecializationRequest],
-    tstring_requests: &[TStringSpecializationRequest],
-    def_requests: &[DefSpecializationRequest],
-    method_requests: &[MethodSpecializationRequest],
-    struct_requests: &[StructInstanceRequest],
-    hash_leaf_types: &[Ty],
+    inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
+    let ElaborationInputs {
+        tuple_requests,
+        tstring_requests,
+        def_requests,
+        method_requests,
+        struct_requests,
+        hash_leaf_types,
+        templates,
+    } = inputs;
     let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
         HashMap::new();
     for request in method_requests {
@@ -990,6 +1086,8 @@ pub fn elaborate_prepared(
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
+        templates,
+        ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         pending_struct_instances: RefCell::new(HashMap::new()),
         per_call_clones: RefCell::new(HashSet::new()),
         def_requests: def_requests
@@ -1030,6 +1128,7 @@ pub fn elaborate_prepared(
         def_traces: _,
         method_traces: _,
         generated: _,
+        ctfe_template_stats: _,
     } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -1070,6 +1169,7 @@ pub fn elaborate_prepared(
         def_traces: elab.def_traces.take(),
         method_traces: elab.method_traces.take(),
         generated,
+        ctfe_template_stats: elab.ctfe_template_stats.take(),
     })
 }
 
@@ -1978,6 +2078,11 @@ struct Elab<'a> {
     /// The checker-demanded hashed vector types beyond the eager width-1
     /// set; the VM-CTFE subprogram mints the same hasher clones from them.
     hash_leaf_types: Vec<Ty>,
+    /// The compilation's checked templates, which the checks of a VM-CTFE
+    /// subprogram derive its traced clones from; absent outside the driver.
+    templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
+    /// What those checks derived and inferred.
+    ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
     /// Fully concrete applications of vector-keyed value templates named by
     /// compile-time type expressions (`comptime default_hasher =
     /// AHasher[SIMD[DType.uint64, 4](0)]`), by mangled clone name: each is
@@ -3164,12 +3269,15 @@ fn elaborate_with_requests(
 ) -> Result<Elaborated, ComptimeError> {
     elaborate_prepared(
         &prepare(program)?,
-        tuple_requests,
-        tstring_requests,
-        def_requests,
-        method_requests,
-        struct_requests,
-        hash_leaf_types,
+        ElaborationInputs {
+            tuple_requests,
+            tstring_requests,
+            def_requests,
+            method_requests,
+            struct_requests,
+            hash_leaf_types,
+            templates: None,
+        },
     )
 }
 

@@ -108,16 +108,24 @@ impl VmBackend {
     /// Execute a named top-level function and return its value without running the
     /// program's top-level block or `main`. This is the narrow API used by
     /// VM-backed CTFE: the caller has already checked that the function is
-    /// compile-time safe and supplied any reified value parameters.
+    /// compile-time safe and supplied any reified value parameters. The
+    /// program is checked over `templates`, so a clone it traces to a
+    /// certified template derives its facts.
     pub fn run_function_value(
         &mut self,
         program: &[Stmt],
+        templates: &mut mojito_checked::templates::TemplateCatalog,
         name: &str,
         args: Vec<Value>,
         value_params: &[(String, Value)],
         fuel: usize,
     ) -> Result<(Value, usize), RuntimeError> {
-        let checked = mojito_checker::checker::check_program(program).map_err(|error| {
+        let checked = mojito_checker::checker::check_program_with_templates(
+            program,
+            &std::collections::HashMap::new(),
+            templates,
+        )
+        .map_err(|error| {
             RuntimeError::TypeError(format!(
                 "VM compile-time program failed the checked boundary: {error}"
             ))

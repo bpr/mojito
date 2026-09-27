@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A per-call clone minted for compile-time evaluation — a hasher's
+  `_update_with_simd` leaf in the VM-CTFE subprogram of `comptime CT =
+  hash(...)`, or a leaf of the `AHasher` specialization it carries — now
+  derives its facts from the compilation's checked template
+  (`assets/ok/comptime_hash.mojo`). The subprogram used to be checked on a
+  fresh template catalog, so every such clone was checked again, and the
+  traces its minting recorded leaked into the driver's elaboration.
 - A member of a user variadic struct specialized whole (`Bag$t2[…]`) now
   binds its pack to the element types its trace names and names that
   specialization for its template's `Self`, so `__len__`, sibling calls,
