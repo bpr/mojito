@@ -1491,7 +1491,12 @@ impl Elab<'_> {
         template: &Stmt,
         arguments: &[TyArg],
     ) -> Option<Vec<CtValue>> {
-        let StmtKind::Def { type_params, .. } = &template.kind else {
+        let StmtKind::Def {
+            type_params,
+            params,
+            ..
+        } = &template.kind
+        else {
             return None;
         };
         let mut vals = Vec::new();
@@ -1525,14 +1530,19 @@ impl Elab<'_> {
                     },
                     TyArg::Ty(ty),
                 ) => {
-                    // An origin-slotted struct argument of a user template
-                    // binds its slots to the clone's own origin binders; one
-                    // with no binder to stand for a slot (`_ListIter[Int]`),
-                    // or a bundled template's, keeps the abstract path.
+                    // An origin-slotted struct argument binds its slots to the
+                    // clone's own origin binders, a bundled template's as a
+                    // user template's. One with no binder to stand for a slot
+                    // (`_ListIter[Int]`), or whose parameter no runtime
+                    // parameter spells (`unsafe_alloc[T](count)`), keeps the
+                    // abstract path: the call infers the binders from its
+                    // arguments alone.
                     if self.ty_mentions_origin_slotted_struct(ty) {
-                        if mojito_checker::checker::is_bundled_module_source(
-                            template.module.as_deref(),
-                        ) {
+                        let spelled = std::slice::from_ref(&parameter.name);
+                        if !params
+                            .iter()
+                            .any(|param| type_mentions_any(&param.ty, spelled))
+                        {
                             return None;
                         }
                         let (bound, _) = self.clone_binding(ty, &mut origin_binders)?;

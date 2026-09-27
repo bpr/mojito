@@ -769,7 +769,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   arguments; `clone_binding` rebinds an instance's slots to the
   `CloneOriginBinders` a clone declares, named by
   `symbol::CLONE_ORIGIN_BINDER_PREFIX`, for a bundled template's instance
-  as for a user template's; `pack_element_source_type` spells
+  or `def` call as for a user template's, which
+  `Checker::clone_origin_binder_ids` leaves unbound for the argument
+  exclusivity rule; `pack_element_source_type` spells
   erased slots as `_`), and the free-function/`Mono` support code; `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below (`comptime/elab.rs` holds the root driver's own cluster), and the

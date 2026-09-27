@@ -3170,6 +3170,47 @@ fn template_method_requests_match_an_inferred_run() {
 }
 
 #[test]
+fn bundled_def_over_loan_carrying_argument_clones() {
+    // A bundled generic `def` called with a loan-carrying type argument
+    // (`alloc(Layout[Span[Int, origin_of(xs)]](...))`) is cloned with the
+    // argument's origin slots bound to clone binders, as a user function's
+    // call is. A clone of a certified template (`dealloc`) derives from it,
+    // and the others pass their concrete clone check.
+    let source = "from std.memory import Layout, dealloc\nfrom std.algorithms import first_or\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    var a = alloc(Layout[Span[Int, origin_of(xs)]](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_offset(0).unsafe_write(Span(xs))\n    print(len(p[0]))\n    dealloc(a^)\n    var l = List[Span[Int, origin_of(xs)]]()\n    l.append(Span(xs))\n    print(first_or(l, Span(xs))[2])\n    print(xs[0])\n";
+    let compiler = Compiler::default().with_template_verification(false);
+    let derived = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&derived).expect("execute").output,
+        "3\n3\n1\n"
+    );
+    let defs: Vec<&str> = derived
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for clone in [
+        "alloc$y9:Span[Int]",
+        "__module$std$memory$alloc$dealloc$y9:Span[Int]",
+        "__module$std$algorithms$first_or$y15:List[Span[Int]]",
+    ] {
+        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
+    }
+    let stats = derived.template_stats();
+    assert!(
+        stats
+            .derived
+            .iter()
+            .any(|name| name == "__module$std$memory$alloc$dealloc$y9:Span[Int]"),
+        "dealloc's clone derives: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     // `self.item = value^` over a symbolic `T` publishes no transfer in the
     // template, which records it as latent. The loan-carrying instance

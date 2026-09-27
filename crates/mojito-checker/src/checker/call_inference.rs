@@ -1221,9 +1221,14 @@ impl Checker {
             matched.keyword_overflow,
         );
         // The callee's own origin binders bind from the arguments before each
-        // argument coerces; `declared` keeps the type parameters abstract.
-        let (params, declared) =
+        // argument coerces, and the result carries what they bound;
+        // `declared` keeps the type parameters abstract.
+        let (params, declared, bindings) =
             self.substitute_callee_pointer_origins(name, &names, params, &slots, args, kwargs)?;
+        let ret = match bindings {
+            Some(bindings) => bindings.substitute(&ret),
+            None => *ret,
+        };
         let mut score = 0;
         for (i, slot) in slots.iter().enumerate() {
             let arg = match slot {
@@ -1377,12 +1382,13 @@ impl Checker {
         )?;
         self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
 
-        let result = return_ref
-            .map(|mut reference| {
-                reference.referent.clone_from(&ret);
+        let result = match return_ref {
+            Some(mut reference) => {
+                *reference.referent = ret;
                 Ty::Ref(reference)
-            })
-            .unwrap_or(*ret);
+            }
+            None => ret,
+        };
         Ok((
             result,
             overload_rank(score, variadic.is_some() || has_kw_collector, 0, false)
@@ -1831,8 +1837,9 @@ impl Checker {
     /// `Pointer[T, o]`, a `ref[o]` referent, or a struct carrying `o` in its
     /// origin tail (`List[RefBox[o]]`) — from the arguments filling those
     /// slots, and substitute the bindings into `params` before each argument
-    /// coerces. Returns the bound parameters and the bound declared spellings
-    /// (type parameters left abstract, for the exclusivity rule).
+    /// coerces. Returns the bound parameters, the bound declared spellings
+    /// (type parameters left abstract, for the exclusivity rule), and the
+    /// bindings, which the result carries too.
     fn substitute_callee_pointer_origins(
         &self,
         name: &str,
@@ -1841,7 +1848,7 @@ impl Checker {
         slots: &[ArgSlot],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<(Vec<Ty>, Vec<Ty>), TypeError> {
+    ) -> Result<CalleeOriginSubstitution, TypeError> {
         let mut origin_bound: Vec<(usize, Ty)> = Vec::new();
         for (index, slot) in slots.iter().enumerate() {
             if !params
@@ -1859,7 +1866,7 @@ impl Checker {
         }
         if origin_bound.is_empty() {
             let declared = params.clone();
-            return Ok((params, declared));
+            return Ok((params, declared, None));
         }
         let bound: Vec<(usize, &Ty)> = origin_bound
             .iter()
@@ -1867,9 +1874,62 @@ impl Checker {
             .collect();
         let bindings = Self::bind_callee_origins(name, names, &params, &bound)?;
         let bound = bindings.substitute_all(&params);
-        Ok((bound.clone(), bound))
+        // A clone's own binders stand for the origin slots of a type argument
+        // (`first_or$…` over `List[Span[Int, __clone_origin0]]`), which the
+        // template spelled as its abstract parameter: the exclusivity rule
+        // reads them unbound, as it reads the template's.
+        let clone_binders = self.clone_origin_binder_ids(name);
+        let declared = if clone_binders.is_empty() {
+            bound.clone()
+        } else {
+            super::origins::ConstructorOriginBindings {
+                pointers: bindings
+                    .pointers
+                    .iter()
+                    .filter(|(id, _)| !clone_binders.contains(id))
+                    .map(|(id, origin)| (*id, origin.clone()))
+                    .collect(),
+                origins: bindings
+                    .origins
+                    .iter()
+                    .filter(|(id, _)| !clone_binders.contains(id))
+                    .map(|(id, origin)| (*id, origin.clone()))
+                    .collect(),
+            }
+            .substitute_all(&params)
+        };
+        Ok((bound, declared, Some(bindings)))
+    }
+
+    /// The binders a generated clone `name` declares for the origin slots of
+    /// its loan-carrying type arguments, in its full binder-index domain.
+    fn clone_origin_binder_ids(&self, name: &str) -> Vec<mojito_types::origin::OriginParamId> {
+        let signatures = self.lookup_callable_origins(name).unwrap_or_default();
+        let [signature] = signatures.as_slice() else {
+            return Vec::new();
+        };
+        signature
+            .source
+            .iter()
+            .enumerate()
+            .filter(|(_, parameter)| {
+                parameter
+                    .name
+                    .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
+            })
+            .filter_map(|(index, _)| u32::try_from(index).ok())
+            .map(mojito_types::origin::OriginParamId)
+            .collect()
     }
 }
+
+/// A call's origin-bound parameters, their declared spellings for the
+/// exclusivity rule, and the bindings, when any parameter names a binder.
+type CalleeOriginSubstitution = (
+    Vec<Ty>,
+    Vec<Ty>,
+    Option<super::origins::ConstructorOriginBindings>,
+);
 
 /// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's
 /// call diagnostic naming the function and the parameter.

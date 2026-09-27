@@ -3,7 +3,7 @@
 #
 # The pin accepts this program; Mojito rejects the parameter annotation with
 # "not a valid SIMD element type: a non-DType argument", since the `SIMD[_, _]`
-# desugar runs over struct methods only (docs/roadmap.md 3.80,
+# desugar runs over struct methods only (docs/roadmap.md 3.81,
 # `wildcard-vector-parameter-on-a-def`). Inside a `Hasher`'s
 # `_update_with_simd`, where the desugar applies, Mojito accepts the same
 # `to_bits()` but source validation ends without a verdict on it, so the

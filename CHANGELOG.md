@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A bundled generic `def` called with a loan-carrying type argument
+  (`alloc(Layout[Span[Int, origin_of(xs)]](count=2))`, `dealloc`) now gets
+  its own clone, as a user function's call does, with the argument's origin
+  slots bound to binders inferred from the call's arguments. Such calls used
+  to run the template's erased body.
 - A generic method called with a loan-carrying argument of its own
   (`k.keep[Span[Int, origin_of(xs)]](v)`), on a plain struct, a generic
   instance, or a static receiver, now gets a per-call clone whose origin
@@ -240,6 +245,17 @@ to evolve under the `0.x` compatibility rules.
   `TemplateStats::carried` lists the carried bodies.
 
 ### Fixed
+
+- A free function's own origin binder is now bound in its result as in its
+  parameters: `f(Span(xs))` on `def f[o: Origin](s: Span[Int, o]) ->
+  Span[Int, o]` has type `Span[Int, origin_of(xs)]`, where it used to keep
+  the unbound binder and reject a later use at the argument's origin.
+- A generic function's clone over a loan-carrying argument no longer
+  reports aliasing between two arguments that carry only the argument's
+  origin (`pick(l, Span(xs))` on `def pick[T](items: List[T], default: T)`).
+- A generic function whose loan-carrying type parameter reaches only its
+  result (`mk[Span[Int, origin_of(xs)]](1)`) now runs its erased body
+  instead of a clone whose origin binder nothing binds.
 
 - A method returning a view of a field (`-> Span[Self.T,
   origin_of(self.items)]`) on an instance over a loan-carrying argument
