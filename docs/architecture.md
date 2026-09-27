@@ -3565,7 +3565,11 @@ rebound in the body runs the overwritten value's destructor between the
 constructing call and the rebind — skipped exactly when that call raises. A
 value live into the `try` that no region path can observe (an unconditional
 silent rebind precedes every potential raise) dies on the entry edge,
-immediately before the `try`. The loan machinery participates: generation and
+immediately before the `try`. In the enclosing walk a `try` keeps live
+whatever its escape targets read (`escape_live_in`): a `break` out of a
+handler reaches the loop exit without passing a rebind after the `try`, so
+the value that exit reads is live into the `try`, not dead at the loop
+body's entry. The loan machinery participates: generation and
 register-loan fixpoints run over each region with entry states replayed from
 the enclosing walk (regions entered by raise or completion use the union of
 every state the preceding region can reach — pure over-retention), so owner

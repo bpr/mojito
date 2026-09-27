@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A surviving trait-bound module-level `def` now derives its instances
+  through a tuple unpacking of a direct call's result (`var head, tail =
+  split(path)`, and `head, tail = split(head)` again) and a runtime `try`
+  with a bare or error-binding `except`, so the bundled `os.removedirs`
+  inherits its template's facts (`assets/ok/template_def_try_unpack.mojo`).
 - A method result whose loans arrive only through a type argument, such as
   `List.pop()` over `List[Span[Int, o]]` or `List[RefBox[o]]`, no longer
   borrows its receiver: the list may be used again while the popped value
@@ -323,6 +328,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value rebound only after a `try` in a loop body, and read past the
+  loop, now survives a handler's `break` or `continue`: drop elaboration
+  counted it dead at the loop body's entry, missing the escape edge, and the
+  VM read an empty slot (`operator Add is not defined for None and Int`).
 - A free function's own origin binder is now bound in its result as in its
   parameters: `f(Span(xs))` on `def f[o: Origin](s: Span[Int, o]) ->
   Span[Int, o]` has type `Span[Int, origin_of(xs)]`, where it used to keep

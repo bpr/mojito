@@ -64,7 +64,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
         changed = false;
         for b in (0..nb).rev() {
             let live_out = block_live_out(f, b, &live_in);
-            let new_in = transfer_drop_liveness(&f.blocks[b].instrs, live_out);
+            let new_in = transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in);
             if new_in != live_in[b] {
                 live_in[b] = new_in;
                 changed = true;
@@ -101,6 +101,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
             for (u, _) in var_uses(&instrs[i]) {
                 live.insert(u);
             }
+            live.extend(escape_live_in(&instrs[i], &live_in));
             // Mirror `transfer_drop_liveness`: a pending `ConsumeVar` is the
             // variable's teardown, so it stays live until then.
             if let MirInstr::ConsumeVar { var } = &instrs[i] {
@@ -592,7 +593,7 @@ pub(super) fn elaborate_region_drops(
         changed = false;
         for b in (0..nb).rev() {
             let live_out = region_block_live_out(blocks, b, &live_in, seeds);
-            let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds.raise);
+            let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds);
             if new_in != live_in[b] {
                 live_in[b] = new_in;
                 changed = true;
@@ -644,6 +645,7 @@ pub(super) fn elaborate_region_drops(
                 live.insert(*var);
             }
             live.extend(&register_uses[b][i]);
+            live.extend(escape_live_in(&instrs[i], seeds.effective_live_in));
             if may_raise(&instrs[i]) {
                 live.extend(seeds.raise.iter().copied());
             }
@@ -846,7 +848,7 @@ pub(super) fn region_block_live_out(
 pub(super) fn transfer_region_drop_liveness(
     instrs: &[MirInstr],
     mut live: HashSet<VarId>,
-    raise: &HashSet<VarId>,
+    seeds: &RegionSeeds,
 ) -> HashSet<VarId> {
     for instr in instrs.iter().rev() {
         if let Some(d) = var_def(instr) {
@@ -858,8 +860,9 @@ pub(super) fn transfer_region_drop_liveness(
         if let MirInstr::ConsumeVar { var } = instr {
             live.insert(*var);
         }
+        live.extend(escape_live_in(instr, seeds.effective_live_in));
         if may_raise(instr) {
-            live.extend(raise.iter().copied());
+            live.extend(seeds.raise.iter().copied());
         }
     }
     live
@@ -1051,6 +1054,7 @@ pub(super) fn active_drop_loan_roots(
 pub(super) fn transfer_drop_liveness(
     instrs: &[MirInstr],
     mut live: HashSet<VarId>,
+    live_in: &[HashSet<VarId>],
 ) -> HashSet<VarId> {
     for instr in instrs.iter().rev() {
         if let Some(d) = var_def(instr) {
@@ -1059,6 +1063,7 @@ pub(super) fn transfer_drop_liveness(
         for (u, _) in var_uses(instr) {
             live.insert(u);
         }
+        live.extend(escape_live_in(instr, live_in));
         // A pending `ConsumeVar` is the variable's teardown: keep it live up
         // to that point so no earlier death splices a competing `DropVar`.
         if let MirInstr::ConsumeVar { var } = instr {
@@ -1066,6 +1071,20 @@ pub(super) fn transfer_drop_liveness(
         }
     }
     live
+}
+
+/// What a `try`'s `break`/`continue` escape edges may still observe: the
+/// live-in sets of their targets, which are live entering the `try` unless a
+/// region rebinds them first (the entry-edge deaths then drop the old value).
+pub(super) fn escape_live_in(instr: &MirInstr, live_in: &[HashSet<VarId>]) -> HashSet<VarId> {
+    let mut targets = HashSet::new();
+    try_escape_targets(instr, &mut targets);
+    targets
+        .into_iter()
+        .filter_map(|target| live_in.get(target))
+        .flatten()
+        .copied()
+        .collect()
 }
 
 /// The variables *used* anywhere in a region's blocks (recursively, through nested

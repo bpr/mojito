@@ -5849,7 +5849,9 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::POINTER_SLOTS)
     .union(MethodFeatures::SIMD_CONSTRUCTIONS)
     .union(MethodFeatures::CONSTRUCTIONS)
-    .union(MethodFeatures::SIBLING_CALLS);
+    .union(MethodFeatures::SIBLING_CALLS)
+    .union(MethodFeatures::TUPLE_UNPACKS)
+    .union(MethodFeatures::TRY_STATEMENTS);
 
 /// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
 /// refuses a body that recorded into it.
@@ -8037,6 +8039,33 @@ impl BodyShape<'_> {
                     })
                     && self.block(finalbody)
             }
+            // A runtime guard: the body, then a handler, bare or binding
+            // the body's error, which it may raise again.
+            StmtKind::Try {
+                body,
+                except: Some((binder, handler)),
+                orelse: None,
+                finalbody: None,
+            } if !self.keyed && self.moved_result.is_some() => {
+                let scope = self.locals.borrow().len();
+                let admitted = self.block(body) && {
+                    if let Some(binder) = binder {
+                        self.locals
+                            .borrow_mut()
+                            .push((binder.clone(), LocalKind::Value));
+                        self.error_binders.borrow_mut().push(binder.clone());
+                    }
+                    let handled = self.block(handler);
+                    if binder.is_some() {
+                        self.error_binders.borrow_mut().pop();
+                    }
+                    handled
+                };
+                self.locals.borrow_mut().truncate(scope);
+                admitted
+                    && self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::TRY_STATEMENTS)
+            }
             StmtKind::Unpack {
                 targets,
                 value,
@@ -8783,6 +8812,7 @@ impl BodyShape<'_> {
                 self.params.contains(&name.as_str()) || self.declared(name)
             }
             ExprKind::Member { .. } => self.receiver_field(value),
+            ExprKind::Call { param_args, .. } if param_args.is_empty() => self.expression(value),
             _ => self.call_result(value),
         };
         let recorded = self.facts.is_none_or(|facts| {

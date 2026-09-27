@@ -2480,6 +2480,55 @@ fn template_raise_forms_derive() {
 }
 
 #[test]
+fn template_def_try_unpack_derives() {
+    // A module-level `def` unpacking a direct call's result, declared and
+    // assigned again, and guarding raising calls with a bare or a binding
+    // `except`; the bundled `os.removedirs` is this shape.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_try_unpack.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for template in ["steps$", "guarded$", "named$"] {
+            let derived: std::collections::HashSet<&str> = served
+                .iter()
+                .map(String::as_str)
+                .filter(|name| name.starts_with(template))
+                .collect();
+            assert_eq!(
+                derived.len(),
+                2,
+                "every {template} instance derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "4 4\n3 -1\nnegative\n5 6\n"
+        );
+    }
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        "from std.os import removedirs\n\n\ndef main() raises:\n    removedirs(String(\"/nonexistent/mojito/a\"))\n",
+    );
+    assert!(
+        program
+            .template_stats()
+            .derived
+            .iter()
+            .any(|name| name.starts_with("__module$os$removedirs$")),
+        "os.removedirs derives"
+    );
+}
+
+#[test]
 fn template_method_raised_built_message_keeps_the_clone_check() {
     // `Error` of a built `String` is no form `BodyShape::raised` names, so
     // the body stays outside the class and still runs.

@@ -81,20 +81,19 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 `os.removedirs` keeps the clone check**
+- [ ] **1.3 `os.rmdir` and `path.split` keep the clone check**
 
-  Problem: a module-level `def` that raises derives, but the function grammar
-  still refuses `os.removedirs` and the bundled bodies it calls.
-  - A `def` returning a tuple expression (`return head, tail`, as
-    `path.split` does) is outside the grammar.
-  - A tuple unpacking (`var head, tail = split(path)`) is a method feature;
-    `FUNCTION_FEATURES` lacks it.
-  - A general `try`/`except` is admitted only as a `with` desugar, and
-    `removedirs` swallows `rmdir`'s error inside its loop.
-  - `rmdir` raises `Error` of a built `String`, which `BodyShape::raised`
-    does not name, beside an `external_call` and a `String` `+`; which of
-    these refuses first is unmeasured.
-  - No bundled body needs any of these today.
+  Problem: `os.removedirs` derives, but the two bundled bodies it calls are
+  still refused by the function grammar.
+  - `rmdir` binds `external_call["rmdir", Int32](...)`, the first statement
+    the grammar refuses; `os.mkdir` refuses at the same form.
+  - `rmdir` then raises `Error` of a built `String` (`String(...) + fspath +
+    ...`), which `BodyShape::raised` does not name.
+  - `split` builds `String(fspath[byte=:i])`, a construction from a keyword
+    slice view, its first refusal.
+  - `split` also rebinds a `String` local whole (`head = stripped^`) and
+    returns a tuple expression (`return head, tail`); neither is in the
+    grammar, and which refuses after the first is unmeasured.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

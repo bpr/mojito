@@ -438,6 +438,26 @@ fn try_body_reassignment_survives_the_block() {
 }
 
 #[test]
+fn try_escape_keeps_an_outer_value_rebound_after_the_try() {
+    // A value rebound only after the `try` in a loop body is still read past
+    // the loop when a handler's `break` or `continue` leaves early: the
+    // escape edge observes it, so it may not die at the loop body's entry.
+    let may = "def may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\n";
+    let brk = format!(
+        "{may}def main():\n    var n = 3\n    var last = 9\n    while n > 0:\n        try:\n            _ = may(n - 2)\n        except:\n            break\n        last = n\n        n -= 1\n    print(last)\n"
+    );
+    assert_eq!(parity(&brk), "2\n");
+    let owned = format!(
+        "{may}def main():\n    var n = 3\n    var last = String(\"none\")\n    while n > 0:\n        try:\n            _ = may(n - 2)\n        except:\n            break\n        last = String(n)\n        n -= 1\n    print(last)\n"
+    );
+    assert_eq!(parity(&owned), "2\n");
+    let nested = format!(
+        "{may}def main():\n    var n = 3\n    var last = 9\n    while n > 0:\n        try:\n            try:\n                _ = may(n - 2)\n            except:\n                n = 0\n                continue\n            last = n\n        except:\n            pass\n        n -= 1\n    print(last)\n"
+    );
+    assert_eq!(parity(&nested), "2\n");
+}
+
+#[test]
 fn try_body_drop_timing_is_preserved() {
     // The `try` scope-exit cleanup still destroys genuine body-locals — and
     // values only reachable from the body — at the region boundary, while a

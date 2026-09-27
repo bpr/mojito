@@ -923,6 +923,10 @@ impl MethodFeatures {
     /// per-call clone folds it to a literal, which keeps the identifier's
     /// identity and takes a literal's facts, as a value-keyed `def`'s does.
     pub const VALUE_BINDERS: Self = Self(1 << 38);
+    /// A runtime `try` with an `except` handler, bare or binding the error:
+    /// it records only the binder's statement binding and type, which is the
+    /// error type its body's raising calls declare and substitutes with them.
+    pub const TRY_STATEMENTS: Self = Self(1 << 39);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
