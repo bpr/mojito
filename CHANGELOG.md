@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A one-element tuple (`(7,)`) and a variadic struct over one element
+  (`Bag[Bool](True)`) now compile natively
+  (`assets/ok/tuple_one_element.mojo`); the native backend passed the lone
+  argument where the constructor expected its collected pack and failed IR
+  verification. A constructor call now binds a variadic initializer's
+  arguments through the pack collector whatever their count.
 - A named destructor called on a field of a consumed `self`
   (`self.lease^.release()` in a `deinit self` method) now compiles natively
   when the field's type has droppable fields

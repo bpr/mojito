@@ -63,6 +63,7 @@ impl FnLowering<'_> {
             if kwargs.is_empty()
                 && args.len() == rest.len()
                 && !rest_by_reference.iter().any(|&by_ref| by_ref)
+                && !self.variadic_callee(&init)
             {
                 for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
                     // A zero-sized argument (the `NoneType` of an `@implicit`

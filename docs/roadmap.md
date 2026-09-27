@@ -470,24 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A one-element tuple does not compile natively**
-
-  Problem: any use of `(7,)` fails the native backend's IR verification
-  ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
-  and `one == (7,)` fails with "unsupported read of undefined aggregate
-  register"; the VM prints the pin's answers.
-  - Declaring `var one = (7,)` and printing it, taking its `len`, or hashing
-    it is enough.
-  - A variadic struct's `Tuple[*Self.Ts]` storage at one element
-    (`Bag[Bool](True)`) fails the same way.
-  - Found while writing `assets/ok/template_method_pack_struct.mojo`
-    (2026-09-26), which keeps to two- and three-element tuples, as
-    `assets/ok/template_method_variadic_struct.mojo` now does (2026-09-27);
-    no `ok` fixture declares a one-element tuple.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.2 A nested generic `def`'s value argument built from its own
+- [ ] **2.1 A nested generic `def`'s value argument built from its own
   parameter is not a native constant**
 
   Problem: `scaled[k + 1]()` inside a nested `def inner[k: Int]()` runs on
@@ -504,7 +487,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
