@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime `if` in a compile-time-keyed `def` — inside a `comptime for`
+  body, under a `comptime if` arm, or outside both — now derives the
+  instance's facts from the checked template, each unrolled copy keeping its
+  own `if` (`assets/ok/template_keyed_runtime_if.mojo`). Such instances used
+  to be checked again.
 - A module-level `def` holding a keyword slice of a closed local, the
   `String(value)` stringify builtin, `external_call`, a whole rebinding of a
   local, a returned tuple display, a direct call's result held whole, a

@@ -544,6 +544,7 @@ assets/ok/template_folded_arithmetic.mojo	main	exe-differential	sanitized
 assets/ok/template_folded_operators.mojo	main	exe-differential	sanitized
 assets/ok/template_folded_value.mojo	main	exe-differential	sanitized
 assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
+assets/ok/template_keyed_runtime_if.mojo	main	exe-differential	sanitized
 assets/ok/template_loop_local.mojo	main	exe-differential	sanitized
 assets/ok/template_method_binder_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_borrowed_parameter.mojo	main	exe-differential	sanitized

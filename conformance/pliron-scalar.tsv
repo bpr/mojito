@@ -544,6 +544,7 @@ assets/ok/template_folded_arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_folded_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_folded_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_keyed_runtime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_loop_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_binder_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-shape

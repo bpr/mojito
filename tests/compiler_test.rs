@@ -1482,6 +1482,36 @@ fn template_folded_arithmetic_derives() {
 }
 
 #[test]
+fn template_keyed_runtime_if_derives() {
+    // A runtime `if` in a keyed body, inside a `comptime for`, under a
+    // `comptime if` arm, and after the loop: each unrolled copy keeps its own
+    // `if`, and every instance derives.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_keyed_runtime_if.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for template in ["count$", "pick$", "nested$"] {
+            assert!(
+                served.iter().any(|name| name.starts_with(template)),
+                "{template} derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "15 2\n4 1\n2\n4\n6 0\n"
+        );
+    }
+}
+
+#[test]
 fn template_def_var_parameter_derives() {
     // A surviving trait-bound `def` taking a `var` parameter: consumed through
     // a named destructor, transferred into a local, and the bundled

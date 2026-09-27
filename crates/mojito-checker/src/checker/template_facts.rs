@@ -8070,10 +8070,10 @@ struct BodyShape<'a> {
     /// The `mut` parameters, which the body may store to.
     mut_params: Vec<&'a str>,
     /// Whether source validation produced the facts. A body it checks may
-    /// hold compile-time control flow over scalar locals and assignments,
-    /// under that check's own rules; any other body may hold runtime
-    /// statements instead: scalar locals and assignments, `if`, `while`, and
-    /// a bare `return`, each checked once.
+    /// hold compile-time control flow over scalar locals, assignments, and
+    /// runtime `if`s, under that check's own rules; any other body may hold
+    /// runtime statements instead: scalar locals and assignments, `if`,
+    /// `while`, and a bare `return`, each checked once.
     keyed: bool,
     /// Whether the body is a method's, which may read `self`'s fields.
     receiver: bool,
@@ -8303,12 +8303,15 @@ impl BodyShape<'_> {
             StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue if !self.keyed => {
                 self.holds(MethodFeatures::STATEMENTS)
             }
-            StmtKind::If { branches, orelse } if !self.keyed => {
+            // A runtime `if` is checked once, or once per unrolled copy in
+            // a keyed body, each copy's condition folding its loop variable
+            // as the copy's other statements do.
+            StmtKind::If { branches, orelse } => {
                 branches
                     .iter()
                     .all(|(condition, arm)| self.condition(condition) && self.block(arm))
                     && orelse.as_ref().is_none_or(|arm| self.block(arm))
-                    && self.holds(MethodFeatures::STATEMENTS)
+                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
             }
             // A runtime loop in a method selects its iterator protocol from
             // the iterable's type, which an instance selects again. The loop
