@@ -1492,10 +1492,7 @@ impl Elab<'_> {
         arguments: &[TyArg],
     ) -> Option<Vec<CtValue>> {
         let StmtKind::Def {
-            name,
-            type_params,
-            params,
-            ..
+            name, type_params, ..
         } = &template.kind
         else {
             return None;
@@ -1536,18 +1533,11 @@ impl Elab<'_> {
                     // An origin-slotted struct argument binds its slots to the
                     // clone's own origin binders, a bundled template's as a
                     // user template's. One with no binder to stand for a slot
-                    // (`_ListIter[Int]`), or whose parameter no runtime
-                    // parameter spells (`unsafe_alloc[T](count)`), keeps the
-                    // abstract path: the call infers the binders from its
-                    // arguments alone.
+                    // (`_ListIter[Int]`) keeps the abstract path. The call
+                    // infers the binders from its arguments, or supplies
+                    // them explicitly where no runtime parameter spells the
+                    // type parameter (`request_kept_param_args`).
                     if self.ty_mentions_origin_slotted_struct(ty) {
-                        let spelled = std::slice::from_ref(&parameter.name);
-                        if !params
-                            .iter()
-                            .any(|param| type_mentions_any(&param.ty, spelled))
-                        {
-                            return None;
-                        }
                         let (bound, _) = self.clone_binding(ty, &mut origin_binders)?;
                         CtValue::Type(Box::new(bound))
                     } else {
@@ -1722,13 +1712,17 @@ impl Elab<'_> {
         vals: &[CtValue],
     ) -> Option<Vec<ParamArg>> {
         let StmtKind::Def {
-            name, type_params, ..
+            name,
+            type_params,
+            params,
+            ..
         } = &template.kind
         else {
             return None;
         };
         let bound = bind_spec_param_args(type_params, param_args, display_name).ok()?;
         let mut kept = Vec::new();
+        let mut origins = Vec::new();
         let mut values = vals.iter();
         for (parameter, arguments) in type_params.iter().zip(bound) {
             if retained_specialization_param(parameter, type_params) {
@@ -1737,6 +1731,20 @@ impl Elab<'_> {
             }
             let decl = classify_ct_param(parameter, type_params, name)?;
             let value = values.next()?;
+            if let CtValue::Type(ty) = value
+                && !parameter_spelled(parameter, params)
+                && self.ty_mentions_origin_slotted_struct(ty)
+            {
+                let source = match arguments.as_slice() {
+                    [ParamArg::Type(source)] => source,
+                    [ParamArg::Named { value, .. }] => match value.as_ref() {
+                        ParamArg::Type(source) => source,
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                self.clone_binder_arguments(ty, source, &mut origins)?;
+            }
             if matches!(decl, ParamDecl::Type { .. })
                 && spec_type_param_substitution(&decl, value).is_none()
             {
@@ -1746,7 +1754,120 @@ impl Elab<'_> {
         if values.next().is_some() {
             return None;
         }
+        // The clone declares an explicit binder for each origin slot of a
+        // type argument no runtime parameter spells, and the call supplies
+        // the origin the application spelled there, in binder order.
+        origins.sort_by_key(|(index, _)| *index);
+        let explicit = self.unspelled_clone_binders(template, vals);
+        if origins.iter().map(|(index, _)| *index).ne(explicit) {
+            return None;
+        }
+        kept.splice(
+            0..0,
+            origins
+                .into_iter()
+                .map(|(_, origin)| ParamArg::Value(origin)),
+        );
         Some(kept)
+    }
+
+    /// Pair each clone binder `bound` names with the origin `source`, the
+    /// application's own spelling of the same type, gives that slot
+    /// (`Span[Int, __clone_origin0]` against `Span[Int, origin_of(xs)]`).
+    /// `None` when the spelling does not line up with the checked type, as
+    /// through an alias.
+    fn clone_binder_arguments(
+        &self,
+        bound: &Ty,
+        source: &Type,
+        out: &mut Vec<(u32, Expr)>,
+    ) -> Option<()> {
+        let (Ty::Struct(name, arguments), Type::Named(source_name, source_arguments)) =
+            (bound, source)
+        else {
+            return (!self.ty_mentions_origin_slotted_struct(bound)).then_some(());
+        };
+        if source_name != name {
+            return None;
+        }
+        let declared = self.structs.get(name.as_str())?.source_params;
+        let slots = bind_spec_param_args(declared, source_arguments, name).ok()?;
+        let is_origin = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
+        let mut origins = arguments.iter().filter_map(|argument| match argument {
+            TyArg::Origin(origin) => Some(origin),
+            _ => None,
+        });
+        let mut others = arguments
+            .iter()
+            .filter(|argument| !matches!(argument, TyArg::Origin(_)));
+        for (parameter, spelled) in declared.iter().zip(slots) {
+            let spelled = match spelled.as_slice() {
+                [ParamArg::Named { value, .. }] => Some(value.as_ref()),
+                [only] => Some(*only),
+                _ => None,
+            };
+            if is_origin(parameter) {
+                if parameter.infer_only {
+                    continue;
+                }
+                let origin = origins.next()?;
+                if let mojito_types::origin::Origin::Param(id) = origin
+                    && CloneOriginBinders::name(*id).is_some()
+                {
+                    let Some(ParamArg::Value(expression)) = spelled else {
+                        return None;
+                    };
+                    out.push((u32::MAX - id.0, expression.clone()));
+                }
+            } else if !parameter.is_origin_mutability_binder(declared)
+                && let Some(TyArg::Ty(inner)) = others.next()
+                && self.ty_mentions_origin_slotted_struct(inner)
+            {
+                let Some(ParamArg::Type(inner_source)) = spelled else {
+                    return None;
+                };
+                self.clone_binder_arguments(inner, inner_source, out)?;
+            }
+        }
+        (origins.next().is_none() && others.next().is_none()).then_some(())
+    }
+
+    /// The clone binders `vals` bind for the origin slots of a type argument
+    /// whose parameter no runtime parameter of `template` spells
+    /// (`unsafe_alloc[Span[Int, o]](count)`), in binder order: such a clone
+    /// declares them explicit, since no argument could infer them.
+    pub(super) fn unspelled_clone_binders(&self, template: &Stmt, vals: &[CtValue]) -> Vec<u32> {
+        let StmtKind::Def {
+            name,
+            type_params,
+            params,
+            ..
+        } = &template.kind
+        else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let mut values = vals.iter();
+        for parameter in type_params {
+            if retained_specialization_param(parameter, type_params) {
+                continue;
+            }
+            if classify_ct_param(parameter, type_params, name).is_none() {
+                continue;
+            }
+            let Some(value) = values.next() else {
+                break;
+            };
+            if let CtValue::Type(ty) = value
+                && !parameter_spelled(parameter, params)
+            {
+                self.collect_clone_binders(ty, &mut found);
+            }
+        }
+        let mut indices: Vec<u32> = found.into_iter().map(|(index, _)| index).collect();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
     }
 
     #[allow(
@@ -2092,6 +2213,15 @@ fn param_arg_mentions_any(argument: &ParamArg, names: &[String]) -> bool {
         ParamArg::Value(expression) => expr_mentions_any(expression, names),
         ParamArg::Named { value, .. } => param_arg_mentions_any(value, names),
     }
+}
+
+/// Whether a runtime parameter's type spells the compile-time `parameter`,
+/// so a call can infer it from its arguments.
+fn parameter_spelled(parameter: &TypeParam, params: &[FnParam]) -> bool {
+    let spelled = std::slice::from_ref(&parameter.name);
+    params
+        .iter()
+        .any(|param| type_mentions_any(&param.ty, spelled))
 }
 
 fn type_mentions_any(ty: &Type, names: &[String]) -> bool {

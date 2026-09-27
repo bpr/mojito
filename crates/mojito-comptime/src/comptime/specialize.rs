@@ -1178,7 +1178,10 @@ impl Elab<'_> {
             .collect();
         // A loan-carrying type argument's origin slots spell the clone's own
         // binders (`Span[Int, __clone_origin0]`), which it declares first.
-        kept_type_params.splice(0..0, self.clone_origin_binder_params(vals));
+        kept_type_params.splice(
+            0..0,
+            self.clone_origin_binder_params(vals, &self.unspelled_clone_binders(template, vals)),
+        );
         let mut specialization = mk(
             StmtKind::Def {
                 name: output_name.clone(),

@@ -3106,7 +3106,13 @@ impl<'a> Elab<'a> {
 
     /// The clone binders the bound values of a `def` clone name
     /// (`Elab::clone_binding`), declared in binder order.
-    pub(super) fn clone_origin_binder_params(&self, values: &[CtValue]) -> Vec<TypeParam> {
+    /// The binders in `explicit` are declared explicit: no argument spells
+    /// them, so each call supplies them (`Elab::unspelled_clone_binders`).
+    pub(super) fn clone_origin_binder_params(
+        &self,
+        values: &[CtValue],
+        explicit: &[u32],
+    ) -> Vec<TypeParam> {
         let mut found = Vec::new();
         for value in values {
             if let CtValue::Type(ty) = value {
@@ -3118,7 +3124,11 @@ impl<'a> Elab<'a> {
         found
             .into_iter()
             .flat_map(|(index, mutability)| {
-                CloneOriginBinders::declared(index, mutability.as_ref())
+                let mut declared = CloneOriginBinders::declared(index, mutability.as_ref());
+                if let Some(origin) = declared.last_mut() {
+                    origin.infer_only = !explicit.contains(&index);
+                }
+                declared
             })
             .collect()
     }

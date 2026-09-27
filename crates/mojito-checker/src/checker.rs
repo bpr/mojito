@@ -2919,6 +2919,7 @@ struct SubscriptResolution {
 type SplitCallableSpecialization = (
     Vec<mojito_ast::ast::ParamArg>,
     Vec<(Vec<usize>, mojito_types::origin::Origin)>,
+    HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 );
 
 mod places;

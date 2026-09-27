@@ -545,7 +545,7 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
 
         if signature.origins.is_empty() {
-            return Ok((arguments.to_vec(), Vec::new()));
+            return Ok((arguments.to_vec(), Vec::new(), HashMap::new()));
         }
         let mut supplied = vec![false; signature.source.len()];
         let mut origins = vec![None; signature.origins.len()];
@@ -625,6 +625,21 @@ impl Checker {
             }
         }
 
+        // A value type names an origin binder by its source slot
+        // (`Span[Int, o]` in a result or parameter type), which the explicit
+        // argument binds as it binds the `ref` signatures naming it.
+        let tails = signature
+            .source
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parameter)| {
+                let origin = origins.get(parameter.origin?)?.clone()?;
+                Some((
+                    mojito_types::origin::OriginParamId(u32::try_from(index).ok()?),
+                    origin,
+                ))
+            })
+            .collect();
         let bindings = signature
             .origins
             .iter()
@@ -633,7 +648,7 @@ impl Checker {
                 origin.map(|origin| (parameter.slots.clone(), origin))
             })
             .collect::<Vec<_>>();
-        Ok((ordinary, bindings))
+        Ok((ordinary, bindings, tails))
     }
 
     #[allow(
@@ -677,9 +692,11 @@ impl Checker {
         let Some(signature) = signature else {
             return Ok((callable, arguments.to_vec()));
         };
-        let (ordinary, bindings) =
+        let (ordinary, bindings, tails) =
             self.split_callable_specialization(name, arguments, signature)?;
-        Ok((self.bind_callable_origins(callable, &bindings), ordinary))
+        let callable =
+            bind_callable_origin_tails(self.bind_callable_origins(callable, &bindings), &tails);
+        Ok((callable, ordinary))
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
@@ -1253,4 +1270,41 @@ pub(super) fn method_instantiation_arguments(
             .map(materialized_instantiation_argument)
             .collect()
     })
+}
+
+/// `callable` with every struct origin tail of its parameter, collector,
+/// and result types that names an explicitly bound origin binder rebound to
+/// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`).
+fn bind_callable_origin_tails(
+    mut callable: Ty,
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+) -> Ty {
+    if tails.is_empty() {
+        return callable;
+    }
+    let (Ty::Func {
+        params,
+        variadic,
+        kw_variadic,
+        ret,
+        ..
+    }
+    | Ty::GenericFunc {
+        params,
+        variadic,
+        kw_variadic,
+        ret,
+        ..
+    }) = &mut callable
+    else {
+        return callable;
+    };
+    let bind = |ty: &mut Ty| *ty = super::origins::substitute_struct_origin_tails(ty, tails);
+    params.iter_mut().for_each(bind);
+    variadic
+        .iter_mut()
+        .chain(kw_variadic.iter_mut())
+        .for_each(|ty| bind(ty));
+    bind(ret);
+    callable
 }

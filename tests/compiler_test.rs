@@ -3713,6 +3713,38 @@ fn bundled_def_over_loan_carrying_argument_clones() {
 }
 
 #[test]
+fn unspelled_loan_carrying_type_argument_clones() {
+    // A loan-carrying type argument no runtime parameter spells
+    // (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n)`) is
+    // cloned with explicit origin binders, which each call supplies from its
+    // own application.
+    let compiler = Compiler::default();
+    let compiled = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/unspelled_loan_carrying_type_argument.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&compiled).expect("execute").output,
+        "3 6\n5\n4\n6\n"
+    );
+    let defs: Vec<&str> = compiled
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for clone in [
+        "__module$std$memory$alloc$unsafe_alloc$y9:Span[Int]",
+        "make$y9:Span[Int]",
+    ] {
+        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
+    }
+}
+
+#[test]
 fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     // `self.item = value^` over a symbolic `T` publishes no transfer in the
     // template, which records it as latent. The loan-carrying instance

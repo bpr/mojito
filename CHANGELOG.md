@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `def` whose loan-carrying type argument reaches only its result
+  (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n) ->
+  Pointer[T, MutUntrackedOrigin]`) now gets its own clone
+  (`assets/ok/unspelled_loan_carrying_type_argument.mojo`): the argument's
+  origin slots become explicit binders of the clone, which the call
+  supplies from its own application. Such a call kept the erased body,
+  since the clone's binders could only be inferred from its arguments.
+- An explicit origin argument now binds the origin slots of the callee's
+  parameter and result types (`slots[origin_of(xs)](n)` over `-> Pointer[
+  Span[Int, o], MutUntrackedOrigin]`), not only its `ref` signatures, so
+  writing a span of `xs` through the result no longer fails to type.
 - A trait-bound `def` handing its `T: Titled` parameter to a method taking
   `Some[Named]`, where `trait Titled(Named)`, now derives from its checked
   template, as the same body over `T: Named` did

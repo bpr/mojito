@@ -3563,6 +3563,24 @@ fn explicit_origins_participate_in_overload_and_generic_candidate_selection() {
 }
 
 #[test]
+fn explicit_origin_argument_binds_the_result_type_origin_slots() {
+    // `slots[origin_of(xs)]` binds `o` inside the result's
+    // `Pointer[Span[Int, o], ...]`, so the pointee is a span of `xs` and a
+    // span of any other place is not.
+    let declarations = "from std.memory.alloc import unsafe_alloc\n\ndef slots[o: MutOrigin](n: Int) -> Pointer[Span[Int, o], MutUntrackedOrigin]:\n    return unsafe_alloc[Span[Int, o]](n)\n\n";
+    ok_std(&format!(
+        "{declarations}def main():\n    var xs: List[Int] = [4, 5, 6]\n    var r = slots[origin_of(xs)](1)\n    r.unsafe_write(Span(xs))\n    r.free()\n"
+    ));
+    let error = err_std(&format!(
+        "{declarations}def main():\n    var xs: List[Int] = [4, 5, 6]\n    var ys: List[Int] = [7]\n    var r = slots[origin_of(xs)](1)\n    r.unsafe_write(Span(ys))\n    r.free()\n"
+    ));
+    assert!(
+        matches!(error, TypeError::TypeMismatch { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn contextual_type_selects_an_origin_specialized_overload_value() {
     let declarations = "def choose[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef choose[origin: Origin[mut=True]](ref[origin] value: Float64) -> ref[origin] Float64:\n    return value\n\n";
     ok(&format!(
