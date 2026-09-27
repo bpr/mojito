@@ -237,11 +237,17 @@ its own roadmap entry in §3.
 
 Existing lifecycle and place defects come first, but not all of
 [`docs/roadmap.md`](roadmap.md) §2 and §3, since §3 reopens at every re-pin.
-§1 opens with a numbered list of the entries that gate it: the
-drop-elaboration and MIR place-shape defects the Stage A1 slice must model,
-and the native miscompile in that slice's own shape. A pivot evaluated against a backend with
-known miscompiles cannot be judged. The rest of §2 and §3 is orthogonal to
-steps 1 and 2 below and can interleave with them.
+What gates the pivot is the handful of §2 native-backend defects whose shapes
+the Stage A1 slice itself uses: a specialized generic struct whose constructor
+mangles into an existing symbol, a forwarded value argument that is not a
+native constant, a consuming move out of a `deinit self` with droppable
+fields, and a one-element tuple. The slice executes natively and on the VM
+from one module, so a backend that miscompiles those shapes cannot be judged
+for conversion totality or execution parity. §1's own entries do not gate it:
+they move the check order above `CheckedProgram`, while A1 shadows MIR below
+it. The pivot entry's `Depends on` bullet carries the current numbers, which
+move as §1 closes. The rest of §2 and §3 is orthogonal to steps 1 and 2 below
+and can interleave with them.
 
 1. **Fix the check order inside the current architecture.** Type-check
    `comptime if`/`for` bodies symbolically and reject what upstream rejects.

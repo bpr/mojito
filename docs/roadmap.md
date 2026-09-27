@@ -114,12 +114,20 @@ to section 3, however small.
     (`docs/notes/param-expr-attributes.md`); A1 carries it as `#[pliron_attr]`
     wrappers over `uniqued_any`, with its own construction, substitution,
     identity, cross-context clone, and canonical-text tests. That alone is
-    not the proof. Last in this section.
+    not the proof.
   - The plan and the measurement design are the broadest scope in this document:
     they reopen the waist and the dialect policy. The A1 slice is built and
     measured once planned.
-  - Depends on nothing: the A1 slice is built and measured from
-    `docs/pliron-backend-pivot-plan.md` alone.
+  - The rest of this section does not gate it: those entries move the check
+    order above `CheckedProgram`, while A1 shadows MIR below it. Waiting for
+    them only ages the decision.
+  - Depends on section 2, for the native defects whose shapes the slice
+    itself uses: a specialized generic struct whose constructor mangles into
+    an existing symbol, a forwarded value argument that is not a native
+    constant, a consuming move out of a `deinit self` with droppable fields,
+    and a one-element tuple. The slice runs natively and on the VM from one
+    module, so a backend that miscompiles those shapes can be measured for
+    neither conversion totality nor execution parity.
   - Model: Fable, Planned.
 
 - [ ] **1.6 A reference-typed call result in a method keeps the clone
