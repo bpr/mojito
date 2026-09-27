@@ -352,11 +352,12 @@ pub(super) fn verify_instruction(
         }
         MirInstr::ConstructTypeParam { dest, param } => {
             if let Some(found) = reg_ty(dest)
-                && !matches!(found, Ty::Param { binder, .. } if binder.name.as_ref() == param)
+                && !matches!(found, Ty::Param { binder, .. } if binder == param)
                 && !matches!(found, Ty::Struct(..))
             {
                 errors.push(format!(
-                    "{prefix}: type-parameter construction of '{param}' has result type {found}"
+                    "{prefix}: type-parameter construction of '{}' has result type {found}",
+                    param.name
                 ));
             }
         }

@@ -11,6 +11,7 @@ impl Decoder {
             files: BTreeMap::new(),
             context: ParamContext::new(),
             legacy_binders: legacy.then(HashMap::new),
+            register_binders: HashMap::new(),
         }
     }
 

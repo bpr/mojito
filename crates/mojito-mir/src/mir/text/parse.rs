@@ -140,6 +140,10 @@ struct Decoder {
     /// artifact by name, which is all a 1.0 reference carries. `None` reads
     /// schema 1.1, whose references are self-describing.
     legacy_binders: Option<HashMap<String, Vec<MetaTy>>>,
+    /// The binder typing each register of the function being read: a
+    /// `type.construct` older than schema 1.3 names its binder by spelling,
+    /// and constructs the one its destination register is typed by.
+    register_binders: HashMap<u32, mojito_types::param_expr::ParamRef>,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

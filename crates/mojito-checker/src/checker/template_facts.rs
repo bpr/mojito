@@ -7201,7 +7201,7 @@ fn kept_binder_construction(
         return None;
     };
     fact_at(&template.expression_types, id)
-        .filter(|ty| matches!(ty, Ty::Param { binder, .. } if *binder.name == **param))
+        .filter(|ty| matches!(ty, Ty::Param { binder, .. } if binder == param))
         .filter(|ty| substitute(ty) == **ty)
         .map(|_| adjustment.clone())
 }
@@ -8930,9 +8930,9 @@ impl BodyShape<'_> {
     /// (`H()`): a temporary of the binder's type, which every clone keeps
     /// symbolic, so each records the same `ConstructTypeParam`.
     ///
-    /// The adjustment names the binder by spelling, so the recorded type
-    /// decides which declaration it constructs: a binder of the enclosing
-    /// struct is another type under each instance, and stays outside.
+    /// The adjustment names the binder it constructs: a binder of the
+    /// enclosing struct is another type under each instance, and stays
+    /// outside.
     fn binder_construction(&self, expr: &Expr) -> bool {
         let ExprKind::Call {
             name,
@@ -8952,10 +8952,10 @@ impl BodyShape<'_> {
             && self.facts.is_none_or(|facts| {
                 matches!(fact_at(&facts.operation_adjustments, id),
                     Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param })
-                        if param == name)
-                    && matches!(fact_at(&facts.expression_types, id),
-                        Some(Ty::Param { binder, .. })
-                            if *binder.name == **name && !self.struct_binders.contains(&&binder.id))
+                        if *param.name == **name
+                            && matches!(fact_at(&facts.expression_types, id),
+                            Some(Ty::Param { binder, .. })
+                                if binder == param && !self.struct_binders.contains(&&binder.id)))
             });
         if admitted {
             self.binder_constructions.borrow_mut().push(id);

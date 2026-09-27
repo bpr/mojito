@@ -40,6 +40,13 @@ fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
     result
 }
 
+fn test_binder(name: &str) -> ParamRef {
+    ParamRef {
+        id: mojito_types::param_expr::ParamId::new(&format!("$test:{name}"), 0),
+        name: name.into(),
+    }
+}
+
 fn function<'a>(program: &'a SpecializedProgram, name: &str) -> &'a MirFunction {
     &program
         .program
@@ -231,32 +238,57 @@ fn dependent_lambda_calls_specialize_once_per_index_and_element_type() {
 }
 
 #[test]
+fn same_spelled_binders_of_two_declarations_bind_apart() {
+    let binder = |owner: &str| mojito_types::param_expr::ParamRef {
+        id: mojito_types::param_expr::ParamId::new(owner, 0),
+        name: "T".into(),
+    };
+    let parameter = |owner: &str| Ty::Param {
+        binder: binder(owner),
+        bounds: vec![],
+        callable_bound: None,
+    };
+    let mut bindings = Bindings::default();
+    unify(&parameter("outer"), &Ty::Int, &mut bindings).unwrap();
+    unify(&parameter("contract"), &Ty::Bool, &mut bindings).unwrap();
+    assert_eq!(
+        substitute_ty(&parameter("outer"), &bindings).unwrap(),
+        Ty::Int
+    );
+    assert_eq!(
+        substitute_ty(&parameter("contract"), &bindings).unwrap(),
+        Ty::Bool
+    );
+    assert!(substitute_ty(&parameter("unbound"), &bindings).is_err());
+}
+
+#[test]
 fn literal_actuals_merge_with_concrete_bindings_in_either_order() {
     let mut bindings = Bindings::default();
     // Receiver-first: `T := Int` from the concrete receiver, then a
     // literal-typed actual (`41 : IntLiteral`) — compatible, keeps `Int`.
-    bind_type("T", &Ty::Int, &mut bindings).unwrap();
-    bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
-    assert_eq!(bindings.types.get("T"), Some(&Ty::Int));
+    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
+    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::Int));
 
     // Result-last: the literal actual binds first, the concrete result
     // type upgrades it.
     let mut bindings = Bindings::default();
-    bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
-    bind_type("T", &Ty::Int, &mut bindings).unwrap();
-    assert_eq!(bindings.types.get("T"), Some(&Ty::Int));
+    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
+    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::Int));
 
     // Genuinely distinct concrete solutions still conflict, and the
     // message carries the structural forms (`Display` collapses
     // `IntLiteral` to `Int`).
     let mut bindings = Bindings::default();
-    bind_type("T", &Ty::Int, &mut bindings).unwrap();
-    let error = bind_type("T", &Ty::Float64, &mut bindings).unwrap_err();
+    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
+    let error = bind_type(&test_binder("T"), &Ty::Float64, &mut bindings).unwrap_err();
     assert!(error.contains("conflicting"), "{error}");
     // Two different literal kinds conflict too.
     let mut bindings = Bindings::default();
-    bind_type("T", &Ty::IntLiteral, &mut bindings).unwrap();
-    assert!(bind_type("T", &Ty::FloatLiteral, &mut bindings).is_err());
+    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
+    assert!(bind_type(&test_binder("T"), &Ty::FloatLiteral, &mut bindings).is_err());
 }
 
 #[test]
@@ -376,7 +408,7 @@ fn substitution_resolves_nested_type_and_value_arguments() {
         generic_templates: Rc::new(HashSet::from(["Buffer".to_string()])),
         ..Bindings::default()
     };
-    bindings.types.insert("T".into(), Ty::UInt);
+    bindings.types.insert(test_binder("T"), Ty::UInt);
     bindings.values.insert("n".into(), CtValue::Int(4));
     let ty = Ty::Struct(
         "Buffer".into(),
@@ -495,16 +527,16 @@ fn binding_solutions_ignore_reference_origins() {
         mutability: mojito_types::origin::Mutability::Immutable,
     });
     let mut bindings = Bindings::default();
-    bind_type("T", &first, &mut bindings).unwrap();
-    bind_type("T", &second, &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &first, &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &second, &mut bindings).unwrap();
     // First solution wins; a mutability disagreement still conflicts.
-    assert_eq!(bindings.types.get("T"), Some(&first));
+    assert_eq!(bindings.types.get(&test_binder("T")), Some(&first));
     let mutable = Ty::Ref(mojito_types::origin::RefTy {
         referent: Box::new(Ty::Int),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Mutable,
     });
-    assert!(bind_type("T", &mutable, &mut bindings).is_err());
+    assert!(bind_type(&test_binder("T"), &mutable, &mut bindings).is_err());
 }
 
 #[test]

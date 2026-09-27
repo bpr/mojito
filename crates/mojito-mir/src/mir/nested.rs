@@ -28,6 +28,8 @@ pub(super) struct FunctionLowering<'a> {
     /// argument naming one is an erased origin argument that carries no
     /// register.
     pub(super) enclosing_origin_parameters: Vec<String>,
+    /// The enclosing struct's type binders, then the function's own.
+    pub(super) enclosing_type_parameters: Vec<mojito_types::param_expr::ParamRef>,
     pub(super) owned_parameters: Vec<bool>,
     pub(super) deinit_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
@@ -54,6 +56,7 @@ pub(super) fn lower_fn_nested(
         value_parameter_locals,
         receiver_value_parameters,
         enclosing_origin_parameters,
+        enclosing_type_parameters,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
         reference_parameters: ref_params,
@@ -93,6 +96,7 @@ pub(super) fn lower_fn_nested(
         checked.call_transfers(),
         &receiver_value_parameters,
         &enclosing_origin_parameters,
+        &enclosing_type_parameters,
     );
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
@@ -120,7 +124,15 @@ pub(super) fn lower_fn_nested(
     out.push((name.to_string(), f));
 
     for child in children {
-        lower_nested_node(checked, child, &registry, overloads, out, declarations);
+        lower_nested_node(
+            checked,
+            child,
+            &registry,
+            overloads,
+            out,
+            declarations,
+            &enclosing_type_parameters,
+        );
     }
 }
 
@@ -289,6 +301,7 @@ fn lower_nested_node(
     overloads: &mojito_symbol::symbol::OverloadSets,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
+    enclosing_type_parameters: &[mojito_types::param_expr::ParamRef],
 ) {
     let ds = node.statement;
     if let StmtKind::Def {
@@ -538,6 +551,7 @@ fn lower_nested_node(
             checked.call_transfers(),
             &[],
             &[],
+            enclosing_type_parameters,
         );
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {
@@ -572,7 +586,15 @@ fn lower_nested_node(
         }
         out.push((mangled.clone(), nf));
         for child in node.children {
-            lower_nested_node(checked, child, &registry, overloads, out, declarations);
+            lower_nested_node(
+                checked,
+                child,
+                &registry,
+                overloads,
+                out,
+                declarations,
+                enclosing_type_parameters,
+            );
         }
     }
 }

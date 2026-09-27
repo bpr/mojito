@@ -77,7 +77,7 @@ impl Specializer<'_> {
                 &string,
                 "__hash__",
                 1,
-                &[("H", hasher_ty.clone())],
+                std::slice::from_ref(&hasher_ty),
             )?;
         }
         if let Ty::Variant(alternatives) = receiver {
@@ -88,7 +88,7 @@ impl Specializer<'_> {
                         alternative,
                         "__hash__",
                         1,
-                        &[("H", hasher_ty.clone())],
+                        std::slice::from_ref(&hasher_ty),
                     )?;
                 }
             }
@@ -98,16 +98,17 @@ impl Specializer<'_> {
 
     /// Enqueue one nominal method instance reached by a lowered intrinsic
     /// rather than an explicit MIR call: the receiver binds the owner's
-    /// parameters, `method_bindings` bind the method's own type parameters,
-    /// and any remaining type parameter (a `Some[..]` sugar spelling)
-    /// instantiates at the builtin string, as `enqueue_display_instance`.
+    /// parameters, `method_bindings` bind the method's own type parameters in
+    /// declaration order, and any remaining type parameter (a `Some[..]`
+    /// sugar spelling) instantiates at the builtin string, as
+    /// `enqueue_display_instance`.
     pub(super) fn enqueue_nominal_method_instance(
         &mut self,
         owner: &str,
         receiver: &Ty,
         method: &str,
         argc: usize,
-        method_bindings: &[(&str, Ty)],
+        method_bindings: &[Ty],
     ) -> Result<(), MonoError> {
         let Ty::Struct(name, arguments) = receiver else {
             return Ok(());
@@ -144,23 +145,28 @@ impl Specializer<'_> {
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             }
         }
-        for (parameter, ty) in method_bindings {
-            bindings.types.insert((*parameter).to_string(), ty.clone());
+        let own_binders: Vec<ParamRef> = declaration
+            .param_decls
+            .iter()
+            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
+            .map(ParamDecl::binder)
+            .filter(|binder| !bindings.types.contains_key(binder))
+            .collect();
+        for (binder, ty) in own_binders.into_iter().zip(method_bindings) {
+            bindings.types.insert(binder, ty.clone());
         }
         for decl in &declaration.param_decls {
-            if let ParamDecl::Type { name, .. } = decl
-                && !bindings.types.contains_key(name.as_str())
+            if let ParamDecl::Type { .. } = decl
+                && !bindings.types.contains_key(&decl.binder())
             {
-                bindings.types.insert(name.clone(), Ty::StringLiteral);
+                bindings.types.insert(decl.binder(), Ty::StringLiteral);
             }
         }
         for ty in &declaration.param_types {
             if let Ty::Param { binder, .. } = ty
-                && !bindings.types.contains_key(binder.name.as_ref())
+                && !bindings.types.contains_key(binder)
             {
-                bindings
-                    .types
-                    .insert(binder.name.to_string(), Ty::StringLiteral);
+                bindings.types.insert(binder.clone(), Ty::StringLiteral);
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
@@ -295,21 +301,19 @@ impl Specializer<'_> {
             }
         }
         for decl in &declaration.param_decls {
-            if let ParamDecl::Type { name, .. } = decl
-                && !bindings.types.contains_key(name.as_str())
+            if let ParamDecl::Type { .. } = decl
+                && !bindings.types.contains_key(&decl.binder())
             {
-                bindings.types.insert(name.clone(), Ty::StringLiteral);
+                bindings.types.insert(decl.binder(), Ty::StringLiteral);
             }
         }
         // The `Some[Writer]` sugar parameter is infer-only (absent from
         // `param_decls`); bind its spelling from the declared type.
         for ty in &declaration.param_types {
             if let Ty::Param { binder, .. } = ty
-                && !bindings.types.contains_key(binder.name.as_ref())
+                && !bindings.types.contains_key(binder)
             {
-                bindings
-                    .types
-                    .insert(binder.name.to_string(), Ty::StringLiteral);
+                bindings.types.insert(binder.clone(), Ty::StringLiteral);
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;

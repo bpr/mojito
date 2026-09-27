@@ -100,6 +100,9 @@ pub struct Reg(pub u32);
 pub struct MirParamArg {
     pub name: Option<String>,
     pub value: Option<Reg>,
+    /// The enclosing declaration's type binder this argument forwards
+    /// (`hash[Self.H](key)`), whose spelling `value` reifies.
+    pub binder: Option<mojito_types::param_expr::ParamRef>,
 }
 
 /// Index of a basic block within a [`MirFunction`]'s `blocks`.
@@ -354,7 +357,7 @@ pub enum MirInstr {
     /// Construct the concrete type reified for a checked type parameter.
     ConstructTypeParam {
         dest: Reg,
-        param: String,
+        param: mojito_types::param_expr::ParamRef,
     },
     /// Target-layout byte size of one checker-resolved type.
     SizeOf {

@@ -194,7 +194,13 @@ impl Checker {
                         .filter(|declaration| declaration.name() == name)
                         .find_map(type_parameter)
                 });
-            if let Some(ref ty @ Ty::Param { ref bounds, .. }) = type_parameter
+            if let Some(
+                ref ty @ Ty::Param {
+                    ref binder,
+                    ref bounds,
+                    ..
+                },
+            ) = type_parameter
                 && bounds
                     .iter()
                     .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
@@ -202,7 +208,7 @@ impl Checker {
                 self.operation_adjustments.borrow_mut().insert(
                     span,
                     mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
-                        param: name.to_string(),
+                        param: binder.clone(),
                     },
                 );
                 return Ok(ty.clone());

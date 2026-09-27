@@ -217,17 +217,20 @@ impl Specializer<'_> {
                 let unresolved_callable_decls = declaration
                     .param_decls
                     .iter()
-                    .filter_map(|decl| match decl {
-                        ParamDecl::Type {
-                            name,
-                            callable_bound: Some(_),
-                            ..
-                        } if !bindings.types.contains_key(name.as_str()) => Some(name),
-                        _ => None,
+                    .filter(|decl| {
+                        matches!(
+                            decl,
+                            ParamDecl::Type {
+                                callable_bound: Some(_),
+                                ..
+                            }
+                        )
                     })
+                    .map(ParamDecl::binder)
+                    .filter(|binder| !bindings.types.contains_key(binder))
                     .collect::<Vec<_>>();
                 if let [parameter] = unresolved_callable_decls.as_slice() {
-                    bindings.types.insert((*parameter).clone(), actual.clone());
+                    bindings.types.insert(parameter.clone(), actual.clone());
                 }
                 // Explicit value parameters may resolve a dependent pattern;
                 // an ordinary unresolved type parameter must remain available

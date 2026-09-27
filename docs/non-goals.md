@@ -212,5 +212,9 @@ parser gives each spelling one identity (`$mir-1.1:<name>`) and the
 artifact's own uses still find their declaration.
 
 - Nothing else is recorded to recover: a later schema writes `owner`/`slot`.
+- A 1.2 artifact's forwarded type argument (`hash[Self.H](key)`) records no
+  binder either. Native monomorphization resolves it when exactly one
+  enclosing binder carries the spelling, and leaves the slot to its default
+  otherwise.
 - Revisit only if a 1.0/1.1 artifact must be read with two same-spelled
   binders told apart.

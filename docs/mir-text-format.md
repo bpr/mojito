@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.2
+# Mojito Textual MIR Format, Version 1.3
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.2 is implemented end to end for inspection and loading: canonical
+Version 1.3 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,12 +20,12 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.2
+mojito-mir 1.3
 ```
 
-The writer emits 1.2. The reader accepts 1.0, 1.1, and 1.2; *Schema 1.0*
+The writer emits 1.3. The reader accepts 1.0 through 1.3; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
-how a 1.1 binder is.
+how a binder without an identity is.
 
 The two unsigned decimal components are major and minor versions. A consumer
 must reject an unknown major version. Within major version 1, a newer minor may
@@ -48,6 +48,15 @@ carry its declaration's identity, the same fields a `param_decl_ref` already
 carries. A 1.1 consumer rejects them as unknown required fields, which is the
 intended failure; a 1.2 consumer reads 1.1 by giving each binder an identity
 per spelling (*Binder identity* under *Types*).
+
+Minor version 3 carries that identity on the two instruction operands that
+still named a binder by spelling. `type.construct` gains `owner` and `slot`
+beside `param`, and a `param_arg` gains `binder`: `absent`, or the
+`present(binder { owner, slot, name })` of the enclosing declaration's type
+binder the argument forwards (`hash[Self.H](key)`). A 1.2 consumer rejects both as
+unknown fields, which is the intended failure. A 1.3 consumer reads an older
+`type.construct` by its destination register's type (*Binder identity* under
+*Types*), and an older `param_arg` as forwarding no recorded binder.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -354,7 +363,9 @@ the declaration's parameter list) are its identity, exactly as in
 declaration agree by identity, and two declarations that both spell `T` stay
 apart. In a 1.1 artifact, whose binders carry only a spelling, every binder
 spelled `n` reads as one identity per spelling (owner `$mir-1.1:n`, slot `0`),
-which is what a 1.1 artifact meant.
+which is what a 1.1 artifact meant. A `type.construct` without `owner` and
+`slot` constructs the binder its destination register is typed by, when that
+binder carries the spelling, and reads as a 1.1 binder otherwise.
 
 `GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
 variants: `with_message { condition, message }`, `conforms`, `conforms_pack`,
@@ -506,7 +517,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.2
+mojito-mir 1.3
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

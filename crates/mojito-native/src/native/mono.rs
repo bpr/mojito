@@ -24,7 +24,7 @@ use mojito_mir::mir::{
 };
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
-use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr};
+use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
 use mojito_types::types::{ParamDecl, Ty, TyArg};
 
 /// A fully concrete backend-private program and the concrete identity of every
@@ -62,7 +62,9 @@ struct InstanceKey {
 
 #[derive(Clone, Default)]
 struct Bindings {
-    types: HashMap<String, Ty>,
+    /// Each type binder's solution, keyed by the binder's identity: two
+    /// binders sharing a spelling are two entries.
+    types: HashMap<ParamRef, Ty>,
     values: HashMap<String, CtValue>,
     callables: HashMap<String, String>,
     associated: HashMap<String, Ty>,
@@ -101,8 +103,8 @@ struct Specializer<'a> {
     callable_targets: HashMap<u32, (String, bool)>,
     /// The type bindings of the instance being specialized: an erased body
     /// forwarding its own binder as a callee's type argument
-    /// (`hash[Self.H](key)`) resolves that spelling here.
-    enclosing_types: HashMap<String, Ty>,
+    /// (`hash[Self.H](key)`) resolves that binder here.
+    enclosing_types: HashMap<ParamRef, Ty>,
     /// Instance names enqueued only by struct discovery's eager `__init__`
     /// walk, never by a call site. A conditional constructor (`__init__(out
     /// self) where conforms_to(Self.T, Defaultable)`) has no MIR-visible

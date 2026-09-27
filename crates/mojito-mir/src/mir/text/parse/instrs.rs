@@ -36,9 +36,16 @@ impl Decoder {
             "reg",
             "%r",
         );
-        let reg_types = reg_types_raw
+        let reg_types: HashMap<u32, Ty> = reg_types_raw
             .into_iter()
             .map(|(id, ty)| (id as u32, ty))
+            .collect();
+        self.register_binders = reg_types
+            .iter()
+            .filter_map(|(register, ty)| match ty {
+                Ty::Param { binder, .. } => Some((*register, binder.clone())),
+                _ => None,
+            })
             .collect();
         let spans = self.locations(self.field(fields, "locations").ok()?);
         let blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
@@ -207,12 +214,24 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,
             }),
-            "type.construct" => Some(MirInstr::ConstructTypeParam {
-                dest: self.req(value, fields, "dest", Self::reg)?,
+            "type.construct" => {
                 // The writer spells the parameter with `symbol` (a bare atom
                 // for identifier-safe names), so accept both spellings here.
-                param: self.req(value, fields, "param", Self::symbol)?,
-            }),
+                let name = self.req(value, fields, "param", Self::symbol)?;
+                let dest = self.req(value, fields, "dest", Self::reg)?;
+                let param = match self.register_binders.get(&dest.0) {
+                    Some(binder)
+                        if self.field(fields, "owner").is_err() && binder.name.as_ref() == name =>
+                    {
+                        binder.clone()
+                    }
+                    _ => mojito_types::param_expr::ParamRef {
+                        id: self.binder_id(value, fields, &name)?,
+                        name: name.into(),
+                    },
+                };
+                Some(MirInstr::ConstructTypeParam { dest, param })
+            }
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,

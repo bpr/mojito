@@ -1720,6 +1720,7 @@ impl Flatten<'_> {
                 nested: self.nested.clone(), // a `try` region may call a nested `def`
                 receiver_value_parameters: self.receiver_value_parameters.clone(),
                 enclosing_origin_parameters: self.enclosing_origin_parameters.clone(),
+                enclosing_type_parameters: self.enclosing_type_parameters.clone(),
                 overloads: self.overloads.clone(),
                 checked: std::sync::Arc::clone(&self.checked),
                 active_semantics: Vec::new(),

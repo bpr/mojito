@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Native monomorphization now solves and substitutes a type parameter by
+  its declaration's identity, so two binders that share a spelling inside
+  one instance no longer share a solution. MIR carries that identity on a
+  type-parameter construction and on a type argument forwarding an
+  enclosing binder (`hash[Self.H](key)`), and the textual format is schema
+  1.3; artifacts of schema 1.0 through 1.2 still load.
 - A generic body's outward store whose source is a union of its
   parameters (a value borrowed through a `ref[origin_of(a, b)]` result) now
   keeps that transfer for its instances, each dropping the parameters that

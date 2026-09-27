@@ -55,6 +55,7 @@ impl Checker {
                 .iter()
                 .filter(|declaration| declaration.name() == method)
                 .find_map(type_parameter)
+            && let Ty::Param { binder, .. } = &ty
         {
             if !self.conforms_to(&ty, "Defaultable") && !self.conforms_to(&ty, "Hasher") {
                 return Err(TypeError::TraitNotSatisfied {
@@ -67,7 +68,7 @@ impl Checker {
             self.operation_adjustments.borrow_mut().insert(
                 span,
                 mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
-                    param: method.to_string(),
+                    param: binder.clone(),
                 },
             );
             return Ok(ty);

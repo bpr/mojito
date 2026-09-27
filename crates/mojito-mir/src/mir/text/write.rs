@@ -554,9 +554,15 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::SizeOf { dest, ty } => {
             record(tag, &[("dest", reg_value(*dest)), ("type", ty_value(ty))])
         }
-        MirInstr::ConstructTypeParam { dest, param } => {
-            record(tag, &[("dest", reg_value(*dest)), ("param", symbol(param))])
-        }
+        MirInstr::ConstructTypeParam { dest, param } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("owner", quote(&param.id.owner)),
+                ("slot", param.id.slot.to_string()),
+                ("param", symbol(&param.name)),
+            ],
+        ),
         MirInstr::MaterializeLiteral {
             dest,
             value,
@@ -1288,12 +1294,23 @@ fn capture_access(value: &MirCaptureAccess) -> String {
         ],
     )
 }
+fn binder_ref(value: &mojito_types::param_expr::ParamRef) -> String {
+    record(
+        "binder",
+        &[
+            ("owner", quote(&value.id.owner)),
+            ("slot", value.id.slot.to_string()),
+            ("name", symbol(&value.name)),
+        ],
+    )
+}
 fn param_arg(value: &MirParamArg) -> String {
     record(
         "param_arg",
         &[
             ("name", option(value.name.as_ref().map(|v| symbol(v)))),
             ("value", option(value.value.map(reg_value))),
+            ("binder", option(value.binder.as_ref().map(binder_ref))),
         ],
     )
 }

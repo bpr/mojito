@@ -397,7 +397,7 @@ pub enum SemanticAdjustment {
     ResolveCallable(String),
     /// Construct the concrete runtime type bound to a checked type parameter.
     ConstructTypeParam {
-        param: String,
+        param: mojito_types::param_expr::ParamRef,
     },
     /// A supplied compile-time type argument binding a runtime-constructible
     /// type parameter (`hash[Fnv1a](x)`): MIR reifies it as the bound

@@ -59,6 +59,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &HashMap::new(),
         &[],
         &[],
+        &[],
     )
 }
 
@@ -226,6 +227,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     .unwrap_or(&[])
                     .to_vec();
                 let value_parameter_locals = value_parameter_locals(&param_decls);
+                let enclosing_type_parameters = type_binders(&param_decls);
                 names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
                 let ptys = caller_params
                     .iter()
@@ -376,6 +378,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         value_parameter_locals,
                         receiver_value_parameters: Vec::new(),
                         enclosing_origin_parameters: origin_binder_names(type_params),
+                        enclosing_type_parameters,
                         owned_parameters: owned,
                         deinit_parameters: deinit,
                         reference_parameters: refp,
@@ -545,6 +548,16 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
                     }
                     let value_parameter_locals = value_parameter_locals(&param_decls);
+                    let enclosing_type_parameters = type_binders(
+                        checked
+                            .generic_parameters_at(&GenericSite::Struct {
+                                module: s.module.clone(),
+                                declaration: name.clone(),
+                            })
+                            .unwrap_or(&[])
+                            .iter()
+                            .chain(checked.generic_parameters_at(&generic_site).unwrap_or(&[])),
+                    );
                     let receiver_value_parameters: Vec<(String, Ty)> = checked
                         .generic_parameters_at(&GenericSite::Struct {
                             module: s.module.clone(),
@@ -715,6 +728,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             enclosing_origin_parameters: origin_binder_names(
                                 type_params.iter().chain(&m.type_params),
                             ),
+                            enclosing_type_parameters,
                             owned_parameters: owned,
                             deinit_parameters: deinit,
                             reference_parameters: refp,
@@ -750,6 +764,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &[],
             &[],
             checked.call_transfers(),
+            &[],
             &[],
             &[],
         )
@@ -959,6 +974,10 @@ struct Flatten<'a> {
     /// argument naming one (`V[Self.o]`) is erased, as the checker's
     /// `EraseCompileTimeArgument` marks a value-shaped one.
     enclosing_origin_parameters: Vec<String>,
+    /// The enclosing struct's type binders, then the function's own: a
+    /// bracket argument forwarding one (`hash[Self.H](key)`) records the
+    /// binder it names, the innermost declaration winning a shared spelling.
+    enclosing_type_parameters: Vec<mojito_types::param_expr::ParamRef>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1777,7 +1796,8 @@ impl Flatten<'_> {
     /// dispatch constructs the supplied type rather than the declaration
     /// default. An enclosing struct's own parameter (`hash[Self.H](key)` in
     /// an erased method body) reifies as the binder's spelling, which the VM
-    /// resolves through the caller's reified parameters at the call. The VM
+    /// resolves through the caller's reified parameters at the call, and
+    /// its slot records the binder itself for monomorphization. The VM
     /// ignores the reified value in every other erased slot.
     fn reified_type_argument(
         &mut self,
@@ -1803,6 +1823,31 @@ impl Flatten<'_> {
         Some(dest)
     }
 
+    /// The enclosing binder a type-shaped bracket argument forwards. `Self.H`
+    /// names the struct's binder, declared first; a bare `H` names the
+    /// innermost declaration's.
+    fn forwarded_binder(&self, argument: &ParamArg) -> Option<mojito_types::param_expr::ParamRef> {
+        let ty = match argument {
+            ParamArg::Type(ty) => ty,
+            ParamArg::Named { value, .. } => match &**value {
+                ParamArg::Type(ty) => ty,
+                ParamArg::Value(_) | ParamArg::Named { .. } => return None,
+            },
+            ParamArg::Value(_) => return None,
+        };
+        let mut binders = self.enclosing_type_parameters.iter();
+        match ty {
+            mojito_ast::ast::Type::SelfParam(name) => {
+                binders.find(|binder| binder.name.as_ref() == name.as_str())
+            }
+            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => {
+                binders.rfind(|binder| binder.name.as_ref() == name.as_str())
+            }
+            _ => None,
+        }
+        .cloned()
+    }
+
     /// An erased argument keeps its (empty) slot: every backend aligns the
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
@@ -1818,7 +1863,12 @@ impl Flatten<'_> {
             } else {
                 self.param_arg_reg(argument, site)
             };
-            registers.push(MirParamArg { name, value });
+            let binder = value.and_then(|_| self.forwarded_binder(argument));
+            registers.push(MirParamArg {
+                name,
+                value,
+                binder,
+            });
         }
         registers
     }
@@ -1888,6 +1938,7 @@ fn lower_cfg_nested(
     call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     receiver_value_parameters: &[(String, Ty)],
     enclosing_origin_parameters: &[String],
+    enclosing_type_parameters: &[mojito_types::param_expr::ParamRef],
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -1935,6 +1986,7 @@ fn lower_cfg_nested(
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
             enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
+            enclosing_type_parameters: enclosing_type_parameters.to_vec(),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
@@ -2731,6 +2783,16 @@ struct ComprehensionPlan<'a> {
 
 /// The names of the `Origin`/`OriginSet` binders among `parameters`, which a
 /// type-shaped bracket argument may name (`V[Self.o]`).
+fn type_binders<'a>(
+    declarations: impl IntoIterator<Item = &'a ParamDecl>,
+) -> Vec<mojito_types::param_expr::ParamRef> {
+    declarations
+        .into_iter()
+        .filter(|declaration| matches!(declaration, ParamDecl::Type { .. }))
+        .map(ParamDecl::binder)
+        .collect()
+}
+
 fn origin_binder_names<'a>(
     parameters: impl IntoIterator<Item = &'a mojito_ast::ast::TypeParam>,
 ) -> Vec<String> {

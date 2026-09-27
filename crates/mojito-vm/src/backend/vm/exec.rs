@@ -146,19 +146,20 @@ impl VmBackend {
             MirInstr::ConstructTypeParam { dest, param } => {
                 // A constructible type parameter is reified at runtime as the
                 // bound struct's name.
-                let bound = match self.bound_type_parameter(prog, function, frame_id, vars, param) {
-                    Some(reference @ Value::Ref { .. }) => {
-                        match self.read_reference(&reference, frame_id, vars)? {
-                            Value::Struct { name, .. } => Some(Value::Str(name)),
-                            _ => None,
+                let bound =
+                    match self.bound_type_parameter(prog, function, frame_id, vars, &param.name) {
+                        Some(reference @ Value::Ref { .. }) => {
+                            match self.read_reference(&reference, frame_id, vars)? {
+                                Value::Struct { name, .. } => Some(Value::Str(name)),
+                                _ => None,
+                            }
                         }
-                    }
-                    other => other,
-                };
+                        other => other,
+                    };
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
-                        "vm: constructing type parameter '{param}' in '{}' requires a reified type argument",
-                        prog.mir.functions[function].0
+                        "vm: constructing type parameter '{}' in '{}' requires a reified type argument",
+                        param.name, prog.mir.functions[function].0
                     )));
                 };
                 // A reified argument can pass through an enclosing abstract
@@ -174,7 +175,7 @@ impl VmBackend {
                             signature
                                 .param_decls
                                 .iter()
-                                .find(|declaration| declaration.name() == param)
+                                .find(|declaration| *declaration.id() == param.id)
                         })
                         .and_then(|declaration| match declaration {
                             mojito_types::types::ParamDecl::Type {

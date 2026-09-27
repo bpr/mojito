@@ -1475,9 +1475,11 @@ erased body that forwards its own binder (`hash[Self.H](key)` in
 `DictEntry.__init__`) reifies the binder's spelling (`Const::Str("H")`), which
 the VM resolves through the caller frame's bindings at the call
 (`runtime_parameter_arguments`), so an explicit `Dict[K, V, SumHasher]`
-hashes under `SumHasher` on insertion as well as lookup; the native
-monomorphizer does not yet honor that forwarding (a `docs/roadmap.md`
-native-lane residue).
+hashes under `SumHasher` on insertion as well as lookup. The argument's slot
+records the binder itself (`MirParamArg::binder`), as the construction names
+the binder it builds, and the native monomorphizer resolves both by that
+identity in the instance's type bindings (`Bindings.types`, keyed by
+`ParamRef`).
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not

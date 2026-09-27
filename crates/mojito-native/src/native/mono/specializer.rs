@@ -268,11 +268,11 @@ impl<'a> Specializer<'a> {
         };
         matched_parameter_arguments(&declaration.param_decls, param_args)
             .into_iter()
-            .filter(|(decl, _)| {
+            .filter(|(decl, _, _)| {
                 matches!(decl, ParamDecl::Value { ty, .. }
                     if matches!(peel_refs(ty), Ty::Func { .. } | Ty::GenericFunc { .. }))
             })
-            .filter_map(|(decl, reg)| {
+            .filter_map(|(decl, reg, _)| {
                 let (_, captures_are_empty) = self.callable_targets.get(&reg.0)?;
                 (!captures_are_empty).then(|| (decl.name().to_string(), reg))
             })

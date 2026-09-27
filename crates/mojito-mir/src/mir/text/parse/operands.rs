@@ -252,10 +252,18 @@ impl Decoder {
         let fields = self.record(value, "param_arg").ok()?;
         let name = self.req(value, fields, "name", |d, v| Some(d.option_symbol(v)))?;
         let param_value = self.req(value, fields, "value", |d, v| Some(d.option_reg(v)))?;
-        self.unknown(fields, &["name", "value"]);
+        // Schema 1.3 records the binder a forwarded type argument names; an
+        // older artifact carries only the reified spelling.
+        let binder = self
+            .field(fields, "binder")
+            .ok()
+            .and_then(|found| self.option_value(Some(found)))
+            .and_then(|found| self.binder_ref(found));
+        self.unknown(fields, &["name", "value", "binder"]);
         Some(MirParamArg {
             name,
             value: param_value,
+            binder,
         })
     }
 
@@ -550,5 +558,17 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    fn binder_ref(&mut self, value: &Value) -> Option<mojito_types::param_expr::ParamRef> {
+        let fields = self.record(value, "binder").ok()?;
+        let name = self.req(value, fields, "name", Self::symbol)?;
+        let owner = self.req(value, fields, "owner", Self::string)?;
+        let slot = self.req(value, fields, "slot", Self::uint)?;
+        self.unknown(fields, &["owner", "slot", "name"]);
+        Some(mojito_types::param_expr::ParamRef {
+            id: mojito_types::param_expr::ParamId::new(&owner, slot),
+            name: name.into(),
+        })
     }
 }

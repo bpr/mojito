@@ -359,7 +359,7 @@ pub(super) fn substitute_instruction(
             // A scalar binding default-constructs as its zero value (the
             // VM's `ConstructTypeParam` answer for the built-in
             // `Defaultable` types).
-            let scalar_default = match bindings.types.get(param.as_str()) {
+            let scalar_default = match bindings.types.get(&*param) {
                 Some(Ty::Int | Ty::IntLiteral) => Some(mojito_mir::mir::Const::Int(0)),
                 Some(Ty::UInt) => Some(mojito_mir::mir::Const::Int(0)),
                 Some(Ty::Bool) => Some(mojito_mir::mir::Const::Bool(false)),
@@ -372,11 +372,12 @@ pub(super) fn substitute_instruction(
                 *instruction = Const { dest: *dest, k };
                 return Ok(());
             }
-            let Some(Ty::Struct(struct_name, _)) = bindings.types.get(param.as_str()) else {
+            let Some(Ty::Struct(struct_name, _)) = bindings.types.get(&*param) else {
                 return Err(MonoError {
                     function: None,
                     construct: format!(
-                        "constructing type parameter `{param}` without a concrete struct binding"
+                        "constructing type parameter `{}` without a concrete struct binding",
+                        param.name
                     ),
                 });
             };
@@ -570,11 +571,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         construct: what,
     };
     Ok(match ty {
-        Ty::Param { binder, .. } => bindings
-            .types
-            .get(binder.name.as_ref())
-            .cloned()
-            .ok_or_else(|| unsupported(format!("unresolved type parameter `{}`", binder.name)))?,
+        Ty::Param { binder, .. } => {
+            bindings.types.get(binder).cloned().ok_or_else(|| {
+                unsupported(format!("unresolved type parameter `{}`", binder.name))
+            })?
+        }
         Ty::Struct(name, args) => {
             if args.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves

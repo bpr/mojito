@@ -26,8 +26,8 @@ pub(super) fn push_sugar_arguments(
             && !declaration
                 .param_decls
                 .iter()
-                .any(|decl| decl.name().trim_start_matches('*') == binder.name.as_ref())
-            && let Some(bound) = bindings.types.get(binder.name.as_ref())
+                .any(|decl| *decl.id() == binder.id)
+            && let Some(bound) = bindings.types.get(binder)
             && *bound != Ty::StringLiteral
         {
             arguments.push(InstanceArg::Ty(bound.clone()));
@@ -44,9 +44,11 @@ pub(super) fn ordered_arguments(
         .iter()
         .map(|decl| {
             match decl {
-                ParamDecl::Type { name, .. } => {
-                    bindings.types.get(name).cloned().map(InstanceArg::Ty)
-                }
+                ParamDecl::Type { .. } => bindings
+                    .types
+                    .get(&decl.binder())
+                    .cloned()
+                    .map(InstanceArg::Ty),
                 ParamDecl::Value { name, .. } => {
                     bindings.values.get(name).cloned().map(InstanceArg::Value)
                 }
@@ -68,8 +70,8 @@ pub(super) fn ordered_arguments(
 /// checker's binder does; an argument matching no declaration is dropped.
 pub(super) fn matched_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
-    arguments: &[mojito_mir::mir::MirParamArg],
-) -> Vec<(&'a ParamDecl, Reg)> {
+    arguments: &'a [mojito_mir::mir::MirParamArg],
+) -> Vec<(&'a ParamDecl, Reg, Option<&'a ParamRef>)> {
     let explicit: Vec<&ParamDecl> = decls
         .iter()
         .filter(|declaration| {
@@ -102,7 +104,7 @@ pub(super) fn matched_parameter_arguments<'a>(
             declaration
         };
         if let Some(declaration) = declaration {
-            matched.push((declaration, value_reg));
+            matched.push((declaration, value_reg, argument.binder.as_ref()));
         }
     }
     matched
@@ -115,9 +117,9 @@ pub(super) fn bind_explicit_value_arguments(
     bindings: &mut Bindings,
     target: &str,
     is_struct: &dyn Fn(&str) -> bool,
-    enclosing_types: &HashMap<String, Ty>,
+    enclosing_types: &HashMap<ParamRef, Ty>,
 ) -> Result<(), MonoError> {
-    for (declaration, value_reg) in matched_parameter_arguments(decls, arguments) {
+    for (declaration, value_reg, forwarded) in matched_parameter_arguments(decls, arguments) {
         match declaration {
             ParamDecl::Value { name, .. } => {
                 let value =
@@ -135,20 +137,23 @@ pub(super) fn bind_explicit_value_arguments(
             // A supplied constructible type argument (`hash[Fnv1a](x)`)
             // reifies as a string register naming the bound struct; an
             // erased body forwarding its own binder (`hash[Self.H](key)`)
-            // spells that binder, which the enclosing instance's bindings
-            // resolve. An unresolvable spelling leaves the slot to its
+            // records that binder, which the enclosing instance's bindings
+            // resolve. An unresolvable argument leaves the slot to its
             // default.
-            ParamDecl::Type { name, .. } => {
+            ParamDecl::Type { .. } => {
                 let Some(CtValue::Str(spelling)) = constant_values.get(&value_reg.0) else {
                     continue;
                 };
                 let bound = if is_struct(spelling) {
                     Some(Ty::Struct(spelling.clone(), Vec::new()))
                 } else {
-                    enclosing_types.get(spelling).cloned()
+                    match forwarded {
+                        Some(binder) => enclosing_types.get(binder).cloned(),
+                        None => uniquely_spelled(enclosing_types, spelling),
+                    }
                 };
                 if let Some(bound) = bound {
-                    bindings.types.insert(name.clone(), bound);
+                    bindings.types.insert(declaration.binder(), bound);
                 }
             }
         }
@@ -163,13 +168,12 @@ pub(super) fn apply_defaults(
     for decl in decls {
         match decl {
             ParamDecl::Type {
-                name,
                 default: Some(default),
                 ..
-            } if !bindings.types.contains_key(name) => {
+            } if !bindings.types.contains_key(&decl.binder()) => {
                 bindings
                     .types
-                    .insert(name.clone(), substitute_ty(default, bindings)?);
+                    .insert(decl.binder(), substitute_ty(default, bindings)?);
             }
             ParamDecl::Value {
                 name,
@@ -193,7 +197,7 @@ pub(super) fn bind_ty_args(
 ) -> Result<(), String> {
     for (decl, arg) in decls.iter().zip(args) {
         match (decl, arg) {
-            (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => bind_type(name, ty, bindings)?,
+            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => bind_type(&decl.binder(), ty, bindings)?,
             (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
                 bind_value(name, value, bindings)?;
             }
@@ -211,7 +215,7 @@ pub(super) fn bind_ty_args(
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
     match pattern {
-        Ty::Param { binder, .. } => bind_type(&binder.name, actual, bindings),
+        Ty::Param { binder, .. } => bind_type(binder, actual, bindings),
         Ty::Assoc { .. } => {
             let key = pattern.to_string();
             match bindings.associated.get(&key) {
@@ -346,7 +350,7 @@ pub(super) fn unify_result(
     // Preserve the established element solution instead of mistaking the
     // flattened handle for a conflicting `T = U` solution.
     if let Ty::Param { binder, .. } = pattern
-        && let Some(Ty::Ref(reference)) = bindings.types.get(binder.name.as_ref())
+        && let Some(Ty::Ref(reference)) = bindings.types.get(binder)
         && ty_equal_modulo_origins(&reference.referent, actual)
     {
         return Ok(());
@@ -377,7 +381,8 @@ pub(super) fn unify_arg(
     }
 }
 
-pub(super) fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<(), String> {
+pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> Result<(), String> {
+    let name = &binder.name;
     if is_symbolic(ty) {
         return Err(format!("solution for `{name}` is not concrete: `{ty}`"));
     }
@@ -386,7 +391,7 @@ pub(super) fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<
     // instance.
     let ty = &materialize_nested_literals(&canonicalize_callable(ty));
     let literal = |ty: &Ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral);
-    match bindings.types.get(name) {
+    match bindings.types.get(binder) {
         // A literal-typed actual materializes into whatever concrete storage
         // is already bound, and a concrete solution upgrades an earlier
         // literal-only binding — mirroring `unify`'s literal escape. Binding
@@ -394,7 +399,7 @@ pub(super) fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<
         // merge must be order-independent.
         Some(old) if literal(ty) && !literal(old) => Ok(()),
         Some(old) if literal(old) && !literal(ty) => {
-            bindings.types.insert(name.to_string(), ty.clone());
+            bindings.types.insert(binder.clone(), ty.clone());
             Ok(())
         }
         // Origins erase from the runtime ABI, so solutions differing only in
@@ -406,7 +411,7 @@ pub(super) fn bind_type(name: &str, ty: &Ty, bindings: &mut Bindings) -> Result<
         )),
         Some(_) => Ok(()),
         None => {
-            bindings.types.insert(name.to_string(), ty.clone());
+            bindings.types.insert(binder.clone(), ty.clone());
             Ok(())
         }
     }
@@ -432,5 +437,19 @@ pub(super) fn bind_value(
             bindings.values.insert(name.to_string(), value.clone());
             Ok(())
         }
+    }
+}
+
+/// The binding of the one enclosing binder spelled `spelling`. A forwarded
+/// type argument read from an artifact older than schema 1.3 records no
+/// binder and has only its spelling, which names a binder when exactly one
+/// carries it.
+fn uniquely_spelled(enclosing_types: &HashMap<ParamRef, Ty>, spelling: &str) -> Option<Ty> {
+    let mut spelled = enclosing_types
+        .iter()
+        .filter(|(binder, _)| binder.name.as_ref() == spelling);
+    match (spelled.next(), spelled.next()) {
+        (Some((_, bound)), None) => Some(bound.clone()),
+        _ => None,
     }
 }

@@ -62,22 +62,24 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 Native monomorphization binds type parameters by spelling**
+- [ ] **1.2 Native monomorphization binds value parameters by spelling**
 
-  Problem: `Bindings.types` and `Specializer.enclosing_types`
-  (`crates/mojito-native/src/native/mono`) are keyed by a binder's name, so a
-  contract binder spelled like the function's own would substitute wrongly.
-  - `substitute_ty` reads a `Ty::Param` by `binder.name`, although the binder
-    carries its declaration's id.
-  - The waist names a binder by spelling too: `ConstructTypeParam { param }`,
-    and a forwarded binder reified as a string register
-    (`hash[Self.H](key)`).
-  - Keying the maps by id needs MIR to carry the id first, which is a MIR
-    schema change.
-  - No failing program is known: a collision needs two same-spelled binders
-    inside one instance.
+  Problem: `Bindings.values`, `Bindings.callables`, and
+  `Bindings.runtime_callables` (`crates/mojito-native/src/native/mono`) are
+  keyed by a binder's name, so two value binders that share a spelling inside
+  one instance would share a solution.
+  - Type binders are keyed by identity (`Bindings.types`, by `ParamRef`,
+    2026-09-26). These three maps are what still reads a spelling there.
+  - `unify_arg` binds a direct reference by `reference.name`, although the
+    reference carries its declaration's id.
+  - `eval_ct` hands the values to `ParamBindings::from_named_values`, the
+    name adapter. `ParamBindings::bind` takes the id.
+  - MIR already carries the id on every `value_param` and `param_decl_ref`,
+    so no schema change is needed.
+  - No failing program is known: the pinned Mojo rejects a method binder
+    spelled like its struct's ("invalid redefinition").
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **1.3 A `where`-clause operand names its binder by spelling**
 
@@ -90,8 +92,8 @@ to section 3, however small.
   - The Tuple closedness check (`src/compiler.rs`, `ClosingBinders`) reads a
     type parameter and a value reference by identity (2026-09-26). These
     operands are what still reads a spelling there.
-  - The constraints are serialized in MIR text, so batch the schema change
-    with 1.2's.
+  - The constraints are serialized in MIR text, so the change is a schema
+    bump past 1.3.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
