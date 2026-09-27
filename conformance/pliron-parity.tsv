@@ -621,6 +621,7 @@ assets/ok/template_method_value_binder.mojo	main	exe-differential	sanitized
 assets/ok/template_method_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vanishing_transfer.mojo	main	exe-differential	sanitized
 assets/ok/template_method_var_self.mojo	main	exe-differential	sanitized
+assets/ok/template_method_variadic_struct.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vector_hash_leaf.mojo	main	exe-differential	sanitized
 assets/ok/template_method_view_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_method_view_result_interior.mojo	main	exe-differential	sanitized

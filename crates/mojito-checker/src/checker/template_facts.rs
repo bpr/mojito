@@ -1485,7 +1485,8 @@ impl Checker {
         // of a variadic struct specialized whole (`Tuple$t2[String, Int]`)
         // has the pack's elements as its receiver's arguments, as many as its
         // trace names; a specialization whose receiver carries none (a user
-        // struct's `Pair$t2[…]`) does not resolve.
+        // struct's `Pair$t2[…]`, `TString$…`) binds the element sources its
+        // trace names, resolved as a `def` clone's are.
         let struct_owner = template
             .id
             .owner
@@ -1524,11 +1525,39 @@ impl Checker {
                     .pack_bindings
                     .iter()
                     .find(|(bound, _)| bound == name.trim_start_matches('*'))
-                    .map(|(_, elements)| elements.len());
-                if arguments.is_empty() || traced != Some(arguments.len()) {
+                    .map(|(_, elements)| elements)
+                    .ok_or_else(unresolved)?;
+                let elements = if arguments.is_empty() {
+                    let elements = traced.iter().map(resolve).collect::<Result<Vec<_>, _>>()?;
+                    // The template's `Self` names this instance only when the
+                    // resolved pack mangles back to it.
+                    let own = template.id.owner.as_deref().map(|owner| {
+                        self.specialized_value_structs(
+                            &self.canonicalize_public_tuple_types(Ty::Struct(
+                                owner.to_string(),
+                                elements
+                                    .iter()
+                                    .cloned()
+                                    .map(mojito_types::types::TyArg::Ty)
+                                    .collect(),
+                            )),
+                        )
+                    });
+                    if !matches!(own, Some(Ty::Struct(name, arguments))
+                        if arguments.is_empty() && site.instance.owner.as_deref() == Some(&*name))
+                    {
+                        return Err(unresolved());
+                    }
+                    elements
+                } else if traced.len() == arguments.len() {
+                    resolved_arguments()?
+                } else {
+                    return Err(unresolved());
+                };
+                if elements.is_empty() {
                     return Err(unresolved());
                 }
-                packs.insert(id.clone(), resolved_arguments()?);
+                packs.insert(id.clone(), elements);
             }
             _ if struct_decls.len() == arguments.len() => {
                 for (decl, ty) in struct_decls.iter().zip(resolved_arguments()?) {
@@ -1632,7 +1661,8 @@ impl Checker {
         } = instance;
         // A closed public `Tuple` names the specialization the clone check
         // selects for it (`canonicalize_public_tuple_types`), and so does a
-        // value-keyed struct at closed values (`specialized_value_structs`).
+        // value-keyed or variadic struct at closed arguments
+        // (`specialized_value_structs`).
         let canonical =
             |ty: Ty| self.specialized_value_structs(&self.canonicalize_public_tuple_types(ty));
         let substitute = |ty: &Ty| {
@@ -1683,16 +1713,7 @@ impl Checker {
         {
             return Err("a rebind assertion does not hold for the instance");
         }
-        // `check_consuming`'s demand on a copied place, at the instance's
-        // type.
-        let copies = facts.copy_place_value_uses.iter().all(|place| {
-            facts
-                .expression_types
-                .iter()
-                .find(|(id, _)| id == place)
-                .is_some_and(|(_, ty)| self.is_copyable(ty) && self.is_implicitly_copyable(ty))
-        });
-        if !copies {
+        if !self.copied_places_hold(&facts, occurrences) {
             return Err("a copied place is not implicitly copyable for the instance");
         }
         // `infer_method_call`'s demand on a place a consuming call copies,
@@ -2018,11 +2039,35 @@ impl Checker {
             .collect()
     }
 
+    /// `check_consuming`'s demand on each copied place, at the instance's
+    /// type. The synthesized `copy`'s receiver is copied explicitly, which
+    /// demands only `Copyable`.
+    fn copied_places_hold(&self, facts: &CheckedBodyFacts, occurrences: &[Occurrence]) -> bool {
+        let explicit_copy = |place: &OccurrenceId| {
+            occurrences.iter().any(|occurrence| {
+                occurrence.callee.as_deref() == Some("__mojito_fieldwise_copy")
+                    && occurrence.id.copy == place.copy
+                    && occurrence.arguments == [place.syntax]
+            })
+        };
+        facts.copy_place_value_uses.iter().all(|place| {
+            facts
+                .expression_types
+                .iter()
+                .find(|(id, _)| id == place)
+                .is_some_and(|(_, ty)| {
+                    self.is_copyable(ty)
+                        && (explicit_copy(place) || self.is_implicitly_copyable(ty))
+                })
+        })
+    }
+
     /// `ty` with every application of a value-keyed struct at closed values
     /// (`_StridedRange[DType.int]`) named as the specialization the
     /// elaborator minted for it (`_StridedRange$dint;`), which is the type
-    /// the clone check reads. An application with no minted specialization
-    /// is left as it is.
+    /// the clone check reads, and so is a user variadic struct at a closed
+    /// pack (`Bag[Int, String]` as `Bag$t2[…]`). An application with no
+    /// minted specialization is left as it is.
     fn specialized_value_structs(&self, ty: &Ty) -> Ty {
         struct Specialized<'a>(&'a Checker);
 
@@ -2038,11 +2083,13 @@ impl Checker {
                         _ => None,
                     })
                     .collect::<Option<Vec<_>>>()
-                    .filter(|values| !values.is_empty())?;
+                    .filter(|values| !values.is_empty())
+                    .or_else(|| closed_pack_values(arguments))?;
                 let mangled = mojito_symbol::symbol::mangle(name, &values).ok()?;
                 self.0
                     .structs
-                    .contains_key(&mangled)
+                    .get(&mangled)
+                    .is_some_and(|info| info.fixed_arguments.is_none())
                     .then(|| Ty::Struct(mangled, Vec::new()))
             }
 
@@ -12291,6 +12338,28 @@ fn read_returns_by_value(facts: &mut CheckedBodyFacts, returned: &[SyntaxId]) {
     for (id, _) in copied {
         push_unique(&mut facts.copy_place_value_uses, id);
     }
+}
+
+/// The mangling values of a variadic struct applied to a closed pack,
+/// spelled as the elaborator spells them. The template itself is not
+/// registered in the clone check, so only a specialization minted under that
+/// name says it was one.
+fn closed_pack_values(
+    arguments: &[mojito_types::types::TyArg],
+) -> Option<Vec<mojito_types::ct::CtValue>> {
+    let elements = arguments
+        .iter()
+        .map(|argument| match argument {
+            mojito_types::types::TyArg::Ty(ty) if !mojito_types::types::is_symbolic(ty) => {
+                Some(ty.clone())
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|elements| !elements.is_empty())?;
+    Some(mojito_symbol::symbol::tuple_specialization_values(
+        &elements,
+    ))
 }
 
 /// Lay each [`PackRelocation`](mojito_checked::templates::PackRelocation)

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A member of a user variadic struct specialized whole (`Bag$t2[…]`) now
+  binds its pack to the element types its trace names and names that
+  specialization for its template's `Self`, so `__len__`, sibling calls,
+  and the synthesized `copy` derive from their checked templates
+  (`assets/ok/template_method_variadic_struct.mojo`). Such members used to
+  be checked again per specialization; a synthesized `copy` of any struct
+  that is not `ImplicitlyCopyable` did too.
 - A runtime `if` in a compile-time-keyed `def` — inside a `comptime for`
   body, under a `comptime if` arm, or outside both — now derives the
   instance's facts from the checked template, each unrolled copy keeping its
