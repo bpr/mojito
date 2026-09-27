@@ -1047,7 +1047,7 @@ impl Checker {
                 variadic.cloned(),
                 kw_variadic.cloned(),
                 HashMap::new(),
-                HashMap::new(),
+                Vec::new(),
             ));
         }
         let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
@@ -1127,19 +1127,18 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
-        let arguments: HashMap<String, TyArg> = signature
-            .decls
-            .iter()
-            .zip(tyargs.iter().cloned())
-            .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
-            .collect();
         // A method-level type pack (`*args: *Ts`) inferred from the overflow
         // arguments resolves to the heterogeneous element list, so each
         // overflow argument scores and converts against its own element
         // (the specialized-pack shape the selection pass already handles).
         let resolved_variadic = match variadic {
             Some(Ty::Param { binder, .. }) if binder.name.starts_with('*') => {
-                match arguments.get(binder.name.trim_start_matches('*')) {
+                let pack = signature
+                    .decls
+                    .iter()
+                    .position(|decl| decl.id() == &binder.id)
+                    .and_then(|index| tyargs.get(index));
+                match pack {
                     Some(TyArg::Val(CtValue::Tuple(values)))
                         if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
                     {
@@ -1163,39 +1162,39 @@ impl Checker {
             resolved_variadic,
             kw_variadic.map(resolve).transpose()?,
             subst,
-            arguments,
+            tyargs,
         ))
     }
 
     pub(super) fn method_constraints_apply(
         &self,
         signature: &MethodSig,
+        arguments: &[TyArg],
         struct_decls: &[ParamDecl],
-        arguments: &HashMap<String, TyArg>,
+        struct_arguments: &[TyArg],
     ) -> bool {
-        self.method_constraint_result(signature, struct_decls, arguments)
+        self.method_constraint_result(signature, arguments, struct_decls, struct_arguments)
             .is_ok()
     }
 
     /// Evaluate method availability, keeping what a call diagnostic needs:
     /// the retained `(condition, "message")` text, or the violated clause
     /// itself, which may explain a sole-candidate call failure. `arguments`
-    /// are the call's, under the spellings of the method's own parameters and
-    /// of `struct_decls`, its struct's.
+    /// bind the method's own parameters and `struct_arguments` its struct's
+    /// `struct_decls`, each position by position; a lone variadic struct
+    /// parameter binds the whole positional list as its pack.
     pub(super) fn method_constraint_result<'signature>(
         &self,
         signature: &'signature MethodSig,
+        arguments: &[TyArg],
         struct_decls: &[ParamDecl],
-        arguments: &HashMap<String, TyArg>,
+        struct_arguments: &[TyArg],
     ) -> Result<(), ConstraintFailure<'signature>> {
-        let borrowed = ConstraintEnvironment::named(
-            &[&signature.decls, struct_decls],
-            arguments
-                .iter()
-                .map(|(name, argument)| (name.as_str(), argument)),
-        );
+        let struct_arguments = positional_pack_arguments(struct_decls, struct_arguments);
+        let mut environment = ConstraintEnvironment::declared(&signature.decls, arguments);
+        environment.bind_declared(struct_decls, &struct_arguments);
         for constraint in &signature.availability {
-            if !self.eval_generic_constraint(constraint, &borrowed) {
+            if !self.eval_generic_constraint(constraint, &environment) {
                 return Err(match constraint {
                     GenericConstraint::WithMessage(_, message) => {
                         ConstraintFailure::Message(message.as_str())
@@ -1242,22 +1241,16 @@ fn is_span_struct_name(name: &str) -> bool {
 }
 
 /// The declaration-order compile-time arguments a generic method call
-/// resolved, when the signature declares any (the name-keyed map is the
-/// solver's shape; declaration order is the specialization identity).
+/// resolved, materialized for its specialization identity, when the
+/// signature declares any.
 pub(super) fn method_instantiation_arguments(
     signature: &MethodSig,
-    arguments: &HashMap<String, TyArg>,
+    arguments: &[TyArg],
 ) -> Option<Vec<TyArg>> {
-    if signature.decls.is_empty() {
-        return None;
-    }
-    signature
-        .decls
-        .iter()
-        .map(|decl| {
-            arguments
-                .get(decl.name().trim_start_matches('*'))
-                .map(materialized_instantiation_argument)
-        })
-        .collect()
+    (!signature.decls.is_empty() && arguments.len() == signature.decls.len()).then(|| {
+        arguments
+            .iter()
+            .map(materialized_instantiation_argument)
+            .collect()
+    })
 }

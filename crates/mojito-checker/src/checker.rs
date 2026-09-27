@@ -2866,13 +2866,7 @@ struct StructDeclaration<'a> {
     decorators: &'a [mojito_ast::ast::Decorator],
 }
 
-type MethodInstantiation = (
-    Vec<Ty>,
-    Option<Ty>,
-    Option<Ty>,
-    TySubst,
-    HashMap<String, TyArg>,
-);
+type MethodInstantiation = (Vec<Ty>, Option<Ty>, Option<Ty>, TySubst, Vec<TyArg>);
 
 struct MethodCallScore {
     rank: usize,

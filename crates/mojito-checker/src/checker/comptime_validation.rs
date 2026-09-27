@@ -786,21 +786,28 @@ impl Checker {
     /// Close the pack elements a callee's type names (`Self.Ts[index]`)
     /// under a use's arguments: a value argument binds its parameter, a
     /// concrete pack its list, and a pack forwarded as a spread the caller's
-    /// own pack. A type with no pack element is returned as it is.
-    pub(super) fn close_pack_elements(&self, ty: Ty, arguments: &HashMap<String, TyArg>) -> Ty {
+    /// own pack. A type with no pack element is returned as it is. `scopes`
+    /// pair declaration lists with their arguments; a later scope's binder
+    /// shadows an earlier one's of the same spelling, the key the dependent
+    /// type's value environment reads.
+    pub(super) fn close_pack_elements(&self, ty: Ty, scopes: &[(&[ParamDecl], &[TyArg])]) -> Ty {
         let names_element =
             |ty: &Ty| matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some());
         if !mojito_types::types::mentions(&ty, &names_element) {
             return ty;
         }
-        let values: HashMap<String, CtValue> = arguments
+        let values: HashMap<String, CtValue> = scopes
             .iter()
-            .filter_map(|(name, argument)| match argument {
-                TyArg::Val(value) => Some((name.clone(), value.clone())),
-                TyArg::Ty(Ty::Param { binder, .. }) if binder.name.starts_with('*') => self
-                    .pack_reference(&binder.name)
-                    .map(|reference| (name.clone(), CtValue::Expr(reference))),
-                TyArg::Ty(_) | TyArg::Origin(_) => None,
+            .flat_map(|(decls, arguments)| decls.iter().zip(arguments.iter()))
+            .filter_map(|(decl, argument)| {
+                let name = decl.name().trim_start_matches('*').to_string();
+                match argument {
+                    TyArg::Val(value) => Some((name, value.clone())),
+                    TyArg::Ty(Ty::Param { binder, .. }) if binder.name.starts_with('*') => self
+                        .pack_reference(&binder.name)
+                        .map(|reference| (name, CtValue::Expr(reference))),
+                    TyArg::Ty(_) | TyArg::Origin(_) => None,
+                }
             })
             .collect();
         self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
@@ -1219,6 +1226,20 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
             _ => {}
         }
     }
+}
+
+/// A struct's arguments as its declarations bind them: a variadic struct
+/// applied element by element binds its lone pack to the whole list (see
+/// [`positional_pack_binding`]); any other argument list binds position by
+/// position as it is.
+pub(super) fn positional_pack_arguments<'a>(
+    decls: &[ParamDecl],
+    arguments: &'a [TyArg],
+) -> std::borrow::Cow<'a, [TyArg]> {
+    positional_pack_binding(decls, arguments)
+        .map_or(std::borrow::Cow::Borrowed(arguments), |(_, pack)| {
+            std::borrow::Cow::Owned(vec![pack])
+        })
 }
 
 /// The pack binding of a variadic struct applied element by element

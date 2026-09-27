@@ -625,19 +625,11 @@ impl Checker {
             // The erased witness serves the instance, its availability
             // condition judged at the instance's arguments as the clone
             // check judges it.
-            if !declared.availability.is_empty() && !struct_arguments.is_empty() {
-                let named: HashMap<String, TyArg> = info
-                    .decls
-                    .iter()
-                    .map(|decl| decl.name().trim_start_matches('*').to_string())
-                    .zip(struct_arguments.iter().cloned())
-                    .collect();
-                if self
-                    .method_constraint_result(declared, &info.decls, &named)
-                    .is_err()
-                {
-                    return Err("the instance's witness is unavailable at the instance");
-                }
+            if !declared.availability.is_empty()
+                && !struct_arguments.is_empty()
+                && !self.method_constraints_apply(declared, &[], &info.decls, struct_arguments)
+            {
+                return Err("the instance's witness is unavailable at the instance");
             }
             if overloaded {
                 crate::checker::overload_support::method_lowered_name(

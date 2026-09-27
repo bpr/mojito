@@ -1663,12 +1663,7 @@ impl Checker {
         if forwarded_pack.is_some() {
             // A result naming the callee's pack elements (`Us[i]`) closes
             // over the caller's own pack.
-            let arguments: HashMap<String, TyArg> = decls
-                .iter()
-                .zip(tyargs.iter().cloned())
-                .map(|(decl, argument)| (decl.name().trim_start_matches('*').to_string(), argument))
-                .collect();
-            referent = self.close_pack_elements(referent, &arguments);
+            referent = self.close_pack_elements(referent, &[(decls, &tyargs)]);
         }
         let result = return_ref
             .map(|mut reference| {

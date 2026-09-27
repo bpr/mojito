@@ -14,7 +14,6 @@ use crate::checker::{Checker, MethodSig, StructInfo};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::templates::{CheckedBodyFacts, OccurrenceId};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst, substitute};
-use std::collections::HashMap;
 
 impl Checker {
     /// Realize one construction for an instance, as `infer_construction`
@@ -143,19 +142,8 @@ impl Checker {
             // overloaded member's lowered name or nothing at all. Its `where`
             // clause, which a clone would have met to exist, is owed here.
             None => {
-                let bound: HashMap<String, TyArg> = info
-                    .decls
-                    .iter()
-                    .zip(&arguments)
-                    .map(|(decl, argument)| {
-                        (
-                            decl.name().trim_start_matches('*').to_string(),
-                            argument.clone(),
-                        )
-                    })
-                    .collect();
                 if !substitution.is_empty()
-                    && !self.method_constraints_apply(declared, &info.decls, &bound)
+                    && !self.method_constraints_apply(declared, &[], &info.decls, &arguments)
                 {
                     return Err("a constructor's availability condition fails for the instance");
                 }

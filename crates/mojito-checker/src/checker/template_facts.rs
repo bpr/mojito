@@ -2465,14 +2465,8 @@ impl Checker {
                 ) else {
                     return Err("a called method has an availability condition and no clone");
                 };
-                let named: HashMap<String, mojito_types::types::TyArg> = info
-                    .decls
-                    .iter()
-                    .map(|decl| decl.name().trim_start_matches('*').to_string())
-                    .zip(bound)
-                    .collect();
                 if self
-                    .method_constraint_result(declared, &info.decls, &named)
+                    .method_constraint_result(declared, &[], &info.decls, &bound)
                     .is_err()
                 {
                     return Err("a called method is unavailable at the instance");

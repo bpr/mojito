@@ -435,15 +435,8 @@ impl Checker {
                 }
             }
         }
-        let environment: HashMap<String, TyArg> = info
-            .decls
-            .iter()
-            .map(|decl| decl.name().trim_start_matches('*').to_string())
-            .zip(targs.iter().cloned())
-            .chain(positional_pack_binding(&info.decls, targs))
-            .collect();
         if self
-            .method_constraint_result(selected, &info.decls, &environment)
+            .method_constraint_result(selected, &[], &info.decls, targs)
             .is_err()
         {
             return Err(TypeError::BadOperator {
@@ -513,14 +506,7 @@ impl Checker {
         if !self.value_coerces(lt, &substitute_at(&sig.params[0], info, targs)) {
             return None;
         }
-        let environment: HashMap<String, TyArg> = info
-            .decls
-            .iter()
-            .map(|decl| decl.name().trim_start_matches('*').to_string())
-            .zip(targs.iter().cloned())
-            .chain(positional_pack_binding(&info.decls, targs))
-            .collect();
-        self.method_constraint_result(sig, &info.decls, &environment)
+        self.method_constraint_result(sig, &[], &info.decls, targs)
             .ok()?;
         Some(
             if info

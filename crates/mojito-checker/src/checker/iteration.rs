@@ -712,7 +712,7 @@ impl Checker {
             .kw_variadic
             .as_deref()
             .map(|ty| substitute(ty, &receiver_subst));
-        let (_, variadic, kw_variadic, method_subst, mut arguments) = self
+        let (_, variadic, kw_variadic, method_subst, method_arguments) = self
             .instantiate_method_generics(
                 &format!("{owner} iterator protocol"),
                 signature,
@@ -724,20 +724,18 @@ impl Checker {
                 &[],
             )
             .ok()?;
-        let method_arguments = arguments.clone();
         // Iterator dunders have no explicit runtime arguments. A variadic or
         // keyword-variadic declaration is not the exact protocol shape even
         // though an empty ordinary call could technically invoke it.
         if variadic.is_some() || kw_variadic.is_some() {
             return None;
         }
-        for (decl, argument) in info.decls.iter().zip(receiver_arguments) {
-            arguments.insert(
-                decl.name().trim_start_matches('*').to_string(),
-                argument.clone(),
-            );
-        }
-        if !self.method_constraints_apply(signature, &info.decls, &arguments) {
+        if !self.method_constraints_apply(
+            signature,
+            &method_arguments,
+            &info.decls,
+            receiver_arguments,
+        ) {
             return None;
         }
         // A receiver's value parameter is not a type substitution, so a lane
@@ -751,11 +749,7 @@ impl Checker {
         };
         let referent = instantiate(&signature.ret);
         let mut semantic_arguments = receiver_arguments.to_vec();
-        semantic_arguments.extend(signature.decls.iter().filter_map(|declaration| {
-            method_arguments
-                .get(declaration.name().trim_start_matches('*'))
-                .cloned()
-        }));
+        semantic_arguments.extend(method_arguments);
         let reference_result = signature.ref_return.as_ref().map(|reference| {
             instantiate_iterator_reference(
                 reference,

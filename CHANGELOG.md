@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic method call's compile-time arguments are kept in declaration
+  order rather than keyed by spelling, and its availability clause binds
+  them and the struct's arguments each to their own binders, so a method
+  binder and a struct binder of the same spelling no longer share one
+  argument. Every availability check over a variadic struct's positional
+  element list now binds its pack to the whole list.
 - The comptime elaborator's parameter metadata now names each binder by
   the declaration it belongs to (its template, or `Struct.method` for a
   method's own binder) rather than one shared `$elaborated` owner, so two

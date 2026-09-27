@@ -879,7 +879,7 @@ impl Checker {
                 .as_deref()
                 .map(|parameter| substitute(parameter, &receiver_substitution));
             for (value_keyword, arguments, keywords) in shapes {
-                let Ok((params, variadic, kw_variadic, _, mut method_arguments)) = self
+                let Ok((params, variadic, kw_variadic, _, method_arguments)) = self
                     .instantiate_method_generics(
                         &format!("{name}.__setitem__"),
                         signature,
@@ -893,13 +893,12 @@ impl Checker {
                 else {
                     continue;
                 };
-                for (declaration, argument) in info.decls.iter().zip(type_arguments) {
-                    method_arguments.insert(
-                        declaration.name().trim_start_matches('*').to_string(),
-                        argument.clone(),
-                    );
-                }
-                if !self.method_constraints_apply(signature, &info.decls, &method_arguments) {
+                if !self.method_constraints_apply(
+                    signature,
+                    &method_arguments,
+                    &info.decls,
+                    type_arguments,
+                ) {
                     continue;
                 }
                 let Ok(scored) = self.score_method_call(

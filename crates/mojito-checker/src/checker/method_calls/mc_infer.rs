@@ -183,7 +183,7 @@ impl Checker {
                 let params = clone_origins.substitute_all(&params);
                 let variadic = variadic.map(|element| clone_origins.substitute(&element));
                 if let Err(failure) =
-                    self.method_constraint_result(sig, &info.decls, &method_arguments)
+                    self.method_constraint_result(sig, &method_arguments, &info.decls, &[])
                 {
                     if single_candidate
                         && availability_failure.is_none()
@@ -1071,22 +1071,17 @@ impl Checker {
                                 .kw_variadic
                                 .as_ref()
                                 .map(|ty| substitute_at(ty, info, targs));
-                            let Ok((
-                                params,
-                                variadic,
-                                kw_variadic,
-                                method_subst,
-                                mut method_arguments,
-                            )) = self.instantiate_method_generics(
-                                &format!("{sname}.{method}"),
-                                sig,
-                                &receiver_params,
-                                receiver_variadic.as_ref(),
-                                receiver_kw_variadic.as_ref(),
-                                param_args,
-                                args,
-                                kwargs,
-                            )
+                            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) =
+                                self.instantiate_method_generics(
+                                    &format!("{sname}.{method}"),
+                                    sig,
+                                    &receiver_params,
+                                    receiver_variadic.as_ref(),
+                                    receiver_kw_variadic.as_ref(),
+                                    param_args,
+                                    args,
+                                    kwargs,
+                                )
                             else {
                                 continue;
                             };
@@ -1105,16 +1100,12 @@ impl Checker {
                                 variadic.map(|element| clone_origins.substitute(&element));
                             let instantiation =
                                 method_instantiation_arguments(sig, &method_arguments);
-                            for (decl, argument) in info.decls.iter().zip(targs) {
-                                method_arguments.insert(
-                                    decl.name().trim_start_matches('*').to_string(),
-                                    argument.clone(),
-                                );
-                            }
-                            method_arguments.extend(positional_pack_binding(&info.decls, targs));
-                            if let Err(failure) =
-                                self.method_constraint_result(sig, &info.decls, &method_arguments)
-                            {
+                            if let Err(failure) = self.method_constraint_result(
+                                sig,
+                                &method_arguments,
+                                &info.decls,
+                                targs,
+                            ) {
                                 // A candidate the arguments would have
                                 // selected reports its failed availability
                                 // clause even among overloads (the
@@ -1159,7 +1150,13 @@ impl Checker {
                                                 &substitute_at(&sig.ret, info, targs),
                                                 &method_subst,
                                             ),
-                                            &method_arguments,
+                                            &[
+                                                (&sig.decls, &method_arguments),
+                                                (
+                                                    &info.decls,
+                                                    &positional_pack_arguments(&info.decls, targs),
+                                                ),
+                                            ],
                                         ),
                                     ),
                                     result_adapter: None,
@@ -1281,7 +1278,7 @@ impl Checker {
                         continue;
                     };
                     if let Err(failure) =
-                        self.method_constraint_result(&sig, &[], &method_arguments)
+                        self.method_constraint_result(&sig, &method_arguments, &[], &[])
                     {
                         if single_candidate
                             && availability_failure.is_none()

@@ -249,7 +249,7 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| substitute_at(ty, info, &tyargs));
-            let Ok((params, variadic, kw_variadic, method_subst, mut method_arguments)) = self
+            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
                 .instantiate_method_generics(
                     &format!("{sname}.{method}"),
                     sig,
@@ -276,13 +276,8 @@ impl Checker {
             let params = clone_origins.substitute_all(&params);
             let variadic = variadic.map(|element| clone_origins.substitute(&element));
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
-            for (decl, argument) in info.decls.iter().zip(&tyargs) {
-                method_arguments.insert(
-                    decl.name().trim_start_matches('*').to_string(),
-                    argument.clone(),
-                );
-            }
-            if let Err(failure) = self.method_constraint_result(sig, &info.decls, &method_arguments)
+            if let Err(failure) =
+                self.method_constraint_result(sig, &method_arguments, &info.decls, &tyargs)
             {
                 if single_candidate
                     && availability_failure.is_none()
