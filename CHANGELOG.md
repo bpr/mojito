@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method declaring a nested `def` with a `mut`, `var`, or `ref`
+  parameter, a closed-scalar default, or `raises` (`def bump(mut x: Int, y:
+  Int)`, `def scaled(x: Int, by: Int = 3)`, `def check(x: Int) raises`) now
+  reuses the template's checked facts
+  (`assets/ok/template_method_nested_def_conventions.mojo`). Such methods
+  used to be checked again per instance.
 - A struct method calling a method on a nominal receiver and leaving a
   defaulted parameter to its default (`self.name.find("y")`,
   `self.tag.joined(times=2)`, a named destructor's `tag^.reap()`) now

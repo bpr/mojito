@@ -3588,6 +3588,48 @@ fn template_nested_def_forms_derive() {
 }
 
 #[test]
+fn template_nested_def_conventions_derive() {
+    // A nested `def` with a `var`, `mut`, or `ref` parameter, a default, or
+    // `raises` keeps its declaration's facts in the recipe.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_nested_def_conventions.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "5 w\n6 7\n6 8\n30 39\n4 5\n2 3\n3 v\n3 h\n-3 12\n",
+        &[
+            ("Shelf.owned", 2),
+            ("Shelf.mutated", 2),
+            ("Shelf.referenced", 2),
+            ("Shelf.defaulted", 2),
+            ("Shelf.raising", 2),
+            ("Shelf.grown", 2),
+            ("Shelf.viewed", 2),
+            ("Shelf.handed", 2),
+            ("Shelf.caught", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_nested_def_whole_value_default_keeps_the_clone_check() {
+    // A default that is no closed scalar is no form `BodyShape::nested_def`
+    // names, so the body stays outside the class and still runs.
+    let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = \"-\") -> String:\n            return String(x) + sep\n\n        return join(k)\n\n\ndef main():\n    print(Shelf[Int](1).joined(3))\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "3-\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Shelf.joined$") && reason == "its template is not certified"
+        }),
+        "the whole-value default leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_generic_static_call_derives() {
     // A generic struct's static solves the struct's parameters at the
     // instance's types and records nothing naming the clone it retargets to.

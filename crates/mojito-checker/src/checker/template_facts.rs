@@ -8608,17 +8608,21 @@ impl BodyShape<'_> {
     /// A nested `def` (`NESTED_DEFS`), at any depth.
     ///
     /// It declares no compile-time parameters, decorators, `where` clause,
-    /// or `raises`, and takes regular read parameters with no default. Its
-    /// recorded parameter and result types substitute in the recipe, where
-    /// they may mention the struct's parameters, and each parameter's
-    /// deletability is judged at the instance's type. Each capture, listed
-    /// or reached through a capture-all default, names a local, a parameter,
-    /// or `self`, by any convention, which an instance maps to its own
-    /// binding; an owned one owes its capability again at the instance's
-    /// type. Its body is judged in place with its parameters as locals read
-    /// where they lie, returning a closed scalar or a whole value, and its
-    /// name is a local the body may only call.
+    /// or typed `raises`, and takes regular parameters, each read, `mut`,
+    /// `var`, or a bare `ref`, with at most a closed-scalar default. A
+    /// raising one keeps its effect in the recipe. Its recorded parameter
+    /// and result types substitute in the recipe, where they may mention the
+    /// struct's parameters, and each parameter's deletability is judged at
+    /// the instance's type. Each capture, listed or reached through a
+    /// capture-all default, names a local, a parameter, or `self`, by any
+    /// convention, which an instance maps to its own binding; an owned one
+    /// owes its capability again at the instance's type. Its body is judged
+    /// in place with its parameters as locals: a `ref` one of a whole value
+    /// a handle, a `mut` or `var` one of a whole value a `var` local, and
+    /// any other read where it lies. It returns a closed scalar or a whole
+    /// value, and its name is a local the body may only call.
     fn nested_def(&self, statement: &Stmt) -> bool {
+        use mojito_ast::ast::ArgConvention;
         let StmtKind::Def {
             name,
             decorators,
@@ -8627,7 +8631,6 @@ impl BodyShape<'_> {
             positional_only,
             keyword_only,
             captures,
-            raises,
             raises_type,
             where_clauses,
             body,
@@ -8640,14 +8643,24 @@ impl BodyShape<'_> {
             && type_params.is_empty()
             && positional_only.is_none()
             && keyword_only.is_none()
-            && !*raises
             && raises_type.is_none()
             && where_clauses.is_empty()
             && params.iter().all(|parameter| {
                 parameter.kind == mojito_ast::ast::ParamKind::Regular
-                    && parameter.convention.is_none()
-                    && parameter.default.is_none()
+                    && matches!(
+                        parameter.convention,
+                        None | Some(
+                            ArgConvention::Imm
+                                | ArgConvention::Mut
+                                | ArgConvention::Var
+                                | ArgConvention::Ref
+                        )
+                    )
                     && parameter.origin.is_none()
+                    && parameter
+                        .default
+                        .as_ref()
+                        .is_none_or(|default| self.expression(default) && self.scalar(default))
             });
         let captured = captures.as_ref().is_none_or(|list| {
             list.entries.iter().all(|capture| {
@@ -8663,11 +8676,22 @@ impl BodyShape<'_> {
             return false;
         }
         let scope = self.locals.borrow().len();
-        self.locals.borrow_mut().extend(
-            params
-                .iter()
-                .map(|parameter| (parameter.name.clone(), LocalKind::Scalar)),
-        );
+        self.locals
+            .borrow_mut()
+            .extend(params.iter().enumerate().map(|(index, parameter)| {
+                let whole = recipe.flatten().is_some_and(|recipe| {
+                    recipe
+                        .param_types
+                        .get(index)
+                        .is_some_and(|ty| !grammar_scalar(ty))
+                });
+                let kind = match parameter.convention {
+                    Some(ArgConvention::Ref) if whole => LocalKind::Reference,
+                    Some(ArgConvention::Mut | ArgConvention::Var) if whole => LocalKind::Value,
+                    _ => LocalKind::Scalar,
+                };
+                (parameter.name.clone(), kind)
+            }));
         self.nested_depth.set(self.nested_depth.get() + 1);
         let admitted = self.block(body);
         self.nested_depth.set(self.nested_depth.get() - 1);
@@ -10103,32 +10127,57 @@ impl BodyShape<'_> {
     /// parameter borrows the place it names, a field read keeps its base as
     /// a handle, and a reference call records its own result, which an
     /// instance marks a copyable read again at its own referent.
-    /// An argument of a call of a nested `def`: a closed scalar, or a whole
-    /// value of exactly the read parameter's recorded type, read where it
-    /// lies when it is a named place and a temporary otherwise. The call
-    /// records its parameters and no contract, and its read parameters take
-    /// no conversion, so an instance substitutes both sides alike.
+    /// An argument of a call of a nested `def`. A `mut` or `ref` parameter
+    /// keeps a named place of exactly its recorded type. Any other takes a
+    /// closed scalar, or a whole value of exactly its recorded type, read
+    /// where it lies when it is a named place and a temporary otherwise, and
+    /// a `var` one a transfer or a temporary as it stands. The call records
+    /// its parameters and no contract, and its parameters take no
+    /// conversion, so an instance substitutes both sides alike.
     fn nested_argument(&self, call: OccurrenceId, index: usize, argument: &Expr) -> bool {
-        if self.expression(argument) && self.scalar(argument) {
-            return true;
-        }
+        use mojito_ast::ast::ArgConvention;
         let named = match &argument.kind {
             ExprKind::Identifier(name) => {
                 self.declared(name) || self.params.contains(&name.as_str())
             }
             _ => self.receiver_field(argument),
         };
+        let scalar = self.expression(argument) && self.scalar(argument);
         let place = named || self.reference_argument(argument);
         let Some(facts) = self.facts else {
-            return place || self.whole_value(argument);
+            return scalar || place || self.whole_value(argument);
         };
         let id = self.occurrence(argument);
-        let parameter = fact_at(&facts.call_parameters, call).and_then(|params| params.get(index));
+        let Some(parameter) =
+            fact_at(&facts.call_parameters, call).and_then(|params| params.get(index))
+        else {
+            return false;
+        };
+        let typed = fact_at(&facts.expression_types, id) == Some(&parameter.ty);
+        if matches!(
+            parameter.convention,
+            Some(ArgConvention::Mut | ArgConvention::Ref)
+        ) {
+            let kept = named && typed && facts.call_place_uses.contains(&id);
+            if kept {
+                let mut places = self.places.borrow_mut();
+                if !places.contains(&id) {
+                    places.push(id);
+                }
+            }
+            return kept && self.holds(MethodFeatures::PLACE_ARGUMENTS);
+        }
+        if facts.call_place_uses.contains(&id) {
+            return false;
+        }
+        if scalar {
+            return true;
+        }
         let read_in_place = facts.borrowed_read_call_places.contains(&id) && place;
-        parameter.is_some_and(|parameter| {
-            parameter.convention.is_none()
-                && fact_at(&facts.expression_types, id) == Some(&parameter.ty)
-        }) && !facts.call_place_uses.contains(&id)
+        matches!(
+            parameter.convention,
+            None | Some(ArgConvention::Imm | ArgConvention::Var)
+        ) && typed
             && (read_in_place || self.whole_value(argument))
             && self.holds(MethodFeatures::VALUE_ARGUMENTS)
     }
@@ -10352,13 +10401,26 @@ impl BodyShape<'_> {
                     return self.callable_call(id, param_args, args, kwargs, known);
                 }
                 if self.local_kind(name) == Some(LocalKind::Callable) {
+                    // A keyword argument binds the recorded parameter of its
+                    // name; with no facts yet its position decides nothing.
+                    let keyword = |kwarg: &mojito_ast::ast::KwArg| {
+                        self.facts
+                            .map_or(Some(0), |facts| {
+                                fact_at(&facts.call_parameters, id).and_then(|params| {
+                                    params
+                                        .iter()
+                                        .position(|parameter| parameter.name == kwarg.name)
+                                })
+                            })
+                            .is_some_and(|index| self.nested_argument(id, index, &kwarg.value))
+                    };
                     return known
                         && param_args.is_empty()
-                        && kwargs.is_empty()
                         && args
                             .iter()
                             .enumerate()
                             .all(|(index, argument)| self.nested_argument(id, index, argument))
+                        && kwargs.iter().all(keyword)
                         && self.holds(MethodFeatures::NESTED_DEFS);
                 }
                 if name == "_unqualified_type_name" || name == "repr" {
