@@ -833,12 +833,15 @@ impl Checker {
         transferred_origins
             .sort_by(|(left, _), (right, _)| format!("{left:?}").cmp(&format!("{right:?}")));
         let frames = self.transfer_frames.borrow();
+        if frames.last().is_some_and(|frame| frame.latent_escapes) {
+            return Err(refuse);
+        }
         let transfer_effects = frames
             .last()
-            .map(|frame| frame.effects.as_slice())
+            .map(|frame| frame.recorded.as_slice())
             .unwrap_or_default()
             .iter()
-            .map(|effect| {
+            .map(|(effect, latent)| {
                 let src_owner = match &effect.src {
                     SigOrigin::Self_ => param_owners.receiver,
                     SigOrigin::Param(index) => param_owners.runtime.get(*index).copied().flatten(),
@@ -850,6 +853,7 @@ impl Checker {
                 Ok(TemplateTransferEffect {
                     effect: effect.clone(),
                     src_ty,
+                    latent: latent.clone(),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -881,7 +885,7 @@ impl Checker {
     /// there must vanish; one whose summary is the one the template read
     /// replays the kept sources; any other summary refuses. A read whose
     /// realized summary is empty is observed empty, as a plain-data clone's
-    /// check observes it.
+    /// check observes it; any other read must find the summary it recorded.
     fn realize_transfers(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -960,18 +964,41 @@ impl Checker {
                 (!sources.is_empty()).then(|| (dest.clone(), sources))
             })
             .collect();
+        // A latent effect is published where its stored type now carries a
+        // loan, stays latent while that type is still symbolic, and vanishes
+        // otherwise, as the instance's own check of the store decides.
         facts.transfer_effects = template
             .transfer_effects
             .iter()
             .filter(|effect| !self.loan_free(&substitute(&effect.src_ty)))
-            .map(|effect| TemplateTransferEffect {
-                effect: effect.effect.clone(),
-                src_ty: substitute(&effect.src_ty),
+            .filter_map(|effect| {
+                let latent = match effect.latent.as_ref().map(substitute) {
+                    None => None,
+                    Some(stored) if self.type_carries_loans(&stored) => None,
+                    Some(stored)
+                        if mojito_types::types::is_symbolic(&stored)
+                            && self.type_may_carry_loans(&stored) =>
+                    {
+                        Some(stored)
+                    }
+                    Some(_) => return None,
+                };
+                Some(TemplateTransferEffect {
+                    effect: effect.effect.clone(),
+                    src_ty: substitute(&effect.src_ty),
+                    latent,
+                })
             })
             .collect();
         let (empty, replayed): (Vec<_>, Vec<_>) = std::mem::take(&mut facts.transfer_reads)
             .into_iter()
             .partition(|(callee, _)| summaries.get(callee).is_none_or(Vec::is_empty));
+        if replayed
+            .iter()
+            .any(|(callee, read)| summaries.get(callee) != Some(read))
+        {
+            return Err("a callee's transfer summary is no longer the one the template read");
+        }
         facts.transfer_reads = replayed;
         for (callee, _) in empty {
             if !facts.effect_free_callees.contains(&callee) {
@@ -5312,9 +5339,7 @@ impl Checker {
         }
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
             for effect in &facts.transfer_effects {
-                if !frame.effects.contains(&effect.effect) {
-                    frame.effects.push(effect.effect.clone());
-                }
+                frame.record(effect.effect.clone(), effect.latent.clone());
             }
         }
         Ok(())
@@ -6437,9 +6462,11 @@ fn map_struct_origins<E>(
     })
 }
 
-/// A struct-typed value's type with its origin tails unbound, and those
-/// origins by template owner, for a type that names a binding only there.
-/// `None` when the type names no binding at all, so it is kept as written.
+/// A struct-typed value's type with its origin slots that name a binding
+/// unbound, and those origins by template owner, for a type that names a
+/// binding only there. A slot naming no binding (a binder, `static`) is kept
+/// in the type, where an instance's substitution reaches it. `None` when the
+/// type names no binding at all, so it is kept as written.
 fn unbound_struct_origins(
     ty: &Ty,
     place: &dyn Fn(&mojito_types::origin::OriginPlace) -> Result<TemplatePlace, IncompleteReason>,
@@ -6449,6 +6476,9 @@ fn unbound_struct_origins(
     }
     let mut origins = Vec::new();
     let unbound = map_struct_origins(ty, &mut |origin| {
+        if !origin_names_place(origin) && *origin != mojito_types::origin::Origin::Unbound {
+            return Ok(origin.clone());
+        }
         origins.push(template_origin(origin, place)?);
         Ok(mojito_types::origin::Origin::Unbound)
     })?;
@@ -6493,21 +6523,29 @@ fn without_struct_origins(ty: &Ty) -> Ty {
 }
 
 /// The inverse of [`unbound_struct_origins`]: the kept origins, rooted at an
-/// instance's own bindings, written back into the type's struct origin slots
-/// in the order they were taken out.
+/// instance's own bindings, written back into the type's unbound struct
+/// origin slots in the order they were taken out. A slot the instance's
+/// substitution brought in (a loan-carrying argument's clone binder) is
+/// kept as it stands; an unbound slot left over, or an origin never written
+/// back, is a lost origin.
 fn bind_struct_origins(
     ty: &Ty,
     origins: &[TemplateOrigin],
     rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
 ) -> Result<Ty, TypeError> {
+    let lost =
+        || TypeError::InvariantViolation("template derivation lost a struct origin".to_string());
     let mut slots = origins.iter();
-    map_struct_origins(ty, &mut |_| {
-        let origin = slots.next().ok_or_else(|| {
-            TypeError::InvariantViolation("template derivation lost a struct origin".to_string())
-        })?;
-        checked_origin(origin, rooted)
-    })
-    .map(|bound| canonical_environment(&bound))
+    let bound = map_struct_origins(ty, &mut |slot| match slot {
+        mojito_types::origin::Origin::Unbound => {
+            checked_origin(slots.next().ok_or_else(lost)?, rooted)
+        }
+        kept => Ok(kept.clone()),
+    })?;
+    if slots.next().is_some() {
+        return Err(lost());
+    }
+    Ok(canonical_environment(&bound))
 }
 
 /// A capturing callable's environment in the canonical order
@@ -6531,18 +6569,8 @@ fn canonical_environment(ty: &Ty) -> Ty {
 /// Whether a type names a checker-local place: an origin rooted at a binding
 /// identity, in a pointer, a reference, or a struct's origin argument.
 fn names_place(ty: &Ty) -> bool {
-    use mojito_types::origin::{Origin, PointerOrigin};
-    fn rooted(origin: &Origin) -> bool {
-        match origin {
-            Origin::Place(_) => true,
-            Origin::Union(members) => members.iter().any(rooted),
-            Origin::Param(_)
-            | Origin::SelfParam
-            | Origin::Static
-            | Origin::Untracked { .. }
-            | Origin::Unbound => false,
-        }
-    }
+    use mojito_types::origin::PointerOrigin;
+    let rooted = origin_names_place;
     mojito_types::types::mentions(ty, &|ty| {
         match ty {
         Ty::Pointer { origin, .. } => matches!(origin, PointerOrigin::Place { .. }),
@@ -6560,6 +6588,20 @@ fn names_place(ty: &Ty) -> bool {
         _ => false,
     }
     })
+}
+
+/// Whether an origin is rooted at a binding identity.
+fn origin_names_place(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Place(_) => true,
+        Origin::Union(members) => members.iter().any(origin_names_place),
+        Origin::Param(_)
+        | Origin::SelfParam
+        | Origin::Static
+        | Origin::Untracked { .. }
+        | Origin::Unbound => false,
+    }
 }
 
 /// An origin with each place it is rooted at mapped by `place`.

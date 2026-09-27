@@ -450,7 +450,25 @@ impl Checker {
             // Accepted: every origin is caller-visible. Record the
             // transfer so later call sites install the caller-side
             // loan this store implies.
-            self.record_transfer_effect(place, &origins, storage);
+            self.record_transfer_effect(place, &origins, storage, None);
+        } else if outward
+            && mojito_types::types::is_symbolic(found)
+            && self.type_may_carry_loans(found)
+        {
+            // A symbolic value carries no loan here, but an instance at a
+            // loan-carrying argument records this store's effect: keep it
+            // latent for the instances derived from this body.
+            let origins = self.aggregate_origins(value);
+            if origins
+                .iter()
+                .any(|origin| self.aggregate_origin_escapes(origin))
+            {
+                if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
+                    frame.latent_escapes = true;
+                }
+            } else {
+                self.record_transfer_effect(place, &origins, storage, Some(found));
+            }
         }
         Ok(())
     }
@@ -2736,6 +2754,8 @@ impl Checker {
                         })
                         .collect(),
                     effects: Vec::new(),
+                    recorded: Vec::new(),
+                    latent_escapes: false,
                     call_throughs: Vec::new(),
                 });
                 self.raise_observation_frames

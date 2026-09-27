@@ -433,12 +433,21 @@ pub(super) struct AssocBindings {
 }
 
 /// Substitute a parameterized associated type's template with concrete
-/// arguments. Types are substituted first with the ordinary type substitution;
-/// a second pass then replaces symbolic value parameters (`CtValue::Expr`) and
-/// origin parameters (`Origin::Param`), which the type-only pass carries through.
+/// arguments. Origin parameters (`Origin::Param`) are replaced first, while
+/// the template names only its own: an origin id is a slot number, so a type
+/// argument's binder of the same number (an enclosing clone's) must not be
+/// reached. Types are then substituted with the ordinary type substitution,
+/// and a last pass replaces symbolic value parameters (`CtValue::Expr`),
+/// which the type-only pass carries through.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
-    let typed = substitute(ty, &bindings.types);
-    substitute_values_and_origins(&typed, &bindings.values, &bindings.origins)
+    let no_origins = HashMap::new();
+    let bound = if bindings.origins.is_empty() {
+        ty.clone()
+    } else {
+        substitute_values_and_origins(ty, &HashMap::new(), &bindings.origins)
+    };
+    let typed = substitute(&bound, &bindings.types);
+    substitute_values_and_origins(&typed, &bindings.values, &no_origins)
 }
 
 fn substitute_values_and_origins(

@@ -31,6 +31,7 @@ assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
+assets/ok/bundled_instance_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_deref_store.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_field_chain_write.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_field_local_write.mojo	main	exe-differential	sanitized
@@ -622,6 +623,7 @@ assets/ok/template_two_types.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_struct.mojo	main	exe-differential	sanitized
 assets/ok/template_value_shaped_construction.mojo	main	exe-differential	sanitized
+assets/ok/template_view_over_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_where_instances.mojo	main	exe-differential	sanitized
 assets/ok/temporary_argument_field_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_deinit.mojo	main	exe-differential	sanitized

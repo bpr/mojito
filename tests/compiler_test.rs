@@ -3170,6 +3170,19 @@ fn template_method_requests_match_an_inferred_run() {
 }
 
 #[test]
+fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
+    // `self.item = value^` over a symbolic `T` publishes no transfer in the
+    // template, which records it as latent. The loan-carrying instance
+    // publishes it, so `c` keeps the loan on `xs` its own check records, and
+    // the plain-data instance drops it.
+    assert_methods_derive(
+        "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    var ys: List[Int] = [4, 5, 6]\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n",
+        "3 2 2\n",
+        &[("Cell.put", 2)],
+    );
+}
+
+#[test]
 fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
     // A method whose body replays a callee's transfer summary is certified
     // once, served from its own facts in every later transfer round, and

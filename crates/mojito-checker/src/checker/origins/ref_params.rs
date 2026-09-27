@@ -608,17 +608,20 @@ impl Checker {
                 {
                     return vec![origin];
                 }
+                // The adjustment is read out before recursing into the
+                // receiver, whose inference may record adjustments of its own.
+                let adjustment = self
+                    .operation_adjustments
+                    .borrow()
+                    .get(&expression.source_span())
+                    .cloned();
                 // `unsafe_offset` preserves provenance: the offset pointer
                 // carries whatever its receiver carried.
                 if let (
                     Some(mojito_checked::checked::SemanticAdjustment::PointerOffset),
                     ExprKind::MethodCall { object, .. },
-                ) = (
-                    self.operation_adjustments
-                        .borrow()
-                        .get(&expression.source_span()),
-                    &expression.kind,
-                ) {
+                ) = (&adjustment, &expression.kind)
+                {
                     return self.aggregate_origins(object);
                 }
                 // A method returning a ref-field struct (a borrowing
@@ -629,12 +632,8 @@ impl Checker {
                 if let (
                     Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }),
                     ExprKind::MethodCall { object, .. },
-                ) = (
-                    self.operation_adjustments
-                        .borrow()
-                        .get(&expression.source_span()),
-                    &expression.kind,
-                ) {
+                ) = (&adjustment, &expression.kind)
+                {
                     let mut carried = self.aggregate_origins(object);
                     if matches!(
                         object.kind,

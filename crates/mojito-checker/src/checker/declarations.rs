@@ -1473,6 +1473,8 @@ impl Checker {
                 })
                 .collect(),
             effects: Vec::new(),
+            recorded: Vec::new(),
+            latent_escapes: false,
             call_throughs: Vec::new(),
         });
         self.raise_observation_frames
@@ -2150,11 +2152,14 @@ impl Checker {
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
-                    let expected = pointer_origins.substitute(&self.constructor_parameter_ty(
-                        &expand_bound_pack(pty, &decls, &tyargs),
+                    // The struct's own origin binders are bound before its
+                    // type parameters, so an argument type's binder of the
+                    // same slot number (an enclosing clone's) stays as it is.
+                    let expected = self.constructor_parameter_ty(
+                        &pointer_origins.substitute(&expand_bound_pack(pty, &decls, &tyargs)),
                         &subst,
                         &values,
-                    )?);
+                    )?;
                     if coerces(aty, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
@@ -2329,10 +2334,11 @@ impl Checker {
                             })
                             .cloned()
                             .unwrap_or_else(|| {
-                                pointer_origins.substitute(&substitute_assoc(
-                                    &expand_bound_pack(pty, &decls, &tyargs),
+                                substitute_assoc(
+                                    &pointer_origins
+                                        .substitute(&expand_bound_pack(pty, &decls, &tyargs)),
                                     &bindings,
-                                ))
+                                )
                             });
                         if coerces(aty, &expected) {
                             if *aty != expected {
@@ -2593,10 +2599,11 @@ impl Checker {
             origins: HashMap::new(),
         };
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
-            let expected = origin_bindings.substitute(&substitute_assoc(
-                &expand_bound_pack(fty, &decls, &tyargs),
+            // Origin binders first, as for a constructor's parameters.
+            let expected = substitute_assoc(
+                &origin_bindings.substitute(&expand_bound_pack(fty, &decls, &tyargs)),
                 &bindings,
-            ));
+            );
             if Self::storage_value_coerces(aty, &expected) {
                 self.record_literal_materializations(&args[i], aty, &expected)?;
             } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {

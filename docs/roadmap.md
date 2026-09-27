@@ -62,26 +62,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 A bundled template's instance over a loan-carrying argument
-  keeps its erased body**
-
-  Problem: `List[Span[Int, origin_of(xs)]]` mints no clones, so its methods
-  run the template's erased body while a user template's instance over the
-  same argument is cloned whole.
-  - A clone of a bundled body checked again at the concrete argument rejects
-    what upstream never sees there: `List.__imul__`'s
-    `self.extend(orig.copy())` reports `self` and `other` as aliasing.
-  - The cause is that a loan-carrying parameter is registered with its own
-    place as the origin it carries (`declarations.rs`), so a copy of `self`
-    looks like a borrow of `self`.
-  - `Elab::user_template_binds_origins` holds the line: only a user
-    template's instance binds its argument's origin slots.
-  - Deriving the bundled clones instead of checking them would lift it, since
-    a derived clone is not checked again.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.3 A per-call method clone over a loan-carrying argument keeps the
+- [ ] **1.2 A per-call method clone over a loan-carrying argument keeps the
   erased path**
 
   Problem: a generic method called with a loan-carrying argument of its own
@@ -91,6 +72,23 @@ to section 3, however small.
     without binders for a method's own arguments, so the request is skipped.
   - Binding there needs the per-call binders numbered after the instance's,
     since both land on one clone.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.3 A bundled generic `def`'s instance over a loan-carrying argument
+  keeps its erased body**
+
+  Problem: a bundled free function called with a loan-carrying type argument
+  (`Span[Int, origin_of(xs)]`) mints no clone, while a user function's call
+  is cloned with the argument's origin slots bound to clone binders.
+  - A bundled struct template's instance binds them the same way and derives
+    its clones from the checked template.
+  - The `def` path keeps its own gate: `Elab::def_request_values`
+    (`comptime/mono.rs`) returns `None` for a bundled template whose
+    argument mentions an origin-slotted struct.
+  - Lifting it wants the same evidence the struct path had: every bundled
+    `def` over such an argument either derives or passes its concrete clone
+    check, and runs as its erased body did.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -915,7 +913,7 @@ last.
   - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
   - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
     instance to unpacks of a sibling call's result, which both backends run.
-  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.77 is
+  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.80 is
     the same unpack plan and closes with it.
   - Model: Opus, Planned.
 
@@ -1369,7 +1367,7 @@ last.
     own check even when the method is never called; without the `try` it
     runs. Pinned by `conformance/probes/generic_method_transfer_in_try.mojo`.
   - Depends on nothing. The `moved-parameter-into-local-collection`
-    divergence in 3.77 is the same stand-in place and closes with it.
+    divergence in 3.80 is the same stand-in place and closes with it.
   - Model: Opus, Not Planned.
 
 - [ ] **3.36 A value-returning body that ends in `abort(...)` is rejected**
@@ -1453,7 +1451,7 @@ last.
   - The pin materializes the literal and binds the parameter to the temporary.
   - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
   - Depends on nothing. It materializes through the same fallback the
-    `ref-binding-register-value` divergence in 3.77 wants narrowed, so the
+    `ref-binding-register-value` divergence in 3.80 wants narrowed, so the
     two answers must agree.
   - Model: Opus, Planned.
 
@@ -1648,7 +1646,7 @@ last.
     `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
-  - Depends on nothing. The bundled `struct DType` port in 3.76 rewrites the
+  - Depends on nothing. The bundled `struct DType` port in 3.79 rewrites the
     same table, so this lands first or folds into it.
   - Model: Opus, Planned.
 
@@ -1983,7 +1981,69 @@ last.
     last.
   - Model: Opus, Planned.
 
-- [ ] **3.76 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.76 A loan carried only by a container's element type does not keep
+  its source alive**
+
+  Problem: `var s = l[0].copy()` over `l: List[Span[Int, origin_of(xs)]]`,
+  then `print(s[1])` after the last direct use of `xs`, stops with "use after
+  Pointer deallocation" on the VM.
+  - `s`'s own type names `origin_of(xs)`, but nothing extends `xs` past its
+    last direct use for it.
+  - The same happens when such elements are moved between two lists whose
+    element origin is a union (`origin_of(xs, ys)`), and when a
+    `Dict[Int, Span[…]]` is read through `items()`.
+  - A later direct use of `xs` hides it, which is how
+    `assets/ok/bundled_instance_loan_carrying_argument.mojo` stays clear of it.
+  - Both the erased body and the derived clones behave the same, so the
+    lever is the caller-side loan a type-carried origin installs, not the
+    callee.
+  - Not yet checked against the pin, which is expected to print `2`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.77 A copy of a loan-carrying value is taken as a borrow of its
+  receiver**
+
+  Problem: a method returning a struct that carries a loan through a type or
+  origin argument (`List[T].copy()` at `T = Span[Int, origin_of(xs)]`,
+  `Span.copy()`) records a view-result borrow of its receiver, so the copy
+  looks like it aliases what it was copied from.
+  - `l.extend(l.copy())` over `List[Span[Int, origin_of(xs)]]` is rejected
+    as aliasing `self` and `other`, and `v[0].copy()` with `v = Span(l)`
+    conflicts with the live `v`.
+  - A concrete clone check at such an argument rejects `List.__imul__`'s
+    `self.extend(orig.copy())` the same way. The clone derives in a normal
+    compilation, but `MOJITO_VERIFY_TEMPLATE_FACTS=1` checks it again and
+    fails there.
+  - The same borrow is why verification disagrees with the derived bodies
+    of `Bag.get` in `assets/ok/loan_carrying_instance_clone.mojo` and of
+    `List._get_copy`: the template records no borrow.
+  - The rule is the `BorrowViewResult` condition in `mc_infer.rs`: any
+    loan-carrying struct result of a non-consuming method.
+  - Dropping the borrow when the declared return names only the struct's own
+    origin binders was tried. It lost the only link from `c.get()`'s result
+    to the loans `c` carries, which 3.76 has to supply first.
+  - Not yet checked against the pin, which is expected to accept both
+    spellings.
+  - Depends on 3.76.
+  - Model: Fable, Planned.
+
+- [ ] **3.78 A subscript of an element read through a `Span` of `Span`s fails
+  on the VM**
+
+  Problem: `var v = Span(l)` over `l: List[Span[Int, origin_of(xs)]]`, then
+  `print(v[1][2])`, stops with "invalid reference projection Field("_data")
+  on None".
+  - Binding the element first (`var second = v[1]`, then `second[2]`) runs.
+  - The same failure shows through a method returning such a view
+    (`Bag.view()` in
+    `assets/ok/template_view_over_loan_carrying_argument.mojo`, which binds
+    the element first).
+  - Not yet checked against the pin, which is expected to print `3`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.79 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -2016,7 +2076,7 @@ last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.77 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.80 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`

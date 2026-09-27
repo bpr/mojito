@@ -215,17 +215,16 @@ impl Elab<'_> {
             let Some(info) = self.structs.get(template.as_str()) else {
                 continue;
             };
-            // A bundled template's body was checked once with its parameters
-            // abstract, as upstream checks it; an instance whose argument
-            // carries a loan keeps that erased body rather than re-checking a
-            // concrete clone (see `Elab::user_template_binds_origins`).
-            let binds_origins = self.user_template_binds_origins(template);
+            // An instance whose argument carries a loan binds its origin
+            // slots to the clone's own binders, a bundled template's as a
+            // user template's; a clone of a certified template derives from
+            // it rather than being checked again.
             for arguments in &self.instance_requests[template] {
                 let mut origin_binders = CloneOriginBinders::default();
                 let Some((values, _)) = self.method_request_values(
                     info.source_params,
                     arguments,
-                    binds_origins.then_some(&mut origin_binders),
+                    Some(&mut origin_binders),
                 ) else {
                     continue;
                 };
@@ -2437,7 +2436,6 @@ impl Elab<'_> {
         // bound, or does not round-trip to source syntax, keeps the erased path.
         let mut bindings = Vec::new();
         let mut origin_binders = CloneOriginBinders::default();
-        let binds_origins = self.user_template_binds_origins(name);
         for (parameter, value) in type_params.iter().zip(values) {
             let CtValue::Type(ty) = value else {
                 return Ok(InstanceClones::default());
@@ -2447,9 +2445,6 @@ impl Elab<'_> {
                 .iter()
                 .any(|bound| self.conformance.require(ty, bound).is_err())
             {
-                return Ok(InstanceClones::default());
-            }
-            if !binds_origins && self.ty_mentions_origin_slotted_struct(ty) {
                 return Ok(InstanceClones::default());
             }
             let Some((bound, source)) = self.clone_binding(ty, &mut origin_binders) else {

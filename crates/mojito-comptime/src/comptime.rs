@@ -2999,20 +2999,6 @@ impl<'a> Elab<'a> {
         )
     }
 
-    /// Whether an instance of the struct template `name` may bind its
-    /// arguments' origin slots to clone binders (`Elab::clone_binding`): a
-    /// user template's clones check against the loan-carrying argument, while
-    /// a bundled template keeps its erased body, checked once with its
-    /// parameters abstract as upstream checks it. A concrete re-check of a
-    /// bundled body would judge call exclusivity on origins upstream never
-    /// sees there (`List.__imul__`'s `self.extend(orig.copy())`).
-    pub(super) fn user_template_binds_origins(&self, name: &str) -> bool {
-        self.program.iter().any(|statement| {
-            matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
-                && !mojito_checker::checker::is_bundled_module_source(statement.module.as_deref())
-        })
-    }
-
     /// The clone binders the bound values of a `def` clone name
     /// (`Elab::clone_binding`), declared in binder order.
     pub(super) fn clone_origin_binder_params(&self, values: &[CtValue]) -> Vec<TypeParam> {

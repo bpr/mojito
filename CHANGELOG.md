@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An instance of a bundled struct over a loan-carrying argument
+  (`List[Span[Int, origin_of(xs)]]`, `Dict[Int, Span[Int, origin_of(xs)]]`)
+  now gets its own method clones, as a user struct's instance does, and
+  each clone of a certified method reuses its checked template's facts.
+  Such instances used to run the template's erased body.
+- A generic body storing a value of a type parameter outward
+  (`self.item = value^`) now keeps that store's transfer for its instances:
+  an instance whose argument carries a loan publishes it, as its own check
+  would. A derived instance used to drop it.
 - A trait-bound `def` that constructs a struct and calls a method on it
   with a value argument, such as the bundled `hash_seeded` building an
   `AHasher` and feeding it `value`, now reuses its checked template's facts
@@ -227,6 +236,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method returning a view of a field (`-> Span[Self.T,
+  origin_of(self.items)]`) on an instance over a loan-carrying argument
+  (`Bag[Span[Int, origin_of(xs)]]`) now compiles. Deriving it failed with
+  "template derivation lost a struct origin", and checking it failed with
+  "no constructor overload matches": a constructor, a fieldwise
+  construction, an alias application, or a bound dispatch substituted its
+  own origin binders after the type arguments, and so rewrote an argument's
+  binder of the same slot number.
+- A read of a loan-free value no longer counts as aliasing a `mut self`
+  receiver that carries a loan (`self._rehash(self.nbuckets)`), and the
+  bundled `Dict` no longer panics with "already borrowed" when a view
+  result's origins are gathered.
 - A method with its own compile-time parameter on a struct keyed on a value
   (`def rep[dt: DType](self, a: SIMD[dt, Self.n])` on `Width[n: Int]`) now
   clones per call, explicit (`w.rep[DType.int16](v)`) or inferred. Such a

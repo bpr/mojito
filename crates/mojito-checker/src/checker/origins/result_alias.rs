@@ -89,11 +89,24 @@ impl Checker {
 
     /// The origins an argument's value carries. A view returned by a method
     /// on an element place (`xs[1].rstrip()`) borrows the owned interior below
-    /// that element.
+    /// that element; a loan-free value (`self.count`) carries none, whatever
+    /// its place's binding carries.
     pub(in crate::checker) fn carried_argument_origins(
         &self,
         expression: &Expr,
     ) -> Vec<mojito_types::origin::Origin> {
+        let checked = self
+            .expression_types
+            .borrow()
+            .get(&expression.source_span())
+            .cloned();
+        if checked.is_some_and(|ty| {
+            !matches!(ty, Ty::Pointer { .. })
+                && !self.type_may_carry_loans(&ty)
+                && !self.type_contains_reference(&ty)
+        }) {
+            return Vec::new();
+        }
         let origins = self.aggregate_origins(expression);
         if origins.is_empty()
             && let ExprKind::MethodCall { object, .. } = &expression.kind

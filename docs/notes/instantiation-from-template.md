@@ -540,9 +540,11 @@ only `Movable` records nothing there, and its `Int` clone would.
     binders are the origin binders the elaborator declared for a
     loan-carrying argument (`Bag[Span[Int, __clone_origin0]]`) takes that
     argument, whose loans are exactly those binders' and whose transfers
-    obligation 14 replays. The template's `self` and `var` parameters carry
-    loans symbolically already, so the clone check records the same
-    transfers.
+    obligation 14 replays. A bundled template's instance takes it too
+    (`List[Span[Int, __clone_origin0]]`). The template does not record the
+    same transfers outright: a store of a symbolic value carries no loan
+    there, so `check_outward_store` records its effect as latent, which
+    obligation 14 publishes for such an instance.
 13. **Reference calls.** A `closed_reference_contract` is a
     `closed_method_contract` but for the reference it returns, on a receiver
     that needs a place. The reference's origin is the callee's declared origin
@@ -579,6 +581,18 @@ only `Movable` records nothing there, and its `Int` clone would.
     ones (`assets/ok/loan_carrying_instance_clone.mojo`): a `var value:
     Span[Int, __clone_origin0]` parameter moved into `self` keeps its source,
     the parameter's own place, exactly as the clone's own check records it.
+    A latent effect (`TemplateTransferEffect::latent`, the store's type) is
+    one the template's frame recorded for an outward store of a symbolic
+    value without publishing it (`TransferFrame::record`), in the order of
+    the frame's other effects. An instance publishes it where the store's
+    substituted type carries a loan, keeps it latent while that type is
+    still symbolic, and drops it otherwise, so `List.append$…` over
+    `Span[Int, origin_of(xs)]` and a user `Cell.put` publish the store their
+    own check records. A latent store whose origin would escape refuses
+    capture, since the instance's check rejects it. A read the template
+    replayed must find its realized callee's summary unchanged, or empty;
+    a clone callee whose summary grew (`List.append$…` against the seeded
+    `List.append`) refuses the derivation.
 15. **Operators.** Each admitted operator is dispatched on the substituted
     operand type (`realize_operator`): a closed scalar records nothing, owing
     only that the primitive path has the operation and gives the type the

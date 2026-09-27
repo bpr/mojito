@@ -2544,7 +2544,36 @@ struct TransferFrame {
     /// body — call-through recording keys on them.
     value_callables: Vec<String>,
     effects: Vec<mojito_checked::checked::TransferEffect>,
+    /// Every effect recorded on this frame, in order, with the stored type
+    /// of each latent one: an outward store of a symbolic value that may
+    /// carry a loan once instantiated. A latent effect is not published; it
+    /// is kept for an instance derived from this body, whose own check would
+    /// record it at a loan-carrying argument.
+    recorded: Vec<(mojito_checked::checked::TransferEffect, Option<Ty>)>,
+    /// A latent store whose origin would escape: an instance at a
+    /// loan-carrying argument rejects the store, so the body's facts are not
+    /// captured for one to be derived from.
+    latent_escapes: bool,
     call_throughs: Vec<mojito_checked::checked::CallThroughEffect>,
+}
+
+impl TransferFrame {
+    /// Record `effect`, published unless `latent` names the stored type
+    /// that makes it latent. An effect already recorded keeps its place in
+    /// the order, and a latent one recorded again for real is published.
+    fn record(&mut self, effect: mojito_checked::checked::TransferEffect, latent: Option<Ty>) {
+        let published = latent.is_none();
+        if let Some((_, kept_latent)) = self.recorded.iter_mut().find(|(kept, _)| *kept == effect) {
+            if published && kept_latent.take().is_some() {
+                self.effects.push(effect);
+            }
+            return;
+        }
+        if published {
+            self.effects.push(effect.clone());
+        }
+        self.recorded.push((effect, latent));
+    }
 }
 
 struct MethodCallResolution {

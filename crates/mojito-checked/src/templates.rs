@@ -1070,11 +1070,14 @@ pub enum TemplateTransferDest {
 ///
 /// The effect names signature origins, so only the type of the parameter or
 /// receiver its source names is instance-dependent; the template's type of
-/// that binding is kept beside it.
+/// that binding is kept beside it. A latent effect, one the body records
+/// for a store of a symbolic value without publishing it, keeps the stored
+/// type: an instance publishes the effect where that type carries a loan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateTransferEffect {
     pub effect: mojito_types::types::TransferEffect,
     pub src_ty: Ty,
+    pub latent: Option<Ty>,
 }
 
 /// Which retained type table a [`TypedOrigins`] entry completes.

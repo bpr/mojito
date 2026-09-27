@@ -988,7 +988,22 @@ impl Checker {
         substitution: &TySubst,
         binders: &TySubst,
     ) -> Ty {
-        let ty = crate::checker::generics::substitute_self(declared, receiver);
+        // The receiver's origin tail binds the struct's own origin binders
+        // before `Self` and the type arguments go in, whose binders share
+        // their id space (`crate::checker::generics::substitute_at`).
+        let declared = match receiver {
+            Ty::Struct(name, arguments) => self.structs.get(name).map_or_else(
+                || declared.clone(),
+                |info| {
+                    crate::checker::origins::substitute_struct_origin_tails(
+                        declared,
+                        &info.tail_origin_bindings(arguments),
+                    )
+                },
+            ),
+            _ => declared.clone(),
+        };
+        let ty = crate::checker::generics::substitute_self(&declared, receiver);
         let ty = mojito_types::types::substitute(&ty, substitution);
         self.resolve_assoc_ty(&mojito_types::types::substitute(&ty, binders))
     }

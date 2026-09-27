@@ -236,7 +236,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
   protocol and delegated-call expression-origin resolution,
   `lower_ref_sig_resolved`), and cross-call transfer effects (`abstract_body_origin`,
-  `record_transfer_effect`, the `apply_transfer_effects` callable-keyed wrapper
+  `record_transfer_effect`, which a symbolic outward store reaches as a
+  latent effect the frame keeps unpublished (`TransferFrame::record`), the
+  `apply_transfer_effects` callable-keyed wrapper
   over the `replay_transfer_effects` core, value-position effect baking
   (`bake_value_transfer_effects`), the higher-order call-through channel
   (`record_call_through`, `apply_call_through_effects`,
@@ -448,7 +450,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`inference.rs:canonicalize_public_tuple_types`). A retained struct type that
   names a binding in an origin argument is kept by template owner
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
-  the bundle's `typed_origins`), and the return annotation an inference
+  the bundle's `typed_origins`: only a slot naming a binding is unbound and
+  refilled, so a slot an instance's argument brings in, such as a clone
+  binder, stays as it stands), and the return annotation an inference
   re-resolves at each `return` is resolved once for a derived instance
   (`annotation_spans`, `grew_outside_body`). `struct_application_frames`, pushed in
   `generics.rs:record_struct_instantiation`, is how a template keeps the
@@ -762,10 +766,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its span-keyed requests find the checker's records for that
   instantiation), the
   origin-slot guards (`ty_mentions_origin_slotted_struct` finds such type
-  arguments; `clone_binding` rebinds a user template's slots to the
+  arguments; `clone_binding` rebinds an instance's slots to the
   `CloneOriginBinders` a clone declares, named by
-  `symbol::CLONE_ORIGIN_BINDER_PREFIX`, and `user_template_binds_origins`
-  keeps a bundled template's abstract; `pack_element_source_type` spells
+  `symbol::CLONE_ORIGIN_BINDER_PREFIX`, for a bundled template's instance
+  as for a user template's; `pack_element_source_type` spells
   erased slots as `_`), and the free-function/`Mono` support code; `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below (`comptime/elab.rs` holds the root driver's own cluster), and the

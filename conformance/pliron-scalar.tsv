@@ -31,6 +31,7 @@ assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bundled_instance_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_deref_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_field_chain_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_field_local_write.mojo	-	ineligible	no-scalar-entry-shape
@@ -622,6 +623,7 @@ assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_shaped_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_view_over_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_where_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_argument_field_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_deinit.mojo	-	ineligible	no-scalar-entry-shape

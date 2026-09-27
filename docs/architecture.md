@@ -2970,7 +2970,12 @@ error.
 The store-outward acceptance point itself is shared: the SetPlace guard
 (escape check plus transfer recording) is the `check_outward_store` helper,
 which unpack-into-place targets also run (per tuple-display element, or
-conservatively with the whole right-hand side's origins). Outward storage
+conservatively with the whole right-hand side's origins). An outward store of
+a symbolic value that may carry a loan once instantiated records its effect
+as latent: the frame keeps it, in order, beside the published effects
+(`TransferFrame::record`) and never publishes it, and a template instance
+derived from the body publishes it where the substituted type carries a loan
+(`docs/notes/instantiation-from-template.md`, obligation 14). Outward storage
 covers both the frame's outliving owners (`self`, `mut`/`ref` parameters and
 the capture-reachable extensions of the escape context) and ANY
 enclosing-frame binding a nested def reaches through captures — storing a

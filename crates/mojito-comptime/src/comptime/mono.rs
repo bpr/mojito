@@ -1528,8 +1528,7 @@ impl Elab<'_> {
                     // An origin-slotted struct argument of a user template
                     // binds its slots to the clone's own origin binders; one
                     // with no binder to stand for a slot (`_ListIter[Int]`),
-                    // or a bundled template's, keeps the abstract path (see
-                    // `Elab::user_template_binds_origins`).
+                    // or a bundled template's, keeps the abstract path.
                     if self.ty_mentions_origin_slotted_struct(ty) {
                         if mojito_checker::checker::is_bundled_module_source(
                             template.module.as_deref(),

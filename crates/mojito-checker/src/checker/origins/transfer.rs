@@ -577,11 +577,8 @@ impl Checker {
                                 src_is_place,
                                 mutable: effect.mutable,
                             };
-                            let mut frames = self.transfer_frames.borrow_mut();
-                            if let Some(frame) = frames.last_mut()
-                                && !frame.effects.contains(&derived)
-                            {
-                                frame.effects.push(derived);
+                            if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
+                                frame.record(derived, None);
                             }
                         }
                     }
@@ -625,13 +622,16 @@ impl Checker {
     /// enclosing callable's accumulation frame. Constructor bodies record
     /// nothing (their arguments are caller-visible; the local aggregate path
     /// installs those loans), and self-to-self transfers are skipped so
-    /// internal reshuffles do not self-loan every call.
+    /// internal reshuffles do not self-loan every call. A `latent` store
+    /// (its stored type) records its effect unpublished
+    /// ([`TransferFrame::record`]).
     #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(in crate::checker) fn record_transfer_effect(
         &self,
         place: &Expr,
         origins: &[mojito_types::origin::Origin],
         storage: &Option<Ty>,
+        latent: Option<&Ty>,
     ) {
         use mojito_types::origin::SigOrigin;
         if self.self_initializing {
@@ -717,9 +717,7 @@ impl Checker {
                 src_is_place,
                 mutable,
             };
-            if !frame.effects.contains(&effect) {
-                frame.effects.push(effect);
-            }
+            frame.record(effect, latent.cloned());
         }
     }
 }
