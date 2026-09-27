@@ -308,6 +308,14 @@ impl Checker {
                 )?;
             }
             if let Some(span) = span {
+                // A read dunder borrows a named operand where it lies, as a
+                // read parameter of an ordinary method call would.
+                if dispatch.borrows.0 {
+                    self.borrow_nominal_place_argument(left, &lt);
+                }
+                if dispatch.borrows.1 {
+                    self.borrow_nominal_place_argument(right, &rt);
+                }
                 if dispatch.negated_equality {
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
@@ -448,6 +456,9 @@ impl Checker {
             selected.conventions.first().copied().flatten(),
             Some(ArgConvention::Var | ArgConvention::Deinit)
         );
+        let reads = |convention: Option<ArgConvention>| {
+            matches!(convention, None | Some(ArgConvention::Imm))
+        };
         let (dispatched, selected, overloaded) = match self
             .instance_method_clone(sname, dunder, targs)
             .and_then(|clone| {
@@ -478,6 +489,10 @@ impl Checker {
             operand_ty,
             converted,
             consumes,
+            borrows: (
+                reads(selected.self_convention),
+                !converted && reads(selected.conventions.first().copied().flatten()),
+            ),
             struct_name: sname.clone(),
             struct_args: targs.to_vec(),
         }))
@@ -1059,6 +1074,9 @@ pub(super) struct StructInfixDispatch {
     pub(super) converted: bool,
     /// Whether the dunder consumes its operand.
     pub(super) consumes: bool,
+    /// Whether the dunder reads its receiver (`self`) and its operand in
+    /// place: a read convention, and an operand taken without conversion.
+    pub(super) borrows: (bool, bool),
     pub(super) struct_name: String,
     pub(super) struct_args: Vec<TyArg>,
 }

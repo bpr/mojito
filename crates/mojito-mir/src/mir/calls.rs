@@ -27,6 +27,26 @@ impl Flatten<'_> {
         self.lower_call_argument_with(expression, false)
     }
 
+    /// Lower one operand of a struct operator: a named place the checker
+    /// marked `BorrowReadArgument` (the dunder reads it) is read where it
+    /// lies, as a read-convention call argument is; anything else is an
+    /// ordinary value.
+    pub(super) fn lower_operator_operand(&mut self, expression: &Expr) -> Reg {
+        let borrowed = self
+            .checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
+                )
+            });
+        borrowed
+            .then(|| self.lower_borrowed_read_argument(expression))
+            .flatten()
+            .unwrap_or_else(|| self.expr(expression))
+    }
+
     /// Whether a call expression's checked result is a borrowing view of its
     /// arguments (`BorrowViewResult`): the caller-side loans lend the place
     /// arguments to the result, so a read-convention place argument must

@@ -262,6 +262,7 @@ assets/ok/nominal_string_unicode_case.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_writer.mojo	main	exe-differential	sanitized
 assets/ok/number_and_string_literals.mojo	main	exe-differential	sanitized
 assets/ok/numeric_operation_traits.mojo	main	exe-differential	sanitized
+assets/ok/operator_operand_borrow.mojo	main	exe-differential	sanitized
 assets/ok/optional_dict_keys.mojo	main	exe-differential	sanitized
 assets/ok/optional_is_none.mojo	main	exe-differential	sanitized
 assets/ok/optional_owning_api.mojo	main	exe-differential	sanitized

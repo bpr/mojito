@@ -3124,6 +3124,14 @@ impl Checker {
             }
             facts.copy_place_value_uses.push(right);
         }
+        // `borrow_nominal_place_argument` on each operand a read dunder
+        // takes where it lies.
+        if dispatch.borrows.0 {
+            self.borrow_nominal_place_operand(facts, left, &left_ty, occurrences);
+        }
+        if dispatch.borrows.1 {
+            self.borrow_nominal_place_operand(facts, right, &right_ty, occurrences);
+        }
         // The conversion `record_implicit_conversion` installs. Its
         // constructor is selected by [`Self::realize_conversion`], which runs
         // after every operator and inherits its refusals.
@@ -3328,21 +3336,35 @@ impl Checker {
         if !matches!(self.len_result_for_type(&ty), Ok(Some(Ty::Int))) {
             return Err("the instance's type has no 'len' witness");
         }
-        let named = occurrences
-            .iter()
-            .any(|occurrence| occurrence.id == argument && occurrence.identifier);
-        let in_place =
-            named && matches!(&ty, Ty::Struct(name, _) if self.structs.contains_key(name));
         // The template's own entry stands: a reference-valued operand is
         // read through its handle whatever the instance, and a nominal type
         // stays nominal under substitution. Only the nominal-place rule can
         // newly hold for an instance.
-        if in_place && !facts.borrowed_read_call_places.contains(&argument) {
-            facts.borrowed_read_call_places.push(argument);
+        self.borrow_nominal_place_operand(facts, argument, &ty, occurrences);
+        Ok(())
+    }
+
+    /// Record that an instance reads a named nominal-struct operand in place
+    /// ([`Checker::borrow_nominal_place_argument`]), keeping the occurrence
+    /// order of the facts.
+    fn borrow_nominal_place_operand(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        operand: OccurrenceId,
+        ty: &Ty,
+        occurrences: &[Occurrence],
+    ) {
+        let named = occurrences
+            .iter()
+            .any(|occurrence| occurrence.id == operand && occurrence.identifier);
+        if named
+            && matches!(ty, Ty::Struct(name, _) if self.structs.contains_key(name))
+            && !facts.borrowed_read_call_places.contains(&operand)
+        {
+            facts.borrowed_read_call_places.push(operand);
             let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
             facts.borrowed_read_call_places.sort_by_key(order);
         }
-        Ok(())
     }
 
     /// Retain a module-level generic declaration's freshly inferred body

@@ -231,8 +231,9 @@ impl Flatten<'_> {
                 }
             }
             ExprKind::Infix(op, a, b) => {
-                let ra = self.expr(a); // operands left-to-right (evaluation order is explicit)
-                let rb = self.expr(b);
+                // Operands left-to-right (evaluation order is explicit).
+                let ra = self.lower_operator_operand(a);
+                let rb = self.lower_operator_operand(b);
                 let resolved = self.resolved_callable(e);
                 // A reflected operator (checker-marked) runs on the RIGHT
                 // operand: `1 + m` calls `m.__radd__(1)`.

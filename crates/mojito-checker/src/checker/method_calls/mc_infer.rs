@@ -955,6 +955,13 @@ impl Checker {
                             reason: self.trait_failure_reason(&tys[0], "Hashable"),
                         });
                     }
+                    // `update(mut self, value: Some[Hashable])` reads its
+                    // value: a named one is lent where it lies, not copied.
+                    if matches!(args[0].kind, ExprKind::Identifier(_)) {
+                        self.borrowed_read_call_places
+                            .borrow_mut()
+                            .insert(args[0].source_span());
+                    }
                     return Ok(Ty::None);
                 }
                 "_update_with_bytes" => {

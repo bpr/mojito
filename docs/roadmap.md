@@ -470,28 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 Operator operands and the bundled `hash` body take lifecycle copies**
-
-  Problem: `b == c` on a struct whose copy constructor prints prints
-  `copy` for each operand, and `hash(b)` prints it twice, on both backends.
-  - Upstream's `__eq__(self, other: Self)` and `__hash__` borrow their
-    operands; nothing is copied.
-  - A named binary-operator operand lowers as a `var.use` copy: the
-    checker's `borrow_nominal_place_argument` mark, which `len`, `print`
-    and the conversion builtins record, is missing on the operator path.
-  - `hash(b)` borrows at the call site; the copies happen inside the
-    bundled generic `hash[T: Hashable, ...](value: T)` body in
-    `stdlib/std/hashlib/hash.mojo`, so that body (or the `T`-typed
-    parameter read it makes) is the second lever.
-  - Probe first: a `Box` owning a `List[Int]` with a printing
-    `__init__(out self, *, copy: Self)`, compared `==` and hashed,
-    verified against the pin.
-  - One recording site plus one stdlib body, but the plan bounds the fixture
-    fallout of any `__eq__` that relied on the copy.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.2 A value argument forwarded from a caller's parameter is not a native
+- [ ] **2.1 A value argument forwarded from a caller's parameter is not a native
   constant**
 
   Problem: a generic `def` that calls another with a value argument built
@@ -515,7 +494,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     same missing native constant and closes with it.
   - Model: Fable, Planned.
 
-- [ ] **2.3 A struct instance over a generic instance, or with a variadic
+- [ ] **2.2 A struct instance over a generic instance, or with a variadic
   initializer, mangles its constructor into an existing symbol**
 
   Problem: `Bag[List[Int]](List[Int]())` runs on the VM and the native
@@ -545,7 +524,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.4 A struct instance over a multi-lane vector mangles a fragment of
+- [ ] **2.3 A struct instance over a multi-lane vector mangles a fragment of
   its type argument into its constructor's name**
 
   Problem: `Box[SIMD[DType.float32, 2]](v)` runs on the VM and the native
@@ -561,7 +540,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.5 Consuming a field of a `deinit self` whose type has droppable
+- [ ] **2.4 Consuming a field of a `deinit self` whose type has droppable
   fields is refused natively**
 
   Problem: `self.lease^.release()` in a `deinit self` method runs on the VM,
@@ -577,7 +556,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.6 A one-element tuple does not compile natively**
+- [ ] **2.5 A one-element tuple does not compile natively**
 
   Problem: any use of `(7,)` fails the native backend's IR verification
   ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
@@ -591,7 +570,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.7 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.6 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2477,7 +2456,7 @@ last.
     method at the last `.` (`rsplit_once('.')` in
     `mir/verify/subscripts.rs`), as several `mojito-symbol` helpers do.
   - `List[Int32]` is fine; only a width above one fails.
-  - 2.4's native mangling fragment is the same `DType.`-in-a-symbol shape.
+  - 2.3's native mangling fragment is the same `DType.`-in-a-symbol shape.
   - Found while probing literal splats (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2492,6 +2471,24 @@ last.
     (`checker/statements.rs`, `StmtKind::Comptime`) and never consults the
     annotation.
   - Found while probing literal splats (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.92 A chained comparison copies its operands and accepts a middle
+  operand the pin cannot copy**
+
+  Problem: `b == c < d` over a `Copyable` struct prints `copy` three times
+  and runs, where the pin rejects it: the middle operand `c` "cannot be
+  implicitly copied".
+  - The pin copies only the middle operand, which both links read, and
+    demands `ImplicitlyCopyable` of it; over an `ImplicitlyCopyable` struct
+    it prints no `copy` at all.
+  - A two-operand comparison borrows a named operand its dunder reads
+    (`borrow_nominal_place_argument` at `infer_infix`); the chain checks
+    each link with no span (`ExprKind::Compare` in `checker/inference.rs`),
+    so it records neither the borrow nor the middle operand's copy demand,
+    and `compare_chain` lowers every operand as a copy.
+  - Found while closing the operator-operand copies (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

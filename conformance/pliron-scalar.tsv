@@ -262,6 +262,7 @@ assets/ok/nominal_string_unicode_case.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nominal_string_writer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/number_and_string_literals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/numeric_operation_traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/operator_operand_borrow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_dict_keys.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_is_none.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_owning_api.mojo	-	ineligible	no-scalar-entry-shape

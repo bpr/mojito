@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct operator whose dunder reads its operands (`b == c`, `b + c`)
+  now borrows a named operand where it lies, and `hash(b)` hashes its
+  argument in place, as upstream (`assets/ok/operator_operand_borrow.mojo`),
+  on the VM and natively. Each took a lifecycle copy of the operand, so a
+  printing copy constructor printed once per operand.
 - An exact literal now builds a multi-lane vector wherever one is expected,
   as upstream's implicit `SIMD(IntLiteral)`/`SIMD(FloatLiteral)` splat does:
   `P(1)` for a `SIMD[DType.int32, 4]` field, `var v: SIMD[DType.float32, 4]
