@@ -526,9 +526,25 @@ impl Checker {
     /// `__setitem__`, but its source syntax is spread across optional bounds.
     /// Give overload/origin/effect checking one typed synthetic argument while
     /// retaining descriptor construction separately for MIR.
-    pub(super) fn synthetic_slice_descriptor(&self, span: &SourceSpan, kind: SliceKind) -> Expr {
+    ///
+    /// The argument's identity is derived from the subscript's and the
+    /// descriptor's position in it, so every check of one subscript keys
+    /// the descriptor alike, and a clone's copy of it traces to the
+    /// template's.
+    pub(super) fn synthetic_slice_descriptor(
+        &self,
+        span: &SourceSpan,
+        position: usize,
+        kind: SliceKind,
+    ) -> Expr {
         let mut expression = Expr::new(ExprKind::None, span.span);
         expression.source.clone_from(&span.source);
+        if let Some(subscript) = span.syntax {
+            expression.syntax_id = mojito_common::token::SyntaxId::derived(
+                subscript,
+                u32::try_from(position).unwrap_or(u32::MAX),
+            );
+        }
         self.expression_types.borrow_mut().insert(
             expression.source_span(),
             Ty::Struct(kind.type_name().to_string(), Vec::new()),
@@ -605,7 +621,7 @@ impl Checker {
                 } else {
                     SliceKind::ContiguousSlice
                 };
-                let descriptor = self.synthetic_slice_descriptor(&target.source_span(), kind);
+                let descriptor = self.synthetic_slice_descriptor(&target.source_span(), 0, kind);
                 (object.as_ref(), vec![descriptor], vec![Some(kind)])
             }
             ExprKind::MultiIndex {
@@ -653,8 +669,11 @@ impl Checker {
                             } else {
                                 SliceKind::ContiguousSlice
                             };
-                            arguments
-                                .push(self.synthetic_slice_descriptor(&target.source_span(), kind));
+                            arguments.push(self.synthetic_slice_descriptor(
+                                &target.source_span(),
+                                position,
+                                kind,
+                            ));
                             descriptors.push(Some(kind));
                         }
                     }
@@ -985,7 +1004,7 @@ impl Checker {
                 ));
             }
             Ty::Struct(..) | Ty::Param { .. } => {
-                let descriptor = self.synthetic_slice_descriptor(&span, kind);
+                let descriptor = self.synthetic_slice_descriptor(&span, 0, kind);
                 self.infer_method_call(
                     span.clone(),
                     object,
@@ -1088,7 +1107,7 @@ impl Checker {
                     } else {
                         SliceKind::ContiguousSlice
                     };
-                    actual_arguments.push(self.synthetic_slice_descriptor(&span, kind));
+                    actual_arguments.push(self.synthetic_slice_descriptor(&span, position, kind));
                     descriptors.push(Some(kind));
                 }
                 // A keyword slice (`s[byte=a:b]`) binds a keyword-only
@@ -1109,7 +1128,7 @@ impl Checker {
                     };
                     keyword_arguments.push(mojito_ast::ast::KwArg {
                         name: name.clone(),
-                        value: self.synthetic_slice_descriptor(&span, kind),
+                        value: self.synthetic_slice_descriptor(&span, position, kind),
                     });
                     descriptors.push(Some(kind));
                 }

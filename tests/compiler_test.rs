@@ -2675,24 +2675,66 @@ fn template_def_try_unpack_derives() {
 }
 
 #[test]
-fn template_method_raised_built_message_keeps_the_clone_check() {
-    // `Error` of a built `String` is no form `BodyShape::raised` names, so
-    // the body stays outside the class and still runs.
+fn template_method_raised_built_message_derives() {
+    // `Error` of a `String` built by a closed operator over a construction
+    // and a converted literal: nothing at the operator names a parameter.
     let source = "struct Slot[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var full: Bool\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.full = False\n\n    def take(self) raises -> Self.T:\n        if not self.full:\n            raise Error(String(\"em\") + \"pty\")\n        return self.item.copy()\n\n\ndef main():\n    try:\n        print(Slot[Int](1).take())\n    except e:\n        print(e)\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert_eq!(
-        compiler.execute(&program).expect("execute").output,
-        "empty\n"
-    );
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Slot.take$") && reason == "its template is not certified"
-        }),
-        "the built message leaves the body outside the class: {:?}",
-        stats.refused
-    );
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(&compiler, source);
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "empty\n"
+        );
+        assert!(
+            served.iter().any(|name| name.starts_with("Slot.take$")),
+            "the built message derives: {stats:?}"
+        );
+    }
+}
+
+#[test]
+fn template_def_slice_stringify_derives() {
+    // A keyword slice of a closed local, the stringify builtin, a whole
+    // rebinding, a returned tuple display, `external_call`, a direct call's
+    // result, and a raised `Error` of a built `String`; the bundled
+    // `os.rmdir` and `path.split` are this shape.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_slice_stringify.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for template in [
+            "halves$",
+            "closed_file$",
+            "__module$path$split$",
+            "__module$os$rmdir$",
+        ] {
+            assert!(
+                served.iter().any(|name| name.starts_with(template)),
+                "{template} derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "ban ana\n xyz\n/a/b c\nclose failed: -1 Err: Bad file descriptor\n\
+             close failed: -1 Err: Bad file descriptor\n\
+             Can not remove directory: /nonexistent/mojito/a Err: No such file or directory\n"
+        );
+    }
 }
 
 #[test]

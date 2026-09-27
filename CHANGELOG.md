@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module-level `def` holding a keyword slice of a closed local, the
+  `String(value)` stringify builtin, `external_call`, a whole rebinding of a
+  local, a returned tuple display, a direct call's result held whole, a
+  method call through its parameter's bound, or a raised `Error` of a built
+  `String` now derives its instances from the checked template. The bundled
+  `os.rmdir`, `os.remove`, `path.split`, `path.dirname`, and `path.exists`
+  used to be checked again per instance, as did a method raising such an
+  `Error`.
 - Native monomorphization now solves and substitutes a value binder by its
   declaration's identity, as it does a type binder, so two value binders
   sharing a spelling keep their own solutions. A body's read of a

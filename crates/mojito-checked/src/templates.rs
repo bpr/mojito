@@ -954,6 +954,28 @@ impl MethodFeatures {
     /// and handed to a construction: its provenance is the receiver's own
     /// place, which an instance roots at its own `self`.
     pub const RECEIVER_POINTERS: Self = Self(1 << 40);
+    /// A keyword slice of a named place of a closed type (`text[byte=:i]`):
+    /// its getter, selected on that type, returns a view whose origin is
+    /// the place, and the check records the slice descriptor at the
+    /// subscript and the descriptor argument under an identity derived from
+    /// the subscript's, neither of which an instance changes.
+    pub const SLICE_VIEWS: Self = Self(1 << 41);
+    /// `String(value)` of one value of a closed type: the stringify builtin
+    /// writes the value through its `Writable` conformance where it lies and
+    /// wraps the text as the nominal `String`, selecting no callee, so the
+    /// routing, the wrap, and the kept place are the same under every
+    /// instance.
+    pub const STRINGIFY: Self = Self(1 << 42);
+    /// `external_call["callee", T](args…)` over values of closed types: the
+    /// libc crossing types itself from the closed callee table and its
+    /// closed return type, selecting no callee, so it records only closed
+    /// types and what each argument's syntax decides.
+    pub const FOREIGN_CALLS: Self = Self(1 << 43);
+    /// An operator over operands of one closed struct type, or such an
+    /// operand and a string literal converted to it (`String("e: ") + s`):
+    /// the type's own dunder answers under every instance, and the
+    /// template recorded nothing at the operator.
+    pub const CLOSED_OPERATORS: Self = Self(1 << 44);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {

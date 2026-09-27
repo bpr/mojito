@@ -3479,6 +3479,7 @@ impl Checker {
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
+            stringified: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
@@ -3560,11 +3561,9 @@ impl Checker {
         let Some(callees) = callees else {
             return outside("a call's callee is not a module-scope declaration");
         };
-        if !facts
-            .effect_free_callees
-            .iter()
-            .all(|callee| callees.contains(&callee.as_str()))
-        {
+        if !facts.effect_free_callees.iter().all(|callee| {
+            callees.contains(&callee.as_str()) || dispatched_conformer(&callees, callee)
+        }) {
             return outside("an effect summary was read outside a direct call");
         }
         if facts.replays_transfers() {
@@ -3574,10 +3573,11 @@ impl Checker {
         // ([`Checker::realize_construction`]); it records no call parameters.
         let at_call = |id: &OccurrenceId| facts.call_parameters.iter().any(|(call, _)| call == id);
         let constructions = shape.constructions.borrow();
+        let stringified = shape.stringified.borrow();
         if !facts
             .overload_targets
             .iter()
-            .all(|(id, _)| at_call(id) || constructions.contains(id))
+            .all(|(id, _)| at_call(id) || constructions.contains(id) || stringified.contains(id))
             || facts
                 .generic_instantiations
                 .iter()
@@ -4083,6 +4083,7 @@ impl Checker {
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
+            stringified: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
             return outside("the body is outside the method grammar");
@@ -4422,9 +4423,50 @@ impl Checker {
         impl mojito_ast::visit::Visitor for Occurrences<'_> {
             fn visit_stmt(&mut self, statement: &Stmt) {
                 let id = self.next_copy(statement.syntax_id);
+                self.push_plain(id, statement.source_span());
+            }
+
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.visit_expression(expr);
+                // A slice argument's descriptor, which the check synthesizes
+                // under an identity derived from the subscript's
+                // (`synthetic_slice_descriptor`), follows its subscript.
+                let descriptors: Vec<usize> = match &expr.kind {
+                    ExprKind::Slice { .. } => vec![0],
+                    ExprKind::MultiIndex { args, .. } => args
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, argument)| {
+                            matches!(
+                                argument,
+                                mojito_ast::ast::SubscriptArg::Slice { .. }
+                                    | mojito_ast::ast::SubscriptArg::KeywordSlice { .. }
+                            )
+                        })
+                        .map(|(position, _)| position)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for position in descriptors {
+                    let syntax = SyntaxId::derived(
+                        expr.syntax_id,
+                        u32::try_from(position).unwrap_or(u32::MAX),
+                    );
+                    let id = self.next_copy(syntax);
+                    self.push_plain(
+                        id,
+                        SourceSpan::syntax(expr.source.clone(), expr.span, syntax),
+                    );
+                }
+            }
+        }
+
+        impl Occurrences<'_> {
+            /// An occurrence that is neither a call, a name, nor an operator.
+            fn push_plain(&mut self, id: OccurrenceId, span: SourceSpan) {
                 self.found.push(Occurrence {
                     id,
-                    span: statement.source_span(),
+                    span,
                     callee: None,
                     arguments: Vec::new(),
                     keywords: Vec::new(),
@@ -4440,7 +4482,7 @@ impl Checker {
                 });
             }
 
-            fn visit_expr(&mut self, expr: &Expr) {
+            fn visit_expression(&mut self, expr: &Expr) {
                 if self.constant_objects.contains(&expr.syntax_id) {
                     return;
                 }
@@ -4493,10 +4535,12 @@ impl Checker {
                             }
                             _ => None,
                         },
-                        ExprKind::Index { object, .. } => Some((
-                            self.origins.origin(object.syntax_id),
-                            "__getitem__".to_string(),
-                        )),
+                        ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                            Some((
+                                self.origins.origin(object.syntax_id),
+                                "__getitem__".to_string(),
+                            ))
+                        }
                         _ => None,
                     },
                     type_receiver: match &expr.kind {
@@ -5969,8 +6013,10 @@ impl SpanKeyed for HashSet<SourceSpan> {
 /// argument, and the result, a runtime `for` over a place, a condition
 /// tested through `__bool__`, a `SIMD` construction or lane read, a
 /// construction of a declared struct, a method call on a local or a parameter whose contract
-/// is a value contract, and a `raises` declaration. Each recipe is a method
-/// body's, on a body without a receiver.
+/// is a value contract or which dispatches through the parameter's bound, a
+/// keyword slice of a closed local, the stringify builtin, `external_call`,
+/// an operator over a closed struct type, and a `raises` declaration. Each
+/// recipe is a method body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OPAQUE_MOVES)
     .union(MethodFeatures::VALUE_ARGUMENTS)
@@ -5985,7 +6031,12 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::CONSTRUCTIONS)
     .union(MethodFeatures::SIBLING_CALLS)
     .union(MethodFeatures::TUPLE_UNPACKS)
-    .union(MethodFeatures::TRY_STATEMENTS);
+    .union(MethodFeatures::TRY_STATEMENTS)
+    .union(MethodFeatures::SLICE_VIEWS)
+    .union(MethodFeatures::STRINGIFY)
+    .union(MethodFeatures::FOREIGN_CALLS)
+    .union(MethodFeatures::CLOSED_OPERATORS)
+    .union(MethodFeatures::BOUND_DISPATCH);
 
 /// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
 /// refuses a body that recorded into it.
@@ -6958,25 +7009,8 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             || static_calls.iter().any(|(call, _)| call == id)
     };
     // A call through a bound, at an occurrence or embedded in a store,
-    // reads the summaries of every conformer's method of that name,
-    // one key per conformer (`Struct.method`, or the overload symbol
-    // `Struct.method$ov$…`), none of them a target.
-    let dispatched: Vec<&str> = targets
-        .iter()
-        .filter(|target| mojito_symbol::symbol::is_trait_dispatch_symbol(target))
-        .filter_map(|target| {
-            let member = target
-                .rsplit_once('.')
-                .map_or(*target, |(_, member)| member);
-            member.split('$').next()
-        })
-        .collect();
-    let conformer_copy = |callee: &str| {
-        callee.rsplit_once('.').is_some_and(|(_, member)| {
-            let member = member.split('$').next().unwrap_or(member);
-            dispatched.contains(&member)
-        })
-    };
+    // reads the summaries of every conformer's method of that name.
+    let conformer_copy = |callee: &str| dispatched_conformer(&targets, callee);
     facts
         .call_parameters
         .iter()
@@ -6997,6 +7031,28 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
                 || conformer_copy(callee)
                 || shape.callable_params.contains(&callee.as_str())
         })
+}
+
+/// Whether `callee` is a conformer's method a call through a bound among
+/// `targets` read the summaries of: such a call reads every conformer's
+/// method of its name, one key per conformer (`Struct.method`, or the
+/// overload symbol `Struct.method$ov$…`), none of them a target. An
+/// instance reads its own witness's summaries again
+/// ([`Checker::realize_bound_dispatch`]).
+fn dispatched_conformer(targets: &[&str], callee: &str) -> bool {
+    let member = |name: &'_ str| name.split('$').next().unwrap_or(name).to_string();
+    callee.rsplit_once('.').is_some_and(|(_, called)| {
+        targets
+            .iter()
+            .filter(|target| mojito_symbol::symbol::is_trait_dispatch_symbol(target))
+            .any(|target| {
+                member(
+                    target
+                        .rsplit_once('.')
+                        .map_or(*target, |(_, method)| method),
+                ) == member(called)
+            })
+    })
 }
 
 /// The direct calls a method body makes of a module-scope function that
@@ -8114,6 +8170,9 @@ struct BodyShape<'a> {
     /// The pack storages admitted ([`Self::pack_storage`]), which an
     /// instance reads as its own relocation.
     pack_relocations: RefCell<Vec<mojito_checked::templates::PackRelocation>>,
+    /// The stringify calls admitted ([`Self::stringify`]), each routed to
+    /// the builtin by an overload target no instance changes.
+    stringified: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -8370,10 +8429,19 @@ impl BodyShape<'_> {
             StmtKind::Assign { name, value } if name == "_" => {
                 self.expression(value) && self.scalar(value)
             }
-            StmtKind::Assign { name, value } if self.local(name) => {
-                self.expression(value)
-                    && self.scalar(value)
-                    && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
+            // A scalar local takes a closed scalar. Any `var` local may be
+            // rebound whole to a value of its own type: the old value's
+            // destruction is the local's, and the new one is moved or a
+            // temporary, converted by nothing an instance selects.
+            StmtKind::Assign { name, value } if self.declared(name) => {
+                let scalar = self.local(name) && self.expression(value) && self.scalar(value);
+                let rebound = !self.keyed
+                    && self.moved_result.is_some()
+                    && self.whole_value(value)
+                    && self.facts.is_none_or(|facts| {
+                        fact_at(&facts.conversions, self.occurrence(value)).is_none()
+                    });
+                (scalar || rebound) && (self.keyed || self.holds(MethodFeatures::STATEMENTS))
             }
             // A whole store to a `mut` parameter, of the parameter's own type.
             StmtKind::Assign { name, value } => {
@@ -8746,7 +8814,8 @@ impl BodyShape<'_> {
     }
 
     /// The operand of a `raise`: a construction, or `Error` made from a
-    /// string literal.
+    /// string literal or from a whole value of a closed type
+    /// (`Error(String("…") + fspath)`).
     ///
     /// `require_error` asks whether the operand is a string, which a
     /// constructed struct's name and the builtin `Error` settle, and whether
@@ -8754,12 +8823,16 @@ impl BodyShape<'_> {
     /// same parameters, so the instance's answer is the template's.
     fn raised(&self, value: &Expr) -> bool {
         let id = self.occurrence(value);
+        let message = |message: &Expr| {
+            matches!(message.kind, ExprKind::Str(_))
+                || (!self.keyed && self.whole_value(message) && self.closed(message))
+        };
         let error = matches!(&value.kind, ExprKind::Call { name, param_args, args, kwargs }
             if name == "Error"
                 && !self.structs.contains_key(name)
                 && param_args.is_empty()
                 && kwargs.is_empty()
-                && matches!(args.as_slice(), [message] if matches!(message.kind, ExprKind::Str(_))))
+                && matches!(args.as_slice(), [argument] if message(argument)))
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id) == Some(&Ty::Error)
                     && fact_at(&facts.call_parameters, id).is_none()
@@ -9052,7 +9125,10 @@ impl BodyShape<'_> {
                 || self.construction(expr)
                 || self.binder_construction(expr)
                 || self.operator_value(expr)
-                || self.comprehension(expr) =>
+                || self.comprehension(expr)
+                || self.tuple_display(expr)
+                || self.stringify(expr)
+                || self.closed_operator(expr) =>
             {
                 true
             }
@@ -9269,21 +9345,236 @@ impl BodyShape<'_> {
             if self.operator(expr, *op, left, right))
     }
 
-    /// The result of a sibling call or of a generic callee's explicit
-    /// application, of any type: a temporary, whose type is the contract's
-    /// or the application's substituted result.
+    /// The result of a sibling call, of a generic callee's explicit
+    /// application, or of a function body's direct call, of any type: a
+    /// temporary, whose type is the contract's or the application's
+    /// substituted result.
     fn call_result(&self, expr: &Expr) -> bool {
         let call = match &expr.kind {
             ExprKind::MethodCall { method, .. } => {
                 !matches!(method.as_str(), "unsafe_take_pointee" | "unsafe_offset")
             }
             ExprKind::Invoke { callee, .. } => matches!(callee.kind, ExprKind::Member { .. }),
+            ExprKind::MultiIndex { .. } => true,
+            // A function body's direct call of a module-scope function,
+            // whose application an instance realizes again
+            // (`realize_direct_call`); a method body's take closed scalars.
+            ExprKind::Call {
+                name, param_args, ..
+            } if param_args.is_empty()
+                && !self.receiver
+                && !self.keyed
+                && self.moved_result.is_some()
+                && !self.structs.contains_key(name)
+                && self.local_kind(name).is_none() =>
+            {
+                true
+            }
             ExprKind::Call {
                 name, param_args, ..
             } => !param_args.is_empty() || self.local_kind(name) == Some(LocalKind::Callable),
             _ => false,
         };
         call && self.expression(expr)
+    }
+
+    /// An operator over two operands of one closed struct type, or such an
+    /// operand and a string literal converted to it
+    /// (`String("bad: ") + name + " n: "`): a temporary of that type.
+    ///
+    /// The operand type's own dunder answers, which no instance changes, so
+    /// the template recorded nothing at the operator, and a literal operand's
+    /// conversion is selected again at the same closed types. An operand is
+    /// a named place, read where it lies, or a whole value.
+    fn closed_operator(&self, expr: &Expr) -> bool {
+        let ExprKind::Infix(op, left, right) = &expr.kind else {
+            return false;
+        };
+        let operand = |operand: &Expr| {
+            matches!(operand.kind, ExprKind::Str(_))
+                || matches!(&operand.kind, ExprKind::Identifier(name)
+                    if self.declared(name) || self.params.contains(&name.as_str()))
+                || self.receiver_field(operand)
+                || self.whole_value(operand)
+        };
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && operator_dispatch(*op)
+            && operand(left)
+            && operand(right)
+            && !matches!(left.kind, ExprKind::Str(_))
+            && self.facts.is_none_or(|facts| {
+                let at = |operand: &Expr| self.occurrence(operand);
+                // A nominal-string wrap is its producer's own conversion
+                // ([`Self::stringify`]), not one of the operand.
+                let unconverted = |operand: &Expr| {
+                    fact_at(&facts.conversions, at(operand))
+                        .is_none_or(|conversion| conversion.result.is_none())
+                };
+                let Some(ty @ Ty::Struct(..)) = fact_at(&facts.expression_types, at(left)) else {
+                    return false;
+                };
+                let right_typed = match &right.kind {
+                    ExprKind::Str(_) => fact_at(&facts.conversions, at(right))
+                        .is_some_and(|conversion| conversion.result.as_ref() == Some(ty)),
+                    _ => {
+                        fact_at(&facts.expression_types, at(right)) == Some(ty)
+                            && unconverted(right)
+                    }
+                };
+                !mojito_types::types::is_symbolic(ty)
+                    && right_typed
+                    && fact_at(&facts.expression_types, id) == Some(ty)
+                    && unconverted(left)
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.call_parameters, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::CLOSED_OPERATORS)
+    }
+
+    /// A string literal a construction takes as the `StringLiteral` it is
+    /// (`String("x")`): a temporary of a closed type no instance changes,
+    /// converted to nothing.
+    fn unconverted_string_literal(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        matches!(expr.kind, ExprKind::Str(_))
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id) == Some(&Ty::StringLiteral)
+                    && fact_at(&facts.conversions, id).is_none()
+            })
+    }
+
+    /// `String(value)` of one value of a closed type other than a string
+    /// literal (`String(fspath[byte=:i])`, `String(err)`): the stringify
+    /// builtin, which reads the value where it lies to write it through its
+    /// `Writable` conformance and wraps the text as the nominal `String`.
+    ///
+    /// The call routes to the builtin (an overload target of `"String"`) and
+    /// records the wrap's conversion at itself, both chosen by the closed
+    /// type alone. A value other than a scalar is written through its
+    /// `Writable` conformance, which keeps its place, admitted here
+    /// ([`Self::references_recorded`]).
+    fn stringify(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let [argument] = args.as_slice() else {
+            return false;
+        };
+        let named = match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.declared(name) || self.params.contains(&name.as_str())
+            }
+            _ => self.receiver_field(argument),
+        };
+        let id = self.occurrence(expr);
+        let value = self.occurrence(argument);
+        let scalar = self.expression(argument) && self.scalar(argument);
+        let kept = self
+            .facts
+            .is_some_and(|facts| facts.call_place_uses.contains(&value));
+        let admitted = !self.keyed
+            && mojito_types::types::is_stdlib_string_struct(name)
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && (scalar || named || self.whole_value(argument))
+            && self.closed(argument)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.overload_targets, id).is_some_and(|target| target == "String")
+                    && fact_at(&facts.conversions, id).is_some()
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.expression_types, value) != Some(&Ty::StringLiteral)
+                    && (scalar || kept)
+            });
+        if admitted {
+            if kept {
+                push_unique(&mut self.places.borrow_mut(), value);
+            }
+            push_unique(&mut self.stringified.borrow_mut(), id);
+        }
+        admitted && self.holds(MethodFeatures::STRINGIFY)
+    }
+
+    /// A tuple display (`return head, tail`): a temporary `Tuple` built
+    /// from its elements, each a closed scalar or a whole value the display
+    /// takes as it stands, converted by nothing an instance selects.
+    ///
+    /// The display records its `Tuple` type as a collection construction,
+    /// which an instance substitutes element by element.
+    fn tuple_display(&self, expr: &Expr) -> bool {
+        let ExprKind::TupleLit(elements) = &expr.kind else {
+            return false;
+        };
+        !self.keyed
+            && !elements.is_empty()
+            && elements.iter().all(|element| {
+                ((self.expression(element) && self.scalar(element)) || self.whole_value(element))
+                    && self.facts.is_none_or(|facts| {
+                        fact_at(&facts.conversions, self.occurrence(element)).is_none()
+                    })
+            })
+            && self.facts.is_none_or(|facts| {
+                matches!(
+                    fact_at(&facts.operation_adjustments, self.occurrence(expr)),
+                    Some(
+                        mojito_checked::checked::SemanticAdjustment::ConstructCollection {
+                            insert: None,
+                            ..
+                        }
+                    )
+                )
+            })
+    }
+
+    /// A keyword slice of a local or a parameter of a closed type
+    /// (`fspath[byte=:i]`), with closed scalar bounds: a view temporary its
+    /// getter returns over the place, whose origin an instance roots at its
+    /// own binding of the place.
+    ///
+    /// The getter is selected on the place's recorded struct, which every
+    /// instance shares, and binds the slice descriptor by value; the
+    /// descriptor the check keys at the subscript depends only on the
+    /// bounds' syntax.
+    fn keyword_slice(&self, expr: &Expr) -> bool {
+        use mojito_ast::ast::SubscriptArg;
+        let ExprKind::MultiIndex { object, args } = &expr.kind else {
+            return false;
+        };
+        let named = matches!(&object.kind, ExprKind::Identifier(name)
+            if self.declared(name) || self.params.contains(&name.as_str()));
+        let bounds = !args.is_empty()
+            && args.iter().all(|argument| match argument {
+                SubscriptArg::KeywordSlice {
+                    lower, upper, step, ..
+                } => [lower, upper, step]
+                    .into_iter()
+                    .flatten()
+                    .all(|bound| self.expression(bound) && self.scalar(bound)),
+                _ => false,
+            });
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && named
+            && self.closed(object)
+            && bounds
+            && self.facts.is_none_or(|facts| {
+                self.named_contract(facts, expr, object, "__getitem__")
+                    .is_some_and(mojito_checked::templates::value_method_contract)
+                    && fact_at(&facts.subscript_descriptors, id).is_some()
+            });
+        if admitted {
+            self.subscript(id);
+        }
+        admitted && self.holds(MethodFeatures::SLICE_VIEWS)
     }
 
     /// A list, set, or dict comprehension: a temporary of the collection
@@ -9413,9 +9704,12 @@ impl BodyShape<'_> {
         // A binding of that name would shadow the struct: the recorded type
         // says the call constructed it.
         let id = self.occurrence(expr);
+        // The stringify builtin types as the struct it wraps its text in
+        // ([`Self::stringify`]), and is routed to the builtin.
         let constructed = self.facts.is_none_or(|facts| {
             matches!(fact_at(&facts.expression_types, id),
                 Some(Ty::Struct(constructed, _)) if constructed == name)
+                && fact_at(&facts.overload_targets, id).is_none_or(|target| target != "String")
         });
         let named_place = |place: &Expr| match &place.kind {
             ExprKind::Identifier(name) => {
@@ -9461,6 +9755,7 @@ impl BodyShape<'_> {
         let value = |field: Option<&(String, Ty)>, argument: &Expr| {
             (self.expression(argument) && self.scalar(argument))
                 || self.whole_value(argument)
+                || self.unconverted_string_literal(argument)
                 || self.pointer(argument)
                 || self.receiver_pointer(argument)
                 || reference_field(field, argument)
@@ -10587,6 +10882,7 @@ impl BodyShape<'_> {
             ExprKind::Index { .. } => {
                 (self.tuple_element(expr) || self.simd_intrinsic(expr)) && self.scalar(expr)
             }
+            ExprKind::MultiIndex { .. } => self.keyword_slice(expr),
             // A call of a method on `self`, on one of its fields, or on a
             // `var` local, passing scalars, whose recorded contract changes
             // per instance only in its target and its substituted result
@@ -10685,6 +10981,7 @@ impl BodyShape<'_> {
                 }
                 if self.scalar_conversion(id, name, param_args, args, kwargs)
                     || self.simd_construction(id, name, args, kwargs)
+                    || self.foreign_call(id, name, param_args, args, kwargs)
                 {
                     return true;
                 }
@@ -10780,6 +11077,58 @@ impl BodyShape<'_> {
         unconverted
             && (read_in_place || self.whole_value(argument))
             && self.holds(MethodFeatures::VALUE_ARGUMENTS)
+    }
+
+    /// `external_call["callee", T](args…)`, the libc crossing
+    /// (`external_call["rmdir", Int32](fspath.as_c_string_slice())`), over
+    /// closed scalars and whole values of closed types.
+    ///
+    /// The checker types it from the closed callee table and the spelled
+    /// return type, and selects no callee: the call records only its closed
+    /// result type, and each argument what its own syntax decides. A
+    /// declaration of that name would record a selection at the call, and
+    /// such a call is not this.
+    fn foreign_call(
+        &self,
+        id: OccurrenceId,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        use mojito_ast::ast::ParamArg;
+        let callee = matches!(
+            param_args.first(),
+            Some(ParamArg::Value(Expr {
+                kind: ExprKind::Str(_),
+                ..
+            }))
+        );
+        // The return type, then at most `num_fixed_args=<literal>`.
+        let shape = matches!(param_args.get(1), Some(ParamArg::Type(_)))
+            && param_args.iter().skip(2).all(|argument| {
+                matches!(argument, ParamArg::Named { name, value }
+                    if name == "num_fixed_args"
+                        && matches!(&**value, ParamArg::Value(Expr { kind: ExprKind::Int(_), .. })))
+            });
+        let admitted = !self.keyed
+            && name == "external_call"
+            && callee
+            && shape
+            && kwargs.is_empty()
+            && args.iter().all(|argument| {
+                ((self.expression(argument) && self.scalar(argument)) || self.whole_value(argument))
+                    && self.closed(argument)
+            })
+            && self.closed_value(id)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.generic_instantiations, id).is_none()
+                    && fact_at(&facts.expression_bindings, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::FOREIGN_CALLS)
     }
 
     /// A built-in scalar conversion of one value of a closed type
@@ -11773,7 +12122,11 @@ impl BodyShape<'_> {
 
     /// Whether the recorded type of `expr` mentions no parameter.
     fn closed(&self, expr: &Expr) -> bool {
-        let id = self.occurrence(expr);
+        self.closed_value(self.occurrence(expr))
+    }
+
+    /// Whether the type recorded at `id` mentions no parameter.
+    fn closed_value(&self, id: OccurrenceId) -> bool {
         self.facts.is_none_or(|facts| {
             facts
                 .expression_types
