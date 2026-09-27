@@ -630,6 +630,31 @@ fn bind_callable_tail_pattern(
             }
             bind_callable_tail_pattern(&declared.referent, &reference.referent, bindings, conflict)
         }
+        // A pointer nested in a type argument (`Layout[Pointer[Int, o]]`)
+        // binds its binder from the actual's provenance; a projected binder
+        // is checked by coercion, not bound.
+        (
+            Ty::Pointer {
+                element: pattern_element,
+                origin: declared,
+            },
+            Ty::Pointer {
+                element,
+                origin: provenance,
+            },
+        ) => {
+            if let PointerOrigin::Param {
+                id,
+                interior,
+                subtree: false,
+                ..
+            } = declared
+                && interior.is_empty()
+            {
+                bindings.bind_pointer(*id, provenance, conflict)?;
+            }
+            bind_callable_tail_pattern(pattern_element, element, bindings, conflict)
+        }
         (Ty::Tuple(patterns), Ty::Tuple(actuals)) if patterns.len() == actuals.len() => {
             for (pattern, actual) in patterns.iter().zip(actuals) {
                 bind_callable_tail_pattern(pattern, actual, bindings, conflict)?;

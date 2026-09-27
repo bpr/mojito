@@ -1830,9 +1830,24 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(respell).collect()),
         Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(respell(element))),
         Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(respell).collect()),
+        // A caller place a clone binder stands for spells as the first
+        // clone binder (`Elab::clone_binding`): one clone serves every place
+        // of the shape, as an erased struct origin tail does.
         Ty::Pointer { element, origin } => Ty::Pointer {
             element: Box::new(respell(element)),
-            origin: origin.clone(),
+            origin: origin.clone_bindable_place().map_or_else(
+                || origin.clone(),
+                |mutable| mojito_types::origin::PointerOrigin::Param {
+                    id: mojito_types::origin::OriginParamId(u32::MAX),
+                    mutability: if mutable {
+                        mojito_types::origin::Mutability::Mutable
+                    } else {
+                        mojito_types::origin::Mutability::Immutable
+                    },
+                    interior: Vec::new(),
+                    subtree: false,
+                },
+            ),
         },
         Ty::Ref(reference) => {
             let mut reference = reference.clone();

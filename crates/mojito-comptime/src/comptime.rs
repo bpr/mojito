@@ -1716,6 +1716,28 @@ fn source_type_from_ty_with_origins(
                 ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),
+        // A pointer spells only over a clone's own origin binder
+        // (`Elab::clone_binding`); a place origin has no source spelling.
+        Ty::Pointer {
+            element,
+            origin:
+                mojito_types::origin::PointerOrigin::Param {
+                    id,
+                    interior,
+                    subtree: false,
+                    ..
+                },
+        } if interior.is_empty() && !origin_names.contains_key(id) => Type::Named(
+            "Pointer".to_string(),
+            vec![
+                ParamArg::Type(source_type_from_ty_with_origins(
+                    element,
+                    origin_names,
+                    materialized_callables,
+                )?),
+                ParamArg::Type(Type::Named(CloneOriginBinders::name(*id)?, Vec::new())),
+            ],
+        ),
         Ty::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
@@ -1741,6 +1763,25 @@ impl Elab<'_> {
     /// Every clone binder `ty`'s struct origin tails name, with the
     /// mutability its slot declares.
     fn collect_clone_binders(&self, ty: &Ty, found: &mut Vec<(u32, Option<Expr>)>) {
+        if let Ty::Pointer { element, origin } = ty {
+            self.collect_clone_binders(element, found);
+            if let mojito_types::origin::PointerOrigin::Param { id, mutability, .. } = origin
+                && CloneOriginBinders::name(*id).is_some()
+            {
+                let fixed = match mutability {
+                    mojito_types::origin::Mutability::Mutable => Some(true),
+                    mojito_types::origin::Mutability::Immutable => Some(false),
+                    mojito_types::origin::Mutability::Param(_) => None,
+                };
+                found.push((
+                    u32::MAX - id.0,
+                    fixed.map(|fixed| {
+                        Expr::new(ExprKind::Bool(fixed), mojito_common::token::DUMMY_SPAN)
+                    }),
+                ));
+            }
+            return;
+        }
         let Ty::Struct(name, arguments) = ty else {
             return;
         };
@@ -1767,6 +1808,32 @@ impl Elab<'_> {
     /// `ty` with every origin slot of an origin-slotted struct rebound to a
     /// fresh clone binder; see [`Elab::clone_binding`].
     fn bind_clone_origins(&self, ty: &Ty, binders: &mut CloneOriginBinders) -> Option<Ty> {
+        if let Ty::Pointer { element, origin } = ty {
+            let element = Box::new(self.bind_clone_origins(element, binders)?);
+            let Some(mutable) = origin.clone_bindable_place() else {
+                return Some(Ty::Pointer {
+                    element,
+                    origin: origin.clone(),
+                });
+            };
+            let fixed = Expr::new(ExprKind::Bool(mutable), mojito_common::token::DUMMY_SPAN);
+            let mojito_types::origin::Origin::Param(id) = binders.fresh(Some(&fixed))? else {
+                return None;
+            };
+            return Some(Ty::Pointer {
+                element,
+                origin: mojito_types::origin::PointerOrigin::Param {
+                    id,
+                    mutability: if mutable {
+                        mojito_types::origin::Mutability::Mutable
+                    } else {
+                        mojito_types::origin::Mutability::Immutable
+                    },
+                    interior: Vec::new(),
+                    subtree: false,
+                },
+            });
+        }
         let Ty::Struct(name, arguments) = ty else {
             return (!self.ty_mentions_origin_slotted_struct(ty)).then(|| ty.clone());
         };
@@ -3094,11 +3161,21 @@ impl<'a> Elab<'a> {
     /// references do the same). A struct whose only explicit parameters are
     /// origins (`RefIter`, `RefBox`) spells bare, which infers per call, so
     /// it specializes.
+    /// A pointer whose origin names a caller place (`Pointer[Int,
+    /// origin_of(x)]`), or the clone binder standing for one, counts as
+    /// such a slot too.
     pub(super) fn ty_mentions_origin_slotted_struct(&self, ty: &Ty) -> bool {
-        mojito_types::types::mentions(
-            ty,
-            &|candidate| matches!(candidate, Ty::Struct(name, arguments) if !arguments.is_empty() && self.struct_has_explicit_origin_slots(name)),
-        )
+        mojito_types::types::mentions(ty, &|candidate| match candidate {
+            Ty::Struct(name, arguments) => {
+                !arguments.is_empty() && self.struct_has_explicit_origin_slots(name)
+            }
+            Ty::Pointer { origin, .. } => {
+                origin.clone_bindable_place().is_some()
+                    || matches!(origin, mojito_types::origin::PointerOrigin::Param { id, .. }
+                        if CloneOriginBinders::name(*id).is_some())
+            }
+            _ => false,
+        })
     }
 
     /// The clone binders the bound values of a `def` clone name

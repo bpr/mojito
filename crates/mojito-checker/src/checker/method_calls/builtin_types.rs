@@ -128,6 +128,27 @@ impl Checker {
                     origin: target,
                 })
             }
+            // `Copyable.copy()`: the same pointer, lowered as an origin cast
+            // to the receiver's own origin.
+            "copy" => {
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "copy".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
+                        origin: origin.clone(),
+                    },
+                );
+                Ok(Ty::Pointer {
+                    element: Box::new(elem.clone()),
+                    origin: origin.clone(),
+                })
+            }
             "unsafe_offset" => {
                 if origin.as_origin().is_some() && !origin.multi_element() {
                     return Err(TypeError::Unsupported(

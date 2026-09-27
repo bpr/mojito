@@ -1274,7 +1274,8 @@ pub(super) fn method_instantiation_arguments(
 
 /// `callable` with every struct origin tail of its parameter, collector,
 /// and result types that names an explicitly bound origin binder rebound to
-/// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`).
+/// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`), and
+/// every pointer nested in them (`-> Pointer[Pointer[Int, o], …]`) too.
 fn bind_callable_origin_tails(
     mut callable: Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
@@ -1299,7 +1300,12 @@ fn bind_callable_origin_tails(
     else {
         return callable;
     };
-    let bind = |ty: &mut Ty| *ty = super::origins::substitute_struct_origin_tails(ty, tails);
+    let bind = |ty: &mut Ty| {
+        *ty = bind_pointer_origin_tails(
+            &super::origins::substitute_struct_origin_tails(ty, tails),
+            tails,
+        );
+    };
     params.iter_mut().for_each(bind);
     variadic
         .iter_mut()
@@ -1307,4 +1313,58 @@ fn bind_callable_origin_tails(
         .for_each(|ty| bind(ty));
     bind(ret);
     callable
+}
+
+/// `ty` with each pointer origin naming an explicitly bound binder of fixed
+/// mutability rebound to the place it binds (see
+/// [`bind_callable_origin_tails`]); a projected binder is left for coercion
+/// to check.
+fn bind_pointer_origin_tails(
+    ty: &Ty,
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+) -> Ty {
+    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
+    let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
+    match ty {
+        Ty::Pointer { element, origin } => {
+            let bound = match origin {
+                PointerOrigin::Param {
+                    id,
+                    mutability,
+                    interior,
+                    subtree: false,
+                } if interior.is_empty() => match (tails.get(id), mutability) {
+                    (Some(Origin::Place(place)), Mutability::Mutable | Mutability::Immutable) => {
+                        Some(PointerOrigin::Place {
+                            place: place.clone(),
+                            mutable: *mutability == Mutability::Mutable,
+                        })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            Ty::Pointer {
+                element: Box::new(recur(element)),
+                origin: bound.unwrap_or_else(|| origin.clone()),
+            }
+        }
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
+        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
+            referent: Box::new(recur(&reference.referent)),
+            origin: reference.origin.clone(),
+            mutability: reference.mutability,
+        }),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
+        other => other.clone(),
+    }
 }

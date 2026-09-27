@@ -326,6 +326,21 @@ pub enum PointerOrigin {
 }
 
 impl PointerOrigin {
+    /// The mutability of a provenance naming a caller place that a
+    /// generated clone's origin binder can stand for: a place without
+    /// interior-generation or subtree segments, whose domain a bare binder
+    /// would lose. Such a place never keys a clone's identity.
+    pub fn clone_bindable_place(&self) -> Option<bool> {
+        let Self::Place { place, mutable } = self else {
+            return None;
+        };
+        place
+            .path
+            .iter()
+            .all(|segment| matches!(segment, OriginSeg::Field(_) | OriginSeg::AnyIndex))
+            .then_some(*mutable)
+    }
+
     /// The loan-tracked [`Origin`] a pointer provenance corresponds to, when it
     /// designates checked storage. `Static`, `Untracked`, and `UnsafeAny`
     /// pointers carry no owner loan.

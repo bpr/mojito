@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Pointer` type argument naming a caller place
+  (`alloc(Layout[Pointer[Int, origin_of(x)]](count=1))`,
+  `unsafe_alloc[Pointer[Int, origin_of(x)]](n)`, a user `Holder[T]` built
+  over `Pointer(to=x)`) now bakes into its clone with a clone origin binder
+  in place of the place, so every place of the shape shares one clone
+  (`assets/ok/pointer_type_argument_clone_binder.mojo`). Such a clone was
+  minted once per place, and its name spelled that run's owner id.
+- `copy()` on a `Pointer` now returns the pointer, as upstream's
+  `Copyable` pointer does, on the VM and natively. A generic body calling
+  `.copy()` on a parameter bound to a pointer was rejected once the pointer
+  was baked into its clone.
 - An iterator a method returned over a loan-carrying list (`it =
   l.__iter__()` over `List[Span[Int, origin_of(xs)]]`) now gets its own
   clone of `next` or of a user generic `def` it is handed to

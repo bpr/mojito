@@ -406,7 +406,8 @@ impl FnLowering<'_> {
 
     /// Pointer-receiver method intrinsics — the VM's `Value::Pointer` method
     /// dispatch: `free`/`unsafe_free` release through the runtime's size-less
-    /// free. Everything else stays unsupported.
+    /// free, and `copy` is the pointer itself, as a register copy is.
+    /// Everything else stays unsupported.
     pub(super) fn lower_pointer_method(
         &mut self,
         ctx: &mut Context,
@@ -429,6 +430,7 @@ impl FnLowering<'_> {
                 self.erased.insert(dest.0);
                 Ok(())
             }
+            "copy" if args.is_empty() => self.lower_copy_value(ctx, dest, recv),
             other => Err(self.unsupported_reg(format!("Pointer method `{other}`"), dest)),
         }
     }

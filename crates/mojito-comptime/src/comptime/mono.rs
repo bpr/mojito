@@ -1782,6 +1782,35 @@ impl Elab<'_> {
         source: &Type,
         out: &mut Vec<(u32, Expr)>,
     ) -> Option<()> {
+        // A pointer's origin argument spells its binder's origin
+        // (`Pointer[Int, __clone_origin0]` against `Pointer[Int,
+        // origin_of(x)]`).
+        if let Ty::Pointer { element, origin } = bound {
+            let Type::Named(source_name, source_arguments) = source else {
+                return None;
+            };
+            let [ParamArg::Type(element_source), origin_source] = source_arguments.as_slice()
+            else {
+                return None;
+            };
+            if !matches!(source_name.as_str(), "Pointer" | "UnsafePointer") {
+                return None;
+            }
+            self.clone_binder_arguments(element, element_source, out)?;
+            if let mojito_types::origin::PointerOrigin::Param { id, .. } = origin
+                && CloneOriginBinders::name(*id).is_some()
+            {
+                let expression = match origin_source {
+                    ParamArg::Value(expression) => expression.clone(),
+                    ParamArg::Type(Type::Named(name, arguments)) if arguments.is_empty() => {
+                        Expr::new(ExprKind::Identifier(name.clone()), (0, 0))
+                    }
+                    _ => return None,
+                };
+                out.push((u32::MAX - id.0, expression));
+            }
+            return Some(());
+        }
         let (Ty::Struct(name, arguments), Type::Named(source_name, source_arguments)) =
             (bound, source)
         else {

@@ -98,19 +98,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A `Pointer` type argument is baked into its clone with its
-  place**
-
-  Problem: `alloc(Layout[Pointer[Int, origin_of(x)]](count=1))` mints
-  `alloc$y25:Pointer[Int, origin@2457]`, one clone per place, where a
-  struct's origin slots become clone binders.
-  - `Elab::ty_mentions_origin_slotted_struct` does not see a `Ty::Pointer`
-    origin, so `clone_binding` leaves the argument as it stands.
-  - The clone runs correctly; its identity names one run's owner id.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.6 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.5 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -134,7 +122,7 @@ to section 3, however small.
     `docs/pliron-backend-pivot-plan.md` alone.
   - Model: Fable, Planned.
 
-- [ ] **1.7 A reference-typed call result in a method keeps the clone
+- [ ] **1.6 A reference-typed call result in a method keeps the clone
   check**
 
   Problem: a method storing a value it read through a reference-returning
@@ -153,7 +141,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 Two overloads of one trait requirement share their binders**
+- [ ] **1.7 Two overloads of one trait requirement share their binders**
 
   Problem: a trait requirement's binders are owned by `Trait.method`, so two
   overloaded requirements whose slots agree give their binders one id.
@@ -165,7 +153,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 Two overloads of one struct method share their elaborator
+- [ ] **1.8 Two overloads of one struct method share their elaborator
   binders**
 
   Problem: the elaborator owns a method's own binders by `Struct.method`
@@ -180,7 +168,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 An overloaded witness beside a rival the recorded types cannot
+- [ ] **1.9 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
 
   Problem: a call through a bound whose witness overloads the requirement
@@ -199,7 +187,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A hasher call over a multi-lane vector keeps the clone check
+- [ ] **1.10 A hasher call over a multi-lane vector keeps the clone check
   when the instance binds the hasher to a struct**
 
   Problem: `hasher._update_with_simd(SIMD[DType.int32, 4](...))` in a
@@ -215,7 +203,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A `print` of a whole value keeps the clone check**
+- [ ] **1.11 A `print` of a whole value keeps the clone check**
 
   Problem: `print(x, s)` in `def echo[T: Writable & ...](x: T, s: String)`
   refuses the template, because `print_call` admits only closed scalars,
@@ -229,7 +217,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A lane read of a defaulted `to_bits()` result keeps the clone
+- [ ] **1.12 A lane read of a defaulted `to_bits()` result keeps the clone
   check**
 
   Problem: a hasher leaf that reads lanes of `value.to_bits()` before
@@ -247,7 +235,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A value-shaped lane read copied into a local keeps the clone
+- [ ] **1.13 A value-shaped lane read copied into a local keeps the clone
   check**
 
   Problem: `var first = lanes[0]` in a keyed `def` refuses the template when
@@ -260,7 +248,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A call through a bound leaving a defaulted parameter to its
+- [ ] **1.14 A call through a bound leaving a defaulted parameter to its
   default keeps the clone check**
 
   Problem: `BodyShape`'s bound-dispatch rule matches every contract
@@ -274,7 +262,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A nested `def` with a whole-value default or a typed `raises`
+- [ ] **1.15 A nested `def` with a whole-value default or a typed `raises`
   keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar default, an
@@ -288,7 +276,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A generic struct's overloaded static whose members differ in a
+- [ ] **1.16 A generic struct's overloaded static whose members differ in a
   parameter-typed parameter keeps the clone check**
 
   Problem: `Pair[Self.T].pick(v)` beside `pick(v: Self.T)` and
@@ -305,7 +293,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A generic struct's static with binders of its own, an
+- [ ] **1.17 A generic struct's static with binders of its own, an
   availability condition, or a reference or variadic parameter keeps the
   clone check**
 
@@ -321,7 +309,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A type alias spelled in a template body keeps the clone check**
+- [ ] **1.18 A type alias spelled in a template body keeps the clone check**
 
   Problem: `external_call["close", c_int](…)` in a user `def` template is
   refused per instance: the clone's occurrences are not the template's.
@@ -335,7 +323,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A module `def` with a defaulted parameter keeps the clone
+- [ ] **1.19 A module `def` with a defaulted parameter keeps the clone
   check**
 
   Problem: `os.mkdir(path, mode: Int = 0o777)` and `os.makedirs` are
@@ -349,7 +337,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 `path.isdir`, `isfile`, and `islink` keep the clone check**
+- [ ] **1.20 `path.isdir`, `isfile`, and `islink` keep the clone check**
 
   Problem: their templates certify, but each instance is refused: a
   retargeted call has no retained application.
@@ -359,7 +347,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 A variadic struct's initializer building its storage with
+- [ ] **1.21 A variadic struct's initializer building its storage with
   `Tuple(*args^)` keeps the clone check**
 
   Problem: a user variadic struct's `__init__` (`self.storage =
@@ -371,7 +359,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A variadic struct's index-keyed accessor keeps the clone
+- [ ] **1.22 A variadic struct's index-keyed accessor keeps the clone
   check**
 
   Problem: a user variadic struct's `def __getitem__[i: Int](self) ->
@@ -384,7 +372,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 `TString.write_to` keeps the clone check**
+- [ ] **1.23 `TString.write_to` keeps the clone check**
 
   Problem: `TString.write_to` binds each element with a `ref` local over a
   `Tuple` accessor inside a `comptime for`, which the method grammar
@@ -395,7 +383,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 A float range's initializer and `__next__` keep the clone
+- [ ] **1.24 A float range's initializer and `__next__` keep the clone
   check**
 
   Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
@@ -410,7 +398,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.25 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -425,7 +413,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.26 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -443,7 +431,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.27 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -452,6 +440,20 @@ to section 3, however small.
     no clone binder stands for it.
   - A binder the call could supply explicitly, spelled as the enclosing
     binder's name, would serve it as an origin place does.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.28 A `Pointer` type argument over an interior-projected place is
+  baked into its clone with its place**
+
+  Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
+  in an `_get_owned_interior` or `_subtree` segment still mints one clone
+  per place, whose identity names that run's owner id.
+  - A plain place, or one reached through fields, binds a clone origin
+    binder instead (`PointerOrigin::clone_bindable_place`).
+  - A bare binder cannot carry the interior or subtree projection, so such
+    a place keeps the old per-place clone.
+  - A binder whose declaration re-applies the projection would serve it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2398,6 +2400,17 @@ last.
       `def` keeps the wildcard spelling and resolves it as an annotation.
     - Found while probing the defaulted `to_bits()`.
     - Model: Opus, Not Planned.
+  - `pointer-write-aliasing-embedded-origin`: `p.unsafe_write(Pointer(to=x))`
+    over `p = unsafe_alloc[Pointer[Int, origin_of(x)]](1)` runs in Mojito and
+    is rejected upstream ("aliasing values passed mutably to 'self' argument
+    and passed mutably to 'value' argument"). Pinned by
+    `conformance/probes/pointer_write_aliasing_embedded_origin.mojo`.
+    - The pin counts the origin the receiver's element type embeds as a
+      mutable access through `self`, which the argument's own mutable
+      `origin_of(x)` aliases.
+    - Mojito's exclusivity check reads the receiver's own provenance only.
+    - Found while fixing a `Pointer` type argument's clone identity.
+    - Model: Opus, Not Planned.
 
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
@@ -2409,6 +2422,37 @@ last.
   - A width-one bool lane is accepted through the `Bool(x)` truthiness
     conversion; an `Int` never reaches that rule.
   - Found while deriving a runtime `if` in a keyed `def` (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.87 A pointer returned by a call reads its owner after the owner is
+  destroyed**
+
+  Problem: `print(idp(p)[])` over `def idp[o: MutOrigin](v: Pointer[Int, o])
+  -> Pointer[Int, o]` and `p = Pointer(to=x)` prints `None` when `x` has no
+  later use; the pin prints `7`.
+  - Drop elaboration destroys `x` before the dereference, since the call
+    result's `ref.read` carries no loan of `x`.
+  - Binding the result first (`var q = idp(p)`, then `q[]`) runs: the
+    binding establishes the loan its type names.
+  - A generic `id[T](v: T) -> T` over the pointer reaches the same path.
+  - Found while fixing a `Pointer` type argument's clone identity
+    (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.88 A pointer held in a generic struct's parameter-typed field cannot
+  be dereferenced in place**
+
+  Problem: `print(h.item[])` or `print(h.get()[])` over `h =
+  Holder(Pointer(to=x))`, whose `item: Self.T` holds the pointer, stops with
+  "vm: ReadRef … received Int(7): expected reference handle"; the pin prints
+  `7`.
+  - Binding it first (`var p = h.get()`, then `p[]`) runs.
+  - Storing such a pointer through `unsafe_write` and reading it back with
+    `p.unsafe_offset(0)[][]` stops the same way.
+  - Found while fixing a `Pointer` type argument's clone identity
+    (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -440,6 +440,7 @@ assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
+assets/ok/pointer_type_argument_clone_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
