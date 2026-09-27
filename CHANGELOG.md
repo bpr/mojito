@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A named destructor called on a field of a consumed `self`
+  (`self.lease^.release()` in a `deinit self` method) now compiles natively
+  when the field's type has droppable fields
+  (`assets/ok/explicit_destroy_consumed_field_droppable.mojo`); the native
+  backend refused it as a place consumption with droppable fields. The
+  callee's `deinit self` exit already destroys those fields in place.
 - A struct instance over a multi-lane vector
   (`Box[SIMD[DType.float32, 2]](v)`) now compiles natively
   (`assets/ok/template_method_vector_instance.mojo`), where the native backend

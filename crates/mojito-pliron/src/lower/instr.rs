@@ -442,20 +442,13 @@ impl FnLowering<'_> {
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
             MirInstr::DropPlace { place } => self.lower_drop_place(ctx, place),
-            MirInstr::ConsumePlace { place, marker } => {
+            MirInstr::ConsumePlace { marker, .. } => {
                 // Consumption skips the whole-value destructor and destroys
-                // only residual fields — a no-op unless fields carry their
-                // own destructor work.
-                let ty = place
-                    .ty
-                    .clone()
-                    .or_else(|| place.root_ty.clone())
-                    .ok_or_else(|| self.unsupported("untyped consumed place".into(), None))?;
-                if self.fields_need_drop(&ty) {
-                    return Err(
-                        self.unsupported("place consumption with droppable fields".into(), None)
-                    );
-                }
+                // only residual fields. MIR emits it only after a named
+                // destructor call on the same place, whose aggregate receiver
+                // passes by address: the callee's `deinit self` exit consume
+                // already destroyed the residual fields in place, and the
+                // call cleared the caller's presence flag for the place.
                 self.erased.insert(marker.0);
                 Ok(())
             }

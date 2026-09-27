@@ -1,10 +1,7 @@
 # A named destructor called on a field of a consumed `self`
-# (`self.lease^.release()` in a `deinit self` method) runs on the VM but the
-# native backend refuses it when the field's type has droppable fields: "in
-# `Ledger$mono$TString.close$y6:String`: unsupported place consumption with
-# droppable fields". Pliron lowers `ConsumePlace` only for a type whose fields
-# need no destruction. Filed from the explicit-destructor derivation work
-# (roadmap section 2); the pinned Mojo runs it.
+# (`self.lease^.release()` in a `deinit self` method) whose type has
+# droppable fields: the field's own named destructor destroys the `String`
+# it leaves behind, exactly once, on both backends.
 @explicit_destroy("release the lease")
 struct Lease[T: Copyable & Deinitable](Movable, Deinitable where False):
     var item: Self.T

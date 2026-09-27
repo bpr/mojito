@@ -470,23 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 Consuming a field of a `deinit self` whose type has droppable
-  fields is refused natively**
-
-  Problem: `self.lease^.release()` in a `deinit self` method runs on the VM,
-  and the native backend refuses it with "unsupported place consumption with
-  droppable fields" when the field's type holds a `String`.
-  - Pliron lowers `ConsumePlace` only for a type whose fields need no
-    destruction; it would need to destroy the residual fields a named
-    destructor leaves.
-  - A field with no droppable fields (`Allocation`'s `_alloc`) already
-    lowers.
-  - `conformance/probes/native_consume_field_with_droppable_fields.mojo`
-    pins it; the pinned Mojo runs it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.2 A one-element tuple does not compile natively**
+- [ ] **2.1 A one-element tuple does not compile natively**
 
   Problem: any use of `(7,)` fails the native backend's IR verification
   ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
@@ -503,7 +487,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.3 A nested generic `def`'s value argument built from its own
+- [ ] **2.2 A nested generic `def`'s value argument built from its own
   parameter is not a native constant**
 
   Problem: `scaled[k + 1]()` inside a nested `def inner[k: Int]()` runs on
@@ -520,7 +504,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
