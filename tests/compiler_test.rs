@@ -1656,6 +1656,45 @@ fn template_value_shaped_construction_derives() {
 }
 
 #[test]
+fn template_value_shaped_operations_derive() {
+    // A keyed `def` applying operators, reductions, casts, and conversions
+    // to a value-shaped construction's value derives every instance; a
+    // reinterpretation narrower than an instance's lane keeps that
+    // instance's clone check, which reports it.
+    let source = "def sum_lanes[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int64, w](v)\n    var twice = lanes + lanes * 3\n    var wide = twice.cast[DType.int32]()\n    return Int(twice.reduce_add()) + Int(wide.reduce_max()) + wide.length\n\ndef scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    var two = one * one - one\n    return Int(two) + Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(sum_lanes[4](2), sum_lanes[2](9), scale[DType.int16](3), scale[DType.uint8](4))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("sum_lanes$") || name.starts_with("scale$"))
+            .collect();
+        assert_eq!(derived.len(), 4, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "44 110 9 16\n"
+        );
+    }
+    let narrower = "def scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(scale[DType.int64](4))\n";
+    let error = Compiler::default()
+        .compile_unlinked(narrower)
+        .expect_err("a narrower reinterpretation is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("at least as wide as the source lane"),
+        "{error}"
+    );
+}
+
+#[test]
 fn template_value_keyed_lane_def_derives() {
     // A `DType`- or lane-keyed `def` with no compile-time control flow is
     // specialized per call; source validation checks its template, so every

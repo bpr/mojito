@@ -3381,6 +3381,9 @@ impl Checker {
                 GrammarNotes {
                     print_calls: shape.print_calls.borrow().clone(),
                     constructions: shape.constructions.borrow().clone(),
+                    simd_to_bits: shape.simd_to_bits.borrow().clone(),
+                    simd_casts: shape.simd_casts.borrow().clone(),
+                    simd_lengths: shape.simd_lengths.borrow().clone(),
                     ..GrammarNotes::default()
                 },
             )
@@ -5829,8 +5832,8 @@ impl SpanKeyed for HashSet<SourceSpan> {
 /// The features a [`TemplateClass::FunctionBody`] may hold: runtime
 /// statements, whole values moved or copied between a parameter, a local, an
 /// argument, and the result, a runtime `for` over a place, a condition
-/// tested through `__bool__`, a `SIMD` construction, a construction of a
-/// declared struct, a method call on a local or a parameter whose contract
+/// tested through `__bool__`, a `SIMD` construction or lane read, a
+/// construction of a declared struct, a method call on a local or a parameter whose contract
 /// is a value contract, and a `raises` declaration. Each recipe is a method
 /// body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
@@ -5843,6 +5846,7 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::CONSUMING_CALLS)
     .union(MethodFeatures::POINTER_SLOTS)
     .union(MethodFeatures::SIMD_CONSTRUCTIONS)
+    .union(MethodFeatures::SIMD_INTRINSICS)
     .union(MethodFeatures::CONSTRUCTIONS)
     .union(MethodFeatures::SIBLING_CALLS)
     .union(MethodFeatures::TUPLE_UNPACKS)
@@ -7417,6 +7421,9 @@ fn realize_simd_intrinsics(
     if realized.is_empty() {
         return Ok(());
     }
+    facts
+        .operation_adjustments
+        .retain(|(id, _)| realized.iter().all(|(read, _)| read != id));
     facts.operation_adjustments.extend(realized);
     let order = |id: OccurrenceId| occurrences.iter().position(|found| found.id == id);
     facts
@@ -10198,8 +10205,9 @@ impl BodyShape<'_> {
                 let runtime = |operand: &Expr| {
                     !self.folding(operand)
                         && self.facts.is_none_or(|facts| {
-                            fact_at(&facts.expression_types, self.occurrence(operand))
-                                .is_some_and(grammar_scalar)
+                            fact_at(&facts.expression_types, self.occurrence(operand)).is_some_and(
+                                |ty| grammar_scalar(ty) || self.value_shaped_scalar(ty),
+                            )
                         })
                 };
                 let folds = self.folding(expr)
@@ -10340,10 +10348,11 @@ impl BodyShape<'_> {
 
     /// A built-in scalar conversion of one value of a closed type
     /// (`Int(key_hash)`, or `Bool(result)` of a closed struct place, which
-    /// its conversion dunder reads in place). It selects no callee and
-    /// records only closed types, which no instance changes; a declaration
-    /// of that name would record a selection at the call, and such a call is
-    /// not this.
+    /// its conversion dunder reads in place), or of a value-shaped vector a
+    /// keyed body holds (`Int(Scalar[dt](v))`). It selects no callee and
+    /// records only its closed result type, which no instance changes; a
+    /// declaration of that name would record a selection at the call, and
+    /// such a call is not this.
     fn scalar_conversion(
         &self,
         id: OccurrenceId,
@@ -10368,7 +10377,7 @@ impl BodyShape<'_> {
             && param_args.is_empty()
             && kwargs.is_empty()
             && (self.expression(argument) || place)
-            && self.closed(argument)
+            && (self.closed(argument) || self.value_shaped(argument))
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id).is_some_and(closed_scalar)
                     && fact_at(&facts.call_parameters, id).is_none()
@@ -10519,10 +10528,14 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => *ty == Ty::Int,
             _ => {
                 mojito_types::types::simd_slots(ty).is_some()
-                    && (!mojito_types::types::is_symbolic(ty) || self.lane_shaped_simd(ty))
+                    && (!mojito_types::types::is_symbolic(ty)
+                        || self.lane_shaped_simd(ty)
+                        || self.value_shaped_scalar(ty))
             }
         };
         let adjustment = fact_at(&facts.operation_adjustments, id);
+        let source = fact_at(&facts.expression_types, self.occurrence(receiver));
+        let open_source = source.is_some_and(mojito_types::types::is_symbolic);
         let adjusted = match (adjustment, &expr.kind) {
             (None, _) => true,
             (
@@ -10530,11 +10543,14 @@ impl BodyShape<'_> {
                 ExprKind::Invoke { .. } | ExprKind::MethodCall { .. },
             ) => !mojito_types::types::is_symbolic(ty),
             // A recorded cast stands under every instance only when its
-            // source lane is closed too, since a `bool` source refuses.
+            // source lane is closed too, since a `bool` source refuses; over
+            // a value-shaped source the instance checks its own lane.
             (Some(SemanticAdjustment::SimdCast { .. }), ExprKind::Invoke { .. }) => {
                 !mojito_types::types::is_symbolic(ty)
-                    && fact_at(&facts.expression_types, self.occurrence(receiver))
-                        .is_some_and(|source| !mojito_types::types::is_symbolic(source))
+                    && source.is_some_and(|source| {
+                        !mojito_types::types::is_symbolic(source)
+                            || self.value_shaped_scalar(source)
+                    })
             }
             (Some(SemanticAdjustment::SimdLength { .. }), ExprKind::Member { .. }) => true,
             _ => false,
@@ -10550,7 +10566,10 @@ impl BodyShape<'_> {
             && fact_at(&facts.method_instantiations, id).is_none()
             && fact_at(&facts.subscript_descriptors, id).is_none()
             && !facts.copy_place_value_uses.contains(&id);
-        if admitted && adjustment.is_none() {
+        // A reinterpretation or cast the template recorded over an open
+        // source lane is noted too: its closed shape stands, but the
+        // instance checks its own source lane against it.
+        if admitted && (adjustment.is_none() || open_source) {
             let read = (id, self.occurrence(receiver));
             match &expr.kind {
                 ExprKind::Invoke { callee, .. } => match &callee.kind {
@@ -10605,7 +10624,8 @@ impl BodyShape<'_> {
                     }
                     mojito_types::types::SimdDtype::Expr(_) => false,
                 };
-                (!symbolic || self.lane_shaped_simd(ty)) && (!closed_dtype || vector)
+                (!symbolic || self.lane_shaped_simd(ty) || self.value_shaped_scalar(ty))
+                    && (!closed_dtype || vector)
             })
         })
     }
@@ -11302,15 +11322,33 @@ impl BodyShape<'_> {
         })
     }
 
-    /// Whether the recorded type of `expr` is a closed scalar. With no facts
-    /// yet, the syntax alone never rules a type out.
+    /// Whether the recorded type of `expr` is a closed scalar, or in a
+    /// keyed body a value-shaped vector ([`Self::value_shaped_scalar`]).
+    /// With no facts yet, the syntax alone never rules a type out.
     fn scalar(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
         self.facts.is_none_or(|facts| {
-            facts
-                .expression_types
-                .iter()
-                .any(|(site, ty)| *site == id && grammar_scalar_or_literal(ty))
+            facts.expression_types.iter().any(|(site, ty)| {
+                *site == id && (grammar_scalar_or_literal(ty) || self.value_shaped_scalar(ty))
+            })
+        })
+    }
+
+    /// A value-shaped vector a keyed body holds as a scalar
+    /// (`SIMD[DType.int64, w]`): every instance folds the binders its slots
+    /// name, and an operator, a reduction, or a lane read over it records
+    /// nothing its dimensions decide, so the instance's facts are the
+    /// template's under the folded dimensions.
+    fn value_shaped_scalar(&self, ty: &Ty) -> bool {
+        self.keyed && self.value_shaped_simd(ty)
+    }
+
+    /// Whether the recorded type of `expr` is a value-shaped vector a keyed
+    /// body holds ([`Self::value_shaped_scalar`]).
+    fn value_shaped(&self, expr: &Expr) -> bool {
+        let id = self.occurrence(expr);
+        self.facts.is_none_or(|facts| {
+            fact_at(&facts.expression_types, id).is_some_and(|ty| self.value_shaped_scalar(ty))
         })
     }
 }

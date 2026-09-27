@@ -632,6 +632,7 @@ assets/ok/template_value_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_lane_def.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_struct.mojo	main	exe-differential	sanitized
 assets/ok/template_value_shaped_construction.mojo	main	exe-differential	sanitized
+assets/ok/template_value_shaped_operations.mojo	main	exe-differential	sanitized
 assets/ok/template_view_over_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_where_instances.mojo	main	exe-differential	sanitized
 assets/ok/temporary_argument_field_deinit.mojo	main	exe-differential	sanitized

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A keyed `def` applying an operator, a reduction, a cast, a lane count, or
+  a built-in conversion to a value built by a value-shaped construction
+  (`var lanes = SIMD[DType.int64, w](v)`, then `lanes + lanes` or
+  `Int(lanes.reduce_add())`) now reuses its template's checked facts in
+  every instance (`assets/ok/template_value_shaped_operations.mojo`). Such
+  instances used to be checked again per call.
 - `to_bits()` with its defaulted target now type-checks over a lane whose
   dtype is still a parameter (`def bits[dt: DType, w: Int](value: SIMD[dt,
   w])`), its target the unsigned dtype of the lane's width, as upstream
