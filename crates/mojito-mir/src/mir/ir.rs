@@ -103,6 +103,11 @@ pub struct MirParamArg {
     /// The enclosing declaration's type binder this argument forwards
     /// (`hash[Self.H](key)`), whose spelling `value` reifies.
     pub binder: Option<mojito_types::param_expr::ParamRef>,
+    /// A value argument built from the enclosing declaration's value binders
+    /// (`successor[n, 1 + n]()`, `below[Self.n, k]()`), as the expression
+    /// over them that monomorphization evaluates under the caller instance's
+    /// bindings. `value` still carries the runtime register the VM reads.
+    pub expr: Option<mojito_types::param_expr::ParamExpr>,
 }
 
 /// Index of a basic block within a [`MirFunction`]'s `blocks`.

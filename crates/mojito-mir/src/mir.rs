@@ -29,6 +29,7 @@ use mojito_checked::checked::{CheckedConst, CheckedProgram};
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
+use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, dict_elements, tuple_elements};
 use std::collections::{HashMap, HashSet};
 
@@ -59,7 +60,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &HashMap::new(),
         &[],
         &[],
-        &[],
+        &EnclosingBinders::default(),
     )
 }
 
@@ -227,7 +228,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     .unwrap_or(&[])
                     .to_vec();
                 let value_parameter_locals = value_parameter_locals(&param_decls);
-                let enclosing_type_parameters = type_binders(&param_decls);
+                let enclosing_binders = EnclosingBinders::of(&param_decls);
                 names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
                 let ptys = caller_params
                     .iter()
@@ -378,7 +379,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         value_parameter_locals,
                         receiver_value_parameters: Vec::new(),
                         enclosing_origin_parameters: origin_binder_names(type_params),
-                        enclosing_type_parameters,
+                        enclosing_binders,
                         owned_parameters: owned,
                         deinit_parameters: deinit,
                         reference_parameters: refp,
@@ -548,7 +549,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
                     }
                     let value_parameter_locals = value_parameter_locals(&param_decls);
-                    let enclosing_type_parameters = type_binders(
+                    let enclosing_binders = EnclosingBinders::of(
                         checked
                             .generic_parameters_at(&GenericSite::Struct {
                                 module: s.module.clone(),
@@ -728,7 +729,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             enclosing_origin_parameters: origin_binder_names(
                                 type_params.iter().chain(&m.type_params),
                             ),
-                            enclosing_type_parameters,
+                            enclosing_binders,
                             owned_parameters: owned,
                             deinit_parameters: deinit,
                             reference_parameters: refp,
@@ -766,7 +767,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             checked.call_transfers(),
             &[],
             &[],
-            &[],
+            &EnclosingBinders::default(),
         )
     };
     // The synthetic module initializer returns nothing and never raises.
@@ -974,10 +975,12 @@ struct Flatten<'a> {
     /// argument naming one (`V[Self.o]`) is erased, as the checker's
     /// `EraseCompileTimeArgument` marks a value-shaped one.
     enclosing_origin_parameters: Vec<String>,
-    /// The enclosing struct's type binders, then the function's own: a
-    /// bracket argument forwarding one (`hash[Self.H](key)`) records the
-    /// binder it names, the innermost declaration winning a shared spelling.
-    enclosing_type_parameters: Vec<mojito_types::param_expr::ParamRef>,
+    /// The enclosing struct's binders, then the function's own: a bracket
+    /// argument forwarding a type binder (`hash[Self.H](key)`) records the
+    /// binder it names, and one built from value binders (`f[1 + n]()`) the
+    /// expression over them, the innermost declaration winning a shared
+    /// spelling.
+    enclosing_binders: EnclosingBinders,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1835,7 +1838,7 @@ impl Flatten<'_> {
             },
             ParamArg::Value(_) => return None,
         };
-        let mut binders = self.enclosing_type_parameters.iter();
+        let mut binders = self.enclosing_binders.types.iter();
         match ty {
             mojito_ast::ast::Type::SelfParam(name) => {
                 binders.find(|binder| binder.name.as_ref() == name.as_str())
@@ -1846,6 +1849,61 @@ impl Flatten<'_> {
             _ => None,
         }
         .cloned()
+    }
+
+    /// The expression a bracket argument built from the enclosing value
+    /// binders denotes (`1 + n`, `Self.n`); none for an argument naming no
+    /// binder, whose register is already its constant.
+    fn forwarded_value(&self, argument: &ParamArg) -> Option<ParamExpr> {
+        let expr = match argument {
+            ParamArg::Named { value, .. } => return self.forwarded_value(value),
+            ParamArg::Type(mojito_ast::ast::Type::SelfParam(name)) => {
+                self.enclosing_binders.value(name, true)
+            }
+            ParamArg::Type(mojito_ast::ast::Type::Named(name, args)) if args.is_empty() => {
+                self.enclosing_binders.value(name, false)
+            }
+            ParamArg::Type(_) => None,
+            ParamArg::Value(expression) => self.value_binder_expr(expression),
+        }?;
+        expr.as_constant().is_none().then_some(expr)
+    }
+
+    /// `expression` over the enclosing value binders, through the shared
+    /// typed builder: names resolve here, operator semantics and canonical
+    /// form are [`ParamContext`]'s.
+    fn value_binder_expr(&self, expression: &Expr) -> Option<ParamExpr> {
+        let context = ParamContext::detached();
+        match &expression.kind {
+            ExprKind::Int(value) => context
+                .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
+                .ok(),
+            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false),
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                self.enclosing_binders.value(field, true)
+            }
+            ExprKind::Prefix(PrefixOp::Neg, value) => {
+                context.neg(&self.value_binder_expr(value)?).ok()
+            }
+            ExprKind::Infix(
+                op @ (InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Pow
+                | InfixOp::Shl),
+                left,
+                right,
+            ) => context
+                .infix(
+                    *op,
+                    &self.value_binder_expr(left)?,
+                    &self.value_binder_expr(right)?,
+                )
+                .ok(),
+            _ => None,
+        }
     }
 
     /// An erased argument keeps its (empty) slot: every backend aligns the
@@ -1864,10 +1922,12 @@ impl Flatten<'_> {
                 self.param_arg_reg(argument, site)
             };
             let binder = value.and_then(|_| self.forwarded_binder(argument));
+            let expr = value.and_then(|_| self.forwarded_value(argument));
             registers.push(MirParamArg {
                 name,
                 value,
                 binder,
+                expr,
             });
         }
         registers
@@ -1938,7 +1998,7 @@ fn lower_cfg_nested(
     call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     receiver_value_parameters: &[(String, Ty)],
     enclosing_origin_parameters: &[String],
-    enclosing_type_parameters: &[mojito_types::param_expr::ParamRef],
+    enclosing_binders: &EnclosingBinders,
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -1986,7 +2046,7 @@ fn lower_cfg_nested(
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
             enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
-            enclosing_type_parameters: enclosing_type_parameters.to_vec(),
+            enclosing_binders: enclosing_binders.clone(),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
@@ -2783,14 +2843,55 @@ struct ComprehensionPlan<'a> {
 
 /// The names of the `Origin`/`OriginSet` binders among `parameters`, which a
 /// type-shaped bracket argument may name (`V[Self.o]`).
-fn type_binders<'a>(
-    declarations: impl IntoIterator<Item = &'a ParamDecl>,
-) -> Vec<mojito_types::param_expr::ParamRef> {
-    declarations
-        .into_iter()
-        .filter(|declaration| matches!(declaration, ParamDecl::Type { .. }))
-        .map(ParamDecl::binder)
-        .collect()
+#[derive(Clone, Default)]
+struct EnclosingBinders {
+    types: Vec<mojito_types::param_expr::ParamRef>,
+    /// The non-callable value binders, each with its declared type.
+    values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
+}
+
+impl EnclosingBinders {
+    fn of<'a>(declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
+        Self::default().with(declarations)
+    }
+
+    /// These binders, then those of a declaration nested inside them.
+    fn with<'a>(&self, declarations: impl IntoIterator<Item = &'a ParamDecl>) -> Self {
+        let mut binders = self.clone();
+        for declaration in declarations {
+            match declaration {
+                ParamDecl::Type { .. } => binders.types.push(declaration.binder()),
+                ParamDecl::Value {
+                    ty,
+                    variadic: false,
+                    callable_default: None,
+                    ..
+                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+                    binders.values.push((declaration.binder(), (**ty).clone()));
+                }
+                ParamDecl::Value { .. } => {}
+            }
+        }
+        binders
+    }
+
+    /// The reference a value binder's spelling denotes: `Self.n` names the
+    /// struct's, declared first; a bare `n` the innermost declaration's.
+    fn value(&self, name: &str, of_self: bool) -> Option<ParamExpr> {
+        let mut binders = self.values.iter();
+        let named =
+            |(binder, _): &&(mojito_types::param_expr::ParamRef, Ty)| binder.name.as_ref() == name;
+        let (binder, ty) = if of_self {
+            binders.find(named)
+        } else {
+            binders.rfind(named)
+        }?;
+        Some(ParamContext::detached().decl_ref(
+            binder.id.clone(),
+            name,
+            mojito_types::param_expr::MetaTy::value(ty.clone()),
+        ))
+    }
 }
 
 fn origin_binder_names<'a>(

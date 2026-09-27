@@ -173,7 +173,7 @@ impl Specializer<'_> {
             &mut bindings,
             target,
             &|name| self.structs.contains_key(name),
-            &self.enclosing_types,
+            &self.enclosing,
         )?;
         apply_defaults(&declaration.param_decls, &mut bindings)?;
         let names = &declaration.param_names;

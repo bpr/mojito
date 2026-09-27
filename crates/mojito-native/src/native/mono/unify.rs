@@ -73,7 +73,7 @@ pub(super) fn ordered_arguments(
 pub(super) fn matched_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [mojito_mir::mir::MirParamArg],
-) -> Vec<(&'a ParamDecl, Reg, Option<&'a ParamRef>)> {
+) -> Vec<(&'a ParamDecl, Reg, &'a mojito_mir::mir::MirParamArg)> {
     let explicit: Vec<&ParamDecl> = decls
         .iter()
         .filter(|declaration| {
@@ -106,7 +106,7 @@ pub(super) fn matched_parameter_arguments<'a>(
             declaration
         };
         if let Some(declaration) = declaration {
-            matched.push((declaration, value_reg, argument.binder.as_ref()));
+            matched.push((declaration, value_reg, argument));
         }
     }
     matched
@@ -119,21 +119,29 @@ pub(super) fn bind_explicit_value_arguments(
     bindings: &mut Bindings,
     target: &str,
     is_struct: &dyn Fn(&str) -> bool,
-    enclosing_types: &HashMap<ParamRef, Ty>,
+    enclosing: &Bindings,
 ) -> Result<(), MonoError> {
-    for (declaration, value_reg, forwarded) in matched_parameter_arguments(decls, arguments) {
+    for (declaration, value_reg, argument) in matched_parameter_arguments(decls, arguments) {
         match declaration {
+            // A constant register is the value; an argument built from the
+            // caller's value binders is its recorded expression under the
+            // caller instance's bindings.
             ParamDecl::Value { name, .. } => {
-                let value =
-                    constant_values
-                        .get(&value_reg.0)
-                        .cloned()
-                        .ok_or_else(|| MonoError {
+                let value = match (constant_values.get(&value_reg.0), &argument.expr) {
+                    (Some(value), _) => value.clone(),
+                    (None, Some(expr)) => eval_ct(expr, enclosing).map_err(|mut error| {
+                        error.function.get_or_insert_with(|| target.to_string());
+                        error
+                    })?,
+                    (None, None) => {
+                        return Err(MonoError {
                             function: Some(target.to_string()),
                             construct: format!(
                                 "value parameter `{name}` is not compile-time constant"
                             ),
-                        })?;
+                        });
+                    }
+                };
                 bindings.values.insert(declaration.binder(), value);
             }
             // A supplied constructible type argument (`hash[Fnv1a](x)`)
@@ -149,9 +157,9 @@ pub(super) fn bind_explicit_value_arguments(
                 let bound = if is_struct(spelling) {
                     Some(Ty::Struct(spelling.clone(), Vec::new()))
                 } else {
-                    match forwarded {
-                        Some(binder) => enclosing_types.get(binder).cloned(),
-                        None => uniquely_spelled(enclosing_types, spelling),
+                    match &argument.binder {
+                        Some(binder) => enclosing.types.get(binder).cloned(),
+                        None => uniquely_spelled(&enclosing.types, spelling),
                     }
                 };
                 if let Some(bound) = bound {

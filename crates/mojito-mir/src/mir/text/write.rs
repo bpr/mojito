@@ -1311,6 +1311,7 @@ fn param_arg(value: &MirParamArg) -> String {
             ("name", option(value.name.as_ref().map(|v| symbol(v)))),
             ("value", option(value.value.map(reg_value))),
             ("binder", option(value.binder.as_ref().map(binder_ref))),
+            ("expr", option(value.expr.as_ref().map(param_expr))),
         ],
     )
 }

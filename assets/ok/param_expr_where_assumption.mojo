@@ -1,9 +1,8 @@
 # A `where` clause that stays residual needs evidence at the application: the
 # enclosing declaration's own clause stating the same proposition, in either
 # operand order. A struct's value parameter takes part through `Self.n`.
-# (Evidence by canonical identity, `successor[n, 1 + n]()`, is pinned by the
-# checker test `param_expr_residual_is_not_false`: natively a value argument
-# computed from a caller's parameter is not yet a constant.)
+# (Evidence by canonical identity, `successor[n, 1 + n]()`, is
+# `assets/ok/value_argument_from_caller_parameter.mojo`.)
 def successor[n: Int, m: Int]() -> Int where n + 1 == m:
     return m
 

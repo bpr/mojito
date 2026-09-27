@@ -123,9 +123,9 @@ to section 3, however small.
     them only ages the decision.
   - Depends on section 2, for the native defects whose shapes the slice
     itself uses: a specialized generic struct whose constructor mangles into
-    an existing symbol, a forwarded value argument that is not a native
-    constant, a consuming move out of a `deinit self` with droppable fields,
-    and a one-element tuple. The slice runs natively and on the VM from one
+    an existing symbol, a consuming move out of a `deinit self` with
+    droppable fields, and a one-element tuple. The slice runs natively and
+    on the VM from one
     module, so a backend that miscompiles those shapes can be measured for
     neither conversion totality nor execution parity.
   - Model: Fable, Planned.
@@ -470,31 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A value argument forwarded from a caller's parameter is not a native
-  constant**
-
-  Problem: a generic `def` that calls another with a value argument built
-  from its own parameter runs on the VM and is refused natively:
-  `successor[n, 1 + n]()` reports ``in `successor`: unsupported value
-  parameter `m` is not compile-time constant``, and a method's
-  `below[Self.n, k]()` the same for `n`.
-  - MIR passes a value argument as a runtime register (`MirParamArg`), which
-    the VM reifies per call. Native monomorphization needs the constant, and
-    the register tells it nothing.
-  - Forwarding a free `def`'s own parameters unchanged (`below[n, k]()`)
-    already works.
-  - The lever is a `ParamExpr` on the MIR value argument, which
-    monomorphization evaluates under the caller instance's bindings
-    (`mono/symbolic.rs::eval_ct`).
-  - `assets/ok/param_expr_where_assumption.mojo` avoids the shape so it stays
-    in the native parity set; the checker test
-    `param_expr_residual_is_not_false` covers it.
-  - It changes the MIR call contract and the text schema with it.
-  - Depends on nothing. Section 4's `Counter[Self.length]` residue is the
-    same missing native constant and closes with it.
-  - Model: Fable, Planned.
-
-- [ ] **2.2 A struct instance over a generic instance, or with a variadic
+- [ ] **2.1 A struct instance over a generic instance, or with a variadic
   initializer, mangles its constructor into an existing symbol**
 
   Problem: `Bag[List[Int]](List[Int]())` runs on the VM and the native
@@ -524,7 +500,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.3 A struct instance over a multi-lane vector mangles a fragment of
+- [ ] **2.2 A struct instance over a multi-lane vector mangles a fragment of
   its type argument into its constructor's name**
 
   Problem: `Box[SIMD[DType.float32, 2]](v)` runs on the VM and the native
@@ -540,7 +516,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.4 Consuming a field of a `deinit self` whose type has droppable
+- [ ] **2.3 Consuming a field of a `deinit self` whose type has droppable
   fields is refused natively**
 
   Problem: `self.lease^.release()` in a `deinit self` method runs on the VM,
@@ -556,7 +532,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.5 A one-element tuple does not compile natively**
+- [ ] **2.4 A one-element tuple does not compile natively**
 
   Problem: any use of `(7,)` fails the native backend's IR verification
   ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
@@ -569,6 +545,23 @@ change that needs a new `MJRT_ABI_VERSION`.
     fixture declares a one-element tuple.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **2.5 A nested generic `def`'s value argument built from its own
+  parameter is not a native constant**
+
+  Problem: `scaled[k + 1]()` inside a nested `def inner[k: Int]()` runs on
+  the VM and is refused natively: ``in `scaled`: unsupported unresolved value
+  parameter `k```.
+  - A module-level `def` and a method evaluate the argument's recorded
+    expression under the caller instance's bindings
+    (`bind_explicit_value_arguments`).
+  - A nested generic `def` is called indirectly through its closure, and its
+    value parameter reaches the body as a runtime local, so the instance
+    binds no `k` to evaluate under.
+  - `conformance/probes/native_nested_def_value_argument.mojo` pins it; the
+    pinned Mojo runs it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **2.6 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
@@ -2456,7 +2449,7 @@ last.
     method at the last `.` (`rsplit_once('.')` in
     `mir/verify/subscripts.rs`), as several `mojito-symbol` helpers do.
   - `List[Int32]` is fine; only a width above one fails.
-  - 2.3's native mangling fragment is the same `DType.`-in-a-symbol shape.
+  - 2.2's native mangling fragment is the same `DType.`-in-a-symbol shape.
   - Found while probing literal splats (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2492,6 +2485,23 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **3.93 A struct built over arithmetic on `Self.n` inside a method fails
+  MIR verification**
+
+  Problem: `Counter[1 + Self.length](self.i)` in a method of
+  `Counter[length: Int]` stops on both backends with "place rooted at slot 0
+  lacks complete checked type metadata"; the pin runs it.
+  - `Counter[Self.length](self.i)`, the struct's own parameter unchanged,
+    runs on the VM and natively.
+  - The constructed value's type keeps the symbolic argument (`1 + length`)
+    in the erased method body, and the verifier requires a concrete place
+    type.
+  - `conformance/probes/symbolic_instance_construction_in_method.mojo` pins
+    it.
+  - Found while closing the forwarded value argument (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
 ### 4. Grow The CPU Standard Library *(demand-first)*
 
 - [ ] **4.1 Collection API parity**
@@ -2504,10 +2514,9 @@ last.
   task closes when its bullets are done, and a residue found inside a task
   moves to the task that owns its fix.
 
-  Depends on nothing as a whole, but two residues below are owned elsewhere:
+  Depends on nothing as a whole, but one residue below is owned elsewhere:
   the `var` collision across unrolled iterations is section 3's `comptime
-  for` scoping entry, and the non-constant value argument is section 2's
-  native constant entry.
+  for` scoping entry.
 
   1. **Compile-time evaluation residues** — what VM CTFE can bind and
      resolve.
@@ -2567,10 +2576,7 @@ last.
      - Value-parameterized structs get no instance clones, so an erased
        body's `_unqualified_type_name[Self.T]()` spells `T` (`repr([1, 2])`
        prints `Array[T, 2]([Int(1), Int(2)])` where upstream prints the
-       element type). A `Self.n` bracket argument inside such a body
-       (`Counter[Self.length](i)`) is VM-only: native monomorphization
-       needs a compile-time-constant value argument (`unsupported value
-       parameter 'length' is not compile-time constant`).
+       element type).
      - Clones are minted per whole instance with no reachability pruning
        and re-checked each discovery round. `benchmarks/compile/stdlib_heavy`
        is about 2.2x its pre-clone baseline in release

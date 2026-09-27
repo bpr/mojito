@@ -28,8 +28,8 @@ pub(super) struct FunctionLowering<'a> {
     /// argument naming one is an erased origin argument that carries no
     /// register.
     pub(super) enclosing_origin_parameters: Vec<String>,
-    /// The enclosing struct's type binders, then the function's own.
-    pub(super) enclosing_type_parameters: Vec<mojito_types::param_expr::ParamRef>,
+    /// The enclosing struct's binders, then the function's own.
+    pub(super) enclosing_binders: EnclosingBinders,
     pub(super) owned_parameters: Vec<bool>,
     pub(super) deinit_parameters: Vec<bool>,
     pub(super) reference_parameters: Vec<bool>,
@@ -56,7 +56,7 @@ pub(super) fn lower_fn_nested(
         value_parameter_locals,
         receiver_value_parameters,
         enclosing_origin_parameters,
-        enclosing_type_parameters,
+        enclosing_binders,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
         reference_parameters: ref_params,
@@ -96,7 +96,7 @@ pub(super) fn lower_fn_nested(
         checked.call_transfers(),
         &receiver_value_parameters,
         &enclosing_origin_parameters,
-        &enclosing_type_parameters,
+        &enclosing_binders,
     );
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
@@ -131,7 +131,7 @@ pub(super) fn lower_fn_nested(
             overloads,
             out,
             declarations,
-            &enclosing_type_parameters,
+            &enclosing_binders,
         );
     }
 }
@@ -301,7 +301,7 @@ fn lower_nested_node(
     overloads: &mojito_symbol::symbol::OverloadSets,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
-    enclosing_type_parameters: &[mojito_types::param_expr::ParamRef],
+    enclosing_binders: &EnclosingBinders,
 ) {
     let ds = node.statement;
     if let StmtKind::Def {
@@ -349,6 +349,7 @@ fn lower_nested_node(
             .unwrap_or(&[])
             .to_vec();
         let value_parameter_locals = value_parameter_locals(&param_decls);
+        let enclosing_binders = &enclosing_binders.with(&param_decls);
         names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
         let mut ptys = capture_types.clone();
         ptys.extend(caller_params.iter().map(|(param, p)| {
@@ -551,7 +552,7 @@ fn lower_nested_node(
             checked.call_transfers(),
             &[],
             &[],
-            enclosing_type_parameters,
+            enclosing_binders,
         );
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {
@@ -593,7 +594,7 @@ fn lower_nested_node(
                 overloads,
                 out,
                 declarations,
-                enclosing_type_parameters,
+                enclosing_binders,
             );
         }
     }

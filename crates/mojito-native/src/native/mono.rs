@@ -105,10 +105,11 @@ struct Specializer<'a> {
     output_structs: Vec<MirStructDeclaration>,
     constant_values: HashMap<u32, CtValue>,
     callable_targets: HashMap<u32, (String, bool)>,
-    /// The type bindings of the instance being specialized: an erased body
+    /// The bindings of the instance being specialized: an erased body
     /// forwarding its own binder as a callee's type argument
-    /// (`hash[Self.H](key)`) resolves that binder here.
-    enclosing_types: HashMap<ParamRef, Ty>,
+    /// (`hash[Self.H](key)`), or building a value argument from its own
+    /// value binders (`successor[n, 1 + n]()`), resolves them here.
+    enclosing: Bindings,
     /// Instance names enqueued only by struct discovery's eager `__init__`
     /// walk, never by a call site. A conditional constructor (`__init__(out
     /// self) where conforms_to(Self.T, Defaultable)`) has no MIR-visible

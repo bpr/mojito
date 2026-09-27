@@ -259,11 +259,20 @@ impl Decoder {
             .ok()
             .and_then(|found| self.option_value(Some(found)))
             .and_then(|found| self.binder_ref(found));
-        self.unknown(fields, &["name", "value", "binder"]);
+        // Schema 1.7 records the expression a value argument built from the
+        // caller's value binders denotes; an older artifact carries only the
+        // runtime register.
+        let expr = self
+            .field(fields, "expr")
+            .ok()
+            .and_then(|found| self.option_value(Some(found)))
+            .and_then(|found| self.param_expr(found));
+        self.unknown(fields, &["name", "value", "binder", "expr"]);
         Some(MirParamArg {
             name,
             value: param_value,
             binder,
+            expr,
         })
     }
 

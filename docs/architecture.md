@@ -1510,7 +1510,12 @@ hashes under `SumHasher` on insertion as well as lookup. The argument's slot
 records the binder itself (`MirParamArg::binder`), as the construction names
 the binder it builds, and the native monomorphizer resolves both by that
 identity in the instance's type bindings (`Bindings.types`, keyed by
-`ParamRef`).
+`ParamRef`). A value argument built from the caller's own value binders
+(`successor[n, 1 + n]()`, `below[Self.n, k]()`) keeps its runtime register
+for the VM and records the expression over those binders beside it
+(`MirParamArg::expr`, built by `Flatten::forwarded_value` through
+`ParamContext`), which the monomorphizer evaluates under the caller
+instance's bindings (`bind_explicit_value_arguments`, `eval_ct`).
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not

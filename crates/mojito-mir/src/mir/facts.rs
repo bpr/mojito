@@ -363,6 +363,7 @@ impl Flatten<'_> {
                     })
                 }),
                 binder: None,
+                expr: None,
             })
             .collect();
         MirSubscriptCall {

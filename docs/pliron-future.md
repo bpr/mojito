@@ -239,8 +239,7 @@ Existing lifecycle and place defects come first, but not all of
 [`docs/roadmap.md`](roadmap.md) §2 and §3, since §3 reopens at every re-pin.
 What gates the pivot is the handful of §2 native-backend defects whose shapes
 the Stage A1 slice itself uses: a specialized generic struct whose constructor
-mangles into an existing symbol, a forwarded value argument that is not a
-native constant, a consuming move out of a `deinit self` with droppable
+mangles into an existing symbol, a consuming move out of a `deinit self` with droppable
 fields, and a one-element tuple. The slice executes natively and on the VM
 from one module, so a backend that miscompiles those shapes cannot be judged
 for conversion totality or execution parity. §1's own entries do not gate it:

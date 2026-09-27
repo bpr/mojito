@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value argument built from the caller's own value parameters
+  (`successor[n, 1 + n]()`, a method's `below[Self.n, k]()`,
+  `Counter[Self.length](i)`) now compiles natively
+  (`assets/ok/value_argument_from_caller_parameter.mojo`). It ran on the VM
+  and the native backend refused it as "not compile-time constant". MIR
+  records the argument as a parameter expression, which monomorphization
+  evaluates under the caller instance's bindings (MIR text schema 1.7).
 - A struct operator whose dunder reads its operands (`b == c`, `b + c`)
   now borrows a named operand where it lies, and `hash(b)` hashes its
   argument in place, as upstream (`assets/ok/operator_operand_borrow.mojo`),

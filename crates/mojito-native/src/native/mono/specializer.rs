@@ -41,7 +41,7 @@ impl<'a> Specializer<'a> {
             output_structs: Vec::new(),
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
-            enclosing_types: HashMap::new(),
+            enclosing: Bindings::default(),
             speculative: HashSet::new(),
         }
     }
@@ -317,7 +317,7 @@ impl<'a> Specializer<'a> {
             .collect();
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
-        self.enclosing_types.clone_from(&bindings.types);
+        self.enclosing.clone_from(bindings);
         self.constant_values.extend(
             self.callable_targets
                 .iter()
