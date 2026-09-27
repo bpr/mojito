@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct specialized whole because a value binder is a lane width
+  (`Width[n: Int]` spelling `SIMD[dt, Self.n]`) now has its members and each
+  per-call clone of a method keyed on its own binder (`w.rep[DType.int16](v)`)
+  derived from checked templates
+  (`assets/ok/dtype_keyed_method_value_struct.mojo`). Its members were never
+  validated and its per-call clones left no trace, so every one was checked
+  again per specialization and per call.
 - A method keyed on a `DType` or vector-width binder of its own
   (`kind[dt: DType](self, …)` building `Scalar[dt](…)`, `lanes[w: Int](self)`
   building `SIMD[DType.int32, w](…)`) now derives each per-call clone from

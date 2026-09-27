@@ -1484,7 +1484,8 @@ impl Elab<'_> {
             // A method with its own baked binder specializes per call from
             // its unelaborated body over the folded struct values; the
             // checker retargets the call to `mangle(method, call values)` on
-            // this specialization.
+            // this specialization, and the clone's trace takes the folded
+            // values before its own (`restamp_leaf_traces`).
             if !requests.is_empty() {
                 let source = Method {
                     body: source_body,
@@ -1494,7 +1495,14 @@ impl Elab<'_> {
                     orig,
                     &source,
                     requests,
-                    &PerCallBase::default(),
+                    &PerCallBase {
+                        owner: Some(PerCallOwner {
+                            name: &mangled,
+                            module: template.module.as_deref(),
+                            template: orig,
+                        }),
+                        ..PerCallBase::default()
+                    },
                     &env,
                 ));
             }
@@ -2895,7 +2903,7 @@ impl Elab<'_> {
             });
     }
 
-    /// Complete the traces of the per-call leaves minted into a value-keyed
+    /// Complete the traces of the per-call leaves and clones minted into a
     /// struct specialized whole, from `from` on: each leaf's source tag is
     /// the specialization's, which stamping gave its body, and the struct's
     /// folded values precede the leaf's own bindings.
@@ -3390,8 +3398,8 @@ impl Elab<'_> {
 /// the instance clone's explicit receiver type, the struct whose method
 /// list the clone joins under its own source tag, which a trace names, and
 /// the origin binders the instance declares on every clone of it. A
-/// clone minted into a struct specialized whole names no owner and leaves
-/// no trace.
+/// clone minted into a struct specialized whole names the specialization
+/// as its owner and the template struct as its template's.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PerCallBase<'a> {
     pub(super) values: &'a [CtValue],

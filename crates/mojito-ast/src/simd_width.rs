@@ -2,7 +2,7 @@
 //! types, statements, and expressions. The elaborator specializes such a
 //! declaration per call, and source validation checks its template.
 
-use crate::ast::{Expr, ExprKind, Method, ParamArg, Stmt, StmtKind, Type, TypeParam};
+use crate::ast::{Expr, ExprKind, Method, Param, ParamArg, Stmt, StmtKind, Type, TypeParam};
 
 /// Whether a generic `def` uses one of its parameters as a lane width.
 ///
@@ -53,6 +53,15 @@ pub fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
     else {
         return false;
     };
+    struct_members_use_layout_dependent_param(type_params, fields, methods)
+}
+
+/// [`struct_uses_layout_dependent_param`] over a struct's parts.
+pub fn struct_members_use_layout_dependent_param(
+    type_params: &[TypeParam],
+    fields: &[Param],
+    methods: &[Method],
+) -> bool {
     let names: Vec<&str> = type_params
         .iter()
         .map(|parameter| parameter.name.as_str())

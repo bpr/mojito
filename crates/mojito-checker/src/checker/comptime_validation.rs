@@ -36,7 +36,7 @@ impl Checker {
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
         let mut overload_indices = HashMap::<String, usize>::new();
-        let value_keyed = value_keyed_struct(&self.self_decls);
+        let value_keyed = value_keyed_struct(&self.self_decls, declaration);
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m).to_string();
             let overload_index = *overload_indices.entry(method_name.clone()).or_default();
@@ -1328,25 +1328,6 @@ pub(super) fn validates_body(
         || type_params.iter().any(simd_wildcard_binder)
 }
 
-/// Whether a struct's binders are all compile-time values and one is a
-/// `DType` or a vector (`_SequentialRange[dtype: DType]`,
-/// `AHasher[key: U256]`): the elaborator specializes such a struct whole per
-/// value and drops its template, so source validation checks every method
-/// body with the values symbolic.
-pub(super) fn value_keyed_struct(decls: &[ParamDecl]) -> bool {
-    decls.iter().all(|decl| {
-        matches!(
-            decl,
-            ParamDecl::Value {
-                variadic: false,
-                ..
-            }
-        )
-    }) && decls.iter().any(|decl| {
-        matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Dtype | Ty::Simd { .. }))
-    })
-}
-
 /// Whether a module-level `def` keys a lane on a `DType` binder of its own
 /// or uses a parameter as a lane width (`Scalar[dt](v)`, `SIMD[DType.int32,
 /// w]`): the elaborator specializes such a def per call and drops its
@@ -1416,6 +1397,32 @@ fn stmt_has_comptime(stmt: &Stmt) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a struct's binders are all compile-time values and one is a
+/// `DType` or a vector (`_SequentialRange[dtype: DType]`,
+/// `AHasher[key: U256]`), or one is a lane width (`Width[n: Int]` spelling
+/// `SIMD[dt, Self.n]`): the elaborator specializes such a struct whole per
+/// value and drops its template, so source validation checks every method
+/// body with the values symbolic.
+fn value_keyed_struct(decls: &[ParamDecl], declaration: &StructDeclaration<'_>) -> bool {
+    let values_only = decls.iter().all(|decl| {
+        matches!(
+            decl,
+            ParamDecl::Value {
+                variadic: false,
+                ..
+            }
+        )
+    });
+    values_only
+        && (decls.iter().any(|decl| {
+            matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Dtype | Ty::Simd { .. }))
+        }) || mojito_ast::simd_width::struct_members_use_layout_dependent_param(
+            declaration.type_params,
+            declaration.fields,
+            declaration.methods,
+        ))
 }
 
 /// The element spelling of a materialized compile-time tuple: a literal

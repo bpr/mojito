@@ -1403,18 +1403,29 @@ impl Checker {
             .iter()
             .flat_map(|relocation| [relocation.spread.syntax, relocation.transfer.syntax])
             .collect();
-        // A folded vector value drops the `Self` its name was read on, the
-        // template occurrence right after the name's in pre-order, and adds
+        // A folded struct value (`Self.key`, `Self.n`) drops the `Self` its
+        // name was read on, the template occurrence right after the name's
+        // in pre-order, which the instance no longer holds; a vector adds
         // its lanes, which no template occurrence has.
+        let instance_syntax: HashSet<SyntaxId> = occurrences
+            .iter()
+            .map(|occurrence| occurrence.id.syntax)
+            .collect();
         let folded_selves: Vec<SyntaxId> = occurrences
             .iter()
-            .filter(|occurrence| matches!(occurrence.vector_fold, Some(VectorFold::Construction)))
             .filter_map(|occurrence| {
                 let order = &checked.facts.occurrences;
                 let at = order
                     .iter()
                     .position(|id| id.syntax == occurrence.id.syntax)?;
-                order.get(at + 1).map(|id| id.syntax)
+                let next = order.get(at + 1)?.syntax;
+                match occurrence.vector_fold {
+                    Some(VectorFold::Construction) => Some(next),
+                    None if occurrence.literal.is_some() && !instance_syntax.contains(&next) => {
+                        Some(next)
+                    }
+                    _ => None,
+                }
             })
             .collect();
         let template_occurrences = checked
@@ -4034,17 +4045,6 @@ impl Checker {
         }
     }
 
-    /// The struct binders `select` picks for a member the executable check
-    /// certifies: a struct kept on the erased path, which reads them at run
-    /// time and no clone folds.
-    fn erased_struct_binders(&self, select: fn(&[ParamDecl]) -> Vec<&str>) -> Vec<&str> {
-        if self.source_validation {
-            Vec::new()
-        } else {
-            select(&self.self_decls)
-        }
-    }
-
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -4261,7 +4261,7 @@ impl Checker {
             pack_struct,
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
-            struct_values: self.erased_struct_binders(struct_scalar_binders),
+            struct_values: struct_scalar_binders(&self.self_decls),
             struct_lanes: self.validated_struct_binders(struct_lane_binders),
             struct_vectors: self.validated_struct_binders(struct_vector_binders),
             print_calls: RefCell::new(Vec::new()),
@@ -7496,8 +7496,9 @@ fn struct_pack_collectors<'m, 'd>(
     (pack, collectors)
 }
 
-/// The names of a struct's `DType` binders, which key a struct specialized
-/// whole and name its members' symbolic lane (`Scalar[Self.dtype]`).
+/// The names of a struct's `DType` and `Int` binders, which key a struct
+/// specialized whole and name its members' symbolic lane
+/// (`Scalar[Self.dtype]`, `SIMD[dt, Self.n]`).
 fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
     decls
         .iter()
@@ -7507,7 +7508,7 @@ fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
                 ty,
                 variadic: false,
                 ..
-            } if **ty == Ty::Dtype => Some(name.as_str()),
+            } if matches!(**ty, Ty::Dtype | Ty::Int) => Some(name.as_str()),
             _ => None,
         })
         .collect()
@@ -11141,7 +11142,9 @@ impl BodyShape<'_> {
 
     /// Whether `expr` is `Self.<value>` in a method body, reading the
     /// struct's own scalar value binder: a runtime read of the reified
-    /// parameter, with no binding of its own.
+    /// parameter on the erased path, and in a struct specialized whole a
+    /// literal every specialization folds under the name's identity, with no
+    /// binding of its own either way.
     fn struct_value(&self, expr: &Expr) -> bool {
         self.receiver
             && matches!(&expr.kind, ExprKind::Member { object, field }
@@ -12623,17 +12626,20 @@ impl BodyShape<'_> {
         self.value_shaped_simd(ty) || self.struct_lane_simd(ty)
     }
 
-    /// A `SIMD` type whose open slots name only the struct's `DType`
-    /// binders, which every specialization of a struct specialized whole
-    /// folds, as a keyed body's own binders are folded.
+    /// A `SIMD` type whose open slots name only the struct's lane binders,
+    /// which every specialization of a struct specialized whole folds, and
+    /// the declaration's own value binders, folded as a keyed body's are
+    /// (`SIMD[dt, Self.n]` in `rep[dt: DType]` of `Width[n: Int]`).
     fn struct_lane_simd(&self, ty: &Ty) -> bool {
         let mut named = HashSet::new();
         mojito_types::types::referenced_parameters(ty, &mut named);
         matches!(ty, Ty::Simd { .. })
-            && !named.is_empty()
             && named
                 .iter()
-                .all(|name| self.struct_lanes.contains(&name.as_str()))
+                .any(|name| self.struct_lanes.contains(&name.as_str()))
+            && named.iter().all(|name| {
+                self.struct_lanes.contains(&name.as_str()) || self.values.contains(&name.as_str())
+            })
     }
 
     /// Whether the recorded type of `expr` is a value-shaped vector the
@@ -12677,6 +12683,12 @@ fn folded_literals(
         })
         .flat_map(|occurrence| occurrence.arguments.iter().copied())
         .collect();
+    // A vector construction takes a literal lane as it stands.
+    let lanes: HashSet<SyntaxId> = occurrences
+        .iter()
+        .filter(|occurrence| matches!(occurrence.callee.as_deref(), Some("SIMD" | "Scalar")))
+        .flat_map(|occurrence| occurrence.arguments.iter().copied())
+        .collect();
     // A fold keeps the identity of the name, or of the use (`Self.Ts.length`)
     // the template typed as the runtime `Int` it stands for.
     let named = |occurrence: &Occurrence| {
@@ -12706,6 +12718,9 @@ fn folded_literals(
                 .map(|(_, ty)| ty);
             let (ty, materialized) = match (&occurrence.literal, recorded) {
                 (Some(CtValue::Int(_)), _) if indices.contains(&occurrence.id.syntax) => {
+                    (Ty::IntLiteral, None)
+                }
+                (Some(CtValue::Int(_)), Some(Ty::Int)) if lanes.contains(&occurrence.id.syntax) => {
                     (Ty::IntLiteral, None)
                 }
                 (Some(CtValue::Int(_)), Some(Ty::Int)) => (Ty::IntLiteral, Some(Ty::Int)),

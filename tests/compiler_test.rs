@@ -1891,6 +1891,45 @@ fn template_method_own_lane_derives() {
 }
 
 #[test]
+fn template_value_struct_per_call_clones_derive() {
+    // A struct specialized whole because a value binder is a lane width
+    // (`Width[n: Int]` spelling `SIMD[dt, Self.n]`) has its members
+    // validated as templates, and each per-call clone of a method keyed on
+    // its own binder derives from its template under both the struct's
+    // folded value and the call's.
+    let source = "struct Width[n: Int]:\n    def __init__(out self):\n        pass\n\n    def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt, Self.n]:\n        return a + a\n\n    def sized[dt: DType](self, a: SIMD[dt, Self.n]) -> Int:\n        return Self.n + len(a)\n\n    def widen[w: Int](self) -> SIMD[DType.int32, w]:\n        return SIMD[DType.int32, w](Self.n)\n\ndef main():\n    var w = Width[4]()\n    print(w.rep[DType.int16](SIMD[DType.int16, 4](1, 2, 3, 4)))\n    print(w.sized(SIMD[DType.uint8, 4](1)), w.widen[2]())\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let per_call: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("Width$i4;.") && name.ends_with(';'))
+            .collect();
+        assert_eq!(
+            per_call,
+            [
+                "Width$i4;.rep$dint16;",
+                "Width$i4;.sized$duint8;",
+                "Width$i4;.widen$i2;"
+            ]
+            .into(),
+            "every per-call clone derives: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "[2, 4, 6, 8]\n8 [4, 4]\n"
+        );
+    }
+}
+
+#[test]
 fn discovery_scan_matches_the_checked_arena() {
     // Request discovery reads a `DiscoveryResult` instead of the assembled
     // arena. Every request kind is a function of the expressions visited,
