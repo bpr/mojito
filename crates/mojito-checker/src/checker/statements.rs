@@ -2251,11 +2251,7 @@ impl Checker {
             .collect::<Result<Vec<_>, _>>();
         self.tparams.pop();
         for constraint in compiled? {
-            let mut facts = Vec::new();
-            guaranteed_conformance_atoms(&constraint, &mut facts);
-            function_assumptions.extend(facts.into_iter().map(|(parameter, trait_name)| {
-                (parameter.trim_start_matches('*').to_string(), trait_name)
-            }));
+            guaranteed_conformance_atoms(&constraint, &mut function_assumptions);
             if let Some(last) = decls.last_mut() {
                 match last {
                     ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {

@@ -481,7 +481,7 @@ Three decisions shaped this, against the pack precedent.
   on `types[0]` says nothing of `types[i]`, a proof after the use or in
   another loop nothing at all. `conformance_arm_assumptions` pushes the
   atoms on `assumed_conformances` around the arm, keyed by the binder's
-  name or the element's spelling, so the plain-parameter path
+  identity or the element's canonical expression, so the plain-parameter path
   (`has_assumed_conformance`) and the view path read the same table.
 
 What the pin licenses, probed 2026-09-23 (Mojo 1.2.0.dev2026092105) and

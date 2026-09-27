@@ -758,7 +758,7 @@ impl Checker {
             // The method's own `where` clause refines its signature exactly as
             // it refines its body: a conditionally available method may name
             // types its receiver's bare bounds do not admit.
-            let signature = match self.method_where_assumptions(m) {
+            let signature = match self.method_where_assumptions(m, &method_decls) {
                 Ok(assumptions) => {
                     self.assume_propositions(Vec::new());
                     self.assumed_conformances.push(assumptions);
@@ -1906,17 +1906,17 @@ impl Checker {
     }
 
     /// A positive `conforms_to(T, Trait)` atom from the active method's
-    /// availability clause refines only that opaque parameter while its body is
-    /// checked. No negative or disjunctive fact reaches this table (see
-    /// `guaranteed_conformance_atoms`).
+    /// availability clause refines only that opaque parameter, by its binder's
+    /// identity, while its body is checked. No negative or disjunctive fact
+    /// reaches this table (see `guaranteed_conformance_atoms`).
     pub(super) fn has_assumed_conformance(&self, ty: &Ty, required: &str) -> bool {
         let Ty::Param { binder, .. } = ty else {
             return false;
         };
-        let name = binder.name.trim_start_matches('*');
+        let subject = AssumedSubject::Binder(binder.id.clone());
         self.assumed_conformances.iter().rev().any(|scope| {
             scope.iter().any(|(parameter, available)| {
-                parameter.trim_start_matches('*') == name
+                *parameter == subject
                     && (available == required
                         || self.trait_refines(available, required)
                         || matches!(
@@ -1966,178 +1966,29 @@ impl Checker {
         })
     }
 
+    /// Whether a struct's conformance condition holds under `args`: the
+    /// condition compiled against the struct's own binders, judged under the
+    /// arguments bound to them by identity.
     pub(super) fn eval_conformance_condition(
         &self,
         info: &StructInfo,
         args: &[TyArg],
         expr: &Expr,
     ) -> bool {
-        let pack = positional_pack_binding(&info.decls, args);
-        let arguments: HashMap<&str, &TyArg> = info
-            .decls
-            .iter()
-            .zip(args)
-            .map(|(decl, arg)| {
-                // A condition names a pack by its unstarred spelling.
-                (decl.name().trim_start_matches('*'), arg)
-            })
-            .chain(pack.as_ref().map(|(name, list)| (name.as_str(), list)))
-            .collect();
-        self.eval_conformance_predicate(expr, &info.decls, &arguments)
-    }
-
-    /// Whether a conformance condition of the declaration owning `decls`
-    /// holds under `args`, the arguments by their parameters' spellings.
-    pub(super) fn eval_conformance_predicate(
-        &self,
-        expr: &Expr,
-        decls: &[ParamDecl],
-        args: &HashMap<&str, &TyArg>,
-    ) -> bool {
-        let compiled = |constraint: &GenericConstraint| {
-            self.eval_generic_constraint(
-                &constraint.bind(&[decls]),
-                &ConstraintEnvironment::named(
-                    &[decls],
-                    args.iter().map(|(name, argument)| (*name, *argument)),
-                ),
-            )
+        let Ok(condition) = self.compile_condition(&info.decls, expr) else {
+            return false;
         };
-        // A predicate-alias application inlines its compiled Bool body (with
-        // the condition's spellings substituted), then evaluates it under the
-        // same argument environment as the surrounding condition.
-        if let Some((name, param_args)) = self.predicate_alias_application(expr) {
-            let name = name.to_string();
-            return self
-                .apply_predicate_alias(&name, &param_args)
-                .is_ok_and(|constraint| compiled(&constraint));
-        }
-        match &expr.kind {
-            ExprKind::TupleLit(elements)
-                if matches!(
-                    elements.as_slice(),
-                    [
-                        _,
-                        Expr {
-                            kind: ExprKind::Str(_),
-                            ..
-                        }
-                    ]
-                ) =>
-            {
-                self.eval_conformance_predicate(&elements[0], decls, args)
-            }
-            ExprKind::Bool(value) => *value,
-            ExprKind::TypeApply {
-                name,
-                args: applied,
-            } if mojito_types::types::trivial_predicate_name(name).is_some()
-                && applied.len() == 1 =>
-            {
-                let kind = mojito_types::types::trivial_predicate_name(name).expect("guarded");
-                let operand = match &applied[0] {
-                    mojito_ast::ast::ParamArg::Type(SourceType::Named(param, param_args))
-                        if param_args.is_empty() =>
-                    {
-                        Some(param.as_str())
-                    }
-                    mojito_ast::ast::ParamArg::Value(Expr {
-                        kind: ExprKind::Identifier(param),
-                        ..
-                    }) => Some(param.as_str()),
-                    _ => None,
-                };
-                match operand.and_then(|param| args.get(param)) {
-                    Some(TyArg::Ty(ty)) => self.is_trivially(kind, ty),
-                    _ => false,
-                }
-            }
-            // The single-bracket-argument spelling parses as runtime indexing.
-            ExprKind::Index { object, index }
-                if matches!(
-                    &object.kind,
-                    ExprKind::Identifier(name)
-                        if mojito_types::types::trivial_predicate_name(name).is_some()
-                ) =>
-            {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                let kind = mojito_types::types::trivial_predicate_name(name).expect("guarded");
-                let param = match &index.kind {
-                    ExprKind::Identifier(param) => Some(param.as_str()),
-                    _ => None,
-                };
-                match param.and_then(|param| args.get(param)) {
-                    Some(TyArg::Ty(ty)) => self.is_trivially(kind, ty),
-                    _ => false,
-                }
-            }
-            ExprKind::Prefix(PrefixOp::Not, value) => {
-                !self.eval_conformance_predicate(value, decls, args)
-            }
-            ExprKind::Infix(InfixOp::And, left, right) => {
-                self.eval_conformance_predicate(left, decls, args)
-                    && self.eval_conformance_predicate(right, decls, args)
-            }
-            ExprKind::Infix(InfixOp::Or, left, right) => {
-                self.eval_conformance_predicate(left, decls, args)
-                    || self.eval_conformance_predicate(right, decls, args)
-            }
-            ExprKind::Infix(op, left, right)
-                if matches!(
-                    op,
-                    InfixOp::Eq
-                        | InfixOp::Ne
-                        | InfixOp::Lt
-                        | InfixOp::Le
-                        | InfixOp::Gt
-                        | InfixOp::Ge
-                ) =>
-            {
-                let Some(left) = conformance_operand(left, args) else {
-                    return false;
-                };
-                let Some(right) = conformance_operand(right, args) else {
-                    return false;
-                };
-                compare_ct_integers(*op, &left, &right).unwrap_or_else(|| match op {
-                    InfixOp::Eq => ct_values_equal(&left, &right),
-                    InfixOp::Ne => !ct_values_equal(&left, &right),
-                    _ => false,
-                })
-            }
-            ExprKind::Call {
-                name,
-                args: operands,
-                kwargs,
-                ..
-            } if name == "conforms_to" && kwargs.is_empty() && operands.len() == 2 => {
-                // `conforms_to(Ts.values, Trait)` holds of every element of
-                // the pack the application binds.
-                if super::constraints::pack_values_projection(&operands[0]).is_some() {
-                    return self
-                        .compile_generic_constraint(expr)
-                        .is_ok_and(|constraint| compiled(&constraint));
-                }
-                let ExprKind::Identifier(type_name) = &operands[0].kind else {
-                    return false;
-                };
-                let ExprKind::Identifier(trait_name) = &operands[1].kind else {
-                    return false;
-                };
-                let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
-                matches!(args.get(type_name.as_str()), Some(TyArg::Ty(ty)) if self.conforms_to(ty, trait_name))
-            }
-            // `Ts.all_conforms_to[Trait]()` over a pack the application binds.
-            _ => pack_conformance_atom(expr).is_some_and(|(pack, trait_name)| {
-                args.contains_key(pack)
-                    && compiled(&GenericConstraint::ConformsPack {
-                        param: ParamRef::unbound(pack),
-                        trait_name: trait_name.to_string(),
-                    })
-            }),
-        }
+        // A sole variadic parameter binds every positional argument as one
+        // pack.
+        let pack = positional_pack_binding(&info.decls, args).map(|(_, list)| list);
+        let environment = match (&pack, info.decls.as_slice()) {
+            (Some(list), [decl]) => ConstraintEnvironment::declared(
+                std::slice::from_ref(decl),
+                std::slice::from_ref(list),
+            ),
+            _ => ConstraintEnvironment::declared(&info.decls, args),
+        };
+        self.eval_generic_constraint(&condition, &environment)
     }
 
     pub(super) fn trait_refines(&self, candidate: &str, required: &str) -> bool {
@@ -3125,44 +2976,4 @@ type StructMemberTypes = (
 /// `def __mlir_index__(self) -> __mlir_type.index`.
 pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
     method.has_self && method.params.is_empty() && method.ret == Ty::Int && method.ret_mlir_index
-}
-
-/// The pack and trait of `Ts.all_conforms_to[Trait]()` (or `Self.Ts…`), read
-/// off syntax: a conformance condition is evaluated where its struct's
-/// parameters are not in scope.
-fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
-    use mojito_ast::ast::ParamArg;
-    let ExprKind::Invoke {
-        callee,
-        param_args,
-        args,
-        kwargs,
-    } = &expr.kind
-    else {
-        return None;
-    };
-    let ExprKind::Member { object, field } = &callee.kind else {
-        return None;
-    };
-    if field != "all_conforms_to" || !args.is_empty() || !kwargs.is_empty() {
-        return None;
-    }
-    let pack = match &object.kind {
-        ExprKind::Identifier(pack) => pack.as_str(),
-        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-            field.as_str()
-        }
-        _ => return None,
-    };
-    let trait_name = match param_args.as_slice() {
-        [ParamArg::Type(SourceType::Named(name, arguments))] if arguments.is_empty() => name,
-        [
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }),
-        ] => name,
-        _ => return None,
-    };
-    Some((pack, mojito_ast::ast::canonical_trait_name(trait_name)))
 }

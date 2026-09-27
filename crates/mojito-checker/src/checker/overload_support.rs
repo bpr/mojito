@@ -186,39 +186,31 @@ pub(super) const fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
     (sig.params.len(), sig.params.len())
 }
 
+/// The conformances a compiled, bound `where` clause guarantees inside its
+/// declaration's body, each keyed by the binder it refines.
 pub(super) fn guaranteed_conformance_atoms(
     constraint: &GenericConstraint,
-    output: &mut Vec<(String, String)>,
+    output: &mut HashSet<(AssumedSubject, String)>,
 ) {
+    let binder = |param: &ParamRef| AssumedSubject::Binder(param.id.clone());
     match constraint {
         GenericConstraint::WithMessage(condition, _) => {
             guaranteed_conformance_atoms(condition, output);
         }
-        GenericConstraint::Conforms { param, trait_name } => {
-            let atom = (param.name.to_string(), trait_name.clone());
-            if !output.contains(&atom) {
-                output.push(atom);
-            }
+        // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
+        // guarantee the trait of every element, recorded under the pack.
+        GenericConstraint::Conforms { param, trait_name }
+        | GenericConstraint::ConformsPack { param, trait_name } => {
+            output.insert((binder(param), trait_name.clone()));
         }
         // `where IsTrivially*[T]` guarantees the facet (and, through the
         // assumption table's implications, the base capability) inside the
         // body, recorded under the predicate's spelling.
         GenericConstraint::Trivial(kind, mojito_types::types::ConstraintOperand::Param(param)) => {
-            let atom = (
-                param.name.to_string(),
+            output.insert((
+                binder(param),
                 mojito_types::types::trivial_predicate_spelling(*kind).to_string(),
-            );
-            if !output.contains(&atom) {
-                output.push(atom);
-            }
-        }
-        // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
-        // guarantee the trait of every element, recorded under the pack's name.
-        GenericConstraint::ConformsPack { param, trait_name } => {
-            let atom = (param.name.to_string(), trait_name.clone());
-            if !output.contains(&atom) {
-                output.push(atom);
-            }
+            ));
         }
         GenericConstraint::And(left, right) => {
             guaranteed_conformance_atoms(left, output);

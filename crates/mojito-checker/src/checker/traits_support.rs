@@ -156,22 +156,6 @@ pub(super) fn merge_associated_requirement(
     }
 }
 
-pub(super) fn conformance_operand(
-    expression: &Expr,
-    arguments: &HashMap<&str, &TyArg>,
-) -> Option<CtValue> {
-    match &expression.kind {
-        ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
-        ExprKind::Bool(value) => Some(CtValue::Bool(*value)),
-        ExprKind::Str(value) => Some(CtValue::Str(value.clone())),
-        ExprKind::Identifier(name) => match arguments.get(name.as_str())? {
-            TyArg::Val(value) => Some((*value).clone()),
-            TyArg::Ty(_) | TyArg::Origin(_) => None,
-        },
-        _ => None,
-    }
-}
-
 pub(super) fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
     let (left, right) = (ct_integer(left)?, ct_integer(right)?);
     Some(match op {

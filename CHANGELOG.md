@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The conformances a `where` clause guarantees inside its declaration's
+  body, and those a `comptime if conforms_to(...)` arm proves, are recorded
+  against the binder they name rather than its spelling, so two
+  same-spelled binders no longer share an assumption. A struct's
+  conditional conformance is now judged as its compiled condition under
+  arguments bound to the struct's own binders.
 - A generic method call's compile-time arguments are kept in declaration
   order rather than keyed by spelling, and its availability clause binds
   them and the struct's arguments each to their own binders, so a method

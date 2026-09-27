@@ -143,25 +143,18 @@ impl Checker {
                 .iter()
                 .map(|condition| self.compile_where_clause(condition))
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut facts = Vec::new();
+            let mut facts = HashSet::new();
             for constraint in &compiled {
-                guaranteed_conformance_atoms(constraint, &mut facts);
+                guaranteed_conformance_atoms(&self.bind_constraint(constraint, &[]), &mut facts);
             }
             for (trait_name, condition) in conformance_conditions {
                 if self.trait_requires_comptime_member(trait_name, &member.name) {
-                    let constraint = self.compile_where_clause(condition)?;
+                    let constraint = self.compile_condition(&self.self_decls, condition)?;
                     guaranteed_conformance_atoms(&constraint, &mut facts);
                 }
             }
             self.assume_propositions(Vec::new());
-            self.assumed_conformances.push(
-                facts
-                    .into_iter()
-                    .map(|(parameter, trait_name)| {
-                        (parameter.trim_start_matches('*').to_string(), trait_name)
-                    })
-                    .collect(),
-            );
+            self.assumed_conformances.push(facts);
             let resolved = (|| {
                 if member.params.is_empty() {
                     let value = self.eval_associated_ct(&member.value, &out)?;
@@ -722,14 +715,32 @@ impl Checker {
     }
 
     /// A condition of the declaration owning `decls` (a struct's conditional
-    /// conformance), compiled and bound to those binders alone.
+    /// conformance), compiled and bound to those binders alone. It compiles
+    /// the same wherever it is judged: a bare `Ts.all_conforms_to[Trait]()`
+    /// is read against `decls`' packs, not the packs the current scope
+    /// encloses.
     pub(super) fn compile_condition(
         &self,
         decls: &[ParamDecl],
         condition: &Expr,
     ) -> Result<GenericConstraint, TypeError> {
-        self.compile_where_clause(condition)
-            .map(|constraint| constraint.bind(&[decls]))
+        let compiled = match &condition.kind {
+            ExprKind::TupleLit(elements) => match elements.as_slice() {
+                [
+                    inner,
+                    Expr {
+                        kind: ExprKind::Str(message),
+                        ..
+                    },
+                ] => GenericConstraint::WithMessage(
+                    Box::new(self.compile_declaration_proposition(decls, inner)?),
+                    message.clone(),
+                ),
+                _ => self.compile_where_clause(condition)?,
+            },
+            _ => self.compile_declaration_proposition(decls, condition)?,
+        };
+        Ok(compiled.bind(&[decls]))
     }
 
     /// Compile a `where` clause. An operand names its parameter unbound
@@ -1828,6 +1839,45 @@ impl Checker {
                 })
         })
     }
+
+    /// One proposition of [`Self::compile_condition`]: its connectives
+    /// recursed into, and a pack conformance over a pack `decls` declares
+    /// compiled against that pack.
+    fn compile_declaration_proposition(
+        &self,
+        decls: &[ParamDecl],
+        expr: &Expr,
+    ) -> Result<GenericConstraint, TypeError> {
+        let declares_pack = |pack: &str| {
+            decls.iter().any(|decl| {
+                matches!(decl, ParamDecl::Type { variadic: true, .. })
+                    && decl.name().trim_start_matches('*') == pack
+            })
+        };
+        Ok(match &expr.kind {
+            ExprKind::Prefix(PrefixOp::Not, value) => GenericConstraint::Not(Box::new(
+                self.compile_declaration_proposition(decls, value)?,
+            )),
+            ExprKind::Infix(InfixOp::And, left, right) => GenericConstraint::And(
+                Box::new(self.compile_declaration_proposition(decls, left)?),
+                Box::new(self.compile_declaration_proposition(decls, right)?),
+            ),
+            ExprKind::Infix(InfixOp::Or, left, right) => GenericConstraint::Or(
+                Box::new(self.compile_declaration_proposition(decls, left)?),
+                Box::new(self.compile_declaration_proposition(decls, right)?),
+            ),
+            _ => match pack_conformance_atom(expr) {
+                Some((pack, trait_name)) if declares_pack(pack) => {
+                    self.check_trait_name(trait_name)?;
+                    GenericConstraint::ConformsPack {
+                        param: ParamRef::unbound(pack),
+                        trait_name: trait_name.to_string(),
+                    }
+                }
+                _ => self.compile_generic_constraint(expr)?,
+            },
+        })
+    }
 }
 
 /// The conjuncts of a proposition: the operands of a canonical `and`, or the
@@ -2060,4 +2110,43 @@ fn validate_predicate_params(
         }
         Bool(_) => Ok(()),
     }
+}
+
+/// The pack and trait of `Ts.all_conforms_to[Trait]()` (or `Self.Ts…`), read
+/// off syntax.
+fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
+    use mojito_ast::ast::ParamArg;
+    let ExprKind::Invoke {
+        callee,
+        param_args,
+        args,
+        kwargs,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let ExprKind::Member { object, field } = &callee.kind else {
+        return None;
+    };
+    if field != "all_conforms_to" || !args.is_empty() || !kwargs.is_empty() {
+        return None;
+    }
+    let pack = match &object.kind {
+        ExprKind::Identifier(pack) => pack.as_str(),
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+            field.as_str()
+        }
+        _ => return None,
+    };
+    let trait_name = match param_args.as_slice() {
+        [ParamArg::Type(SourceType::Named(name, arguments))] if arguments.is_empty() => name,
+        [
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }),
+        ] => name,
+        _ => return None,
+    };
+    Some((pack, mojito_ast::ast::canonical_trait_name(trait_name)))
 }

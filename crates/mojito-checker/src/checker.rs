@@ -544,7 +544,7 @@ pub struct Checker {
     /// a temporary bound to the declaration changes the identity of `Ty::Param`
     /// and can make an otherwise identical return type fail to match. The
     /// facts refine capability queries only while that method body is checked.
-    assumed_conformances: Vec<HashSet<(String, String)>>,
+    assumed_conformances: Vec<HashSet<(AssumedSubject, String)>>,
     /// The residual propositions the enclosing declarations' own `where`
     /// clauses assume, level for level beside `assumed_conformances`. A
     /// callee's constraint that stays residual is proven only by being one of
@@ -2422,6 +2422,15 @@ fn self_struct_arguments(
                 .map(|(id, _)| TyArg::Origin(mojito_types::origin::Origin::Param(id))),
         )
         .collect()
+}
+
+/// What a conformance assumption refines: a declared parameter by its
+/// binder's identity, or a dependent pack element a `comptime if` arm proves
+/// something of, by its canonical expression.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum AssumedSubject {
+    Binder(ParamId),
+    Element(ParamExpr),
 }
 
 /// A generic top-level alias (`comptime Alias[params] = Type` or a Bool

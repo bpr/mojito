@@ -183,14 +183,14 @@ impl Checker {
 
     /// The conformances a `comptime if` condition proves of its operands for
     /// the arm it guards, as the pinned Mojo licenses them: every
-    /// `conforms_to(X, A & B)` atom under `and`, keyed by `X`'s spelling — a
-    /// parameter's binder name, a dependent element's expression — so the
-    /// proof reaches exactly that element, and only below the condition.
+    /// `conforms_to(X, A & B)` atom under `and`, keyed by what `X` denotes — a
+    /// parameter's binder, a dependent element's canonical expression — so
+    /// the proof reaches exactly that element, and only below the condition.
     /// `or`, `not`, and any other leaf prove nothing.
     pub(super) fn conformance_arm_assumptions(
         &self,
         cond: &Expr,
-    ) -> Result<HashSet<(String, String)>, TypeError> {
+    ) -> Result<HashSet<(AssumedSubject, String)>, TypeError> {
         let cond = self.inline_local_comptime_values(cond);
         let mut proved = HashSet::new();
         self.collect_arm_assumptions(&cond, &mut proved)?;
@@ -200,7 +200,7 @@ impl Checker {
     fn collect_arm_assumptions(
         &self,
         cond: &Expr,
-        proved: &mut HashSet<(String, String)>,
+        proved: &mut HashSet<(AssumedSubject, String)>,
     ) -> Result<(), TypeError> {
         match &cond.kind {
             ExprKind::Infix(InfixOp::And, left, right) => {
@@ -212,10 +212,10 @@ impl Checker {
                     return Ok(());
                 };
                 let key = match self.comptime_type_operand(&args[0])? {
-                    Some(Ty::Param { binder, .. }) => {
-                        binder.name.trim_start_matches('*').to_string()
+                    Some(Ty::Param { binder, .. }) => AssumedSubject::Binder(binder.id),
+                    Some(Ty::Dependent(dependent)) => {
+                        AssumedSubject::Element(dependent.expr().clone())
                     }
-                    Some(Ty::Dependent(dependent)) => dependent.expr().to_string(),
                     _ => return Ok(()),
                 };
                 proved.extend(trait_names.into_iter().map(|trait_name| {
@@ -851,11 +851,11 @@ impl Checker {
             _ => Vec::new(),
         };
         let spelled = dependent.expr().to_string();
-        for (parameter, guaranteed) in self.assumed_conformances.iter().flatten() {
-            let names_element = parameter == &spelled
-                || pack_name
-                    .as_deref()
-                    .is_some_and(|pack| parameter.trim_start_matches('*') == pack);
+        for (subject, guaranteed) in self.assumed_conformances.iter().flatten() {
+            let names_element = match subject {
+                AssumedSubject::Element(element) => element == dependent.expr(),
+                AssumedSubject::Binder(id) => pack.is_some_and(|reference| &reference.id == id),
+            };
             if names_element && !bounds.contains(guaranteed) {
                 bounds.push(guaranteed.clone());
             }
