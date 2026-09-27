@@ -257,9 +257,20 @@ pub(super) fn member_type_scope(
 /// its whole identity.
 pub(super) fn synthetic_binder(name: &str) -> ParamRef {
     ParamRef {
-        id: ParamId::new(&format!("$synthetic:{name}"), 0),
+        id: ParamId::new(&format!("{SYNTHETIC_BINDER_PREFIX}{name}"), 0),
         name: name.into(),
     }
+}
+
+/// Whether a binder is an existential `Some[Trait]` parameter's
+/// [`synthetic_binder`]: declared by the callee that spells it and never
+/// solved per call.
+pub(super) fn existential_binder(binder: &ParamRef) -> bool {
+    binder
+        .id
+        .owner
+        .strip_prefix(SYNTHETIC_BINDER_PREFIX)
+        .is_some_and(|name| name.starts_with("Some["))
 }
 
 /// The lane-shaped view of the wildcard vector binder inside its method's
@@ -384,3 +395,6 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
 pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> TySubst {
     mojito_types::types::struct_argument_substitution(decls, targs)
 }
+
+/// The owner spelling every [`synthetic_binder`] starts with.
+const SYNTHETIC_BINDER_PREFIX: &str = "$synthetic:";

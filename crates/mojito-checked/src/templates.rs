@@ -709,7 +709,8 @@ pub enum TemplateClass {
     MethodBody(MethodFeatures),
     /// A module-level trait-bound function beyond [`Self::FixedCalls`]: a
     /// runtime body holding a whole value of a parameter type in a local, an
-    /// argument, or a result, or a runtime `for`, named by its
+    /// argument, or a result, a runtime `for`, a construction, or a method
+    /// call with arguments, named by its
     /// [`MethodFeatures`] as a method's are. Its instances owe what a
     /// [`Self::MethodBody`]'s owe, plain-data arguments among them.
     FunctionBody(MethodFeatures),
@@ -750,8 +751,8 @@ impl MethodFeatures {
     /// Element arithmetic, takes, destroys, and writes through a pointer
     /// field of `self`.
     pub const POINTER_SLOTS: Self = Self(1 << 2);
-    /// A method call on `self` or one of its fields whose contract is closed
-    /// but carries arguments or a `mut` receiver.
+    /// A method call on `self`, a field of it, a local, or a parameter whose
+    /// contract is closed but carries arguments or a `mut` receiver.
     pub const SIBLING_CALLS: Self = Self(1 << 3);
     /// A reference result: every `return` hands out a place of `self`, a
     /// field or a pointer slot, as a handle rather than a value.

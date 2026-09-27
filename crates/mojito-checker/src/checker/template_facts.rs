@@ -13,7 +13,7 @@
 //! refuses a body instead of being dropped silently. The design record is
 //! `docs/notes/instantiation-from-template.md`.
 
-use super::annotations::{simd_binder_slots, simd_binder_view};
+use super::annotations::{existential_binder, simd_binder_slots, simd_binder_view};
 use super::body_carry::ObservedEffects;
 use super::builtins::{SIMD_WILDCARD_BOUND, simd_wildcard_binder};
 use super::{
@@ -3006,6 +3006,12 @@ impl Checker {
                 coverage,
                 TemplateCoverage::Certified(TemplateClass::FunctionBody(_))
             );
+        let constructs = method_body
+            || matches!(
+                coverage,
+                TemplateCoverage::Certified(TemplateClass::FunctionBody(features))
+                    if features.contains(MethodFeatures::CONSTRUCTIONS)
+            );
         self.template_catalog.borrow_mut().record(CheckedTemplate {
             id: site.template_id.clone(),
             producer: if self.source_validation {
@@ -3029,7 +3035,7 @@ impl Checker {
             ])
             .chain(whole_values.then_some(TemplateObligation::PlainDataArguments))
             .chain(method_body.then_some(TemplateObligation::ReplayedTransfers))
-            .chain(method_body.then_some(TemplateObligation::ConstructorSelection))
+            .chain(constructs.then_some(TemplateObligation::ConstructorSelection))
             .collect(),
         });
     }
@@ -3279,7 +3285,6 @@ impl Checker {
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
-            || !shape.constructions.borrow().is_empty()
             || !shape.repr_calls.borrow().is_empty()
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
@@ -3301,6 +3306,7 @@ impl Checker {
                 TemplateCoverage::Certified(class),
                 GrammarNotes {
                     print_calls: shape.print_calls.borrow().clone(),
+                    constructions: shape.constructions.borrow().clone(),
                     ..GrammarNotes::default()
                 },
             )
@@ -3363,8 +3369,14 @@ impl Checker {
         if facts.replays_transfers() {
             return outside("the body replays a transfer summary");
         }
+        // A construction's `__init__` target is re-selected per instance
+        // ([`Checker::realize_construction`]); it records no call parameters.
         let at_call = |id: &OccurrenceId| facts.call_parameters.iter().any(|(call, _)| call == id);
-        if !facts.overload_targets.iter().all(|(id, _)| at_call(id))
+        let constructions = shape.constructions.borrow();
+        if !facts
+            .overload_targets
+            .iter()
+            .all(|(id, _)| at_call(id) || constructions.contains(id))
             || facts
                 .generic_instantiations
                 .iter()
@@ -5747,13 +5759,13 @@ impl SpanKeyed for HashSet<SourceSpan> {
     }
 }
 
-/// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
-/// refuses a body that recorded into it.
 /// The features a [`TemplateClass::FunctionBody`] may hold: runtime
 /// statements, whole values moved or copied between a parameter, a local, an
 /// argument, and the result, a runtime `for` over a place, a condition
-/// tested through `__bool__`, a `SIMD` construction, and a `raises`
-/// declaration. Each recipe is a method body's, on a body without a receiver.
+/// tested through `__bool__`, a `SIMD` construction, a construction of a
+/// declared struct, a method call on a local or a parameter whose contract
+/// is a value contract, and a `raises` declaration. Each recipe is a method
+/// body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OPAQUE_MOVES)
     .union(MethodFeatures::VALUE_ARGUMENTS)
@@ -5763,8 +5775,12 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OWNED_PARAMETERS)
     .union(MethodFeatures::CONSUMING_CALLS)
     .union(MethodFeatures::POINTER_SLOTS)
-    .union(MethodFeatures::SIMD_CONSTRUCTIONS);
+    .union(MethodFeatures::SIMD_CONSTRUCTIONS)
+    .union(MethodFeatures::CONSTRUCTIONS)
+    .union(MethodFeatures::SIBLING_CALLS);
 
+/// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
+/// refuses a body that recorded into it.
 const fn derivable_table(table: FactTable) -> bool {
     match table {
         FactTable::ExpressionTypes
@@ -6895,6 +6911,24 @@ fn tuple_element_accessor(target: &str) -> Option<&str> {
 
 /// Whether the lowered callee `target` is `owner`'s `method`, or a clone or
 /// an overload of it.
+/// Whether an argument of the recorded type binds a parameter typed by the
+/// callee's existential `Some[…]` binder under every instance: the argument
+/// is a caller binder whose bounds name each of the existential's. A binder
+/// whose bound only refines one keeps the clone check.
+fn existential_argument(parameter: &Ty, argument: Option<&Ty>) -> bool {
+    match (parameter, argument) {
+        (
+            Ty::Param {
+                binder,
+                bounds: wanted,
+                ..
+            },
+            Some(Ty::Param { bounds: held, .. }),
+        ) => existential_binder(binder) && wanted.iter().all(|bound| held.contains(bound)),
+        _ => false,
+    }
+}
+
 fn names_method(target: &str, owner: &str, method: &str) -> bool {
     target
         .strip_prefix(owner)
@@ -9678,6 +9712,10 @@ impl BodyShape<'_> {
     /// binders of its own, so the call recorded its parameter types at the
     /// receiver's arguments, in the caller's binder scope, and an instance
     /// substitutes them in the contract and in the call's parameters alike.
+    /// A parameter typed by the callee's existential `Some[…]` binder stays
+    /// in the callee's scope under every instance: a whole value binds it
+    /// when its caller binder carries the existential's bounds, which the
+    /// instance's request discharged ([`existential_argument`]).
     fn argument(&self, call: &Expr, argument: &Expr) -> bool {
         let named = match &argument.kind {
             ExprKind::Identifier(name) => {
@@ -9736,6 +9774,10 @@ impl BodyShape<'_> {
                 && by_value
                 && parameter.is_some_and(|parameter| {
                     converted
+                        || existential_argument(
+                            &parameter.parameter_ty,
+                            fact_at(&facts.expression_types, id),
+                        )
                         || fact_at(&facts.expression_types, id) == Some(&parameter.parameter_ty)
                 })
                 && (read_in_place || copied_reference || self.whole_value(argument))

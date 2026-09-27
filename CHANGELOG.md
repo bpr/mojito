@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait-bound `def` that constructs a struct and calls a method on it
+  with a value argument, such as the bundled `hash_seeded` building an
+  `AHasher` and feeding it `value`, now reuses its checked template's facts
+  in every instance. Such functions used to be checked again per instance.
 - A struct method binding or returning an element of a tuple-typed local
   by value (`var head = entry[0]`, `return entry[0]` from a
   `Tuple[Self.T, Int]`) now reuses its checked template's facts in every
