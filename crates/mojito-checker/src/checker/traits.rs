@@ -232,6 +232,7 @@ impl Checker {
                     parametric_origin_writes: Vec::new(),
                     origin_binders: vec![None; regular_params.len()],
                     receiver: None,
+                    clone_origins: false,
                     synthesized_default: false,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
@@ -1151,6 +1152,7 @@ impl Checker {
                         parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
                         origin_binders: req_sig.origin_binders.clone(),
                         receiver: None,
+                        clone_origins: false,
                         synthesized_default: false,
                     };
                 if !got_sigs.iter().any(|got| {

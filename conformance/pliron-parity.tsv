@@ -327,6 +327,7 @@ assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
 assets/ok/partial_move_mut_parameter_reinit.mojo	main	exe-differential	sanitized
 assets/ok/partial_move_reinit_sibling_use.mojo	main	exe-differential	sanitized
 assets/ok/path_operations.mojo	main	exe-differential	sanitized
+assets/ok/per_call_clone_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/pliron_alloc_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/pliron_builtin_numeric_edges.mojo	main	exe-differential	sanitized
 assets/ok/pliron_callable_struct.mojo	main	exe-differential	sanitized

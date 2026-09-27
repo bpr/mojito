@@ -221,11 +221,9 @@ impl Elab<'_> {
             // it rather than being checked again.
             for arguments in &self.instance_requests[template] {
                 let mut origin_binders = CloneOriginBinders::default();
-                let Some((values, _)) = self.method_request_values(
-                    info.source_params,
-                    arguments,
-                    Some(&mut origin_binders),
-                ) else {
+                let Some((values, _)) =
+                    self.method_request_values(info.source_params, arguments, &mut origin_binders)
+                else {
                     continue;
                 };
                 if mono.instances_done.insert(mangle(template, &values)?) {
@@ -2032,9 +2030,12 @@ impl Elab<'_> {
                                 .all(|(name, parameter)| *name == parameter.name)
                     })
                 {
-                    let Some((values, bindings)) =
-                        self.method_request_values(&method.type_params, request.arguments(), None)
-                    else {
+                    let mut origin_binders = CloneOriginBinders::default();
+                    let Some((values, bindings)) = self.method_request_values(
+                        &method.type_params,
+                        request.arguments(),
+                        &mut origin_binders,
+                    ) else {
                         continue;
                     };
                     let instance = mangle(&method.name, &values)?;
@@ -2050,7 +2051,7 @@ impl Elab<'_> {
                     } else {
                         instance
                     };
-                    let clone = self
+                    let mut clone = self
                         .specialize_method_clone(&method, clone_name, &bindings, &env, &subs)
                         .map_err(|error| {
                             ComptimeError::NotComptime(format!(
@@ -2058,6 +2059,9 @@ impl Elab<'_> {
                                 method.name
                             ))
                         })?;
+                    clone
+                        .type_params
+                        .splice(0..0, origin_binders.params().iter().cloned());
                     elaborated_methods.push(clone);
                 }
                 match self.block(&method.body, &mut env, true) {
@@ -2259,14 +2263,14 @@ impl Elab<'_> {
     /// declaration order (type arguments as `CtValue::Type`, value
     /// arguments as themselves); callable-bounded and retained
     /// callable-value parameters stay symbolic; Origin binders have no
-    /// checker slot. `None` skips the request. With `origin_binders`, a type
-    /// argument mentioning an origin-slotted struct spells its slots as the
-    /// binders' names (see `Elab::clone_binding`); without, it skips.
+    /// checker slot. `None` skips the request. A type argument mentioning an
+    /// origin-slotted struct spells its slots as fresh `origin_binders`
+    /// (see `Elab::clone_binding`).
     pub(super) fn method_request_values(
         &self,
         type_params: &[TypeParam],
         arguments: &[TyArg],
-        mut origin_binders: Option<&mut CloneOriginBinders>,
+        origin_binders: &mut CloneOriginBinders,
     ) -> Option<(Vec<CtValue>, Vec<MethodBinding>)> {
         let mut values = Vec::new();
         let mut bindings = Vec::new();
@@ -2302,12 +2306,7 @@ impl Elab<'_> {
                     {
                         return None;
                     }
-                    let (bound, source) = match origin_binders.as_deref_mut() {
-                        Some(binders) => self.clone_binding(ty, binders)?,
-                        // See `Elab::ty_mentions_origin_slotted_struct`.
-                        None if self.ty_mentions_origin_slotted_struct(ty) => return None,
-                        None => (ty.clone(), source_type_from_ty(ty)?),
-                    };
+                    let (bound, source) = self.clone_binding(ty, origin_binders)?;
                     values.push(CtValue::Type(Box::new(ty.clone())));
                     bindings.push(MethodBinding {
                         name,
@@ -2540,6 +2539,7 @@ impl Elab<'_> {
                         module: template.module.as_deref(),
                         template: name,
                     }),
+                    origin_binders: Some(&origin_binders),
                 },
                 &consts,
             ));
@@ -2688,6 +2688,7 @@ impl Elab<'_> {
             bindings: base_bindings,
             receiver,
             owner,
+            origin_binders: base_binders,
         } = *base;
         let specializable = method
             .type_params
@@ -2714,8 +2715,12 @@ impl Elab<'_> {
                     .zip(&regular)
                     .all(|(name, parameter)| *name == parameter.name)
         }) {
+            // The call's own loan-carrying arguments bind their origin slots
+            // to binders numbered after the instance's: both land on the
+            // clone, which declares the instance's first.
+            let mut binders = base_binders.cloned().unwrap_or_default();
             let Some((call_values, call_bindings)) =
-                self.method_request_values(&method.type_params, request.arguments(), None)
+                self.method_request_values(&method.type_params, request.arguments(), &mut binders)
             else {
                 continue;
             };
@@ -2747,6 +2752,10 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = receiver.cloned();
+            let first_own = base_binders.map_or(0, |base| base.params().len());
+            clone
+                .type_params
+                .splice(0..0, binders.params()[first_own..].iter().cloned());
             if let Some(owner) = owner {
                 self.trace_per_call_clone(owner, method, &clone, &bindings, base_bindings.len());
             }
@@ -3306,8 +3315,9 @@ impl Elab<'_> {
 
 /// What a per-call method clone inherits from where it is minted: an
 /// instance's baked values and bindings (empty for a non-generic struct),
-/// the instance clone's explicit receiver type, and the struct whose method
-/// list the clone joins under its own source tag, which a trace names. A
+/// the instance clone's explicit receiver type, the struct whose method
+/// list the clone joins under its own source tag, which a trace names, and
+/// the origin binders the instance declares on every clone of it. A
 /// clone minted into a struct specialized whole, or into the CTFE
 /// subprogram, names no owner and leaves no trace.
 #[derive(Clone, Copy, Default)]
@@ -3316,6 +3326,7 @@ pub(super) struct PerCallBase<'a> {
     pub(super) bindings: &'a [MethodBinding],
     pub(super) receiver: Option<&'a Type>,
     pub(super) owner: Option<PerCallOwner<'a>>,
+    pub(super) origin_binders: Option<&'a CloneOriginBinders>,
 }
 
 /// The struct a traced per-call clone joins, its module, and the struct

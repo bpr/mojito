@@ -433,6 +433,11 @@ impl Checker {
                 .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
                 .collect(),
             receiver: None,
+            clone_origins: method.type_params.iter().any(|parameter| {
+                parameter
+                    .name
+                    .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
+            }),
             synthesized_default: method.synthesized,
         })
     }

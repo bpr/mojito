@@ -1112,7 +1112,7 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
 /// unless the slot fixes its mutability. A binder's `OriginParamId` counts
 /// down from `u32::MAX`, far above any checker slot index, and spells as its
 /// own name wherever the bound type is spelled (`source_type_from_ty`).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct CloneOriginBinders {
     count: u32,
     params: Vec<TypeParam>,

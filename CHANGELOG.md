@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic method called with a loan-carrying argument of its own
+  (`k.keep[Span[Int, origin_of(xs)]](v)`), on a plain struct, a generic
+  instance, or a static receiver, now gets a per-call clone whose origin
+  binders are inferred from its arguments. Such calls used to run the
+  template's erased body.
 - An instance of a bundled struct over a loan-carrying argument
   (`List[Span[Int, origin_of(xs)]]`, `Dict[Int, Span[Int, origin_of(xs)]]`)
   now gets its own method clones, as a user struct's instance does, and

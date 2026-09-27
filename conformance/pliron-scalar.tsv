@@ -327,6 +327,7 @@ assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_mut_parameter_reinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_reinit_sibling_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/path_operations.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/per_call_clone_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_alloc_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_builtin_numeric_edges.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pliron_callable_struct.mojo	-	ineligible	no-scalar-entry-shape

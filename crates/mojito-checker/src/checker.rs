@@ -2144,6 +2144,10 @@ struct MethodSig {
     /// (`Bag[Span[Int, __clone_origin0]]`), so a call binds them from its
     /// receiver as well as from its arguments. `None` for every other method.
     receiver: Option<Ty>,
+    /// The method is a clone declaring the elaborator's origin binders for a
+    /// loan-carrying type argument (`__clone_origin0`), which a call binds
+    /// from its receiver and arguments.
+    clone_origins: bool,
     /// A synthesized trait default ([`mojito_ast::ast::Method::is_synthesized_default`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,
@@ -2180,6 +2184,7 @@ impl MethodSig {
             parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
             receiver: None,
+            clone_origins: false,
             synthesized_default: false,
         }
     }
