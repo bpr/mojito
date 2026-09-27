@@ -2353,6 +2353,19 @@ fn template_method_simd_leaf_derives() {
 }
 
 #[test]
+fn template_method_simd_leaf_default_bits_derives() {
+    // `value.to_bits()` with its defaulted target over the wildcard vector
+    // parameter: the template's target is the unsigned dtype of the lane's
+    // width as a parameter expression, which each leaf clone folds.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_simd_leaf_default_bits.mojo"),
+        "12638128926439346813 12638149817160282822\n8026467504136239071 12638152016183539244\n\
+         559230338672390537\n620445648566982762\n",
+        &[("BitsHasher._update_with_simd", 15)],
+    );
+}
+
+#[test]
 fn template_value_keyed_struct_members_derive() {
     // A struct keyed on a `DType` or vector value is specialized whole per
     // value; source validation checks its members once with the value

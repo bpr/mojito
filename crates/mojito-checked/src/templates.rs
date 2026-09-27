@@ -220,11 +220,16 @@ pub fn derive_adjustment(
         SemanticAdjustment::DtypeConstant { dtype } => {
             Some(SemanticAdjustment::DtypeConstant { dtype: *dtype })
         }
-        // A reinterpretation or a lane count is recorded only over a closed
-        // receiver, whose dtype and width are the same under every instance;
-        // one over a lane-shaped receiver records nothing, and the instance
-        // records its own (`simd_to_bits`, `simd_lengths`).
+        // A reinterpretation, a cast, or a lane count is recorded only over a
+        // closed receiver, whose dtype and width are the same under every
+        // instance; one over a lane-shaped receiver records nothing, and the
+        // instance records its own (`simd_to_bits`, `simd_casts`,
+        // `simd_lengths`).
         SemanticAdjustment::SimdToBits { dtype, width } => Some(SemanticAdjustment::SimdToBits {
+            dtype: *dtype,
+            width: *width,
+        }),
+        SemanticAdjustment::SimdCast { dtype, width } => Some(SemanticAdjustment::SimdCast {
             dtype: *dtype,
             width: *width,
         }),
@@ -300,7 +305,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::Iterate(..)
         | SemanticAdjustment::ConstructSimd { .. }
         | SemanticAdjustment::SizeOf { .. }
-        | SemanticAdjustment::SimdCast { .. }
         | SemanticAdjustment::DtypeFloatQuery { .. }
         | SemanticAdjustment::SimdShuffle { .. }
         | SemanticAdjustment::ConstructVariant { .. }
@@ -1548,6 +1552,12 @@ pub struct CheckedBodyFacts {
     /// result type, and owes that the target is no narrower than its own
     /// lane (`realize_simd_intrinsics`); a closed one stands as recorded.
     pub simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
+    /// The `cast[DType.<name>]()` conversions whose width the template left
+    /// open (a lane-shaped receiver), each with its receiver occurrence. An
+    /// instance records the `SimdCast` adjustment from its substituted
+    /// result type, and owes that neither lane is `bool`
+    /// (`realize_simd_intrinsics`); a closed one stands as recorded.
+    pub simd_casts: Vec<(OccurrenceId, OccurrenceId)>,
     /// The `.length` reads whose receiver width the template left open, each
     /// with its receiver occurrence. An instance records the `SimdLength`
     /// adjustment from the receiver's substituted type.
@@ -1783,6 +1793,7 @@ impl CheckedBodyFacts {
             subscript_descriptors,
             simd_constructions,
             simd_to_bits,
+            simd_casts,
             simd_lengths,
             contextual_bases,
             parameterized_method_calls,
@@ -1989,6 +2000,7 @@ impl CheckedBodyFacts {
             subscript_descriptors: at(&self.subscript_descriptors, occurrences, folded),
             simd_constructions: at(&self.simd_constructions, occurrences, folded),
             simd_to_bits: receivers(&self.simd_to_bits),
+            simd_casts: receivers(&self.simd_casts),
             simd_lengths: receivers(&self.simd_lengths),
             contextual_bases: at(&self.contextual_bases, occurrences, folded),
             parameterized_method_calls: at(&self.parameterized_method_calls, occurrences, folded),
@@ -2098,6 +2110,7 @@ impl CheckedBodyFacts {
             + self.subscript_descriptors.len()
             + self.simd_constructions.len()
             + self.simd_to_bits.len()
+            + self.simd_casts.len()
             + self.simd_lengths.len()
             + self.contextual_bases.len()
             + self.parameterized_method_calls.len()

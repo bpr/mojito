@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `to_bits()` with its defaulted target now type-checks over a lane whose
+  dtype is still a parameter (`def bits[dt: DType, w: Int](value: SIMD[dt,
+  w])`), its target the unsigned dtype of the lane's width, as upstream
+  (`assets/ok/simd_to_bits_default_symbolic.mojo`). It used to be rejected
+  with "an explicit target dtype for a symbolic source lane".
+- A `Hasher`'s `_update_with_simd` reading `value.to_bits().cast[DType.uint64]()`
+  now reuses its template's checked facts in every per-call leaf, each
+  recording its own reinterpretation and cast
+  (`assets/ok/template_method_simd_leaf_default_bits.mojo`). Such leaves used
+  to be checked again per call.
 - A `def` keyed on a `DType` binder, or using a parameter as a lane width,
   with no compile-time control flow (`def lane[dt: DType](v: Int)`
   constructing `Scalar[dt](v)`) now has its body checked once by source

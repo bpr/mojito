@@ -18,9 +18,10 @@
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	674
+# swept-count	676
 fixture	family	first-error
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
 assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'
 assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization
 assets/ok/template_method_simd_leaf.mojo	hasher-protocol	error: 'FoldHasher' does not implement all requirements for 'Hasher'
+assets/ok/template_method_simd_leaf_default_bits.mojo	hasher-protocol	error: 'BitsHasher' does not implement all requirements for 'Hasher'

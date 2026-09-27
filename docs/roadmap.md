@@ -112,29 +112,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A hasher leaf spelled with the defaulted `to_bits()` keeps the
-  clone check**
-
-  Problem: an `_update_with_simd(mut self, value: SIMD[_, _])` body reading
-  `value.to_bits()` with no target dtype gets no verdict from source
-  validation, so its template is never certified and every per-call leaf
-  clone is inferred.
-  - The default target is the unsigned dtype of the source lane's width,
-    which the `to_bits` arm of `infer_method_call` (`mc_infer.rs`) cannot
-    spell over a symbolic dtype. Under validation the arm ends the body as a
-    `SymbolicBoundary`, as a reflected symbolic type does, and the clones
-    keep the clone check they always had.
-  - The explicit spelling `value.to_bits[DType.uint64]()`, which the bundled
-    hashers use, derives (`assets/ok/template_method_simd_leaf.mojo`).
-  - The pin accepts the defaulted spelling on a symbolic lane
-    (`conformance/probes/simd_wildcard_to_bits_default.mojo`).
-  - A symbolic default needs a parameter-expression form for "the unsigned
-    dtype of this lane's width", after which the lane grammar admits the
-    result as it admits the explicit form.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.6 A value built by a value-shaped construction is not a grammar
+- [ ] **1.5 A value built by a value-shaped construction is not a grammar
   scalar**
 
   Problem: in a keyed `def`, `var lanes = SIMD[DType.int64, w](v)` derives,
@@ -148,7 +126,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A borrowed iterator built from a cast pointer keeps the clone
+- [ ] **1.6 A borrowed iterator built from a cast pointer keeps the clone
   check**
 
   Problem: the `ref self` overload of `Set.__iter__` builds its iterator
@@ -161,7 +139,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A method call leaving a defaulted parameter to its default keeps
+- [ ] **1.7 A method call leaving a defaulted parameter to its default keeps
   the clone check**
 
   Problem: `self.name.find("y")` is refused by the method grammar, while
@@ -175,7 +153,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A nested `def` with a parameter convention, a default, or
+- [ ] **1.8 A nested `def` with a parameter convention, a default, or
   `raises` keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only regular read parameters with
@@ -187,7 +165,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 An overloaded static method of a generic struct keeps the clone
+- [ ] **1.9 An overloaded static method of a generic struct keeps the clone
   check**
 
   Problem: `BodyShape::static_call` admits a generic struct's static only
@@ -206,7 +184,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A variadic struct specialized whole other than `Tuple` cannot
+- [ ] **1.10 A variadic struct specialized whole other than `Tuple` cannot
   bind its pack**
 
   Problem: a member of `TString$…` or of a user variadic struct
@@ -223,7 +201,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A clone minted for compile-time evaluation is never derived**
+- [ ] **1.11 A clone minted for compile-time evaluation is never derived**
 
   Problem: the CTFE subprogram is checked by `check_program` on a fresh
   template catalog (`ctfe.rs`), so a per-call clone minted there
@@ -234,7 +212,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A member of a `DType`-keyed range keeps the clone check**
+- [ ] **1.12 A member of a `DType`-keyed range keeps the clone check**
 
   Problem: the members of `_SequentialRange`, `_StridedRange`,
   `_ZeroStartingRange`, and `_FloatStridedRange` other than `__iter__` are
@@ -250,11 +228,11 @@ to section 3, however small.
     `def`'s own binders.
   - Each operation needs its facts realized at the instance's folded dtype,
     as a value-shaped construction's are (`realize_value_shaped_constructions`).
-  - Depends on 1.6, whose operator recipe over a value-shaped local this
+  - Depends on 1.5, whose operator recipe over a value-shaped local this
     reuses.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 `AHasher`'s own members keep the clone check**
+- [ ] **1.13 `AHasher`'s own members keep the clone check**
 
   Problem: of the bundled `AHasher[key]`'s members, only the
   `_update_with_simd` leaves derive; the others are inferred per
@@ -271,7 +249,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A method reading its struct's scalar value binder keeps the
+- [ ] **1.14 A method reading its struct's scalar value binder keeps the
   clone check across passes**
 
   Problem: `Self.rows` in a method of `Grid[T, rows: Int]` is outside the
@@ -286,7 +264,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A method keyed on its own `DType` or a vector width keeps the
+- [ ] **1.15 A method keyed on its own `DType` or a vector width keeps the
   clone check**
 
   Problem: a method's own value binder derives only when it is an `Int` or
@@ -301,7 +279,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A per-call clone on a struct specialized per value is never
+- [ ] **1.16 A per-call clone on a struct specialized per value is never
   derived**
 
   Problem: `w.rep[DType.int16](v)` on `Width[n: Int]` clones `rep` on the
@@ -313,10 +291,10 @@ to section 3, however small.
     struct's value and the method's own binder symbolic.
   - Found while closing the missing clones
     (assets/ok/dtype_keyed_method_value_struct.mojo).
-  - Depends on 1.16, which derives a method's own `DType` or width binder.
+  - Depends on 1.15, which derives a method's own `DType` or width binder.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 An element store into or from a parameter's field keeps the
+- [ ] **1.17 An element store into or from a parameter's field keeps the
   clone check**
 
   Problem: `self.items[i] = other.items[i]`, or `other.items[i] = ...` on a
@@ -331,7 +309,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 An augmented assignment to a local through its in-place dunder
+- [ ] **1.18 An augmented assignment to a local through its in-place dunder
   keeps the clone check**
 
   Problem: `var m = self.meter; m += Meter(3)` is refused by the method
@@ -343,7 +321,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A raising in-place dunder dispatched through a bound keeps the
+- [ ] **1.19 A raising in-place dunder dispatched through a bound keeps the
   clone check**
 
   Problem: `self.total += x` on a `T` whose bound declares a raising
@@ -357,7 +335,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A module `def` updating a `mut` parameter through its in-place
+- [ ] **1.20 A module `def` updating a `mut` parameter through its in-place
   dunder keeps the clone check**
 
   Problem: `def add_in[T: Accum](mut a: T, b: T): a += b` is refused by the
@@ -370,7 +348,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 A whole value discarded with `_ =` keeps the clone check**
+- [ ] **1.21 A whole value discarded with `_ =` keeps the clone check**
 
   Problem: the method grammar's discard arm admits only a closed scalar, so
   a body with `_ = head` over a local of a parameter type is inferred per
@@ -384,7 +362,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A binder whose bound only refines an existential's keeps the
+- [ ] **1.22 A binder whose bound only refines an existential's keeps the
   clone check**
 
   Problem: a trait-bound `def` handing its `T: Titled` parameter to a method
@@ -400,7 +378,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A loan-carrying type parameter no runtime parameter spells keeps
+- [ ] **1.23 A loan-carrying type parameter no runtime parameter spells keeps
   the erased body**
 
   Problem: a generic `def` whose loan-carrying type argument reaches only its
@@ -416,7 +394,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 An iterator argument recorded with a receiver origin keeps the
+- [ ] **1.24 An iterator argument recorded with a receiver origin keeps the
   erased body**
 
   Problem: `next(it)` with `it = l.__iter__()` over `l: List[Span[Int,
@@ -429,7 +407,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A `Pointer` type argument is baked into its clone with its
+- [ ] **1.25 A `Pointer` type argument is baked into its clone with its
   place**
 
   Problem: `alloc(Layout[Pointer[Int, origin_of(x)]](count=1))` mints
@@ -441,7 +419,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.26 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -465,7 +443,7 @@ to section 3, however small.
     `docs/pliron-backend-pivot-plan.md` alone.
   - Model: Fable, Planned.
 
-- [ ] **1.28 A reference-typed call result in a method keeps the clone
+- [ ] **1.27 A reference-typed call result in a method keeps the clone
   check**
 
   Problem: a method storing a value it read through a reference-returning
@@ -484,7 +462,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.29 Two overloads of one trait requirement share their binders**
+- [ ] **1.28 Two overloads of one trait requirement share their binders**
 
   Problem: a trait requirement's binders are owned by `Trait.method`, so two
   overloaded requirements whose slots agree give their binders one id.
@@ -496,7 +474,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.30 Two overloads of one struct method share their elaborator
+- [ ] **1.29 Two overloads of one struct method share their elaborator
   binders**
 
   Problem: the elaborator owns a method's own binders by `Struct.method`
@@ -511,7 +489,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.31 An overloaded witness beside a rival the recorded types cannot
+- [ ] **1.30 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
 
   Problem: a call through a bound whose witness overloads the requirement
@@ -530,7 +508,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.32 A hasher call over a multi-lane vector keeps the clone check
+- [ ] **1.31 A hasher call over a multi-lane vector keeps the clone check
   when the instance binds the hasher to a struct**
 
   Problem: `hasher._update_with_simd(SIMD[DType.int32, 4](...))` in a
@@ -546,7 +524,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.33 A `print` of a whole value keeps the clone check**
+- [ ] **1.32 A `print` of a whole value keeps the clone check**
 
   Problem: `print(x, s)` in `def echo[T: Writable & ...](x: T, s: String)`
   refuses the template, because `print_call` admits only closed scalars,
@@ -557,6 +535,24 @@ to section 3, however small.
     admitting a named place needs the certificate to argue for it there too.
   - The instance already proves each argument `Writable` again
     (`realize_print_call`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.33 A lane read of a defaulted `to_bits()` result keeps the clone
+  check**
+
+  Problem: a hasher leaf that reads lanes of `value.to_bits()` before
+  casting them (`bits[i].cast[DType.uint64]()`) is refused, while the same
+  body casting the whole vector first derives.
+  - The defaulted target is a parameter expression over the wildcard's
+    hidden dtype, so a lane of it is not a closed scalar, and
+    `BodyShape::lane_receiver` admits lane reads and reductions only over a
+    closed dtype.
+  - The whole-vector spelling `value.to_bits().cast[DType.uint64]()` derives
+    (`assets/ok/template_method_simd_leaf_default_bits.mojo`).
+  - Admitting it needs a symbolic-lane scalar the grammar can carry into a
+    `cast`, realized per instance as `realize_simd_intrinsics` realizes the
+    whole-vector reads.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2501,7 +2497,7 @@ last.
     - The `SIMD[_, _]` desugar (`synth.rs:desugar_simd_keyed_methods`) runs
       over struct methods only, where the `Hasher` protocol needs it; a free
       `def` keeps the wildcard spelling and resolves it as an annotation.
-    - Found while probing the defaulted `to_bits()` for 1.5.
+    - Found while probing the defaulted `to_bits()`.
     - Model: Opus, Not Planned.
 
   Five divergences are retained on purpose and re-probed rather than fixed;

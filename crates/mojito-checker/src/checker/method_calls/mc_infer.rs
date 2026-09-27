@@ -417,29 +417,14 @@ impl Checker {
             && let Some((source, width)) = simd_slots(&obj_ty)
         {
             reject_kwargs(kwargs)?;
-            let target = match (param_args.first(), source.known()) {
+            let target = match (param_args.first(), &source) {
                 (Some(argument), _) => self.dtype_from_arg(argument)?,
-                (None, Some(source)) => {
-                    SimdDtype::Known(unsigned_dtype_of_width(dtype_bit_width(source)))
+                (None, SimdDtype::Known(source)) => {
+                    SimdDtype::Known(unsigned_dtype_of_width(dtype_bit_width(*source)))
                 }
-                // The default target is the source lane's own width, which a
-                // symbolic dtype does not have yet. Source validation reaches
-                // this with a `Hasher`'s wildcard vector parameter viewed as a
-                // lane-shaped vector: that is no verdict on the body, which
-                // keeps its per-instantiation check, where the lane is closed.
-                (None, None) => {
-                    if self.source_validation {
-                        return Err(TypeError::SymbolicBoundary(
-                            "'to_bits' with its default target on a symbolic source lane"
-                                .to_string(),
-                        ));
-                    }
-                    return Err(TypeError::TypeMismatch {
-                        expected: "an explicit target dtype for a symbolic source lane".to_string(),
-                        found: obj_ty.to_string(),
-                        context: "SIMD.to_bits".to_string(),
-                    });
-                }
+                (None, SimdDtype::Expr(source)) => SimdDtype::Expr(
+                    symbolic_unsigned_dtype_of(&self.param_context, source).map_err(param_error)?,
+                ),
             };
             if let Some(target_dtype) = target.known() {
                 let unsigned = matches!(

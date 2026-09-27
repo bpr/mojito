@@ -500,6 +500,7 @@ assets/ok/simd_shuffle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_surface.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_width_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_to_bits_default_symbolic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_wide_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sized_generic_views.mojo	-	ineligible	no-scalar-entry-shape
@@ -596,6 +597,7 @@ assets/ok/template_method_reflected_operator.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/template_method_sibling_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_simd_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_simd_leaf.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_simd_leaf_default_bits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_simd_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_statements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_static_call.mojo	-	ineligible	no-scalar-entry-shape

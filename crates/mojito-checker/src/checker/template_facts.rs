@@ -282,6 +282,7 @@ struct GrammarNotes {
     repr_calls: Vec<OccurrenceId>,
     print_calls: Vec<OccurrenceId>,
     simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
+    simd_casts: Vec<(OccurrenceId, OccurrenceId)>,
     simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
 }
 
@@ -3013,6 +3014,7 @@ impl Checker {
                         facts.repr_calls = notes.repr_calls;
                         facts.print_calls = notes.print_calls;
                         facts.simd_to_bits = notes.simd_to_bits;
+                        facts.simd_casts = notes.simd_casts;
                         facts.simd_lengths = notes.simd_lengths;
                         (facts, coverage)
                     }
@@ -3351,6 +3353,7 @@ impl Checker {
             repr_calls: RefCell::new(Vec::new()),
             lane_binders: Vec::new(),
             simd_to_bits: RefCell::new(Vec::new()),
+            simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
@@ -3950,6 +3953,7 @@ impl Checker {
                 })
                 .collect(),
             simd_to_bits: RefCell::new(Vec::new()),
+            simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
@@ -3962,19 +3966,7 @@ impl Checker {
             } else {
                 TemplateClass::MethodBody(features)
             });
-            (
-                coverage,
-                GrammarNotes {
-                    operators: shape.operators.borrow().clone(),
-                    bound_builtins: shape.bound_builtins.borrow().clone(),
-                    constructions: shape.constructions.borrow().clone(),
-                    callable_calls: shape.callable_calls.borrow().clone(),
-                    repr_calls: shape.repr_calls.borrow().clone(),
-                    print_calls: shape.print_calls.borrow().clone(),
-                    simd_to_bits: shape.simd_to_bits.borrow().clone(),
-                    simd_lengths: shape.simd_lengths.borrow().clone(),
-                },
-            )
+            (coverage, shape.grammar_notes())
         };
         let Some(facts) = facts else {
             return class();
@@ -4786,7 +4778,8 @@ impl Checker {
                 .collect(),
             // The lists the certificate fills from the grammar (`operators`,
             // `bound_builtins`, `constructions`, `callable_calls`,
-            // `repr_calls`, `print_calls`, `simd_to_bits`, `simd_lengths`)
+            // `repr_calls`, `print_calls`, `simd_to_bits`, `simd_casts`,
+            // `simd_lengths`)
             // stay empty in a capture (`record_template`).
             ..CheckedBodyFacts::default()
         })
@@ -7377,13 +7370,14 @@ fn realize_value_shaped_constructions(
     Ok(())
 }
 
-/// The shape of each `to_bits` reinterpretation and `.length` read the
-/// template made over a lane-shaped receiver, which it left unrecorded: the
-/// instance's are its substituted result type's and receiver type's, as a
-/// closed read's are its recorded adjustment's. A reinterpretation's target
-/// must be at least as wide as the instance's lane, the one constraint
-/// `infer_method_call` checks only on a closed source; an instance whose
-/// lane is wider refuses, and the clone check reports it. The adjustment
+/// The shape of each `to_bits` reinterpretation, `cast`, and `.length` read
+/// the template made over a lane-shaped receiver, which it left unrecorded:
+/// the instance's are its substituted result type's and receiver type's, as
+/// a closed read's are its recorded adjustment's. A reinterpretation's
+/// target must be at least as wide as the instance's lane, and a cast's
+/// lanes must not be `bool`, the constraints `infer_method_call` checks only
+/// on a closed source; an instance that breaks one refuses, and the clone
+/// check reports it. The adjustment
 /// table keeps the body's occurrence order, as a capture writes it.
 fn realize_simd_intrinsics(
     template: &CheckedBodyFacts,
@@ -7405,6 +7399,16 @@ fn realize_simd_intrinsics(
         }
         realized.push((*id, SemanticAdjustment::SimdToBits { dtype, width }));
     }
+    for (id, receiver) in &template.simd_casts {
+        let (dtype, width) =
+            shape(*id).ok_or("a cast's lane dtype or width stays open in the instance")?;
+        let (source, _) =
+            shape(*receiver).ok_or("a cast's source lane stays open in the instance")?;
+        if dtype == mojito_ast::ast::Dtype::Bool || source == mojito_ast::ast::Dtype::Bool {
+            return Err("a cast's instance lane is `bool`");
+        }
+        realized.push((*id, SemanticAdjustment::SimdCast { dtype, width }));
+    }
     for (id, receiver) in &template.simd_lengths {
         let (_, width) =
             shape(*receiver).ok_or("a lane count's receiver width stays open in the instance")?;
@@ -7419,6 +7423,7 @@ fn realize_simd_intrinsics(
         .operation_adjustments
         .sort_by_key(|(id, _)| order(*id));
     facts.simd_to_bits.clear();
+    facts.simd_casts.clear();
     facts.simd_lengths.clear();
     Ok(())
 }
@@ -7849,6 +7854,10 @@ struct BodyShape<'a> {
     /// each with its receiver occurrence, whose adjustment an instance
     /// records from its substituted result.
     simd_to_bits: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
+    /// The `cast[DType.<name>]()` conversions admitted over a lane-shaped
+    /// receiver, each with its receiver occurrence, whose adjustment an
+    /// instance records from its substituted result.
+    simd_casts: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
     /// The `.length` reads admitted over a lane-shaped receiver, each with
     /// its receiver occurrence, whose adjustment an instance records from
     /// the receiver's substituted type.
@@ -8317,6 +8326,22 @@ impl BodyShape<'_> {
     /// type ([`Checker::realize_tuple_elements`]).
     fn tuple_element_value(&self, expr: &Expr) -> bool {
         self.tuple_element(expr) && self.holds(MethodFeatures::OPAQUE_MOVES)
+    }
+
+    /// What the certificate hands the instance from the grammar's walk: the
+    /// occurrences it must dispatch or prove itself.
+    fn grammar_notes(&self) -> GrammarNotes {
+        GrammarNotes {
+            operators: self.operators.borrow().clone(),
+            bound_builtins: self.bound_builtins.borrow().clone(),
+            constructions: self.constructions.borrow().clone(),
+            callable_calls: self.callable_calls.borrow().clone(),
+            repr_calls: self.repr_calls.borrow().clone(),
+            print_calls: self.print_calls.borrow().clone(),
+            simd_to_bits: self.simd_to_bits.borrow().clone(),
+            simd_casts: self.simd_casts.borrow().clone(),
+            simd_lengths: self.simd_lengths.borrow().clone(),
+        }
     }
 
     /// Whether the references the check recorded are exactly the ones the
@@ -10397,8 +10422,9 @@ impl BodyShape<'_> {
     }
 
     /// A lane read on a vector the body holds: `v.to_bits[DType.<name>]()`
-    /// (an `Invoke` with a `Member` callee and one `DType` argument),
-    /// `v.to_bits()` or `v.reduce_*()` (a `MethodCall` without arguments),
+    /// or `v.cast[DType.<name>]()` (an `Invoke` with a `Member` callee and
+    /// one `DType` argument), `v.to_bits()` or `v.reduce_*()` (a
+    /// `MethodCall` without arguments),
     /// `v.length` (a `Member`), or `v[i]` (an `Index` over a scalar), on a
     /// receiver [`Self::lane_receiver`] admits: a parameter, a `var` local,
     /// a field of `self`, or another lane read, of a closed vector type or a
@@ -10406,14 +10432,15 @@ impl BodyShape<'_> {
     ///
     /// Each is a compiler-known operation on `Ty::Simd`: it selects no
     /// callee, converts nothing, and records at most its shape, the
-    /// `SimdToBits` or `SimdLength` adjustment, which inference writes only
-    /// over a closed receiver and which is then the same under every
-    /// instance. Over a lane-shaped receiver the template records no
+    /// `SimdToBits`, `SimdCast`, or `SimdLength` adjustment, which inference
+    /// writes only over a closed receiver and which is then the same under
+    /// every instance. Over a lane-shaped receiver the template records no
     /// adjustment, and the instance records its own from the substituted
     /// types (`realize_simd_intrinsics`). A lane read and a reduction stand
     /// on a receiver whose dtype is closed, so their results are closed; a
-    /// reinterpretation's explicit target closes the result's dtype itself,
-    /// and a lane count is an `Int`.
+    /// cast's or a reinterpretation's explicit target closes the result's
+    /// dtype itself, a defaulted reinterpretation's is the unsigned dtype of
+    /// the receiver's lane width, and a lane count is an `Int`.
     fn simd_intrinsic(&self, expr: &Expr) -> bool {
         use mojito_ast::ast::ParamArg;
         use mojito_checked::checked::SemanticAdjustment;
@@ -10424,6 +10451,7 @@ impl BodyShape<'_> {
             ParamArg::Named { .. } => false,
         };
         let reinterpretation = |method: &str| method == "to_bits";
+        let cast = |method: &str| method == "cast";
         let reduction = |method: &str| {
             matches!(
                 method,
@@ -10445,7 +10473,7 @@ impl BodyShape<'_> {
                 let ExprKind::Member { object, field } = &callee.kind else {
                     return false;
                 };
-                if !reinterpretation(field)
+                if !(reinterpretation(field) || cast(field))
                     || !args.is_empty()
                     || !kwargs.is_empty()
                     || !matches!(param_args.as_slice(), [argument] if dtype_argument(argument))
@@ -10501,6 +10529,13 @@ impl BodyShape<'_> {
                 Some(SemanticAdjustment::SimdToBits { .. }),
                 ExprKind::Invoke { .. } | ExprKind::MethodCall { .. },
             ) => !mojito_types::types::is_symbolic(ty),
+            // A recorded cast stands under every instance only when its
+            // source lane is closed too, since a `bool` source refuses.
+            (Some(SemanticAdjustment::SimdCast { .. }), ExprKind::Invoke { .. }) => {
+                !mojito_types::types::is_symbolic(ty)
+                    && fact_at(&facts.expression_types, self.occurrence(receiver))
+                        .is_some_and(|source| !mojito_types::types::is_symbolic(source))
+            }
             (Some(SemanticAdjustment::SimdLength { .. }), ExprKind::Member { .. }) => true,
             _ => false,
         };
@@ -10518,7 +10553,12 @@ impl BodyShape<'_> {
         if admitted && adjustment.is_none() {
             let read = (id, self.occurrence(receiver));
             match &expr.kind {
-                ExprKind::Invoke { .. } => push_unique(&mut self.simd_to_bits.borrow_mut(), read),
+                ExprKind::Invoke { callee, .. } => match &callee.kind {
+                    ExprKind::Member { field, .. } if cast(field) => {
+                        push_unique(&mut self.simd_casts.borrow_mut(), read);
+                    }
+                    _ => push_unique(&mut self.simd_to_bits.borrow_mut(), read),
+                },
                 ExprKind::MethodCall { method, .. } if reinterpretation(method) => {
                     push_unique(&mut self.simd_to_bits.borrow_mut(), read);
                 }

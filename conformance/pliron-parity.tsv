@@ -500,6 +500,7 @@ assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_surface.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_hooks.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits.mojo	main	exe-differential	sanitized
+assets/ok/simd_to_bits_default_symbolic.mojo	main	exe-differential	sanitized
 assets/ok/simd_wide_widths.mojo	main	exe-differential	sanitized
 assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized
@@ -596,6 +597,7 @@ assets/ok/template_method_reflected_operator.mojo	main	exe-differential	sanitize
 assets/ok/template_method_sibling_view.mojo	main	exe-differential	sanitized
 assets/ok/template_method_simd_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_simd_leaf.mojo	main	exe-differential	sanitized
+assets/ok/template_method_simd_leaf_default_bits.mojo	main	exe-differential	sanitized
 assets/ok/template_method_simd_scalar.mojo	main	exe-differential	sanitized
 assets/ok/template_method_statements.mojo	main	exe-differential	sanitized
 assets/ok/template_method_static_call.mojo	main	exe-differential	sanitized

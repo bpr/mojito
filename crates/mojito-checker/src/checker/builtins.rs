@@ -278,6 +278,28 @@ pub(super) const fn unsigned_dtype_of_width(bits: u32) -> Dtype {
     }
 }
 
+/// [`unsigned_dtype_of_width`] over a symbolic source lane `source`: a `cond`
+/// chain testing the lane's identity against each dtype of a width, which
+/// folds to the closed target once an instance binds the lane, as upstream's
+/// `_unsigned_integral_type_of[dtype]()` default does.
+pub(super) fn symbolic_unsigned_dtype_of(
+    context: &ParamContext,
+    source: &ParamExpr,
+) -> Result<ParamExpr, ParamError> {
+    let dtype = |dtype: Dtype| context.constant(CtValue::Dtype(dtype));
+    let mut target = dtype(Dtype::UInt64)?;
+    for unsigned in [Dtype::UInt32, Dtype::UInt16, Dtype::UInt8] {
+        let tests = Dtype::ALL
+            .into_iter()
+            .filter(|lane| unsigned_dtype_of_width(dtype_bit_width(*lane)) == unsigned)
+            .map(|lane| Ok(context.identical(source, &dtype(lane)?)))
+            .collect::<Result<Vec<_>, ParamError>>()?;
+        let same_width = context.op(ParamOp::BoolOr, &tests)?;
+        target = context.op(ParamOp::Cond, &[same_width, dtype(unsigned)?, target])?;
+    }
+    Ok(target)
+}
+
 pub(super) fn is_numeric_like(ty: &Ty) -> bool {
     is_numeric(&default_literal(ty))
 }
