@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's method handing a construction a pointer to `self` or
+  a field of it rebound to the whole receiver
+  (`Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`) now
+  reuses its template's checked facts in every instance, so the borrowed
+  `Set.__iter__` and `Dict.__iter__` do
+  (`assets/ok/template_method_receiver_pointer.mojo`). Such methods used to
+  be checked again per instance.
 - A keyed `def` applying an operator, a reduction, a cast, a lane count, or
   a built-in conversion to a value built by a value-shaped construction
   (`var lanes = SIMD[DType.int64, w](v)`, then `lanes + lanes` or

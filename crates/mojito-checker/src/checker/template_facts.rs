@@ -4922,16 +4922,16 @@ impl Checker {
         // A type is retained as written, and a binding identity inside one
         // would never be remapped for an instance. Two exceptions are kept by
         // template owner: a reference at the top of a place or binding type
-        // (`rooted_reference`), and a struct's origin arguments
-        // (`unbound_struct_origins`); a pointer's own provenance and a
-        // reference below the top stay refused.
+        // (`rooted_reference`), and a struct's origin arguments and a
+        // pointer's own provenance at the top of a type (`typed_origins`); a
+        // reference below the top stays refused.
         let expression_types = self.expression_types.borrow();
         let kept_apart = [
             &*self.expression_place_types.borrow(),
             &*self.binding_types.borrow(),
         ];
         let abstracted = |ty: &Ty| {
-            unbound_struct_origins(ty, &|place| {
+            typed_origins(ty, &|place| {
                 Ok(TemplatePlace {
                     root: TemplateOwner::Receiver,
                     path: place.path.clone(),
@@ -5014,7 +5014,7 @@ impl Checker {
                 .find(|typed| typed.table == table && typed.occurrence == *id)
                 .map_or_else(
                     || Ok(ty.clone()),
-                    |typed| bind_struct_origins(ty, &typed.origins, &rooted),
+                    |typed| bind_typed_origins(ty, typed, &rooted),
                 )
         };
         for (id, ty) in &facts.expression_types {
@@ -6547,18 +6547,93 @@ fn unbound_typed(
 ) -> Result<Vec<(OccurrenceId, Ty)>, IncompleteReason> {
     types
         .into_iter()
-        .map(|(id, ty)| match unbound_struct_origins(&ty, place)? {
-            Some((ty, origins)) => {
+        .map(|(id, ty)| match self::typed_origins(&ty, place)? {
+            Some(KeptType {
+                ty,
+                origins,
+                pointer,
+            }) => {
                 typed_origins.push(TypedOrigins {
                     table,
                     occurrence: id,
                     origins,
+                    pointer,
                 });
                 Ok((id, ty))
             }
             None => Ok((id, ty)),
         })
         .collect()
+}
+
+/// A retained type with the origins it names kept by template owner: the
+/// parts of one [`TypedOrigins`] entry.
+struct KeptType {
+    ty: Ty,
+    origins: Vec<TemplateOrigin>,
+    pointer: Option<bool>,
+}
+
+/// [`unbound_struct_origins`] for a retained type, which may also be a
+/// pointer to a place (`Pointer(to=self.items)`): its provenance is kept
+/// first by template owner and the type with it untracked, with the
+/// pointer's capability beside.
+fn typed_origins(
+    ty: &Ty,
+    place: &dyn Fn(&mojito_types::origin::OriginPlace) -> Result<TemplatePlace, IncompleteReason>,
+) -> Result<Option<KeptType>, IncompleteReason> {
+    use mojito_types::origin::PointerOrigin;
+    let Ty::Pointer {
+        element,
+        origin: PointerOrigin::Place {
+            place: pointee,
+            mutable,
+        },
+    } = ty
+    else {
+        return Ok(
+            unbound_struct_origins(ty, place)?.map(|(ty, origins)| KeptType {
+                ty,
+                origins,
+                pointer: None,
+            }),
+        );
+    };
+    let (element, rest) = unbound_struct_origins(element, place)?
+        .unwrap_or_else(|| ((**element).clone(), Vec::new()));
+    let origins = std::iter::once(Ok(TemplateOrigin::Place(place(pointee)?)))
+        .chain(rest.into_iter().map(Ok))
+        .collect::<Result<Vec<_>, IncompleteReason>>()?;
+    Ok(Some(KeptType {
+        ty: Ty::Pointer {
+            element: Box::new(element),
+            origin: PointerOrigin::Untracked { mutable: *mutable },
+        },
+        origins,
+        pointer: Some(*mutable),
+    }))
+}
+
+/// The inverse of [`typed_origins`]: a kept pointer's provenance rooted at
+/// the instance's own place, then its struct origins written back.
+fn bind_typed_origins(
+    ty: &Ty,
+    typed: &TypedOrigins,
+    rooted: &dyn Fn(&TemplatePlace) -> Result<mojito_types::origin::OriginPlace, TypeError>,
+) -> Result<Ty, TypeError> {
+    use mojito_types::origin::PointerOrigin;
+    let (Some(mutable), Ty::Pointer { element, .. }, [TemplateOrigin::Place(pointee), rest @ ..]) =
+        (typed.pointer, ty, typed.origins.as_slice())
+    else {
+        return bind_struct_origins(ty, &typed.origins, rooted);
+    };
+    Ok(Ty::Pointer {
+        element: Box::new(bind_struct_origins(element, rest, rooted)?),
+        origin: PointerOrigin::Place {
+            place: rooted(pointee)?,
+            mutable,
+        },
+    })
 }
 
 /// A type with every struct origin argument unbound, for comparing two types
@@ -9127,6 +9202,7 @@ impl BodyShape<'_> {
             (self.expression(argument) && self.scalar(argument))
                 || self.whole_value(argument)
                 || self.pointer(argument)
+                || self.receiver_pointer(argument)
                 || reference_field(field, argument)
         };
         let admitted = constructed
@@ -9209,6 +9285,47 @@ impl BodyShape<'_> {
             _ => false,
         };
         admitted && self.holds(MethodFeatures::POINTER_SLOTS)
+    }
+
+    /// A tracked pointer to `self` or a field of it, rebound to the whole
+    /// receiver: `Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`.
+    ///
+    /// The pointee is the place's declared type under the instance's
+    /// arguments, and both provenances are the receiver's own place, the
+    /// inner one rooted at `self` and the cast's the symbolic
+    /// `origin_of(self)`, so an instance roots them at its own `self`.
+    fn receiver_pointer(&self, expr: &Expr) -> bool {
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return false;
+        };
+        let receiver_origin = matches!(param_args.as_slice(),
+            [mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Call { name, param_args, args, kwargs }, .. })]
+                if name == "origin_of"
+                    && param_args.is_empty()
+                    && kwargs.is_empty()
+                    && matches!(args.as_slice(), [origin] if self.receiver_itself(origin)));
+        let pointer_to_receiver = matches!(&object.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if name == "Pointer"
+                && param_args.is_empty()
+                && args.is_empty()
+                && matches!(kwargs.as_slice(), [to]
+                    if to.name == "to"
+                        && (self.receiver_itself(&to.value) || self.receiver_field(&to.value))));
+        field == "unsafe_origin_cast"
+            && receiver_origin
+            && args.is_empty()
+            && kwargs.is_empty()
+            && pointer_to_receiver
+            && self.holds(MethodFeatures::RECEIVER_POINTERS)
     }
 
     /// One element slot of such a pointer, `pointer[scalar]`.

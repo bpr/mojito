@@ -2199,6 +2199,26 @@ fn template_method_sibling_views_derive() {
 }
 
 #[test]
+fn template_method_receiver_pointers_derive() {
+    // A pointer to `self` or a field of it rebound to the whole receiver, handed
+    // to a fieldwise or a hand-written constructor from a read or a `mut`
+    // receiver, as `Set.__iter__` and `Dict.__iter__` build their borrowed
+    // iterators. Both provenances root at the instance's own `self`.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_method_receiver_pointer.mojo"),
+        "1 0\n12 11\n2 1\n2 1\na 7\nk 2\n",
+        &[
+            ("Shelf.cursor", 2),
+            ("Shelf.whole", 2),
+            ("Shelf.offset", 2),
+            ("Shelf.edit", 2),
+            ("Set.__iter__", 2),
+            ("Dict.__iter__", 1),
+        ],
+    );
+}
+
+#[test]
 fn template_method_immutable_sibling_views_derive() {
     // A sibling's `ImmOrigin` view wrapped by a construction, returned and
     // bound to a local: the construction's immutable-binder record names the

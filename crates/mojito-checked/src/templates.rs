@@ -212,6 +212,21 @@ pub fn derive_adjustment(
             Some(SemanticAdjustment::BorrowViewResult { materialized: None })
         }
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // A pointer to a place is minted with the place owner's capability,
+        // which its declaration fixes. A provenance rebind to an origin that
+        // names no binding (`origin_of(self)`, a binder) is the same under
+        // every instance; one naming a place names a binding of one run.
+        SemanticAdjustment::PointerToPlace { mutable } => {
+            Some(SemanticAdjustment::PointerToPlace { mutable: *mutable })
+        }
+        SemanticAdjustment::PointerOriginCast {
+            origin: mojito_types::origin::PointerOrigin::Place { .. },
+        } => None,
+        SemanticAdjustment::PointerOriginCast { origin } => {
+            Some(SemanticAdjustment::PointerOriginCast {
+                origin: origin.clone(),
+            })
+        }
         // A reflected operator names no type. Its target, the right
         // operand's reflected dunder, is re-selected on the instance's
         // types (`realize_operator`).
@@ -315,8 +330,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::VariantSet { .. }
         | SemanticAdjustment::VariantTake { .. }
         | SemanticAdjustment::VariantReplace { .. }
-        | SemanticAdjustment::PointerToPlace { .. }
-        | SemanticAdjustment::PointerOriginCast { .. }
         | SemanticAdjustment::UninitStorageMake { .. }
         | SemanticAdjustment::UninitStorageWrite { .. }
         | SemanticAdjustment::VariantSetInitWith { .. }
@@ -931,6 +944,11 @@ impl MethodFeatures {
     /// it records only the binder's statement binding and type, which is the
     /// error type its body's raising calls declare and substitutes with them.
     pub const TRY_STATEMENTS: Self = Self(1 << 39);
+    /// A tracked pointer to `self` or a field of it, rebound to the whole
+    /// receiver (`Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`)
+    /// and handed to a construction: its provenance is the receiver's own
+    /// place, which an instance roots at its own `self`.
+    pub const RECEIVER_POINTERS: Self = Self(1 << 40);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1026,11 +1044,16 @@ pub enum TemplateOrigin {
 /// receiver inside a type argument. The type is kept with every struct
 /// origin slot unbound, and an instance writes its own bindings back into
 /// those slots in the same order.
+///
+/// A pointer to a place (`Pointer(to=self.items)`) names the place in its
+/// own provenance. The type is kept with that provenance untracked, the
+/// place taken first, and `pointer` holds the pointer's capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedOrigins {
     pub table: TypedTable,
     pub occurrence: OccurrenceId,
     pub origins: Vec<TemplateOrigin>,
+    pub pointer: Option<bool>,
 }
 
 /// One origin slot a view-returning call's result binds at the call, in

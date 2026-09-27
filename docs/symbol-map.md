@@ -456,7 +456,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
   the bundle's `typed_origins`: only a slot naming a binding is unbound and
   refilled, so a slot an instance's argument brings in, such as a clone
-  binder, stays as it stands), and the return annotation an inference
+  binder, stays as it stands; a pointer to a place, `Pointer(to=self.items)`,
+  keeps its provenance the same way, first, flagged by `TypedOrigins::pointer`:
+  `typed_origins`/`bind_typed_origins`), and the return annotation an inference
   re-resolves at each `return` is resolved once for a derived instance
   (`annotation_spans`, `grew_outside_body`). `struct_application_frames`, pushed in
   `generics.rs:record_struct_instantiation`, is how a template keeps the

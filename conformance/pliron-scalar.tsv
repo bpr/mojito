@@ -588,6 +588,7 @@ assets/ok/template_method_place_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_range_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_rebind.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_receiver_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_reference_local.mojo	-	ineligible	no-scalar-entry-shape
