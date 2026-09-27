@@ -1931,7 +1931,7 @@ fn param_expr(value: &ParamExpr) -> String {
         ),
         ParamKind::PackQuery { pack, query } => record(
             "param_pack_query",
-            &[("pack", symbol(pack)), ("query", pack_query(query))],
+            &[("pack", binder_ref(pack)), ("query", pack_query(query))],
         ),
         // A hole never crosses into MIR; `schema_findings` reports it before
         // printing, and the token keeps the text honest if it is reached.

@@ -1448,7 +1448,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.5", "mojito-mir 1.2", 1)
+        .replacen("mojito-mir 1.6", "mojito-mir 1.2", 1)
         .replace(
             "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H }",
             "type.construct { dest: %r0, param: H }",
@@ -1457,7 +1457,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             ", binder: present(binder { owner: \"$test:H\", slot: 0, name: H })",
             "",
         );
-    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.5", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.6", 1), text);
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let read = &parsed.program.functions[0].1.blocks[0].instrs;
     assert!(matches!(
@@ -1566,13 +1566,13 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     assert_bound(&read_decls(&text));
 
     let older = text
-        .replacen("mojito-mir 1.5", "mojito-mir 1.3", 1)
+        .replacen("mojito-mir 1.6", "mojito-mir 1.3", 1)
         .replace("binder { owner: \"$test:T\", slot: 0, name: T }", "T")
         .replace(
             "binder { owner: \"$unbound:Outer\", slot: 0, name: Outer }",
             "Outer",
         );
-    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.5", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.6", 1), text);
     assert_bound(&read_decls(&older));
 }
 
@@ -1612,13 +1612,13 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.5", "mojito-mir 1.4", 1)
+        .replacen("mojito-mir 1.6", "mojito-mir 1.4", 1)
         .replace(
             "ct_deferred(binder { owner: \"$test:callback\", slot: 0, name: callback })",
             "ct_deferred(callback)",
         )
         .replace("ct_marker(marker_local)", "ct_deferred(\"$local\")");
-    assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.5", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.6", 1), text);
     let Ty::Struct(_, arguments) = read(&older) else {
         panic!("expected a struct type");
     };
@@ -1630,4 +1630,47 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
         arguments[1],
         TyArg::Val(CtValue::Marker(CtMarker::RuntimeLocal))
     );
+}
+
+/// Schema 1.6 carries the identity of the pack a pack query names; an older
+/// artifact spells only its name, which reads as an unbound reference.
+#[test]
+fn pack_queries_round_trip_and_read_from_older_artifacts() {
+    let query = ParamContext::detached().pack_query(&test_binder("Ts"), PackQuery::Length);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::Struct(
+                "Buf".into(),
+                vec![TyArg::Val(CtValue::Expr(query))],
+            )],
+            Vec::new(),
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    let read_pack = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        let Ty::Struct(_, arguments) = parsed.program.functions[0].1.reg_types[&0].clone() else {
+            panic!("expected a struct type");
+        };
+        let [TyArg::Val(CtValue::Expr(expression))] = arguments.as_slice() else {
+            panic!("expected one expression argument");
+        };
+        let mojito_types::param_expr::ParamKind::PackQuery { pack, .. } = expression.kind() else {
+            panic!("expected a pack query");
+        };
+        pack.clone()
+    };
+    assert_eq!(read_pack(&text).id, test_id("Ts"));
+
+    let older = text
+        .replacen("mojito-mir 1.6", "mojito-mir 1.5", 1)
+        .replace(
+            "pack: binder { owner: \"$test:Ts\", slot: 0, name: Ts }",
+            "pack: Ts",
+        );
+    assert_ne!(older.replacen("mojito-mir 1.5", "mojito-mir 1.6", 1), text);
+    let pack = read_pack(&older);
+    assert!(pack.is_unbound() && &*pack.name == "Ts");
 }

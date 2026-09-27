@@ -221,7 +221,8 @@ artifact's own uses still find their declaration.
   parameter list declaring it, and as an unbound reference when that list
   declares none, so an operand naming an enclosing declaration's binder is
   bound by nothing.
-- A deferred slot older than schema 1.5 is a spelling too. It reads as an
-  unbound reference, which no enclosing binder closes.
+- A deferred slot older than schema 1.5, and a pack query's pack older than
+  schema 1.6, are spellings too. Each reads as an unbound reference, which no
+  enclosing binder closes.
 - Revisit only if a 1.0/1.1 artifact must be read with two same-spelled
   binders told apart.

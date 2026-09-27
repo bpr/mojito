@@ -1426,7 +1426,7 @@ fn tuple_specialization_ct_expr_is_closed(
         closed &= match node.kind() {
             ParamKind::Constant(value) => tuple_specialization_value_is_closed_in(value, binders),
             ParamKind::DeclRef(reference) => binders.ids.contains(&reference.id),
-            ParamKind::PackQuery { pack, .. } => binders.names_type(pack),
+            ParamKind::PackQuery { pack, .. } => binders.ids.contains(&pack.id),
             // An element of a pack that is still a parameter, or a reflection
             // of a symbolic type, names no instance.
             ParamKind::Hole { .. } | ParamKind::ListGet { .. } | ParamKind::Reflect { .. } => false,
@@ -1523,32 +1523,21 @@ fn tuple_specialization_constraint_operand_is_closed(
 
 /// The binders an enclosing callable contract declares, which a Tuple
 /// element type may mention and still be closed. A type parameter, a value
-/// reference, a `where` operand, and a callable default name their binder by
-/// identity, and so does a deferred slot; a pack query carries only a
-/// spelling.
+/// reference, a `where` operand, a callable default, a deferred slot, and a
+/// pack query all name their binder by identity.
 #[derive(Default, Clone)]
 struct ClosingBinders {
     ids: std::collections::HashSet<crate::param_expr::ParamId>,
-    types: std::collections::HashSet<String>,
 }
 
 impl ClosingBinders {
     /// These binders with a nested contract's own `decls` added.
     fn nested(&self, decls: &[crate::types::ParamDecl]) -> Self {
         let mut nested = self.clone();
-        for declaration in decls {
-            nested.ids.insert(declaration.id().clone());
-            if let crate::types::ParamDecl::Type { name, .. } = declaration {
-                nested
-                    .types
-                    .insert(name.trim_start_matches('*').to_string());
-            }
-        }
         nested
-    }
-
-    fn names_type(&self, name: &str) -> bool {
-        self.types.contains(name.trim_start_matches('*'))
+            .ids
+            .extend(decls.iter().map(|declaration| declaration.id().clone()));
+        nested
     }
 }
 

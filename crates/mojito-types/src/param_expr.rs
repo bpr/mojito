@@ -364,7 +364,7 @@ impl ParamContext {
 
     /// One of today's bound-pack constraint leaves, carried for the checker's
     /// concrete tuple/pack logic to resolve. It adds no symbolic pack support.
-    pub fn pack_query(&self, pack: &str, query: PackQuery) -> ParamExpr {
+    pub fn pack_query(&self, pack: &ParamRef, query: PackQuery) -> ParamExpr {
         let meta = match &query {
             PackQuery::Length => MetaTy::int(),
             PackQuery::Conforms(_) | PackQuery::Predicate { .. } | PackQuery::Contains(_) => {
@@ -378,7 +378,7 @@ impl ParamContext {
         self.make(
             meta,
             ParamKind::PackQuery {
-                pack: pack.to_string(),
+                pack: pack.clone(),
                 query,
             },
         )
@@ -1110,7 +1110,7 @@ impl ParamExpr {
                 output.insert(reference.name.to_string());
             }
             ParamKind::PackQuery { pack, .. } => {
-                output.insert(pack.clone());
+                output.insert(pack.name.to_string());
             }
             _ => {}
         });
@@ -1309,8 +1309,9 @@ pub enum ParamKind {
         subject: ParamExpr,
         query: ReflectQuery,
     },
-    /// A bound-pack query the checker's concrete pack logic resolves.
-    PackQuery { pack: String, query: PackQuery },
+    /// A bound-pack query the checker's concrete pack logic resolves; the
+    /// pack is named by its binder's identity.
+    PackQuery { pack: ParamRef, query: PackQuery },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     Hole { kind: HoleKind, token: u64 },
 }

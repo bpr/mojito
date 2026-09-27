@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.5
+# Mojito Textual MIR Format, Version 1.6
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.5 is implemented end to end for inspection and loading: canonical
+Version 1.6 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,10 +20,10 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.5
+mojito-mir 1.6
 ```
 
-The writer emits 1.5. The reader accepts 1.0 through 1.5; *Schema 1.0*
+The writer emits 1.6. The reader accepts 1.0 through 1.6; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -75,6 +75,12 @@ deferred slot, is `ct_marker`. A 1.4 consumer rejects both, which is the
 intended failure. A 1.5 consumer reads an older bare symbol as an unbound
 reference of that spelling, or as the marker the symbol spells (`$local`,
 `$type`, `$tuple-origin:<id>:<imm|mut|param>`).
+
+Minor version 6 carries that identity on a pack query. The `pack` field of
+`param_pack_query` is a `binder { owner, slot, name }` record where it was a
+bare symbol. A 1.5 consumer rejects the record, which is the intended
+failure. A 1.6 consumer reads an older bare symbol as an unbound reference of
+that spelling.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -326,7 +332,9 @@ param_pack_query { pack, query }
 `bool_xor`, `cond`. `meta` is `meta_value(type)`, `meta_type`,
 `meta_reflected`, `meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
-`meta_param_list(meta)`. A pack `query` is `pack_length`,
+`meta_param_list(meta)`. A pack query's `pack` is the
+`binder { owner, slot, name }` record of the pack binder it queries, and its
+`query` is `pack_length`,
 `pack_conforms(symbol)`, `pack_predicate { predicate, all }`, or
 `pack_contains(param-expr)`.
 
@@ -546,7 +554,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.5
+mojito-mir 1.6
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

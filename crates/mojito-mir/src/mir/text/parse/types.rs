@@ -698,7 +698,7 @@ impl Decoder {
                     self.built(value, built)
                 }
                 "param_pack_query" => {
-                    let pack = self.req(value, fields, "pack", Self::symbol)?;
+                    let pack = self.req(value, fields, "pack", Self::pack_binder)?;
                     let query = self.req(value, fields, "query", Self::pack_query)?;
                     self.unknown(fields, &["pack", "query"]);
                     Some(self.context.pack_query(&pack, query))
@@ -755,6 +755,16 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    /// The pack a pack query names: a `binder` record, or the bare spelling
+    /// of an artifact older than schema 1.6, which reads as an unbound
+    /// reference of that spelling.
+    fn pack_binder(&mut self, value: &Value) -> Option<ParamRef> {
+        if matches!(&value.kind, ValueKind::Record(tag, _) if tag == "binder") {
+            return self.binder_ref(value);
+        }
+        self.symbol(value).map(|name| ParamRef::unbound(&name))
     }
 
     fn pack_query(&mut self, value: &Value) -> Option<PackQuery> {

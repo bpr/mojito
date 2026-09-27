@@ -630,7 +630,9 @@ second expression tree.
   declaration at each site the checker builds one, so the Tuple closedness
   check (`ClosingBinders`) counts it as bound only by that binder. The
   elaborator's markers for a name that is no parameter are a separate
-  variant, `CtValue::Marker(CtMarker)`.
+  variant, `CtValue::Marker(CtMarker)`. A bound-pack query
+  (`ParamKind::PackQuery`) names its pack by `ParamRef` as well, so
+  `ClosingBinders` is keyed by binder identity alone.
 - `param_expr::fold` is the one implementation of compile-time scalar
   operators; the checker, the elaborator, and native monomorphization call it.
 

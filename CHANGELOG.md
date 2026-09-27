@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack query (`ParamKind::PackQuery`) now names its pack by the binder's
+  identity rather than its spelling, so the Tuple closedness check no longer
+  counts it as bound by an enclosing pack that merely shares the spelling.
+  MIR text writes the pack as a `binder` record, which moves the textual
+  format to schema 1.6; artifacts of schema 1.0 through 1.5 still load, a
+  spelled pack reading as an unbound reference.
 - A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
   fills by its declaration's identity rather than its spelling, so the Tuple
   closedness check no longer counts it as bound by an enclosing value binder
