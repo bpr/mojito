@@ -1875,7 +1875,14 @@ impl Checker {
         to: &Ty,
     ) -> Result<(), TypeError> {
         let scalar_boundary = matches!(from, Ty::IntLiteral | Ty::FloatLiteral)
-            && (matches!(to, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(to));
+            && (matches!(to, Ty::Int | Ty::UInt | Ty::Float64)
+                || matches!(
+                    to,
+                    Ty::Simd {
+                        width: SimdWidth::Known(_),
+                        ..
+                    }
+                ));
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
                 && !self.literal_value_fits_target(&value, to)
@@ -1961,14 +1968,14 @@ impl Checker {
                 CtValue::IntLiteral(_),
                 Ty::Simd {
                     dtype,
-                    width: SimdWidth::Known(1),
+                    width: SimdWidth::Known(_),
                 },
             ) => dtype.licenses(int_literal_materializes_to_dtype),
             (
                 CtValue::FloatLiteral(_),
                 Ty::Simd {
                     dtype,
-                    width: SimdWidth::Known(1),
+                    width: SimdWidth::Known(_),
                 },
             ) => dtype.licenses(Dtype::is_float),
             (value, Ty::Int | Ty::UInt | Ty::Float64) => {

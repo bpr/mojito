@@ -533,26 +533,58 @@ impl Flatten<'_> {
         let Some(found) = self.f.reg_types.get(&value.0) else {
             return value;
         };
-        let compatible = match found {
-            Ty::IntLiteral => {
-                matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
-                    || mojito_types::types::is_scalar_simd(target)
-            }
-            Ty::FloatLiteral => {
-                matches!(target, Ty::Float64)
-                    || mojito_types::types::scalar_simd_dtype(target)
-                        .is_some_and(mojito_ast::ast::Dtype::is_float)
-            }
-            _ => false,
-        };
+        let compatible =
+            match found {
+                Ty::IntLiteral => {
+                    matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
+                        || mojito_types::types::is_scalar_simd(target)
+                }
+                Ty::FloatLiteral => {
+                    matches!(target, Ty::Float64)
+                        || mojito_types::types::scalar_simd_dtype(target)
+                            .is_some_and(mojito_ast::ast::Dtype::is_float)
+                }
+                _ => false,
+            } || mojito_types::types::simd_shape(target).is_some_and(|(dtype, width)| {
+                width > 1
+                    && matches!(found, Ty::IntLiteral | Ty::FloatLiteral)
+                    && mojito_types::types::splats_to(
+                        found,
+                        &mojito_types::types::SimdDtype::Known(dtype),
+                    )
+            });
         if !compatible {
             return value;
         }
+        self.materialize_literal(value, target, source)
+    }
+
+    /// Materialize an exact-literal register as the checked `target`: a
+    /// numeric scalar through `MaterializeLiteral`, a multi-lane vector as the
+    /// one-element splat explicit `SIMD[dt, w](literal)` construction emits.
+    pub(in crate::mir) fn materialize_literal(
+        &mut self,
+        value: Reg,
+        target: &Ty,
+        source: SourceSpan,
+    ) -> Reg {
         let dest = self.fresh_typed(source, None, target.clone());
-        self.emit(MirInstr::MaterializeLiteral {
-            dest,
-            value,
-            target: target.clone(),
+        let splat = match mojito_types::types::simd_shape(target) {
+            Some((dtype, width)) if width > 1 => usize::try_from(width).ok().map(|w| (dtype, w)),
+            _ => None,
+        };
+        self.emit(match splat {
+            Some((dtype, width)) => MirInstr::MakeSimd {
+                dest,
+                dtype,
+                width,
+                elems: vec![value],
+            },
+            None => MirInstr::MaterializeLiteral {
+                dest,
+                value,
+                target: target.clone(),
+            },
         });
         dest
     }

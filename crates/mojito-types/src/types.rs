@@ -1981,6 +1981,15 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 width: SimdWidth::Known(1),
             },
         ) if splats_to(literal, dtype) => true,
+        // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
+        // `(FloatLiteral)` splat an exact literal across every lane.
+        (
+            literal @ (Ty::IntLiteral | Ty::FloatLiteral),
+            Ty::Simd {
+                dtype,
+                width: SimdWidth::Known(_),
+            },
+        ) if splats_to(literal, dtype) => true,
         (
             Ty::Simd {
                 dtype: from_dtype,
@@ -3645,6 +3654,19 @@ mod simd_slot_tests {
                 width: SimdWidth::inferred(&context),
             }
         ));
+    }
+
+    #[test]
+    fn exact_literals_splat_into_a_known_multi_lane_vector() {
+        let int32x4 = canonical_simd_ty(Dtype::Int32, 4);
+        let float32x4 = canonical_simd_ty(Dtype::Float32, 4);
+        assert!(coerces(&Ty::IntLiteral, &int32x4));
+        assert!(coerces(&Ty::IntLiteral, &float32x4));
+        assert!(coerces(&Ty::FloatLiteral, &float32x4));
+        assert!(!coerces(&Ty::FloatLiteral, &int32x4));
+        assert!(!coerces(&Ty::Bool, &canonical_simd_ty(Dtype::Bool, 4)));
+        assert!(!coerces(&canonical_simd_ty(Dtype::Int32, 1), &int32x4));
+        assert!(!coerces(&Ty::Int, &canonical_simd_ty(Dtype::Int, 4)));
     }
 
     #[test]

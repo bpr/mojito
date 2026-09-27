@@ -537,6 +537,21 @@ impl FnLowering<'_> {
             | CheckedConst::String(_)
             | CheckedConst::None => match expected {
                 LowerTy::Scalar(scalar) => self.checked_const_value(ctx, default, *scalar, dest),
+                // A literal default at a multi-lane parameter splats, as the
+                // VM's binding materializes it.
+                LowerTy::Aggregate { ty, .. }
+                    if matches!(default, CheckedConst::Int(_) | CheckedConst::Float(_))
+                        && let Some((dtype, width)) = mojito_types::types::simd_shape(ty)
+                        && let Ok(width) = usize::try_from(width)
+                        && width > 1 =>
+                {
+                    let lane =
+                        self.checked_const_value(ctx, default, ScalarTy::of_dtype(dtype), dest)?;
+                    let vector = self.simd_splat_value(ctx, lane, width, dest);
+                    let storage = self.simd_storage_slot(ctx, dtype, width);
+                    self.simd_store_vector_to(ctx, storage, dtype, width, vector, dest);
+                    Ok(storage)
+                }
                 _ => Err(self.unsupported_reg(
                     format!("non-scalar default argument in call to `{callee}`"),
                     dest,

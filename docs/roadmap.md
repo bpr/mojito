@@ -470,20 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 Front end: a bare literal cannot build a multi-lane SIMD field**
-
-  Problem: `P(1)` for a struct whose field is `SIMD[DType.int32, 4]` is
-  rejected with a field type mismatch.
-  - Upstream accepts it through the implicit `SIMD(IntLiteral)`
-    initializer.
-  - Spell `P(SIMD[DType.int32, 4](1))` until then.
-  - The coercion rule itself is one site, but it fires at every field
-    initialization, so the plan's job is to bound the overload-resolution and
-    fixture fallout before the edit.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.2 Operator operands and the bundled `hash` body take lifecycle copies**
+- [ ] **2.1 Operator operands and the bundled `hash` body take lifecycle copies**
 
   Problem: `b == c` on a struct whose copy constructor prints prints
   `copy` for each operand, and `hash(b)` prints it twice, on both backends.
@@ -504,7 +491,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.3 A value argument forwarded from a caller's parameter is not a native
+- [ ] **2.2 A value argument forwarded from a caller's parameter is not a native
   constant**
 
   Problem: a generic `def` that calls another with a value argument built
@@ -528,7 +515,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     same missing native constant and closes with it.
   - Model: Fable, Planned.
 
-- [ ] **2.4 A struct instance over a generic instance, or with a variadic
+- [ ] **2.3 A struct instance over a generic instance, or with a variadic
   initializer, mangles its constructor into an existing symbol**
 
   Problem: `Bag[List[Int]](List[Int]())` runs on the VM and the native
@@ -558,7 +545,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.5 A struct instance over a multi-lane vector mangles a fragment of
+- [ ] **2.4 A struct instance over a multi-lane vector mangles a fragment of
   its type argument into its constructor's name**
 
   Problem: `Box[SIMD[DType.float32, 2]](v)` runs on the VM and the native
@@ -574,7 +561,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.6 Consuming a field of a `deinit self` whose type has droppable
+- [ ] **2.5 Consuming a field of a `deinit self` whose type has droppable
   fields is refused natively**
 
   Problem: `self.lease^.release()` in a `deinit self` method runs on the VM,
@@ -590,7 +577,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **2.7 A one-element tuple does not compile natively**
+- [ ] **2.6 A one-element tuple does not compile natively**
 
   Problem: any use of `(7,)` fails the native backend's IR verification
   ("argument 1 type mismatch: expected llvm.ptr, got builtin.integer i64"),
@@ -604,7 +591,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.8 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.7 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2461,6 +2448,50 @@ last.
     `p.unsafe_offset(0)[][]` stops the same way.
   - Found while fixing a `Pointer` type argument's clone identity
     (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.89 A scalar does not splat implicitly into a multi-lane vector**
+
+  Problem: `var v: SIMD[DType.int32, 4] = Int32(9)` is rejected with a type
+  mismatch; the pin splats it through the implicit
+  `SIMD.__init__(Scalar[dtype])`.
+  - The same holds for a `Float64` into a `float64` vector and an `Int` into
+    a `DType.int` vector. A `Bool` never splats implicitly upstream.
+  - An exact literal already splats (2026-09-27): the checker records it as a
+    literal materialization, which MIR lowers to a one-element `MakeSimd`.
+  - A runtime scalar needs its own checked adjustment, since MIR
+    materializes only a register whose checked type is a literal.
+  - Spell `SIMD[DType.int32, 4](x)` until then.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.90 A subscript of a `List` of multi-lane vectors fails MIR
+  verification**
+
+  Problem: `print(l[0])` over `l = List[SIMD[DType.int32, 4]]()` stops with
+  "selected subscript target … is not in the __getitem__ method family" on
+  the VM; the pin prints the vector.
+  - The clone's symbol (`List.__getitem__$y20:SIMD[DType.int32, 4]$ov$Int`)
+    carries the `.` of `DType.int32`, and the verifier splits owner from
+    method at the last `.` (`rsplit_once('.')` in
+    `mir/verify/subscripts.rs`), as several `mojito-symbol` helpers do.
+  - `List[Int32]` is fine; only a width above one fails.
+  - 2.4's native mangling fragment is the same `DType.`-in-a-symbol shape.
+  - Found while probing literal splats (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.91 An annotated `comptime` literal ignores its declared type**
+
+  Problem: `comptime ONE: Int32 = 1` binds `ONE` as an `Int`, so
+  `ONE.dtype` prints `int` where the pin prints `int32`.
+  - `comptime ONES: SIMD[DType.int32, 4] = 1` likewise prints `1` where the
+    pin prints `[1, 1, 1, 1]`.
+  - The checker binds every constant it can evaluate as `IntLiteral`
+    (`checker/statements.rs`, `StmtKind::Comptime`) and never consults the
+    annotation.
+  - Found while probing literal splats (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

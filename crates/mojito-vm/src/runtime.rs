@@ -1351,6 +1351,17 @@ pub fn materialize_literal(
                 .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))?;
             Ok(simd_value(dtype, SimdLanes::Int(vec![lane])))
         }
+        // Upstream's implicit `SIMD(IntLiteral)`/`(FloatLiteral)` splat: the
+        // literal materializes as one lane, then fills the vector.
+        (value @ (Value::IntLiteral(_) | Value::FloatLiteral(_)), target)
+            if let Some((dtype, width)) = mojito_types::types::simd_shape(target)
+                && let Ok(width) = usize::try_from(width)
+                && width > 1 =>
+        {
+            let lane =
+                materialize_literal(value, &mojito_types::types::canonical_simd_ty(dtype, 1))?;
+            simd_from_values(dtype, width, &[lane])
+        }
         (value, target) => Err(RuntimeError::TypeError(format!(
             "cannot materialize {} as {target}",
             type_name(&value)

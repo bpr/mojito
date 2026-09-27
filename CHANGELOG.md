@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An exact literal now builds a multi-lane vector wherever one is expected,
+  as upstream's implicit `SIMD(IntLiteral)`/`SIMD(FloatLiteral)` splat does:
+  `P(1)` for a `SIMD[DType.int32, 4]` field, `var v: SIMD[DType.float32, 4]
+  = 1.5`, an argument, an assignment, a return, or a parameter default
+  (`assets/ok/simd_literal_splat.mojo`), on the VM and natively. Each was
+  rejected with a type mismatch.
 - A `Pointer` type argument naming a caller place
   (`alloc(Layout[Pointer[Int, origin_of(x)]](count=1))`,
   `unsafe_alloc[Pointer[Int, origin_of(x)]](n)`, a user `Holder[T]` built

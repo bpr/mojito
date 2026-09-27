@@ -424,16 +424,7 @@ impl Flatten<'_> {
                 }
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeLiteral {
                     target,
-                } => {
-                    let target = target.as_ref().clone();
-                    let dest = self.fresh_typed(site.clone(), None, target.clone());
-                    self.emit(MirInstr::MaterializeLiteral {
-                        dest,
-                        value,
-                        target,
-                    });
-                    dest
-                }
+                } => self.materialize_literal(value, target, site.clone()),
             };
         }
         if adjustments.is_empty()

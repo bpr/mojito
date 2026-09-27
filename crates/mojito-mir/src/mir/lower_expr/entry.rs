@@ -253,13 +253,7 @@ impl Flatten<'_> {
             if let Some(source) = self.checked_ty(e) {
                 self.f.reg_types.entry(value.0).or_insert(source);
             }
-            let dest = self.fresh_typed(span(e), None, target.clone());
-            self.emit(MirInstr::MaterializeLiteral {
-                dest,
-                value,
-                target,
-            });
-            return dest;
+            return self.materialize_literal(value, &target, span(e));
         }
         self.expr_unconverted(e)
     }
