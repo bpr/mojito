@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `hasher.update(x)` or `hasher._update_with_simd(x)` call in a generic
+  method whose own `H: Hasher` an instance binds to a nominal hasher such as
+  `AHasher` now derives as the struct's own method call, as the instance's
+  own check selects it, instead of the checker builtin the bound proved, so
+  `MOJITO_VERIFY_TEMPLATE_FACTS=1` agrees on
+  `assets/ok/template_method_simd_construction.mojo`. A multi-lane vector
+  argument there still keeps the clone check.
 - A call through a bound whose instance type overloads the requirement at
   one arity now derives wherever the clone check's own ranking decides it on
   the recorded argument types: past the conversion count, the copies a

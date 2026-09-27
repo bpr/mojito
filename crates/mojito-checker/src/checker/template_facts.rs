@@ -1848,7 +1848,7 @@ impl Checker {
         }
         facts.operators.clear();
         for (call, builtin) in &template.bound_builtins {
-            self.realize_bound_builtin(&facts, *call, *builtin, occurrences)?;
+            self.realize_bound_builtin(&mut facts, *call, *builtin, occurrences)?;
         }
         facts.bound_builtins.clear();
         for call in &template.repr_calls {

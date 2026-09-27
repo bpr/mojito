@@ -404,10 +404,12 @@ impl Checker {
     /// Discharge one checker builtin the template called on a bounded
     /// parameter (obligation 17): the argument the template proved through
     /// the bound must satisfy the same demand at the instance's type. A
-    /// hashed value records its leaf, as `is_hashable` does.
+    /// hashed value records its leaf, as `is_hashable` does. A hasher the
+    /// instance binds to a nominal struct selects that struct's own method
+    /// instead ([`Self::realize_nominal_hasher_call`]).
     pub(super) fn realize_bound_builtin(
         &self,
-        facts: &CheckedBodyFacts,
+        facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         builtin: BoundBuiltin,
         occurrences: &[Occurrence],
@@ -416,8 +418,24 @@ impl Checker {
             .iter()
             .find(|occurrence| occurrence.id == id)
             .ok_or("a bound builtin call is not an occurrence of the instance")?;
-        if occurrence.method_call.is_none() {
+        let Some((receiver, method)) = &occurrence.method_call else {
             return Err("a bound builtin call is not a method call in the instance");
+        };
+        let receiver = OccurrenceId {
+            syntax: *receiver,
+            copy: id.copy,
+        };
+        if matches!(builtin, BoundBuiltin::Update | BoundBuiltin::UpdateSimd)
+            && let Some(ty @ Ty::Struct(..)) = fact_at(&facts.expression_types, receiver).cloned()
+        {
+            return self.realize_nominal_hasher_call(
+                facts,
+                occurrence,
+                receiver,
+                &ty,
+                method,
+                occurrences,
+            );
         }
         for argument in &occurrence.arguments {
             let argument = OccurrenceId {
@@ -934,6 +952,142 @@ impl Checker {
             binders.insert(decl.id().clone(), argument.ty.clone());
         }
         Ok(Some(binders))
+    }
+
+    /// Realize `hasher.update(x)` or `hasher._update_with_simd(x)` whose
+    /// receiver the instance binds to a nominal struct, as `infer_method_call`
+    /// selects it there: the struct's own method, not the checker builtin
+    /// the bound proved. The call records what a method call on a `mut`
+    /// receiver records — the witness's contract, the receiver's generation
+    /// refreshed at the call — and each read argument is borrowed where it
+    /// lies, or, a temporary, borrowed and destroyed after the call. A
+    /// transferred argument, or a place that overlaps the receiver, is the
+    /// clone check's to judge.
+    fn realize_nominal_hasher_call(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrence: &Occurrence,
+        receiver: OccurrenceId,
+        ty: &Ty,
+        method: &str,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let id = occurrence.id;
+        let root = fact_at(&facts.expression_bindings, receiver)
+            .cloned()
+            .ok_or("a hasher receiver is not a bound place")?;
+        let arguments = occurrence
+            .arguments
+            .iter()
+            .map(|argument| {
+                let value = OccurrenceId {
+                    syntax: *argument,
+                    copy: id.copy,
+                };
+                let found = occurrences
+                    .iter()
+                    .find(|occurrence| occurrence.id == value)
+                    .ok_or("a hasher argument is not an occurrence of the instance")?;
+                if found.transfer {
+                    return Err("a hasher argument is transferred");
+                }
+                let ty = fact_at(&facts.expression_types, value)
+                    .cloned()
+                    .ok_or("a hasher argument has no retained type")?;
+                Ok(DispatchedArgument {
+                    value,
+                    parameter_ty: ty.clone(),
+                    ty,
+                    convention: None,
+                    requires_place: false,
+                    ranked: false,
+                    owned: found.ranking.owned,
+                })
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        // The template's leaves are unkeyed, so one only this call demanded
+        // cannot be withdrawn from the instance, whose own check records none
+        // at the struct's method.
+        let leaf = |ty: &Ty| facts.hash_leaves.contains(ty);
+        if arguments
+            .iter()
+            .any(|argument| mojito_types::types::mentions(&argument.ty, &leaf))
+        {
+            return Err("a hasher argument hashes a leaf the template recorded unkeyed");
+        }
+        for argument in arguments.iter().filter(|argument| !argument.owned) {
+            if fact_at(&facts.expression_bindings, argument.value)
+                .is_none_or(|bound| *bound == root)
+            {
+                return Err("a hasher argument's place is unbound or overlaps the receiver");
+            }
+        }
+        let witness =
+            self.bound_witness(ty, Some(ArgConvention::Mut), false, method, &arguments)?;
+        let BoundWitness::Method { .. } = &witness else {
+            return Err("a hasher receiver selects no method");
+        };
+        let invalidation = TemplateInvalidation {
+            root,
+            path: Vec::new(),
+            except: None,
+            include_base_generation: false,
+        };
+        facts.selected_calls.push((
+            id,
+            TemplateCallContract {
+                contract: CheckedCallContract {
+                    target: String::new(),
+                    raises: None,
+                    result_ty: Ty::None,
+                    result_adapter: None,
+                    receiver_requires_place: true,
+                    receiver_elided: false,
+                    receiver_convention: Some(ArgConvention::Mut),
+                    arguments: Vec::new(),
+                    captures: Vec::new(),
+                    reference_result: None,
+                    parameter_arguments: Vec::new(),
+                    param_decls: Vec::new(),
+                    boundary: CheckedCallBoundary::default(),
+                },
+                reference_result: None,
+                result_origins: Vec::new(),
+                arguments: Vec::new(),
+                invalidations: vec![invalidation.clone()],
+            },
+        ));
+        facts.overload_targets.push((id, String::new()));
+        facts.call_parameters.push((id, Vec::new()));
+        facts.interior_invalidations.push((id, vec![invalidation]));
+        self.install_witness(facts, id, &witness, &arguments, occurrences)?;
+        for argument in &arguments {
+            let tables = if argument.owned {
+                vec![
+                    &mut facts.read_temporary_arguments,
+                    &mut facts.unconsumed_temporaries,
+                ]
+            } else {
+                vec![&mut facts.borrowed_read_call_places]
+            };
+            for table in tables {
+                if !table.contains(&argument.value) {
+                    table.push(argument.value);
+                }
+            }
+        }
+        let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+        facts.selected_calls.sort_by_key(|(id, _)| order(id));
+        facts.overload_targets.sort_by_key(|(id, _)| order(id));
+        facts.call_parameters.sort_by_key(|(id, _)| order(id));
+        facts
+            .interior_invalidations
+            .sort_by_key(|(id, _)| order(id));
+        facts.method_instantiations.sort_by_key(|(id, _)| order(id));
+        facts.read_temporary_arguments.sort_by_key(order);
+        facts.unconsumed_temporaries.sort_by_key(order);
+        facts.borrowed_read_call_places.sort_by_key(order);
+        Ok(())
     }
 
     /// Write a struct witness into the instance's facts at `id`: the
