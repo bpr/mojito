@@ -221,9 +221,12 @@ impl Elab<'_> {
             // it rather than being checked again.
             for arguments in &self.instance_requests[template] {
                 let mut origin_binders = CloneOriginBinders::default();
-                let Some((values, _)) =
-                    self.method_request_values(info.source_params, arguments, &mut origin_binders)
-                else {
+                let Some((values, _)) = self.method_request_values(
+                    template,
+                    info.source_params,
+                    arguments,
+                    &mut origin_binders,
+                ) else {
                     continue;
                 };
                 if mono.instances_done.insert(mangle(template, &values)?) {
@@ -761,7 +764,7 @@ impl Elab<'_> {
             let template = self.selected_declaration(&job.orig, job.decl);
             let mut spec = match &template.kind {
                 StmtKind::Struct { type_params, .. }
-                    if !classify_ct_params(type_params)
+                    if !classify_ct_params(type_params, &job.orig)
                         .iter()
                         .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. })) =>
                 {
@@ -940,7 +943,7 @@ impl Elab<'_> {
         };
         let evaluated_count = type_params
             .iter()
-            .filter(|parameter| classify_ct_param(parameter, type_params).is_some())
+            .filter(|parameter| !retained_specialization_param(parameter, type_params))
             .count();
         if evaluated_count != vals.len() {
             return Err(ComptimeError::Arity(format!(
@@ -973,7 +976,7 @@ impl Elab<'_> {
         let mut type_pack_values: HashMap<String, Vec<CtValue>> = HashMap::new();
         let mut values = vals.iter();
         for tp in type_params {
-            let Some(decl) = classify_ct_param(tp, type_params) else {
+            let Some(decl) = classify_ct_param(tp, type_params, &output_name) else {
                 // Origin/OriginSet binders and explicit callable-value
                 // parameters remain symbolic. Their arguments are retained at
                 // each rewritten call and therefore never enter `CtValue`.
@@ -1414,6 +1417,7 @@ impl Elab<'_> {
             if super::synth::is_simd_keyed_method(&method) {
                 let requests = super::synth::hasher_leaf_requests(template, &self.hash_leaf_types);
                 simd_clones.extend(self.per_call_method_clones(
+                    orig,
                     &method,
                     &requests,
                     &PerCallBase {
@@ -1481,6 +1485,7 @@ impl Elab<'_> {
                     ..method.clone()
                 };
                 call_clones.extend(self.per_call_method_clones(
+                    orig,
                     &source,
                     requests,
                     &PerCallBase::default(),
@@ -1571,7 +1576,7 @@ impl Elab<'_> {
                 "specialization registry entry '{orig}' is not a struct"
             )));
         };
-        let decls = classify_ct_params(type_params);
+        let decls = classify_ct_params(type_params, orig);
         let (
             [
                 ParamDecl::Type {
@@ -1728,7 +1733,8 @@ impl Elab<'_> {
                 matches!(method.name.as_str(), "__getitem__" | "__getitem_param__")
                     && !method.type_params.is_empty()
                     && matches!(
-                        classify_ct_params(&method.type_params).as_slice(),
+                        classify_ct_params(&method.type_params, &format!("{orig}.{}", method.name))
+                            .as_slice(),
                         [ParamDecl::Value { .. }]
                     );
             let mut env = self.top_consts.borrow().clone();
@@ -1897,7 +1903,8 @@ impl Elab<'_> {
             // substituted and the `Ts[i]` annotation folded to that element.
             if dependent_index_accessor {
                 let accessor_name = method.name.clone();
-                let index_decls = classify_ct_params(&method.type_params);
+                let index_decls =
+                    classify_ct_params(&method.type_params, &format!("{orig}.{accessor_name}"));
                 let (
                     [
                         ParamDecl::Value {
@@ -2032,6 +2039,7 @@ impl Elab<'_> {
                 {
                     let mut origin_binders = CloneOriginBinders::default();
                     let Some((values, bindings)) = self.method_request_values(
+                        &format!("{owner}.{}", method.name),
                         &method.type_params,
                         request.arguments(),
                         &mut origin_binders,
@@ -2268,6 +2276,7 @@ impl Elab<'_> {
     /// (see `Elab::clone_binding`).
     pub(super) fn method_request_values(
         &self,
+        owner: &str,
         type_params: &[TypeParam],
         arguments: &[TyArg],
         origin_binders: &mut CloneOriginBinders,
@@ -2290,7 +2299,7 @@ impl Elab<'_> {
                 continue;
             }
             let name = parameter.name.trim_start_matches('*').to_string();
-            let decl = classify_ct_param(parameter, type_params)?;
+            let decl = classify_ct_param(parameter, type_params, owner)?;
             match (&decl, argument) {
                 (
                     ParamDecl::Type {
@@ -2528,6 +2537,7 @@ impl Elab<'_> {
                 continue;
             }
             clones.extend(self.per_call_method_clones(
+                name,
                 method,
                 per_call_requests,
                 &PerCallBase {
@@ -2676,8 +2686,11 @@ impl Elab<'_> {
     /// method with no baked parameter, a request whose arguments do not
     /// align, a `where` clause false for the instantiation, or a body that
     /// fails to elaborate mints nothing: the call keeps the erased path.
+    /// `template` is the struct whose declaration `method` is, which owns
+    /// the method's binders.
     pub(super) fn per_call_method_clones(
         &self,
+        template: &str,
         method: &Method,
         requests: &[MethodSpecializationRequest],
         base: &PerCallBase<'_>,
@@ -2719,9 +2732,12 @@ impl Elab<'_> {
             // to binders numbered after the instance's: both land on the
             // clone, which declares the instance's first.
             let mut binders = base_binders.cloned().unwrap_or_default();
-            let Some((call_values, call_bindings)) =
-                self.method_request_values(&method.type_params, request.arguments(), &mut binders)
-            else {
+            let Some((call_values, call_bindings)) = self.method_request_values(
+                &format!("{template}.{}", method.name),
+                &method.type_params,
+                request.arguments(),
+                &mut binders,
+            ) else {
                 continue;
             };
             let mut values = base_values.to_vec();
@@ -3354,9 +3370,7 @@ pub(super) struct MethodBinding {
 /// (`F: def() -> T`) and retained callable-value parameters stay on the
 /// clone's signature, and Origin binders have no argument at all.
 pub(super) fn method_parameter_is_baked(parameter: &TypeParam, siblings: &[TypeParam]) -> bool {
-    parameter.callable_bound.is_none()
-        && !retained_specialization_param(parameter, siblings)
-        && classify_ct_param(parameter, siblings).is_some()
+    parameter.callable_bound.is_none() && !retained_specialization_param(parameter, siblings)
 }
 
 /// The body of a generic template method that cannot elaborate until its

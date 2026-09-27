@@ -33,8 +33,6 @@ pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypePara
     )
 }
 
-/// Classify one source parameter that participates in compile-time evaluation.
-/// `None` means the parameter is retained symbolically by specialization.
 /// The concrete source type to substitute for a specialization type parameter
 /// that is dropped from the clone's signature and calls, or `None` when the
 /// parameter must remain symbolic: type packs, callable-value bindings,
@@ -66,6 +64,7 @@ pub(super) fn spec_type_param_substitution(decl: &ParamDecl, value: &CtValue) ->
 pub(super) fn classify_ct_param_with(
     tp: &TypeParam,
     siblings: &[TypeParam],
+    owner: &str,
     is_value_struct: &dyn Fn(&str) -> bool,
 ) -> Option<ParamDecl> {
     if let [only] = tp.bounds.as_slice()
@@ -75,23 +74,30 @@ pub(super) fn classify_ct_param_with(
         && is_value_struct(only)
     {
         return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings),
+            id: elaborated_binder(tp, siblings, owner),
             name: tp.name.clone(),
             ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
             default: tp
                 .default
                 .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings)),
+                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
             constraints: Vec::new(),
         });
     }
-    classify_ct_param(tp, siblings)
+    classify_ct_param(tp, siblings, owner)
 }
 
-pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Option<ParamDecl> {
+/// Classify one of `owner`'s source parameters that participates in
+/// compile-time evaluation; `None` means specialization retains it
+/// symbolically (see [`retained_specialization_param`]).
+pub(super) fn classify_ct_param(
+    tp: &TypeParam,
+    siblings: &[TypeParam],
+    owner: &str,
+) -> Option<ParamDecl> {
     if retained_specialization_param(tp, siblings) {
         return None;
     }
@@ -99,13 +105,13 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         && let Some(ty) = ct_param_source_type(source_type)
     {
         return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings),
+            id: elaborated_binder(tp, siblings, owner),
             name: tp.name.clone(),
             ty: Box::new(ty),
             default: tp
                 .default
                 .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings)),
+                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -116,13 +122,13 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         && let Some(ty) = ct_value_param_type(only)
     {
         return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings),
+            id: elaborated_binder(tp, siblings, owner),
             name: tp.name.clone(),
             ty: Box::new(ty),
             default: tp
                 .default
                 .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings)),
+                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
             callable_default: None,
             infer_only: tp.infer_only,
             variadic: tp.name.starts_with('*'),
@@ -130,7 +136,7 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         });
     }
     Some(ParamDecl::Type {
-        id: elaborated_binder(tp, siblings),
+        id: elaborated_binder(tp, siblings, owner),
         name: tp.name.clone(),
         bounds: tp.bounds.clone(),
         callable_bound: None,
@@ -143,6 +149,24 @@ pub(super) fn classify_ct_param(tp: &TypeParam, siblings: &[TypeParam]) -> Optio
         variadic: tp.name.starts_with('*'),
         constraints: Vec::new(),
     })
+}
+
+/// The identity of an elaborator-classified binder: the declaration `owner`
+/// names — its template, so a `$` clone shares its template's binders, as
+/// the checker's owners do — and the binder's slot among its siblings.
+pub(super) fn elaborated_binder(
+    tp: &TypeParam,
+    siblings: &[TypeParam],
+    owner: &str,
+) -> mojito_types::param_expr::ParamId {
+    let slot = siblings
+        .iter()
+        .position(|sibling| sibling.name == tp.name)
+        .unwrap_or_default();
+    mojito_types::param_expr::ParamId::new(
+        mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner),
+        slot,
+    )
 }
 
 pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::origin::RefTy> {
@@ -234,15 +258,4 @@ pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dt
     };
     let width = width.wrapping_signed(64)?;
     (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
-}
-
-/// The identity of an elaborator-classified binder: the elaborator's
-/// declaration metadata has no owner to give, so every list is `$elaborated`
-/// and a binder is its slot among its siblings.
-fn elaborated_binder(tp: &TypeParam, siblings: &[TypeParam]) -> mojito_types::param_expr::ParamId {
-    let slot = siblings
-        .iter()
-        .position(|sibling| sibling.name == tp.name)
-        .unwrap_or_default();
-    mojito_types::param_expr::ParamId::new("$elaborated", slot)
 }

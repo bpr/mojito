@@ -1433,27 +1433,24 @@ fn literal_ct_value(expr: &Expr) -> Option<CtValue> {
 /// them, built through the shared typed constructors. The elaborator itself
 /// evaluates a default from its source expression, so `None` here only means
 /// the metadata carries no symbolic form.
-fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam]) -> Option<ParamExpr> {
+fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<ParamExpr> {
     let context = ParamContext::detached();
     match &expr.kind {
         ExprKind::Identifier(name) => {
-            let (slot, sibling) = siblings
-                .iter()
-                .enumerate()
-                .find(|(_, sibling)| sibling.name == *name)?;
+            let sibling = siblings.iter().find(|sibling| sibling.name == *name)?;
             let ty = match (&sibling.value_type, sibling.bounds.as_slice()) {
                 (Some(source), _) => ct_param_source_type(source)?,
                 (None, [only]) => ct_value_param_type(only)?,
                 _ => return None,
             };
             Some(context.decl_ref(
-                mojito_types::param_expr::ParamId::new("$elaborated", slot),
+                elaborated_binder(sibling, siblings, owner),
                 name,
                 mojito_types::param_expr::MetaTy::value(ty),
             ))
         }
         ExprKind::Prefix(PrefixOp::Neg, value) => {
-            context.neg(&ct_expr_from_ast(value, siblings)?).ok()
+            context.neg(&ct_expr_from_ast(value, siblings, owner)?).ok()
         }
         ExprKind::Infix(
             op @ (InfixOp::Add
@@ -1467,8 +1464,8 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam]) -> Option<ParamExpr> {
         ) => context
             .infix(
                 *op,
-                &ct_expr_from_ast(left, siblings)?,
-                &ct_expr_from_ast(right, siblings)?,
+                &ct_expr_from_ast(left, siblings, owner)?,
+                &ct_expr_from_ast(right, siblings, owner)?,
             )
             .ok(),
         _ => context.constant(literal_ct_value(expr)?).ok(),
@@ -2016,9 +2013,9 @@ struct Elab<'a> {
     generic_aliases: RefCell<HashMap<String, (Vec<TypeParam>, Expr)>>,
 }
 
-fn classify_ct_params(tps: &[TypeParam]) -> Vec<ParamDecl> {
+fn classify_ct_params(tps: &[TypeParam], owner: &str) -> Vec<ParamDecl> {
     tps.iter()
-        .filter_map(|tp| classify_ct_param(tp, tps))
+        .filter_map(|tp| classify_ct_param(tp, tps, owner))
         .collect()
 }
 
@@ -2432,7 +2429,7 @@ fn collect_fns(program: &[Stmt]) -> HashMap<String, CtFn<'_>> {
             fns.insert(
                 name.clone(),
                 CtFn {
-                    ct_params: classify_ct_params(type_params),
+                    ct_params: classify_ct_params(type_params, name),
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     body,
                 },
@@ -2467,7 +2464,7 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
             structs.insert(
                 name.clone(),
                 CtStruct {
-                    decls: classify_ct_params(type_params),
+                    decls: classify_ct_params(type_params, name),
                     source_params: type_params,
                     associated,
                     fields,
@@ -2692,12 +2689,15 @@ fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
 /// Whether a top-level `def` is a type-pack template: it declares a `*Ts` type
 /// parameter — the type-pack class's per-declaration predicate.
 fn pack_keyed_declaration(statement: &Stmt) -> bool {
-    let StmtKind::Def { type_params, .. } = &statement.kind else {
+    let StmtKind::Def {
+        name, type_params, ..
+    } = &statement.kind
+    else {
         return false;
     };
     type_params.iter().any(|parameter| {
         matches!(
-            classify_ct_param(parameter, type_params),
+            classify_ct_param(parameter, type_params, name),
             Some(ParamDecl::Type { variadic: true, .. })
         )
     })
@@ -2769,7 +2769,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
                 .iter()
                 .any(|parameter| {
                     matches!(
-                        classify_ct_param(parameter, type_params),
+                        classify_ct_param(parameter, type_params, name),
                         Some(ParamDecl::Type {
                             variadic: false,
                             ..

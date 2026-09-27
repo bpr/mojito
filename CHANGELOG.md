@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The comptime elaborator's parameter metadata now names each binder by
+  the declaration it belongs to (its template, or `Struct.method` for a
+  method's own binder) rather than one shared `$elaborated` owner, so two
+  declarations' binders at the same slot no longer share an identity.
 - Two overloads of one generic struct method whose parameter slots agree no
   longer share their binders: an overloaded method owns them under the
   symbol its template lowers to (`Box.pick$ov$…`), which MIR text spells as

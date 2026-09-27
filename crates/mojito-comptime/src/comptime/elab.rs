@@ -689,7 +689,7 @@ impl Elab<'_> {
         let source_defaults: Vec<Option<&Expr>> = info
             .source_params
             .iter()
-            .filter(|tp| classify_ct_param(tp, info.source_params).is_some())
+            .filter(|tp| !retained_specialization_param(tp, info.source_params))
             .map(|tp| tp.default.as_ref())
             .collect();
         let defaults_fill = args.len() < info.decls.len()
@@ -883,6 +883,7 @@ impl Elab<'_> {
         let mut clones = Vec::new();
         for method in &stmt_methods(stmt) {
             clones.extend(self.per_call_method_clones(
+                name,
                 method,
                 requests.map_or(&[][..], Vec::as_slice),
                 &base,

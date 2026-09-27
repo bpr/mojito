@@ -494,7 +494,7 @@ impl Elab<'_> {
         };
         let type_params = info.source_params;
         !type_params.is_empty()
-            && classify_ct_params(type_params).iter().all(|decl| {
+            && classify_ct_params(type_params, name).iter().all(|decl| {
                 matches!(
                     decl,
                     ParamDecl::Type {
@@ -1303,7 +1303,7 @@ impl Elab<'_> {
         self.specializable.get(name).is_some_and(|template| {
             matches!(&template.kind, StmtKind::Struct { type_params, .. }
             if matches!(
-                classify_ct_params(type_params).as_slice(),
+                classify_ct_params(type_params, name).as_slice(),
                 [ParamDecl::Type { variadic: true, .. }]
             ))
         })
@@ -1324,7 +1324,7 @@ impl Elab<'_> {
                 "specialization registry entry '{name}' is not a struct"
             )));
         };
-        let decls = classify_ct_params(type_params);
+        let decls = classify_ct_params(type_params, name);
         let [ParamDecl::Type { variadic: true, .. }] = decls.as_slice() else {
             if decls
                 .iter()
@@ -1393,7 +1393,7 @@ impl Elab<'_> {
         let mut vals = Vec::new();
         let mut environment = consts.clone();
         for (parameter, arguments) in evaluated.iter().zip(bound) {
-            let decl = classify_ct_param_with(parameter, type_params, &|bound| {
+            let decl = classify_ct_param_with(parameter, type_params, name, &|bound| {
                 self.structs.contains_key(bound)
             })
             .ok_or_else(|| {
@@ -1492,6 +1492,7 @@ impl Elab<'_> {
         arguments: &[TyArg],
     ) -> Option<Vec<CtValue>> {
         let StmtKind::Def {
+            name,
             type_params,
             params,
             ..
@@ -1522,7 +1523,7 @@ impl Elab<'_> {
                     _ => return None,
                 }
             }
-            let decl = classify_ct_param(parameter, type_params)?;
+            let decl = classify_ct_param(parameter, type_params, name)?;
             let value = match (&decl, argument) {
                 (
                     ParamDecl::Type {
@@ -1716,7 +1717,10 @@ impl Elab<'_> {
         param_args: &[ParamArg],
         vals: &[CtValue],
     ) -> Option<Vec<ParamArg>> {
-        let StmtKind::Def { type_params, .. } = &template.kind else {
+        let StmtKind::Def {
+            name, type_params, ..
+        } = &template.kind
+        else {
             return None;
         };
         let bound = bind_spec_param_args(type_params, param_args, display_name).ok()?;
@@ -1727,7 +1731,7 @@ impl Elab<'_> {
                 kept.extend(arguments.into_iter().cloned());
                 continue;
             }
-            let decl = classify_ct_param(parameter, type_params)?;
+            let decl = classify_ct_param(parameter, type_params, name)?;
             let value = values.next()?;
             if matches!(decl, ParamDecl::Type { .. })
                 && spec_type_param_substitution(&decl, value).is_none()
@@ -1759,7 +1763,10 @@ impl Elab<'_> {
             request_site,
             forwarded_pack_types,
         } = request;
-        let StmtKind::Def { type_params, .. } = &template.kind else {
+        let StmtKind::Def {
+            name, type_params, ..
+        } = &template.kind
+        else {
             return Err(ComptimeError::NotComptime(format!(
                 "specialization registry entry '{display_name}' is not a function"
             )));
@@ -1782,7 +1789,7 @@ impl Elab<'_> {
                 continue;
             }
 
-            let decl = classify_ct_param(parameter, type_params)
+            let decl = classify_ct_param(parameter, type_params, name)
                 .expect("non-retained source parameter must have a comptime classification");
             let binding = decl.name().trim_start_matches('*').to_string();
             if parameter.name.starts_with('*') {

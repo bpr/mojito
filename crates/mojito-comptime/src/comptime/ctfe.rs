@@ -1438,6 +1438,7 @@ impl Elab<'_> {
             for method in methods.iter_mut() {
                 if super::synth::is_simd_keyed_method(method) {
                     clones.extend(self.per_call_method_clones(
+                        name,
                         method,
                         &requests,
                         &super::specialize::PerCallBase::default(),

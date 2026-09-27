@@ -217,10 +217,10 @@ pinned Mojo accepts all three.
 The MIR text writer emits a binder's `owner`/`slot` on every `param`,
 `type_param`, and `value_param` record (schema 1.2); a 1.0/1.1 binder reads
 as one identity per spelling (`$mir-1.1:<name>`). The elaborator's
-declaration metadata (`$elaborated`) still has no owner to give, and native
-monomorphization still binds a function's own type binders by spelling; the
-roadmap entry *Binder identity is still by spelling below the checker* lists
-those corners.
+declaration metadata names a binder by its declaration (the template, or
+`Struct.method` for a method's own binder) and its slot among all the
+declaration's parameters; its environment is still keyed by name. Native
+monomorphization still binds a value binder by spelling (`docs/roadmap.md`).
 
 ## One folder
 
