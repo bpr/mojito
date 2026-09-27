@@ -112,6 +112,25 @@ fn non_overloaded_def_keeps_its_source_name() {
 }
 
 #[test]
+fn method_symbol_splits_outside_baked_type_arguments() {
+    use mojito::symbol::{retarget_method_symbol, split_method_symbol};
+    let clone = "Box.__init__$y22:SIMD[DType.float32, 2]";
+    assert_eq!(
+        split_method_symbol(clone),
+        Some(("Box", "__init__$y22:SIMD[DType.float32, 2]"))
+    );
+    assert_eq!(
+        retarget_method_symbol(clone, "Box$mono$TSIMD$DType$float32$$2$").as_deref(),
+        Some("Box$mono$TSIMD$DType$float32$$2$.__init__$y22:SIMD[DType.float32, 2]")
+    );
+    assert_eq!(
+        split_method_symbol("List[Int].append"),
+        Some(("List[Int]", "append"))
+    );
+    assert_eq!(split_method_symbol("SIMD[DType.float32, 2]"), None);
+}
+
+#[test]
 fn method_and_constructor_overloads_get_qualified_names() {
     let names = lowered_names(
         "struct Box:\n    var n: Int\n\

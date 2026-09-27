@@ -195,6 +195,7 @@ assets/ok/list_and_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_anytype_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_contiguous_slice_strict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_of_vectors_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store_drop.mojo	-	ineligible	no-scalar-entry-shape
@@ -632,6 +633,7 @@ assets/ok/template_method_var_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_variadic_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_variadic_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vector_hash_leaf.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_vector_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_vector_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_view_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_view_result_interior.mojo	-	ineligible	no-scalar-entry-shape

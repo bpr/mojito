@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct instance over a multi-lane vector
+  (`Box[SIMD[DType.float32, 2]](v)`) now compiles natively
+  (`assets/ok/template_method_vector_instance.mojo`), where the native backend
+  refused its constructor with a mangled name holding a fragment of the type
+  argument. A subscript of a `List` of multi-lane vectors (`l[0]`, `l[0] = v`)
+  now runs instead of failing MIR verification
+  (`assets/ok/list_of_vectors_subscript.mojo`). A method symbol now splits
+  from its receiver only at a `.` outside brackets, so a clone's baked
+  `DType.float32` never splits it.
 - A struct instance over a generic instance (`Bag[List[Int]](List[Int]())`)
   and a struct whose initializer collects `var *values` (`Bag(1, 2)`) now
   compile natively (`assets/ok/instance_constructor_symbols.mojo`,

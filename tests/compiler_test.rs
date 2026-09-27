@@ -2540,15 +2540,17 @@ fn template_method_generic_calls_derive() {
 fn template_method_vector_hash_leaf_derives() {
     // A bound `__hash__` on a sized scalar or a multi-lane vector instance:
     // derivation's hashed leaf is the one the instance's clone check accepts.
+    // Each instance derives twice: its instance clone and the per-call clone
+    // over the hasher.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_vector_hash_leaf.mojo"),
         "5089976597503910097\nTrue True\n",
-        &[("Box.digest", 2)],
+        &[("Box.digest", 4)],
     );
     assert_methods_derive(
-        include_str!("../conformance/probes/native_simd_instance_mangle.mojo"),
+        include_str!("../assets/ok/template_method_vector_instance.mojo"),
         "1547189026303444902\n",
-        &[("Box.digest", 1)],
+        &[("Box.digest", 2)],
     );
 }
 

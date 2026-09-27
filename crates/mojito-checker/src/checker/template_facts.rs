@@ -2616,8 +2616,7 @@ impl Checker {
             let Ty::Struct(owner, arguments) = place else {
                 return Err("an updated place's in-place dunder is not a struct's method");
             };
-            let method = selected
-                .rsplit_once('.')
+            let method = mojito_symbol::symbol::split_method_symbol(&selected)
                 .and_then(|(_, method)| method.split('$').next())
                 .ok_or("an in-place update names no method")?;
             let target = self
@@ -7410,14 +7409,13 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
 /// ([`Checker::realize_bound_dispatch`]).
 fn dispatched_conformer(targets: &[&str], callee: &str) -> bool {
     let member = |name: &'_ str| name.split('$').next().unwrap_or(name).to_string();
-    callee.rsplit_once('.').is_some_and(|(_, called)| {
+    mojito_symbol::symbol::split_method_symbol(callee).is_some_and(|(_, called)| {
         targets
             .iter()
             .filter(|target| mojito_symbol::symbol::is_trait_dispatch_symbol(target))
             .any(|target| {
                 member(
-                    target
-                        .rsplit_once('.')
+                    mojito_symbol::symbol::split_method_symbol(target)
                         .map_or(*target, |(_, method)| method),
                 ) == member(called)
             })

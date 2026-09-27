@@ -312,6 +312,23 @@ pub fn instance_clone_base(method: &str) -> &str {
     method.split_once('$').map_or(method, |(base, _)| base)
 }
 
+/// A method symbol split at its receiver separator (`Box` and
+/// `__init__$y22:SIMD[DType.float32, 2]`): the last `.` outside brackets, so a
+/// clone's baked type arguments (`DType.float32`) never split it.
+pub fn split_method_symbol(symbol: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut separator = None;
+    for (index, ch) in symbol.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            '.' if depth == 0 => separator = Some(index),
+            _ => {}
+        }
+    }
+    separator.map(|index| (&symbol[..index], &symbol[index + 1..]))
+}
+
 /// Deterministic MIR identity for a concrete generic instance. Origins have
 /// already been erased from `arguments` and therefore cannot split ABI identity.
 pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
@@ -724,9 +741,7 @@ pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
 /// receiver is the abstract `__trait_dispatch`, which a concrete type
 /// replaces ([`retarget_method_symbol`]).
 pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
-    symbol
-        .rsplit_once('.')
-        .is_some_and(|(receiver, _)| receiver == TRAIT_DISPATCH)
+    split_method_symbol(symbol).is_some_and(|(receiver, _)| receiver == TRAIT_DISPATCH)
 }
 
 /// Retarget a checker-selected method symbol to a concrete runtime type.
@@ -737,7 +752,7 @@ pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
 /// Keeping this parsing here preserves this module's ownership of the overload
 /// encoding.
 pub fn retarget_method_symbol(symbol: &str, type_name: &str) -> Option<String> {
-    let (_, method_and_signature) = symbol.rsplit_once('.')?;
+    let (_, method_and_signature) = split_method_symbol(symbol)?;
     Some(format!("{type_name}.{method_and_signature}"))
 }
 
@@ -745,7 +760,7 @@ pub fn retarget_method_symbol(symbol: &str, type_name: &str) -> Option<String> {
 /// Keep this knowledge beside the overload encoding so checked/MIR consumers do
 /// not parse `$ov$` spellings independently.
 pub fn is_index_normalization_symbol(symbol: &str) -> bool {
-    symbol.rsplit_once('.').is_some_and(|(_, method)| {
+    split_method_symbol(symbol).is_some_and(|(_, method)| {
         method == "__mlir_index__"
             || method
                 .strip_prefix("__mlir_index__")

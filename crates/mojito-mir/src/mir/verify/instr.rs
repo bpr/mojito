@@ -1189,10 +1189,11 @@ pub(super) fn verify_instruction(
                         "{prefix}: indirect-call target '{target}' does not match callable contract '{expected}'"
                     ));
                 }
-                let is_call_target = target.rsplit_once('.').is_some_and(|(_, method)| {
-                    method == "__call__"
-                        || mojito_symbol::symbol::is_overload_of(method, "__call__")
-                });
+                let is_call_target = mojito_symbol::symbol::split_method_symbol(target)
+                    .is_some_and(|(_, method)| {
+                        method == "__call__"
+                            || mojito_symbol::symbol::is_overload_of(method, "__call__")
+                    });
                 if !is_call_target {
                     errors.push(format!(
                         "{prefix}: indirect-call target '{target}' is not a __call__ method"

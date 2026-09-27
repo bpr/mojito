@@ -223,10 +223,7 @@ impl Checker {
         call: &mut TemplateCallContract,
         receiver: &Ty,
     ) -> Result<EmbeddedWitness, &'static str> {
-        let method = call
-            .contract
-            .target
-            .rsplit_once('.')
+        let method = mojito_symbol::symbol::split_method_symbol(&call.contract.target)
             .and_then(|(_, method)| method.split('$').next())
             .ok_or("an embedded dispatch names no method")?
             .to_string();

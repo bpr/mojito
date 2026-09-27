@@ -97,16 +97,17 @@ pub(super) fn verify_subscript_call(
     } = sources;
     verify_capture_accesses(prefix, function, &call.capture_accesses, errors);
     let abstract_trait_dispatch = call.target.starts_with("__trait_dispatch.");
-    let target_family = call.target.rsplit_once('.').is_some_and(|(_, symbol)| {
-        symbol == method
-            || symbol
-                .strip_prefix(method)
-                .is_some_and(|suffix| suffix.starts_with('$'))
-            || method == "__getitem__"
-                && (symbol == "__getitem_param__"
-                    || symbol.starts_with("__getitem_param__$")
-                    || symbol.starts_with("__getitem_param_value__$"))
-    });
+    let target_family =
+        mojito_symbol::symbol::split_method_symbol(&call.target).is_some_and(|(_, symbol)| {
+            symbol == method
+                || symbol
+                    .strip_prefix(method)
+                    .is_some_and(|suffix| suffix.starts_with('$'))
+                || method == "__getitem__"
+                    && (symbol == "__getitem_param__"
+                        || symbol.starts_with("__getitem_param__$")
+                        || symbol.starts_with("__getitem_param_value__$"))
+        });
     if !target_family {
         errors.push(format!(
             "{prefix}: selected subscript target '{}' is not in the {method} method family",
@@ -123,9 +124,7 @@ pub(super) fn verify_subscript_call(
     };
     if !abstract_trait_dispatch
         && let Some(receiver) = concrete_receiver
-        && call
-            .target
-            .rsplit_once('.')
+        && mojito_symbol::symbol::split_method_symbol(&call.target)
             .is_some_and(|(owner, _)| owner != receiver)
     {
         errors.push(format!(

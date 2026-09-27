@@ -891,7 +891,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in
   `native/mono/instances.rs` select clones through it from checked register
   types); `instance_clone_base` recovers a clone's source method name for the
-  exact-name lifecycle gates, and `lifecycle_constructor` recognizes a
+  exact-name lifecycle gates, `split_method_symbol` splits a lowered method
+  symbol from its receiver at the last `.` outside brackets (a clone's baked
+  `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,
+  and the monomorphizer parse method symbols through it), and `lifecycle_constructor` recognizes a
   construction through a clone or an overload. The VM's `lifecycle_symbol`
   and `instance_field_types` (`backend/vm.rs`) pick an instance's
   `__init__`/`__copyinit__`/`__moveinit__`/`__deinit__` clone from a checked

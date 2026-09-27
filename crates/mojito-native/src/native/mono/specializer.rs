@@ -1387,7 +1387,7 @@ fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
 /// instance beside it.
 fn lifecycle_clone_instance_symbol(template: &str, owner: Option<&str>) -> Option<String> {
     let owner = owner?;
-    let (_, method) = template.rsplit_once('.')?;
+    let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
     let base = mojito_symbol::symbol::instance_clone_base(method);
     if !matches!(
         base,

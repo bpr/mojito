@@ -3,7 +3,7 @@
 # integer instance, the hashed leaf each instance's own clone check accepts,
 # and a direct `__hash__` on a vector or a sized scalar feeds the hasher as
 # `hash()` does (`-0.0` folded first). The multi-lane vector instance is
-# `conformance/probes/native_simd_instance_mangle.mojo`.
+# `template_method_vector_instance.mojo`.
 from std.hashlib import Hasher
 from std.hashlib._ahash import AHasher
 

@@ -195,6 +195,7 @@ assets/ok/list_and_struct.mojo	main	exe-differential	sanitized
 assets/ok/list_anytype_element.mojo	main	exe-differential	sanitized
 assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
 assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
+assets/ok/list_of_vectors_subscript.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized
 assets/ok/list_subscript_field_store.mojo	main	exe-differential	sanitized
 assets/ok/list_subscript_field_store_drop.mojo	main	exe-differential	sanitized
@@ -632,6 +633,7 @@ assets/ok/template_method_var_self.mojo	main	exe-differential	sanitized
 assets/ok/template_method_variadic_initializer.mojo	main	exe-differential	sanitized
 assets/ok/template_method_variadic_struct.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vector_hash_leaf.mojo	main	exe-differential	sanitized
+assets/ok/template_method_vector_instance.mojo	main	exe-differential	sanitized
 assets/ok/template_method_vector_key.mojo	main	exe-differential	sanitized
 assets/ok/template_method_view_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_method_view_result_interior.mojo	main	exe-differential	sanitized

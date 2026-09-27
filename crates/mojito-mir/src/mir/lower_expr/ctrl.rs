@@ -405,8 +405,7 @@ impl Flatten<'_> {
         resolved: &str,
         args: Vec<Reg>,
     ) {
-        let method = resolved
-            .rsplit_once('.')
+        let method = mojito_symbol::symbol::split_method_symbol(resolved)
             .map_or(resolved, |(_, method)| method)
             .to_string();
         let recv = self.fresh_typed(expression.source_span(), Some(collection), target.clone());
