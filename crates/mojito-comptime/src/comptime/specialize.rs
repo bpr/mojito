@@ -2331,8 +2331,10 @@ impl Elab<'_> {
                     },
                     TyArg::Val(value),
                 ) => {
-                    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
-                        || !ct_value_has_type(value, ty)
+                    if matches!(
+                        value,
+                        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+                    ) || !ct_value_has_type(value, ty)
                     {
                         return None;
                     }

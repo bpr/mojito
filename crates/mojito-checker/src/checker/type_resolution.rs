@@ -1887,7 +1887,7 @@ impl Checker {
                                 context: format!("callable-value parameter '{name}'"),
                             });
                         }
-                        return Ok(TyArg::Val(CtValue::Deferred(name.clone())));
+                        return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
                     }
                     // Source validation types before the elaborator folds a
                     // value argument it alone can evaluate (a vector
@@ -1897,7 +1897,7 @@ impl Checker {
                     let value = match self.eval_associated_ct(expr, &HashMap::new()) {
                         Ok(value) => value,
                         Err(_) if self.source_validation => {
-                            return Ok(TyArg::Val(CtValue::Deferred(name.clone())));
+                            return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
                         }
                         Err(error) => return Err(error),
                     };
@@ -2892,10 +2892,13 @@ impl Checker {
 
 fn tyarg_is_symbolic(argument: &TyArg) -> bool {
     match argument {
-        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
-        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values
-            .iter()
-            .any(|value| matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))),
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => true,
+        TyArg::Val(CtValue::Tuple(values) | CtValue::List(values)) => values.iter().any(|value| {
+            matches!(
+                value,
+                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+            )
+        }),
         TyArg::Val(_) => false,
         TyArg::Origin(
             mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,

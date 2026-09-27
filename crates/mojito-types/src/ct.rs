@@ -10,10 +10,11 @@
 //! type-valued compile-time members.
 //!
 //! Scalar values and recursively materializable tuples/lists/dicts/sets have a
-//! runtime literal form; `Type`, `Reflected`, `Expr`, and `Deferred` are
-//! compile-time-only.
+//! runtime literal form; `Type`, `Reflected`, `Expr`, `Deferred`, and `Marker`
+//! are compile-time-only.
 
-use crate::param_expr::ParamExpr;
+use crate::origin::{Mutability, OriginParamId};
+use crate::param_expr::{ParamExpr, ParamRef};
 use crate::types::{
     SimdDtype, SimdWidth, Ty, TyArg, dict_elements, list_element, set_element, tuple_elements,
 };
@@ -156,12 +157,48 @@ pub enum CtValue {
     /// folded expression is its ordinary concrete variant
     /// ([`ParamExpr::into_value`]).
     Expr(ParamExpr),
-    /// A parameter slot whose value arrives later and takes no part in
-    /// generic identity: a callable-value parameter the VM reifies under this
-    /// name, a value argument only the elaborator can fold, or an
-    /// elaborator-private marker. It is not a parameter reference and never
-    /// enters a specialization key.
-    Deferred(String),
+    /// The slot of a declared value parameter whose value arrives later and
+    /// takes no part in generic identity: a callable-value parameter the VM
+    /// reifies under the binder's spelling, or a value argument only the
+    /// elaborator can fold. It names the binder whose slot it fills, is not a
+    /// reference to a parameter in scope, and never enters a specialization
+    /// key.
+    Deferred(ParamRef),
+    /// An elaborator-private classification of a name. It stands for no
+    /// parameter and no value.
+    Marker(CtMarker),
+}
+
+/// What the elaborator knows about a name that has no compile-time value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CtMarker {
+    /// A runtime local: a parameter or a declared variable.
+    RuntimeLocal,
+    /// A declared struct name.
+    TypeName,
+    /// An origin parameter of the struct being walked, by its
+    /// declaration-order identity and the permission it grants.
+    TupleOrigin {
+        id: OriginParamId,
+        mutability: Mutability,
+    },
+}
+
+impl fmt::Display for CtMarker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RuntimeLocal => f.write_str("$local"),
+            Self::TypeName => f.write_str("$type"),
+            Self::TupleOrigin { id, mutability } => {
+                let permission = match mutability {
+                    Mutability::Immutable => "imm",
+                    Mutability::Mutable => "mut",
+                    Mutability::Param(_) => "param",
+                };
+                write!(f, "$tuple-origin:{}:{permission}", id.0)
+            }
+        }
+    }
 }
 
 impl CtValue {
@@ -249,7 +286,11 @@ impl CtValue {
                 Some(ty) => ty.to_string(),
                 None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
             },
-            Self::Type(_) | Self::Reflected(_) | Self::Expr(_) | Self::Deferred(_) => return None,
+            Self::Type(_)
+            | Self::Reflected(_)
+            | Self::Expr(_)
+            | Self::Deferred(_)
+            | Self::Marker(_) => return None,
         })
     }
 
@@ -485,7 +526,11 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()?,
                 kwargs: Vec::new(),
             },
-            Self::Type(_) | Self::Reflected(_) | Self::Expr(_) | Self::Deferred(_) => return None,
+            Self::Type(_)
+            | Self::Reflected(_)
+            | Self::Expr(_)
+            | Self::Deferred(_)
+            | Self::Marker(_) => return None,
         };
         Some(Expr {
             kind,
@@ -625,7 +670,8 @@ impl fmt::Display for CtValue {
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
             Self::Expr(expr) => write!(f, "{expr}"),
-            Self::Deferred(name) => write!(f, "{name}"),
+            Self::Deferred(binder) => write!(f, "{binder}"),
+            Self::Marker(marker) => write!(f, "{marker}"),
             Self::Dict { entries, .. } => {
                 write!(f, "{{")?;
                 for (index, (key, value)) in entries.iter().enumerate() {

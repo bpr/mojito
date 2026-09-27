@@ -279,7 +279,7 @@ impl Elab<'_> {
                             _ => mojito_types::origin::Mutability::Param(id),
                         };
                         struct_consts
-                            .insert(parameter.name.clone(), ct_origin_marker(index, mutability));
+                            .insert(parameter.name.clone(), ct_origin_marker(id, mutability));
                     }
                     for parameter in type_params.iter_mut() {
                         self.mono_type_parameter(parameter, &struct_consts, mono)?;
@@ -1519,7 +1519,9 @@ impl Elab<'_> {
                 // A thin/capturing callable-value parameter keeps a checker
                 // slot (a symbolic placeholder) but stays symbolic here.
                 match argument {
-                    TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => continue,
+                    TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => {
+                        continue;
+                    }
                     _ => return None,
                 }
             }
@@ -1560,8 +1562,10 @@ impl Elab<'_> {
                     },
                     TyArg::Val(value),
                 ) => {
-                    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
-                        || !ct_value_has_type(value, ty)
+                    if matches!(
+                        value,
+                        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+                    ) || !ct_value_has_type(value, ty)
                     {
                         return None;
                     }
@@ -2063,7 +2067,10 @@ fn closed_instance_argument(ty: &Ty) -> bool {
         Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => closed_instance_argument(ty),
-            TyArg::Val(value) => !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)),
+            TyArg::Val(value) => !matches!(
+                value,
+                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+            ),
             TyArg::Origin(_) => true,
         }),
         _ => false,

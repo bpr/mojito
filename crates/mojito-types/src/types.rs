@@ -2955,7 +2955,8 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Str(_)
         | CtValue::Dtype(_)
         | CtValue::Simd { .. }
-        | CtValue::Deferred(_) => value.clone(),
+        | CtValue::Deferred(_)
+        | CtValue::Marker(_) => value.clone(),
     })
 }
 
@@ -3059,8 +3060,8 @@ pub fn referenced_parameters<S: std::hash::BuildHasher>(
     );
 }
 
-/// Whether a deferred slot ([`CtValue::Deferred`]) occurs in a value argument
-/// anywhere in `ty`.
+/// Whether a deferred slot ([`CtValue::Deferred`]) or an elaborator marker
+/// ([`CtValue::Marker`]) occurs in a value argument anywhere in `ty`.
 pub fn mentions_deferred_value(ty: &Ty) -> bool {
     struct Finder(bool);
     impl TyRewrite for Finder {
@@ -3069,7 +3070,7 @@ pub fn mentions_deferred_value(ty: &Ty) -> bool {
         }
 
         fn value(&mut self, value: &CtValue) {
-            self.0 |= matches!(value, CtValue::Deferred(_));
+            self.0 |= matches!(value, CtValue::Deferred(_) | CtValue::Marker(_));
         }
     }
     let mut finder = Finder(false);
@@ -3296,7 +3297,7 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
     match value {
-        CtValue::Expr(_) | CtValue::Deferred(_) => true,
+        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {

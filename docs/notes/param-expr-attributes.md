@@ -42,11 +42,14 @@ runtime `Ty`, so it has no place in that lattice.
 - `CtValue::Expr(ParamExpr)` is a **residual** — never a constant. A folded
   expression is its ordinary concrete variant (`ParamExpr::into_value`), so a
   type argument has one representation of each constant.
-- `CtValue::Deferred(String)` is a slot whose value arrives later and takes no
-  part in generic identity: a callable-value parameter the VM reifies, a value
-  argument only the elaborator can fold under source validation, or an
-  elaborator-private marker. It is not a parameter reference and never enters
-  a specialization key.
+- `CtValue::Deferred(ParamRef)` is a slot whose value arrives later and takes
+  no part in generic identity: a callable-value parameter the VM reifies, or a
+  value argument only the elaborator can fold under source validation. It
+  names the binder whose slot it fills by identity, is not a reference to a
+  parameter in scope, and never enters a specialization key.
+- `CtValue::Marker(CtMarker)` is an elaborator-private classification of a
+  name (a runtime local, a declared struct name, an origin parameter of the
+  struct being walked). It stands for no parameter and no value.
 
 `CtExpr` is gone too: a value parameter's default, a conditional callable
 default's condition, and a dependent index are `ParamExpr`s.
@@ -306,7 +309,7 @@ The writer prints schema 1.1; the reader accepts 1.0 and 1.1
 
 ```text
 ct_expr(<param-expr>)          a residual value argument
-ct_deferred(name)              a deferred slot
+ct_deferred(name)              a deferred slot (a `binder` record from 1.5)
 dependent_parameter(<param-expr>)
 
 param_constant(<ct-value>)

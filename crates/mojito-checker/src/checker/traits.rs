@@ -1688,7 +1688,7 @@ impl Checker {
 
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
-            CtValue::Int(_) | CtValue::Deferred(_) => Some(Ty::Int),
+            CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::Int),
             CtValue::Expr(expr) => match expr.meta() {
                 mojito_types::param_expr::MetaTy::Value(ty) => Some((**ty).clone()),
                 _ => None,

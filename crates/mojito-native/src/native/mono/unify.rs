@@ -422,7 +422,10 @@ pub(super) fn bind_value(
     value: &CtValue,
     bindings: &mut Bindings,
 ) -> Result<(), String> {
-    if matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) {
+    if matches!(
+        value,
+        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+    ) {
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(name) {

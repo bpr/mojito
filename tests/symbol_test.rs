@@ -527,7 +527,7 @@ fn param_expr_closed_specialization_keys() {
     let n = CtValue::Expr(context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int()));
     let open = [
         n.clone(),
-        CtValue::Deferred("callback".into()),
+        CtValue::Deferred(mojito::param_expr::ParamRef::unbound("callback")),
         CtValue::Tuple(vec![CtValue::Int(1), n.clone()]),
         CtValue::Struct {
             name: "Extent".into(),
@@ -565,7 +565,7 @@ fn param_expr_closed_specialization_keys() {
             &decls,
             &[
                 TyArg::Val(CtValue::Int(1)),
-                TyArg::Val(CtValue::Deferred("b".into()))
+                TyArg::Val(CtValue::Deferred(decls[1].binder()))
             ]
         ),
         Some(vec![CtValue::Int(1)])

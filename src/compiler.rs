@@ -1138,7 +1138,10 @@ fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequ
         .filter(|instantiation| {
             instantiation.arguments.iter().all(|argument| {
                 closed_generic_argument(argument)
-                    && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
+                    && !matches!(
+                        argument,
+                        TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_))
+                    )
             })
         })
         .map(|instantiation| {
@@ -1160,7 +1163,7 @@ fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequ
 fn closed_generic_argument(argument: &TyArg) -> bool {
     match argument {
         TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
-        TyArg::Val(CtValue::Deferred(_)) | TyArg::Origin(_) => true,
+        TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_)) | TyArg::Origin(_) => true,
         TyArg::Val(value) => {
             tuple_specialization_value_is_closed_in(value, &ClosingBinders::default())
         }
@@ -1340,7 +1343,8 @@ fn tuple_specialization_value_is_closed_in(
     use crate::ct::CtValue;
     match value {
         CtValue::Expr(expression) => tuple_specialization_ct_expr_is_closed(expression, binders),
-        CtValue::Deferred(name) => binders.names_value(name),
+        CtValue::Deferred(binder) => binders.ids.contains(&binder.id),
+        CtValue::Marker(_) => false,
         CtValue::Tuple(values)
         | CtValue::List(values)
         | CtValue::Set {
@@ -1520,12 +1524,12 @@ fn tuple_specialization_constraint_operand_is_closed(
 /// The binders an enclosing callable contract declares, which a Tuple
 /// element type may mention and still be closed. A type parameter, a value
 /// reference, a `where` operand, and a callable default name their binder by
-/// identity; a deferred slot and a pack query carry only a spelling.
+/// identity, and so does a deferred slot; a pack query carries only a
+/// spelling.
 #[derive(Default, Clone)]
 struct ClosingBinders {
     ids: std::collections::HashSet<crate::param_expr::ParamId>,
     types: std::collections::HashSet<String>,
-    values: std::collections::HashSet<String>,
 }
 
 impl ClosingBinders {
@@ -1534,21 +1538,17 @@ impl ClosingBinders {
         let mut nested = self.clone();
         for declaration in decls {
             nested.ids.insert(declaration.id().clone());
-            let name = declaration.name().trim_start_matches('*').to_string();
-            match declaration {
-                crate::types::ParamDecl::Type { .. } => nested.types.insert(name),
-                crate::types::ParamDecl::Value { .. } => nested.values.insert(name),
-            };
+            if let crate::types::ParamDecl::Type { name, .. } = declaration {
+                nested
+                    .types
+                    .insert(name.trim_start_matches('*').to_string());
+            }
         }
         nested
     }
 
     fn names_type(&self, name: &str) -> bool {
         self.types.contains(name.trim_start_matches('*'))
-    }
-
-    fn names_value(&self, name: &str) -> bool {
-        self.values.contains(name.trim_start_matches('*'))
     }
 }
 

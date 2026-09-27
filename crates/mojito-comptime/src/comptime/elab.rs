@@ -759,7 +759,10 @@ impl Elab<'_> {
                 .iter()
                 .map(|argument| match argument {
                     TyArg::Val(value)
-                        if !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_)) =>
+                        if !matches!(
+                            value,
+                            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+                        ) =>
                     {
                         Some(value.clone())
                     }

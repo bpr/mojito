@@ -58,7 +58,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
 pub(super) fn arg_has_symbolic(arg: &TyArg) -> bool {
     match arg {
         TyArg::Ty(ty) => is_symbolic(ty),
-        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_)) => true,
+        TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => true,
         TyArg::Val(_) | TyArg::Origin(_) => false,
     }
 }

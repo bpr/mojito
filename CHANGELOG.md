@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The conformances a `where` clause guarantees inside its declaration's
   body, and those a `comptime if conforms_to(...)` arm proves, are recorded
   against the binder they name rather than its spelling, so two
@@ -852,6 +860,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The differential pin is now Mojo `1.2.0.dev2026092105` (upstream
   `26cfe94f40`, 2026-09-21), and two of its changes reach Mojito. A walrus
   updates a name already in scope and never introduces one, so `(n := 1)` on
@@ -1376,6 +1392,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - `StringLiteral` and the nominal `String` are distinct overload keys: `def
   f(x: StringLiteral)` beside `def f(x: String)` is legal and a literal
   argument selects the `StringLiteral` overload, as upstream
@@ -1433,6 +1457,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - `codepoint_count()`/`grapheme_count()` are spelled `count_codepoints()`/
   `count_graphemes()` on `String` and `StringSpan`, matching upstream; the
   old spellings are gone.
@@ -2046,6 +2078,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - `docs/roadmap.md` is restructured into a lean ordered checklist: the
   "Where Mojito Stands" overview moved to `docs/features.md`, the native
   backend architecture/dialect/testing contract moved to
@@ -2267,6 +2307,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The prioritized native-backend direction is now Pliron first (staged in
   `docs/roadmap.md`), then Cranelift on material Pliron failure, with a C or C++ source backend as a
   possible addition; direct LLVM or MLIR lowering and eBPF are no longer
@@ -2305,6 +2353,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The §6 owning family APIs land across the bundled containers:
   linear-capable `deinit_with(deinit self, handler)` on List, Array, Dict,
   Set, StringDict, and Tuple (the `consume_elements` family spelling);
@@ -2386,6 +2442,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - Views and strict bounds (nightly §5): `Span(list)` and `StringSpan` are
   borrowed contiguous views — multi-element origin-bearing pointers (a new
   origin capability: an interior-generation-projected pointer origin
@@ -2988,6 +3052,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - Developer infrastructure: the whole-corpus fixture sweeps are now one
   generated test per fixture in the `tests/corpus_test.rs` binary
   (libtest-mimic, the project's first dev-dependency), preserving each sweep's
@@ -3169,6 +3241,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The bundled owned-iteration protocol now uses current Mojo's monomorphic
   `IteratorOwnedType`. `IterableOwned`'s associated iterator member (and `List`'s
   conformance) is renamed from the legacy `OwnedIter` to `IteratorOwnedType`; a
@@ -3544,6 +3624,14 @@ milestone gating the textual MIR/VM schema and native-backend work.
 
 ### Changed
 
+- A deferred slot (`CtValue::Deferred`) now names the binder whose slot it
+  fills by its declaration's identity rather than its spelling, so the Tuple
+  closedness check no longer counts it as bound by an enclosing value binder
+  that merely shares the spelling. The elaborator's markers for a name that
+  is no parameter are a separate `CtValue::Marker`. MIR text writes the slot
+  as a `binder` record and the marker as `ct_marker`, which moves the
+  textual format to schema 1.5; artifacts of schema 1.0 through 1.4 still
+  load, a spelled slot reading as an unbound reference.
 - The public `Backend` trait object is now a statically dispatched enum over
   concrete implementations. `BackendKind` recognizes the planned
   `vm`/`cranelift`/`ebpf`/`llvm`/`mlir` seams; `BackendKind::make` parses a

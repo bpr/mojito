@@ -926,6 +926,41 @@ impl Decoder {
             .unwrap_or_default()
     }
 
+    /// A deferred slot: the `binder` record of the parameter whose slot it
+    /// fills. An artifact older than schema 1.5 spells it as a bare symbol,
+    /// which reads as an unbound reference of that spelling, or as the
+    /// elaborator marker the symbol spells.
+    fn deferred_slot(&mut self, value: &Value) -> Option<CtValue> {
+        if matches!(&value.kind, ValueKind::Record(tag, _) if tag == "binder") {
+            return self.binder_ref(value).map(CtValue::Deferred);
+        }
+        let name = self.symbol(value)?;
+        Some(legacy_marker(&name).map_or_else(
+            || CtValue::Deferred(ParamRef::unbound(&name)),
+            CtValue::Marker,
+        ))
+    }
+
+    fn ct_marker(&mut self, value: &Value) -> Option<CtMarker> {
+        match &value.kind {
+            ValueKind::Atom(tag) if tag == "marker_local" => Some(CtMarker::RuntimeLocal),
+            ValueKind::Atom(tag) if tag == "marker_type" => Some(CtMarker::TypeName),
+            ValueKind::Record(tag, fields) if tag == "marker_tuple_origin" => {
+                let id = self.req(value, fields, "id", Self::uint32)?;
+                let mutability = self.req(value, fields, "mutability", Self::mutability)?;
+                self.unknown(fields, &["id", "mutability"]);
+                Some(CtMarker::TupleOrigin {
+                    id: OriginParamId(id),
+                    mutability,
+                })
+            }
+            _ => {
+                self.error(value.span, "expected compile-time marker");
+                None
+            }
+        }
+    }
+
     pub(super) fn ct_value(&mut self, value: &Value) -> Option<CtValue> {
         match &value.kind {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
@@ -942,7 +977,8 @@ impl Decoder {
                 "ct_type" => self.ty(inner).map(|ty| CtValue::Type(Box::new(ty))),
                 "ct_reflected" => self.ty(inner).map(|ty| CtValue::Reflected(Box::new(ty))),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
-                "ct_deferred" => self.symbol(inner).map(CtValue::Deferred),
+                "ct_deferred" => self.deferred_slot(inner),
+                "ct_marker" => self.ct_marker(inner).map(CtValue::Marker),
                 // Schema 1.0 spelled both a parameter reference and a
                 // deferred callable-value slot this way; a declared scalar
                 // value parameter is the reference.
@@ -952,7 +988,7 @@ impl Decoder {
                     self.legacy_reference(value, &name)
                         .map(|binder| match binder {
                             LegacyBinder::Typed(reference) => reference.into_value(),
-                            LegacyBinder::Undeclared => CtValue::Deferred(name),
+                            LegacyBinder::Undeclared => CtValue::Deferred(ParamRef::unbound(&name)),
                         })
                 }
                 other => {
@@ -1077,4 +1113,22 @@ enum LegacyBinder {
     /// No value parameter of that name: a deferred slot in value position,
     /// an error in expression position.
     Undeclared,
+}
+
+/// The elaborator marker a deferred slot older than schema 1.5 spells.
+fn legacy_marker(name: &str) -> Option<CtMarker> {
+    match name {
+        "$local" => return Some(CtMarker::RuntimeLocal),
+        "$type" => return Some(CtMarker::TypeName),
+        _ => {}
+    }
+    let (index, permission) = name.strip_prefix("$tuple-origin:")?.split_once(':')?;
+    let id = OriginParamId(index.parse().ok()?);
+    let mutability = match permission {
+        "imm" => Mutability::Immutable,
+        "mut" => Mutability::Mutable,
+        "param" => Mutability::Param(id),
+        _ => return None,
+    };
+    Some(CtMarker::TupleOrigin { id, mutability })
 }

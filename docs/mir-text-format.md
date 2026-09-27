@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.4
+# Mojito Textual MIR Format, Version 1.5
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.4 is implemented end to end for inspection and loading: canonical
+Version 1.5 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -20,10 +20,10 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.4
+mojito-mir 1.5
 ```
 
-The writer emits 1.4. The reader accepts 1.0 through 1.4; *Schema 1.0*
+The writer emits 1.5. The reader accepts 1.0 through 1.5; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -67,6 +67,14 @@ consumer rejects the record, which is the intended failure. A 1.4 consumer
 reads an older bare symbol as the binder of that spelling in the parameter
 list declaring the clause, or as an unbound reference when that list declares
 none (*Binder identity* under *Types*).
+
+Minor version 5 carries that identity on a deferred slot. The operand of
+`ct_deferred` is a `binder { owner, slot, name }` record where it was a bare
+symbol, and an elaborator marker, which an older artifact spelled as a
+deferred slot, is `ct_marker`. A 1.4 consumer rejects both, which is the
+intended failure. A 1.5 consumer reads an older bare symbol as an unbound
+reference of that spelling, or as the marker the symbol spells (`$local`,
+`$type`, `$tuple-origin:<id>:<imm|mut|param>`).
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -285,9 +293,13 @@ rational; reprinting reduces it.
 `CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
 `ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
 `ct_set`, `ct_dtype`, `ct_simd`, `ct_struct { name, fields }`, `ct_type`,
-`ct_reflected`, `ct_expr(param-expr)` for a residual parameter expression, or
-`ct_deferred(symbol)` for a slot whose value arrives later (a callable-value
-parameter the VM reifies) and which is no part of generic identity.
+`ct_reflected`, `ct_expr(param-expr)` for a residual parameter expression,
+`ct_deferred(binder)` for a slot whose value arrives later (a callable-value
+parameter the VM reifies) and which is no part of generic identity, or
+`ct_marker(marker)` for an elaborator classification of a name that is no
+parameter: `marker_local`, `marker_type`, or
+`marker_tuple_origin { id, mutability }`. A deferred slot names the binder
+whose slot it fills by a `binder { owner, slot, name }` record.
 
 ### Parameter expressions
 
@@ -405,7 +417,8 @@ emits them; in a 1.1 artifact they are errors.
 A 1.0 name carries no type, so it resolves through the value parameters the
 artifact declares (`value_param { name, type, ... }`, callable-valued ones
 excluded). Exactly one declared type gives a typed reference. None gives a
-deferred slot in value position and an error in expression position. Several
+deferred slot in value position, read as an unbound reference of that
+spelling, and an error in expression position. Several
 different declared types are an error that asks for a 1.1 re-emission: nothing
 in a 1.0 reference chooses between them, and the reader does not guess.
 
@@ -533,7 +546,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.4
+mojito-mir 1.5
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

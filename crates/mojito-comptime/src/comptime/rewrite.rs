@@ -218,6 +218,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         | CtValue::Reflected(_)
                         | CtValue::Expr(_)
                         | CtValue::Deferred(_)
+                        | CtValue::Marker(_)
                 )
                 && let Some(materialized) = value.materialize(e.span)
             {
@@ -450,21 +451,17 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
 /// The `Subs` marker for a name bound as a runtime local (a parameter or a
 /// declared variable) rather than a compile-time constant: it materializes
 /// as nothing, and a type application on it is a type-keyed accessor call.
-const RUNTIME_LOCAL: &str = "$local";
-
-pub(super) fn runtime_local_marker() -> CtValue {
-    CtValue::Deferred(RUNTIME_LOCAL.to_string())
+pub(super) const fn runtime_local_marker() -> CtValue {
+    CtValue::Marker(CtMarker::RuntimeLocal)
 }
 
 /// The `Subs` marker for a declared struct name (see `materialize_block`).
-const TYPE_NAME: &str = "$type";
-
-fn type_name_marker() -> CtValue {
-    CtValue::Deferred(TYPE_NAME.to_string())
+const fn type_name_marker() -> CtValue {
+    CtValue::Marker(CtMarker::TypeName)
 }
 
 fn is_runtime_local(subs: Subs, name: &str) -> bool {
-    matches!(subs(name), Some(CtValue::Deferred(marker)) if marker == RUNTIME_LOCAL)
+    matches!(subs(name), Some(CtValue::Marker(CtMarker::RuntimeLocal)))
 }
 
 /// Rewrite a single-argument type application on a runtime local (`v[Int]`)
@@ -1559,6 +1556,7 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
                             | CtValue::Reflected(_)
                             | CtValue::Expr(_)
                             | CtValue::Deferred(_)
+                            | CtValue::Marker(_)
                     )
                     && let Some(materialized) =
                         value.materialize(mojito_common::token::DUMMY_SPAN) =>

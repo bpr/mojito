@@ -2827,14 +2827,13 @@ impl Checker {
                     self.resolve_param_arg(decl, argument)?
                 } else if let ParamDecl::Value {
                     callable_default: Some(_),
-                    name,
                     ..
                 } = decl
                 {
                     // The VM evaluates the symbolic default after reifying all
                     // preceding scalar/callable parameters.  Generic identity
                     // records only that this runtime value occupies the slot.
-                    TyArg::Val(CtValue::Deferred(name.clone()))
+                    TyArg::Val(CtValue::Deferred(decl.binder()))
                 } else if let ParamDecl::Value {
                     default: Some(value),
                     ty,
@@ -2988,7 +2987,7 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
                     } else if callable_default.is_some() {
-                        tyargs.push(TyArg::Val(CtValue::Deferred(pname.clone())));
+                        tyargs.push(TyArg::Val(CtValue::Deferred(decl.binder())));
                     } else {
                         return Err(TypeError::CannotInferTypeParam {
                             name: name.to_string(),

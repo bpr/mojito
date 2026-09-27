@@ -256,7 +256,13 @@ fn type_families_reprint_byte_identically() {
                 CtValue::Type(Box::new(Ty::Int)),
                 CtValue::Reflected(Box::new(Ty::Bool)),
                 CtValue::Expr(int_parameter("Holder", 1, "N")),
-                CtValue::Deferred("callback".into()),
+                CtValue::Deferred(test_binder("callback")),
+                CtValue::Marker(CtMarker::RuntimeLocal),
+                CtValue::Marker(CtMarker::TypeName),
+                CtValue::Marker(CtMarker::TupleOrigin {
+                    id: OriginParamId(2),
+                    mutability: Mutability::Param(OriginParamId(2)),
+                }),
                 CtValue::Dict {
                     spelling: Some(Box::new(mojito_types::types::dict_type(Ty::Int, Ty::Bool))),
                     entries: vec![(CtValue::Int(1), CtValue::Bool(true))],
@@ -1358,7 +1364,9 @@ fn param_expr_mir_round_trip() {
         params[0],
         Ty::Struct(
             "Buf".into(),
-            vec![TyArg::Val(CtValue::Deferred("callback".into()))]
+            vec![TyArg::Val(CtValue::Deferred(
+                mojito_types::param_expr::ParamRef::unbound("callback")
+            ))]
         )
     );
 
@@ -1440,7 +1448,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.4", "mojito-mir 1.2", 1)
+        .replacen("mojito-mir 1.5", "mojito-mir 1.2", 1)
         .replace(
             "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H }",
             "type.construct { dest: %r0, param: H }",
@@ -1449,7 +1457,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             ", binder: present(binder { owner: \"$test:H\", slot: 0, name: H })",
             "",
         );
-    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.4", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.5", 1), text);
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let read = &parsed.program.functions[0].1.blocks[0].instrs;
     assert!(matches!(
@@ -1558,12 +1566,68 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     assert_bound(&read_decls(&text));
 
     let older = text
-        .replacen("mojito-mir 1.4", "mojito-mir 1.3", 1)
+        .replacen("mojito-mir 1.5", "mojito-mir 1.3", 1)
         .replace("binder { owner: \"$test:T\", slot: 0, name: T }", "T")
         .replace(
             "binder { owner: \"$unbound:Outer\", slot: 0, name: Outer }",
             "Outer",
         );
-    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.4", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.5", 1), text);
     assert_bound(&read_decls(&older));
+}
+
+/// Schema 1.5 carries the identity of the binder a deferred slot fills; an
+/// older artifact spells only its name, which reads as an unbound reference,
+/// or as the elaborator marker the name spells.
+#[test]
+fn deferred_slots_round_trip_and_read_from_older_artifacts() {
+    let holder = |values: Vec<CtValue>| {
+        Ty::Struct(
+            "Buf".into(),
+            values.into_iter().map(TyArg::Val).collect::<Vec<_>>(),
+        )
+    };
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![holder(vec![
+                CtValue::Deferred(test_binder("callback")),
+                CtValue::Marker(CtMarker::RuntimeLocal),
+            ])],
+            Vec::new(),
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    let read = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        parsed.program.functions[0].1.reg_types[&0].clone()
+    };
+    let Ty::Struct(_, arguments) = read(&text) else {
+        panic!("expected a struct type");
+    };
+    assert!(matches!(
+        &arguments[0],
+        TyArg::Val(CtValue::Deferred(binder)) if binder.id == test_id("callback")
+    ));
+
+    let older = text
+        .replacen("mojito-mir 1.5", "mojito-mir 1.4", 1)
+        .replace(
+            "ct_deferred(binder { owner: \"$test:callback\", slot: 0, name: callback })",
+            "ct_deferred(callback)",
+        )
+        .replace("ct_marker(marker_local)", "ct_deferred(\"$local\")");
+    assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.5", 1), text);
+    let Ty::Struct(_, arguments) = read(&older) else {
+        panic!("expected a struct type");
+    };
+    assert!(matches!(
+        &arguments[0],
+        TyArg::Val(CtValue::Deferred(binder)) if binder.is_unbound() && &*binder.name == "callback"
+    ));
+    assert_eq!(
+        arguments[1],
+        TyArg::Val(CtValue::Marker(CtMarker::RuntimeLocal))
+    );
 }

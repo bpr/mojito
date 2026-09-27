@@ -676,6 +676,7 @@ impl Elab<'_> {
                         | CtValue::Reflected(_)
                         | CtValue::Expr(_)
                         | CtValue::Deferred(_)
+                        | CtValue::Marker(_)
                 )
             }),
             _ => false,
@@ -709,7 +710,11 @@ impl Elab<'_> {
                 Ok(CtValue::Bool(comptime_contains(receiver, &item)?))
             }
             (
-                CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Expr(_) | CtValue::Deferred(_),
+                CtValue::Type(_)
+                | CtValue::Reflected(_)
+                | CtValue::Expr(_)
+                | CtValue::Deferred(_)
+                | CtValue::Marker(_),
                 _,
                 _,
             ) => Err(ComptimeError::NotComptime(format!(

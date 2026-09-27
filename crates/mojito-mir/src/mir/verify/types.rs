@@ -487,7 +487,9 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             mojito_types::types::TyArg::Val(value) => {
                 matches!(
                     value,
-                    mojito_types::ct::CtValue::Expr(_) | mojito_types::ct::CtValue::Deferred(_)
+                    mojito_types::ct::CtValue::Expr(_)
+                        | mojito_types::ct::CtValue::Deferred(_)
+                        | CtValue::Marker(_)
                 )
             }
             mojito_types::types::TyArg::Origin(_) => false,

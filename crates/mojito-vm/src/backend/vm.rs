@@ -895,7 +895,7 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Reflected(_)
         // No unresolved expression or deferred slot becomes a runtime value.
         | CtValue::Expr(_)
-        | CtValue::Deferred(_) => return None,
+        | CtValue::Deferred(_) | CtValue::Marker(_) => return None,
     })
 }
 

@@ -44,7 +44,7 @@ pub use mojito_symbol::symbol::{
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_common::token::{SourceSpan, Span};
-use mojito_types::ct::{CtLane, CtValue};
+use mojito_types::ct::{CtLane, CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use mojito_vm::backend::VmBackend;
@@ -1774,11 +1774,13 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
             })
         }
         CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
-        CtValue::Type(_) | CtValue::Reflected(_) | CtValue::Expr(_) | CtValue::Deferred(_) => {
-            Err(ComptimeError::NotComptime(
-                "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
-            ))
-        }
+        CtValue::Type(_)
+        | CtValue::Reflected(_)
+        | CtValue::Expr(_)
+        | CtValue::Deferred(_)
+        | CtValue::Marker(_) => Err(ComptimeError::NotComptime(
+            "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
+        )),
         // A collection crosses into VM CTFE only as its materialized display
         // in a synthesized entry, never as a runtime value.
         CtValue::Dict { .. } | CtValue::Set { .. } => Err(ComptimeError::NotComptime(

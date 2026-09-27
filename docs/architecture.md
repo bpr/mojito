@@ -625,7 +625,12 @@ second expression tree.
   struct's — and a clause is judged under a `ConstraintEnvironment` keyed by
   `ParamId`. An operand no classified declaration binds (an origin's
   mutability parameter, an associated member's own parameter) stays unbound
-  and is identified by its spelling.
+  and is identified by its spelling. A deferred slot (`CtValue::Deferred`)
+  carries the `ParamRef` of the binder whose slot it fills, taken from the
+  declaration at each site the checker builds one, so the Tuple closedness
+  check (`ClosingBinders`) counts it as bound only by that binder. The
+  elaborator's markers for a name that is no parameter are a separate
+  variant, `CtValue::Marker(CtMarker)`.
 - `param_expr::fold` is the one implementation of compile-time scalar
   operators; the checker, the elaborator, and native monomorphization call it.
 

@@ -170,17 +170,8 @@ pub(super) fn elaborated_binder(
 }
 
 pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::origin::RefTy> {
-    let CtValue::Deferred(marker) = value else {
+    let &CtValue::Marker(CtMarker::TupleOrigin { id, mutability }) = value else {
         return None;
-    };
-    let marker = marker.strip_prefix("$tuple-origin:")?;
-    let (index, permission) = marker.split_once(':')?;
-    let id = mojito_types::origin::OriginParamId(index.parse().ok()?);
-    let mutability = match permission {
-        "imm" => mojito_types::origin::Mutability::Immutable,
-        "mut" => mojito_types::origin::Mutability::Mutable,
-        "param" => mojito_types::origin::Mutability::Param(id),
-        _ => return None,
     };
     Some(mojito_types::origin::RefTy {
         // Filled by `type_from_anno` after the marker establishes provenance.
@@ -213,19 +204,14 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
 
 /// CTFE does not evaluate an Origin as a runtime value, but nested type
 /// annotations still need its stable declaration-order identity while the
-/// monomorphizer resolves a variadic Tuple element pack. Encode that semantic
-/// fact in the existing non-materializable `Deferred` carrier for the duration of
-/// the enclosing struct walk.
-pub(super) fn ct_origin_marker(
-    index: usize,
+/// monomorphizer resolves a variadic Tuple element pack. Carry that semantic
+/// fact as a non-materializable marker for the duration of the enclosing
+/// struct walk.
+pub(super) const fn ct_origin_marker(
+    id: mojito_types::origin::OriginParamId,
     mutability: mojito_types::origin::Mutability,
 ) -> CtValue {
-    let permission = match mutability {
-        mojito_types::origin::Mutability::Immutable => "imm",
-        mojito_types::origin::Mutability::Mutable => "mut",
-        mojito_types::origin::Mutability::Param(_) => "param",
-    };
-    CtValue::Deferred(format!("$tuple-origin:{index}:{permission}"))
+    CtValue::Marker(CtMarker::TupleOrigin { id, mutability })
 }
 
 pub(super) fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {

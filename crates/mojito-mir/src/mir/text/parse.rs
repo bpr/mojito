@@ -12,7 +12,7 @@ use mojito_checked::checked::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
-use mojito_types::ct::CtValue;
+use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, CaptureSetParamId,
     Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefSig,
