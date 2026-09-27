@@ -138,8 +138,8 @@ impl Checker {
                         "positional-only/keyword-only markers on trait methods".to_string(),
                     ));
                 }
-                let mut decls =
-                    self.classify_params(&method_binder_owner(name, &m.name), &m.type_params)?;
+                let owner = format!("{}.{}", binder_owner(name), binder_owner(&m.name));
+                let mut decls = self.classify_params(&owner, &m.type_params)?;
                 for condition in &m.where_clauses {
                     let constraint = self
                         .compile_where_clause(condition)
@@ -726,7 +726,7 @@ impl Checker {
             // symbolically and skips the rest (pack-dependent shapes): the
             // concrete specialization checks every method.
             let method_decls =
-                match self.classify_params(&method_binder_owner(name, &m.name), &m.type_params) {
+                match self.classify_params(&self.method_binder_owner(name, m), &m.type_params) {
                     Ok(decls) => decls,
                     Err(_) if declaration.template_shell => continue,
                     Err(error) => return Err(error),

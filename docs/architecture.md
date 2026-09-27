@@ -607,7 +607,13 @@ second expression tree.
   same-spelled parameters of unrelated declarations differ and a `$` clone
   shares its template's. An overloaded module-level `def` is owned by the
   signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
-  of one name never share a binder. A type binder is the same identity: `ParamDecl`
+  of one name never share a binder. An overloaded struct method is owned the
+  same way, by the symbol its template lowers to (`Box.pick$ov$…`):
+  `overloaded_method_owners` computes it once per template and keys it by
+  the template struct and its first body statement's range, which every
+  clone keeps, so a clone whose substituted signature lowers differently
+  still shares its template's binders. A trait requirement is still owned
+  by `Trait.method`. A type binder is the same identity: `ParamDecl`
   carries its `id`, `Ty::Param { binder: ParamRef }` compares by it, and every
   type substitution is a `TySubst` keyed by it; a canonicalized callable
   contract's binders are `$contract` slots, so contracts differing only in

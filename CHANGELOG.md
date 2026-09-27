@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Two overloads of one generic struct method whose parameter slots agree no
+  longer share their binders: an overloaded method owns them under the
+  symbol its template lowers to (`Box.pick$ov$…`), which MIR text spells as
+  the binder's owner, and every clone of an overload shares its template's.
 - A compiled `where` clause now names each operand by its declaration's
   identity rather than its spelling, and is judged under arguments keyed by
   binder, so a clause's `T` is the binder of the declaration it was written

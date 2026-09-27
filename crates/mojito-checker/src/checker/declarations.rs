@@ -477,7 +477,7 @@ impl Checker {
     /// parser guarantees each parameter carries at least one `: bound` (Mojo has
     /// no unconstrained parameters).
     /// `owner` names the declaration whose binders these are
-    /// ([`binder_owner`]/[`method_binder_owner`]); a default may reference the
+    /// ([`binder_owner`]/[`Self::method_binder_owner`]); a default may reference the
     /// value parameters declared before it.
     pub(super) fn classify_params(
         &mut self,
@@ -985,7 +985,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
         let decls =
-            self.classify_params(&method_binder_owner(declaration, &m.name), &m.type_params)?;
+            self.classify_params(&self.method_binder_owner(declaration, m), &m.type_params)?;
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
@@ -1316,7 +1316,7 @@ impl Checker {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
-        let method_decls = self.classify_params(&method_owner(self_ty, &m.name), &m.type_params)?;
+        let method_decls = self.classify_params(&self.method_owner(self_ty, m), &m.type_params)?;
         for declaration in &method_decls {
             if let ParamDecl::Value {
                 name, ty, variadic, ..

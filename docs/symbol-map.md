@@ -546,7 +546,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Checker::param_context`, handed over by `TemplateCatalog::param_context`),
   and `value_parameter_in_scope`/`push_param_scope` resolve a bare value
   parameter to its owned reference (`annotations.rs`: `binder_owner`,
-  `method_binder_owner`, `value_parameter`, `params_as_args`).
+  `Checker::method_binder_owner` over `overloaded_method_owners`,
+  `value_parameter`, `params_as_args`).
   `constraint_verdict`/`constraint_proposition` are the three-valued
   evaluator, `assume_declared_propositions`/`assumptions_prove` the evidence
   an enclosing `where` supplies, and `eval_generic_constraint` its

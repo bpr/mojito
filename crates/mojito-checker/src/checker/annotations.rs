@@ -5,6 +5,30 @@ use super::*;
 pub use mojito_types::types::splats_to;
 
 impl Checker {
+    /// The declaration that owns method `m`'s own binders on the struct
+    /// `owner` ([`binder_owner`]): `Struct.method`, or for an overloaded
+    /// method the symbol its template lowers to, so two overloads own
+    /// distinct binders and every clone of one shares its template's.
+    pub(super) fn method_binder_owner(&self, owner: &str, m: &Method) -> String {
+        let template = binder_owner(owner);
+        m.body
+            .first()
+            .and_then(|first| {
+                self.overloaded_method_owners
+                    .get(&(template.clone(), first.span))
+            })
+            .cloned()
+            .unwrap_or_else(|| format!("{template}.{}", binder_owner(&m.name)))
+    }
+
+    /// [`Self::method_binder_owner`] of `m` on the struct `self_ty` names.
+    pub(super) fn method_owner(&self, self_ty: &Ty, m: &Method) -> String {
+        match self_ty {
+            Ty::Struct(owner, _) => self.method_binder_owner(owner, m),
+            _ => self.method_binder_owner("Self", m),
+        }
+    }
+
     /// The dtype a SIMD element-type argument names: a `DType.<name>` member,
     /// a `SIMD` type's `dtype` (`Float64.dtype`), a `comptime` binding of
     /// one, or — symbolic while its declaration is a template — a `[dt:
@@ -325,9 +349,48 @@ pub(super) fn binder_owner(name: &str) -> String {
         .to_string()
 }
 
-/// [`binder_owner`] for a method's own parameters.
-pub(super) fn method_binder_owner(owner: &str, method: &str) -> String {
-    format!("{}.{}", binder_owner(owner), binder_owner(method))
+/// The binder owner of every overloaded struct method in `program`: the
+/// symbol its template lowers to, keyed by the template struct and the byte
+/// range of the method's first body statement, as
+/// [`Checker::method_binder_owner`] looks it up. A clone keeps its template's
+/// body spans but not its signature, so the owner is computed once, from the
+/// template.
+pub(super) fn overloaded_method_owners(
+    program: &[Stmt],
+    sets: &mojito_symbol::symbol::OverloadSets,
+) -> HashMap<(String, mojito_common::token::Span), String> {
+    program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct {
+                name,
+                type_params,
+                methods,
+                ..
+            } if binder_owner(name) == *name => Some((name, type_params, methods)),
+            _ => None,
+        })
+        .flat_map(|(name, type_params, methods)| {
+            methods
+                .iter()
+                .filter(|m| m.self_ty.is_none() && binder_owner(&m.name) == m.name)
+                .filter_map(move |m| {
+                    let source =
+                        format!("{name}.{}", mojito_symbol::symbol::lifecycle_method_name(m));
+                    let lowered = mojito_symbol::symbol::lowered_method_name(
+                        &source,
+                        type_params,
+                        &m.params,
+                        m.keyword_only,
+                        m.has_self,
+                        m.self_convention,
+                        sets,
+                    );
+                    let first = m.body.first()?;
+                    (lowered != source).then(|| ((name.clone(), first.span), lowered))
+                })
+        })
+        .collect()
 }
 
 /// The checker's diagnostic for a parameter-expression error.
@@ -337,14 +400,6 @@ pub(super) fn param_error(error: mojito_types::param_expr::ParamError) -> TypeEr
         ParamError::Arithmetic(message) | ParamError::Unsupported(message) => message,
         other => other.to_string(),
     })
-}
-
-/// The binder owner of `method` on the struct `self_ty` names.
-pub(super) fn method_owner(self_ty: &Ty, method: &str) -> String {
-    match self_ty {
-        Ty::Struct(owner, _) => method_binder_owner(owner, method),
-        _ => method_binder_owner("Self", method),
-    }
 }
 
 /// The variadic type packs a declaration's own binders open, as the

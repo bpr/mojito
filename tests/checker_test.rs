@@ -6874,6 +6874,59 @@ fn method_templates_are_identified_by_their_struct_and_body() {
 }
 
 #[test]
+fn overloads_of_one_generic_method_own_distinct_binders() {
+    // Two overloads of `pick` whose slots agree are two declarations: each
+    // owns its `U` under the symbol it lowers to, and the per-instantiation
+    // clone of each (`pick$y3:Int`) keeps its template's owner.
+    let source = "struct Box[T: Copyable & Deinitable](Copyable):\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def pick[U: Copyable & Deinitable](self, u: U, t: Self.T) -> Int:\n        return 1\n\n    def pick[U: Copyable & Deinitable](self, u: U, s: String) -> Int:\n        return 2\n\ndef main():\n    var b = Box[Int](3)\n    print(b.pick[Float64](1.5, 4))\n";
+    let linked = mojito::link_source(source, std::path::Path::new("overload_binders.mojo"))
+        .expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = mojito::checker::check_program(&program).expect("check");
+    let (module, methods) = program
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Struct { name, methods, .. } if name == "Box" => {
+                Some((statement.module.clone(), methods))
+            }
+            _ => None,
+        })
+        .expect("Box");
+    let owners: Vec<(String, String)> = methods
+        .iter()
+        .enumerate()
+        .filter(|(_, method)| method.name.starts_with("pick") && !method.type_params.is_empty())
+        .map(|(index, method)| {
+            let site = mojito::checked::GenericSite::Method {
+                module: module.clone(),
+                declaration: "Box".to_string(),
+                method: index,
+            };
+            let decls = checked
+                .generic_parameters_at(&site)
+                .expect("method binders");
+            let [mojito::types::ParamDecl::Type { id, .. }] = decls else {
+                panic!("one type binder: {decls:?}");
+            };
+            (method.params[1].name.clone(), id.owner.to_string())
+        })
+        .collect();
+    let owner_of = |param: &str| -> Vec<&str> {
+        owners
+            .iter()
+            .filter(|(name, _)| name == param)
+            .map(|(_, owner)| owner.as_str())
+            .collect()
+    };
+    let (by_t, by_s) = (owner_of("t"), owner_of("s"));
+    assert!(by_t.len() >= 2 && by_s.len() >= 2, "{owners:?}");
+    assert!(by_t.iter().all(|owner| *owner == by_t[0]), "{owners:?}");
+    assert!(by_s.iter().all(|owner| *owner == by_s[0]), "{owners:?}");
+    assert_ne!(by_t[0], by_s[0]);
+    assert!(by_s[0].starts_with("Box.pick$ov$"), "{owners:?}");
+}
+
+#[test]
 fn method_template_classes_name_what_the_body_holds() {
     // A method beyond a scalar getter is certified `MethodBody`, and its
     // features say which arguments its certificate rests on. A store through

@@ -16,9 +16,7 @@
 use super::annotations::{existential_binder, simd_binder_slots, simd_binder_view};
 use super::body_carry::ObservedEffects;
 use super::builtins::{SIMD_WILDCARD_BOUND, simd_wildcard_binder};
-use super::{
-    Checker, EffectRead, callable_contract_target, callable_lowered_name, method_binder_owner,
-};
+use super::{Checker, EffectRead, callable_contract_target, callable_lowered_name};
 use mojito_ast::ast::{CaptureKind, Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
@@ -361,7 +359,7 @@ impl Checker {
             return self.check_block(&m.body, Some(ret_ty), false);
         };
         let method_decls =
-            self.classify_params(&method_binder_owner(owner, &m.name), &m.type_params)?;
+            self.classify_params(&self.method_binder_owner(owner, m), &m.type_params)?;
         let mut decls = self.self_decls.clone();
         decls.extend(method_decls.iter().cloned());
         // A per-instantiation clone carries its receiver type. Every other
