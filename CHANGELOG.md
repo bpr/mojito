@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method reading its struct's closed scalar value binder (`Self.rows` in
+  `Grid[T, rows: Int]`, `Self.length` in `Array`) is now certified as a
+  template, so `Grid.count`, `Array.__len__`, and `Array`'s literal
+  initializer are reused from their checked facts in every later checker
+  pass (`assets/ok/template_method_value_parameter.mojo`). The method
+  grammar used to refuse such a read, so the body was inferred again.
 - The bundled `AHasher[key]`'s own members — both initializers, `_update`,
   `_large_update`, `_update_with_bytes`, `update`, and `finish` — now derive
   from their checked templates in every specialization

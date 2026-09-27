@@ -2687,6 +2687,15 @@ fn template_method_value_parameter_templates_reuse() {
             "{name}: later passes reuse or carry the template's own facts: {stats:?}"
         );
     }
+    // With carry-over off, a `Self.rows` read is served by the catalog.
+    let uncarried = compile_entry(&compiler.clone().with_body_fact_reuse(false), source);
+    let uncarried = uncarried.template_stats();
+    for name in ["Grid.count", "Grid.total", "Grid.full"] {
+        assert!(
+            uncarried.reused.iter().any(|reused| reused == name),
+            "{name}: later passes reuse the template's own facts: {uncarried:?}"
+        );
+    }
     let derived: std::collections::HashSet<&str> = stats
         .derived
         .iter()

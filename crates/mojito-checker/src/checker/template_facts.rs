@@ -4027,6 +4027,17 @@ impl Checker {
         }
     }
 
+    /// The struct binders `select` picks for a member the executable check
+    /// certifies: a struct kept on the erased path, which reads them at run
+    /// time and no clone folds.
+    fn erased_struct_binders(&self, select: fn(&[ParamDecl]) -> Vec<&str>) -> Vec<&str> {
+        if self.source_validation {
+            Vec::new()
+        } else {
+            select(&self.self_decls)
+        }
+    }
+
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -4239,7 +4250,7 @@ impl Checker {
             pack_struct,
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
-            struct_values: Vec::new(),
+            struct_values: self.erased_struct_binders(struct_scalar_binders),
             struct_lanes: self.validated_struct_binders(struct_lane_binders),
             struct_vectors: self.validated_struct_binders(struct_vector_binders),
             print_calls: RefCell::new(Vec::new()),
@@ -7467,6 +7478,22 @@ fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
                 variadic: false,
                 ..
             } if **ty == Ty::Dtype => Some(name.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A struct's scalar value binders of a closed type (`rows: Int`).
+fn struct_scalar_binders(decls: &[ParamDecl]) -> Vec<&str> {
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } if closed_scalar(ty) => Some(name.as_str()),
             _ => None,
         })
         .collect()
