@@ -112,21 +112,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A method call leaving a defaulted parameter to its default keeps
-  the clone check**
-
-  Problem: `self.name.find("y")` is refused by the method grammar, while
-  `self.name.find("y", 0)` derives, so a call that omits an argument the
-  callee declares with a default never reaches the argument rule.
-  - The default is the callee's declaration, the same under every instance
-    of a nominal receiver's method.
-  - Found while string literals joined the argument rule (2026-09-26):
-    `String.find` and `String.startswith` both default a trailing
-    parameter.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.6 A nested `def` with a parameter convention, a default, or
+- [ ] **1.5 A nested `def` with a parameter convention, a default, or
   `raises` keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only regular read parameters with
@@ -138,7 +124,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 An overloaded static method of a generic struct keeps the clone
+- [ ] **1.6 An overloaded static method of a generic struct keeps the clone
   check**
 
   Problem: `BodyShape::static_call` admits a generic struct's static only
@@ -157,7 +143,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A variadic struct specialized whole other than `Tuple` cannot
+- [ ] **1.7 A variadic struct specialized whole other than `Tuple` cannot
   bind its pack**
 
   Problem: a member of `TString$…` or of a user variadic struct
@@ -174,7 +160,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A clone minted for compile-time evaluation is never derived**
+- [ ] **1.8 A clone minted for compile-time evaluation is never derived**
 
   Problem: the CTFE subprogram is checked by `check_program` on a fresh
   template catalog (`ctfe.rs`), so a per-call clone minted there
@@ -185,7 +171,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A member of a `DType`-keyed range keeps the clone check**
+- [ ] **1.9 A member of a `DType`-keyed range keeps the clone check**
 
   Problem: the members of `_SequentialRange`, `_StridedRange`,
   `_ZeroStartingRange`, and `_FloatStridedRange` other than `__iter__` are
@@ -206,7 +192,7 @@ to section 3, however small.
     the recipe a struct's `Self.dtype` would reuse.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 `AHasher`'s own members keep the clone check**
+- [ ] **1.10 `AHasher`'s own members keep the clone check**
 
   Problem: of the bundled `AHasher[key]`'s members, only the
   `_update_with_simd` leaves derive; the others are inferred per
@@ -223,7 +209,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A method reading its struct's scalar value binder keeps the
+- [ ] **1.11 A method reading its struct's scalar value binder keeps the
   clone check across passes**
 
   Problem: `Self.rows` in a method of `Grid[T, rows: Int]` is outside the
@@ -238,7 +224,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A method keyed on its own `DType` or a vector width keeps the
+- [ ] **1.12 A method keyed on its own `DType` or a vector width keeps the
   clone check**
 
   Problem: a method's own value binder derives only when it is an `Int` or
@@ -253,7 +239,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A per-call clone on a struct specialized per value is never
+- [ ] **1.13 A per-call clone on a struct specialized per value is never
   derived**
 
   Problem: `w.rep[DType.int16](v)` on `Width[n: Int]` clones `rep` on the
@@ -265,10 +251,10 @@ to section 3, however small.
     struct's value and the method's own binder symbolic.
   - Found while closing the missing clones
     (assets/ok/dtype_keyed_method_value_struct.mojo).
-  - Depends on 1.13, which derives a method's own `DType` or width binder.
+  - Depends on 1.12, which derives a method's own `DType` or width binder.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 An element store into or from a parameter's field keeps the
+- [ ] **1.14 An element store into or from a parameter's field keeps the
   clone check**
 
   Problem: `self.items[i] = other.items[i]`, or `other.items[i] = ...` on a
@@ -283,7 +269,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 An augmented assignment to a local through its in-place dunder
+- [ ] **1.15 An augmented assignment to a local through its in-place dunder
   keeps the clone check**
 
   Problem: `var m = self.meter; m += Meter(3)` is refused by the method
@@ -295,7 +281,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A raising in-place dunder dispatched through a bound keeps the
+- [ ] **1.16 A raising in-place dunder dispatched through a bound keeps the
   clone check**
 
   Problem: `self.total += x` on a `T` whose bound declares a raising
@@ -309,7 +295,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A module `def` updating a `mut` parameter through its in-place
+- [ ] **1.17 A module `def` updating a `mut` parameter through its in-place
   dunder keeps the clone check**
 
   Problem: `def add_in[T: Accum](mut a: T, b: T): a += b` is refused by the
@@ -322,7 +308,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 A whole value discarded with `_ =` keeps the clone check**
+- [ ] **1.18 A whole value discarded with `_ =` keeps the clone check**
 
   Problem: the method grammar's discard arm admits only a closed scalar, so
   a body with `_ = head` over a local of a parameter type is inferred per
@@ -336,7 +322,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A binder whose bound only refines an existential's keeps the
+- [ ] **1.19 A binder whose bound only refines an existential's keeps the
   clone check**
 
   Problem: a trait-bound `def` handing its `T: Titled` parameter to a method
@@ -352,7 +338,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A loan-carrying type parameter no runtime parameter spells keeps
+- [ ] **1.20 A loan-carrying type parameter no runtime parameter spells keeps
   the erased body**
 
   Problem: a generic `def` whose loan-carrying type argument reaches only its
@@ -368,7 +354,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 An iterator argument recorded with a receiver origin keeps the
+- [ ] **1.21 An iterator argument recorded with a receiver origin keeps the
   erased body**
 
   Problem: `next(it)` with `it = l.__iter__()` over `l: List[Span[Int,
@@ -381,7 +367,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A `Pointer` type argument is baked into its clone with its
+- [ ] **1.22 A `Pointer` type argument is baked into its clone with its
   place**
 
   Problem: `alloc(Layout[Pointer[Int, origin_of(x)]](count=1))` mints
@@ -393,7 +379,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.23 The Pliron pivot has no falsifiable proof yet**
 
   Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
   stages a migration to a required Pliron IR framework, but its Stage A1 slice
@@ -417,7 +403,7 @@ to section 3, however small.
     `docs/pliron-backend-pivot-plan.md` alone.
   - Model: Fable, Planned.
 
-- [ ] **1.25 A reference-typed call result in a method keeps the clone
+- [ ] **1.24 A reference-typed call result in a method keeps the clone
   check**
 
   Problem: a method storing a value it read through a reference-returning
@@ -436,7 +422,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 Two overloads of one trait requirement share their binders**
+- [ ] **1.25 Two overloads of one trait requirement share their binders**
 
   Problem: a trait requirement's binders are owned by `Trait.method`, so two
   overloaded requirements whose slots agree give their binders one id.
@@ -448,7 +434,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 Two overloads of one struct method share their elaborator
+- [ ] **1.26 Two overloads of one struct method share their elaborator
   binders**
 
   Problem: the elaborator owns a method's own binders by `Struct.method`
@@ -463,7 +449,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 An overloaded witness beside a rival the recorded types cannot
+- [ ] **1.27 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
 
   Problem: a call through a bound whose witness overloads the requirement
@@ -482,7 +468,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.29 A hasher call over a multi-lane vector keeps the clone check
+- [ ] **1.28 A hasher call over a multi-lane vector keeps the clone check
   when the instance binds the hasher to a struct**
 
   Problem: `hasher._update_with_simd(SIMD[DType.int32, 4](...))` in a
@@ -498,7 +484,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.30 A `print` of a whole value keeps the clone check**
+- [ ] **1.29 A `print` of a whole value keeps the clone check**
 
   Problem: `print(x, s)` in `def echo[T: Writable & ...](x: T, s: String)`
   refuses the template, because `print_call` admits only closed scalars,
@@ -512,7 +498,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.31 A lane read of a defaulted `to_bits()` result keeps the clone
+- [ ] **1.30 A lane read of a defaulted `to_bits()` result keeps the clone
   check**
 
   Problem: a hasher leaf that reads lanes of `value.to_bits()` before
@@ -530,7 +516,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.32 A lane read copied into a local keeps the clone check**
+- [ ] **1.31 A lane read copied into a local keeps the clone check**
 
   Problem: `var first = lanes[0]` in a keyed `def` refuses the template,
   over a closed vector as well as a value-shaped one, while
@@ -539,6 +525,20 @@ to section 3, however small.
     refuses any lane read with a `copy_place_value_uses` entry.
   - An instance already re-proves each copied place implicitly copyable
     at its own type, so the copy itself derives.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.32 A call through a bound leaving a defaulted parameter to its
+  default keeps the clone check**
+
+  Problem: `BodyShape`'s bound-dispatch rule matches every contract
+  parameter to a supplied argument, so an omitted one refuses the template.
+  - A nominal receiver's call now derives with a default left out
+    (2026-09-27): the default is the callee's declaration.
+  - Through a bound the instance re-selects a witness, whose own default is
+    what the clone runs; whether a witness may default differently from its
+    requirement is unmeasured.
+  - No bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -3632,6 +3632,27 @@ fn template_string_literal_argument_derives() {
 }
 
 #[test]
+fn template_defaulted_argument_derives() {
+    // A method call leaving a defaulted parameter to its default records
+    // only the omitted slot: the callee evaluates its own default.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_defaulted_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "-1 2 False True\na-b! cab! a-b!! cab!!\n24 12 4 4\n",
+        &[
+            ("Named.position", 2),
+            ("Named.starts", 2),
+            ("Named.tag_joined", 2),
+            ("Named.tag_twice", 2),
+            ("Named.tripled_length", 2),
+            ("Named.reaped", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_field_of_field_derives() {
     // A field of a `self` field holding a struct, and a field of a struct
     // parameter, is read and written at the same path under every instance.

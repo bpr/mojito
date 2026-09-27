@@ -394,11 +394,13 @@ pub fn trivial_method_contract(call: &TemplateCallContract) -> bool {
 /// and, by substitution, its result type.
 ///
 /// The receiver is read or mutated in place, never consumed or bound by a
-/// `ref` whose mutability origin solving decides. Every argument is supplied
-/// (no default is evaluated in the callee's scope) and either binds a closed
-/// scalar parameter by value, adapted at most by materializing a literal to a
-/// closed type, or is the caller's place kept for a `mut` or `ref` parameter
-/// ([`kept_place_argument`]), which is never adapted. The call neither
+/// `ref` whose mutability origin solving decides. Every argument either binds
+/// a closed scalar parameter by value, adapted at most by materializing a
+/// literal to a closed type, or is the caller's place kept for a `mut` or
+/// `ref` parameter ([`kept_place_argument`]), which is never adapted. An
+/// omitted argument binds by value: its default is the callee's declaration,
+/// evaluated in the callee's scope, so the call records only the slot, and an
+/// instance's retargeted callee brings its own. The call neither
 /// raises, adapts its result, returns a reference, captures, nor carries
 /// compile-time parameters. Whether the receiver needs a place is the
 /// callee's declaration, which an instance's clone keeps. Every field is
@@ -410,8 +412,8 @@ pub fn closed_method_contract(call: &TemplateCallContract) -> bool {
 /// Whether a method call's contract is a [`closed_method_contract`] but for
 /// the types its by-value parameters have.
 ///
-/// An argument bound by value to a parameter of any type is still supplied,
-/// still bound without a place, and invalidates nothing at its boundary. Its
+/// An argument bound by value to a parameter of any type is still bound
+/// without a place, and invalidates nothing at its boundary. Its
 /// type is either the parameter's, which substitution preserves, or one an
 /// `@implicit` constructor converts to it, which an instance selects again
 /// from its own source and target types. Either way an instance changes the
@@ -560,8 +562,11 @@ fn closed_contract(
                     argument.convention,
                     None | Some(ArgConvention::Imm | ArgConvention::Var)
                 );
-            argument.source != CheckedCallArgumentSource::Default
-                && (by_value || kept_place_argument(argument))
+            // A default is the callee's declaration, evaluated in the
+            // callee's scope, so it binds by value and never a place.
+            by_value
+                || (argument.source != CheckedCallArgumentSource::Default
+                    && kept_place_argument(argument))
         })
         && captures.is_empty()
         && reference_result.is_none()

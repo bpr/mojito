@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method calling a method on a nominal receiver and leaving a
+  defaulted parameter to its default (`self.name.find("y")`,
+  `self.tag.joined(times=2)`, a named destructor's `tag^.reap()`) now
+  reuses its template's checked facts in every instance
+  (`assets/ok/template_method_defaulted_argument.mojo`). Such methods used to
+  be checked again per instance.
 - A generic struct's method handing a construction a pointer to `self` or
   a field of it rebound to the whole receiver
   (`Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`) now
