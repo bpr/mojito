@@ -2223,7 +2223,8 @@ fn template_method_parameter_built_stores_derive() {
     // value built over the parameter, or whose element is the parameter
     // itself and updates through its bound's `__iadd__`: the getter is
     // realized on the instance's receiver and the dunder re-selected on the
-    // instance's element type.
+    // instance's element type. A module `def` updating a `mut` parameter
+    // through its bound's `__iadd__` re-selects the dunder the same way.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_parameter_built_store.mojo"),
         "2 2 6 9\n1 4 32 41\n3 21\n",
@@ -2232,6 +2233,7 @@ fn template_method_parameter_built_stores_derive() {
             ("Rack.bump_self", 2),
             ("Rack.accumulate", 2),
             ("Rack.fold", 2),
+            ("add_in", 2),
         ],
     );
 }

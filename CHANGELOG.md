@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module `def` updating a `mut` parameter through its in-place dunder
+  (`def add_in[T: Accum](mut a: T, b: T): a += b`) now derives each instance
+  from its checked template
+  (`assets/ok/template_method_parameter_built_store.mojo`). The function
+  class refused any `mut` parameter and any in-place update, so the body was
+  checked again per instance.
 - An augmented assignment through an in-place dunder that a parameter's
   bound declares raising (`self.total += x` on a `T: Checked`) now derives
   from the method's checked template, whether the instance's witness raises

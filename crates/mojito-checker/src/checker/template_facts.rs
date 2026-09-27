@@ -3487,9 +3487,10 @@ impl Checker {
 
     /// The certificate a freshly captured module-level generic function earns.
     ///
-    /// Every class shares a declaration shape: plain type parameters, immutable
-    /// regular runtime parameters, a concrete scalar result, and no captures,
-    /// decorators, or `where` clauses, so the declaration's bounds —
+    /// Every class shares a declaration shape: plain type parameters, plain
+    /// regular runtime parameters (read, and in a runtime body `var` or `mut`),
+    /// a concrete scalar result, and no captures, decorators, or `where`
+    /// clauses, so the declaration's bounds —
     /// discharged where an instance is requested — are all an instance owes.
     /// Only a [`TemplateClass::FunctionBody`] may raise
     /// (`MethodFeatures::RAISES`).
@@ -3625,11 +3626,15 @@ impl Checker {
                     if arguments.is_empty()
                         && pack_binders.contains(&name.trim_start_matches('*')))
         };
-        // A `var` parameter of a runtime body is bound owned from its
+        // A `var` or `mut` parameter of a runtime body is bound from its
         // declared convention alone, and is rooted at its own binding under
         // every instance, as a method's is.
         let owned_param = |parameter: &mojito_ast::ast::FnParam| {
-            !keyed && parameter.convention == Some(mojito_ast::ast::ArgConvention::Var)
+            !keyed
+                && matches!(
+                    parameter.convention,
+                    Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Mut)
+                )
         };
         let plain_params = params.iter().all(|parameter| {
             (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
@@ -3638,9 +3643,14 @@ impl Checker {
                 && parameter.origin.is_none()
         });
         if !plain_params {
-            return outside("a parameter is not an immutable or 'var' regular parameter");
+            return outside("a parameter is not an immutable, 'var', or 'mut' regular parameter");
         }
         let owned_params = params.iter().any(owned_param);
+        let mut_params: Vec<&str> = params
+            .iter()
+            .filter(|parameter| parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut))
+            .map(|parameter| parameter.name.as_str())
+            .collect();
         if captures.is_some() || !decorators.is_empty() {
             return outside("the declaration captures or is decorated");
         }
@@ -3688,8 +3698,8 @@ impl Checker {
             struct_vectors: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
-            borrowed_params: Vec::new(),
-            mut_params: Vec::new(),
+            borrowed_params: mut_params.clone(),
+            mut_params,
             keyed,
             receiver: false,
             self_convention: None,
@@ -3698,7 +3708,7 @@ impl Checker {
             // (`FunctionBody`); a keyed body keeps source validation's rules.
             moved_result: (!keyed).then_some(ret_ty),
             reference_result: None,
-            // An owned parameter makes the body a `FunctionBody`, whose
+            // A `var` or `mut` parameter makes the body a `FunctionBody`, whose
             // instances owe plain-data arguments.
             features: std::cell::Cell::new(
                 [
@@ -3782,9 +3792,6 @@ impl Checker {
         {
             return outside("a call has an effect other than raising");
         }
-        if !facts.inplace_updates.is_empty() {
-            return outside("an augmented assignment dispatches an in-place dunder");
-        }
         let adjustments_derive = facts
             .operation_adjustments
             .iter()
@@ -3798,17 +3805,19 @@ impl Checker {
             );
         }
         // Every call selected a module-scope declaration or is a method call
-        // the grammar admitted (`CONSUMING_CALLS`), which records its (empty)
+        // or in-place update the grammar admitted, which records its
         // parameters here too; every effect summary read belongs to one of
         // those calls, and no application carries a pack.
         let callees: Option<Vec<&str>> = facts
             .call_parameters
             .iter()
             .map(|(id, _)| {
-                fact_at(&facts.selected_calls, *id).map_or_else(
-                    || template_callee(facts, *id),
-                    |call| Some(call.contract.target.as_str()),
-                )
+                fact_at(&facts.selected_calls, *id)
+                    .or_else(|| fact_at(&facts.inplace_updates, *id))
+                    .map_or_else(
+                        || template_callee(facts, *id),
+                        |call| Some(call.contract.target.as_str()),
+                    )
             })
             .collect();
         let Some(callees) = callees else {
