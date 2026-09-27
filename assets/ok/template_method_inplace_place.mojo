@@ -5,7 +5,7 @@
 # re-selected on the instance's type, and a field of a closed struct or of
 # one built over the parameter through that struct's own dunder, the
 # instance's clone where it has one, which may raise in a method declared
-# `raises`. A `mut` parameter updates the same way.
+# `raises`. A `mut` parameter or a `var` local updates the same way.
 trait Accum:
     def __iadd__(mut self, rhs: Self):
         ...
@@ -96,6 +96,16 @@ struct Rack[T: Accum & ImplicitlyCopyable & Deinitable]:
     def absorb(self, mut into: Self.T, x: Self.T):
         into += x
 
+    def bumped(self, k: Int) -> Int:
+        var m = self.meter
+        m += Meter(k)
+        return m.n
+
+    def summed(self, x: Self.T) -> Self.T:
+        var t = self.total
+        t += x
+        return t
+
     def result(self) -> Self.T:
         return self.total
 
@@ -112,6 +122,7 @@ def main() raises:
     meters.absorb(m, Meter(7))
     meters.bump_checked(8)
     print(meters.result().n, meters.meter.n, meters.tick.count, meters.inner.meter.n, m.n)
+    print(meters.bumped(3), meters.meter.n, meters.summed(Meter(2)).n, meters.result().n)
     try:
         meters.bump_checked(-1)
     except e:
@@ -127,3 +138,4 @@ def main() raises:
     gauges.bump_checked(2)
     gauges.bump_checked(3)
     print(gauges.strict.n, gauges.result().v, gauges.meter.n, gauges.tick.count, gauges.inner.meter.n, g.v)
+    print(gauges.bumped(4), gauges.meter.n, gauges.summed(Gauge(2)).v, gauges.result().v)

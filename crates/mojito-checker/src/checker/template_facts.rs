@@ -10473,7 +10473,8 @@ impl BodyShape<'_> {
 
     /// A place of a struct or bare parameter type updated through its
     /// in-place dunder (`self.total += x`, `self.meter += Meter(1)`,
-    /// `into += x`): a field of a writable `self`, or a `mut` parameter.
+    /// `into += x`, `m += Meter(3)`): a field of a writable `self`, a `var`
+    /// local holding a whole value, or a `mut` parameter.
     ///
     /// The contract is kept at the place in `inplace_updates`, and the
     /// operand is judged against it as a method call's argument. A struct's
@@ -10485,6 +10486,7 @@ impl BodyShape<'_> {
     /// parameter (`realize_inplace_updates`).
     fn inplace_place(&self, place: &Expr, value: &Expr) -> bool {
         let writable = (self.self_writable() && self.receiver_field(place))
+            || self.value_local(place)
             || matches!(&place.kind, ExprKind::Identifier(name)
                 if self.mut_params.contains(&name.as_str()));
         writable
@@ -11224,10 +11226,19 @@ impl BodyShape<'_> {
     }
 
     /// Whether `expr` names a `var` local holding a whole value, which a
-    /// method call or `len` reads or writes in place.
+    /// method call or `len` reads or writes in place. With no facts, a local
+    /// taken as a scalar may hold a whole value too (`var m = self.meter`):
+    /// its declaration's syntax alone cannot tell, and the check with facts
+    /// judges its kind from the recorded types.
     fn value_local(&self, expr: &Expr) -> bool {
-        matches!(&expr.kind, ExprKind::Identifier(name)
-            if self.local_kind(name) == Some(LocalKind::Value))
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return false;
+        };
+        match self.local_kind(name) {
+            Some(LocalKind::Value) => true,
+            Some(LocalKind::Scalar) => self.facts.is_none(),
+            _ => false,
+        }
     }
 
     /// Whether `expr` is a field of a `var` local holding a whole value. The

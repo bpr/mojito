@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An augmented assignment to a `var` local through its in-place dunder
+  (`var m = self.meter; m += Meter(3)`) now derives from the method's checked
+  template (`assets/ok/template_method_inplace_place.mojo`). The method
+  grammar admitted such an update only on a field of `self` or a `mut`
+  parameter, and took a local copied from a field for a scalar, so the body
+  was checked again per instance.
 - An element store into a `mut` parameter's field (`other.items[i] = x`,
   `other.counts[i] += 1`) now derives from the method's checked template
   (`assets/ok/template_method_subscripted_receiver.mojo`). The method grammar
