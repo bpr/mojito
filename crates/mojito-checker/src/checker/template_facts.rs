@@ -254,6 +254,10 @@ enum VectorFold {
     Construction,
     /// One lane of such a construction, a literal the template never had.
     Lane(LiteralKind),
+    /// The `DType.<member>` constant a method's own `DType` binder folded to
+    /// (`Scalar[dt]`) under the name's identity, which the instance's own
+    /// check skips as it skips any constant it wrote.
+    Constant,
 }
 
 /// The kind of a literal, which decides its own type.
@@ -1384,7 +1388,8 @@ impl Checker {
         let Some(desugars) = self.instance_with_desugars(body, &checked.facts.with_forms) else {
             return refuse("a `with` statement has no desugar form in its template");
         };
-        let mut occurrences = self.occurrences_over(body, &desugars);
+        let mut occurrences =
+            self.occurrences_over(body, &desugars, Some(&checked.facts.occurrences));
         fold_vector_values(&mut occurrences, &checked.facts.occurrences);
         // Every occurrence of the body is one the template checked. A class
         // without compile-time control flow keeps them all, once each; a
@@ -1455,6 +1460,8 @@ impl Checker {
             });
             return refuse("the clone's occurrences are not the template's");
         }
+        occurrences
+            .retain(|occurrence| !matches!(occurrence.vector_fold, Some(VectorFold::Constant)));
         let ids: Vec<OccurrenceId> = occurrences.iter().map(|occurrence| occurrence.id).collect();
         let Some(folded) = folded_literals(&checked.facts, &occurrences) else {
             return refuse("a folded compile-time value does not fit its template type");
@@ -4108,13 +4115,14 @@ impl Checker {
         // baked by every clone; only source validation sees its body, with
         // the parameter viewed as a lane-shaped vector (`simd_binder_view`),
         // and the elaborated program holds a trap stub in its place.
-        // A scalar value binder of the method's own (`[n: Int]`) is folded
-        // by every per-call clone, as a value-keyed `def`'s is.
+        // A scalar or `DType` value binder of the method's own (`[n: Int]`,
+        // `[dt: DType]`) is folded by every per-call clone, as a value-keyed
+        // `def`'s is; a vector over it (`Scalar[dt]`) is value-shaped.
         let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
         let Some(value_binders) =
             method_value_binders(method, &decls[self.self_decls.len().min(decls.len())..])
         else {
-            return outside("a method's own value binder is not an 'Int' or 'Bool'");
+            return outside("a method's own value binder is not an 'Int', 'Bool', or 'DType'");
         };
         let bound_type_binder = |binder: &mojito_ast::ast::TypeParam| {
             bound_binder(binder) && !value_binders.contains(&binder.name.as_str())
@@ -4142,7 +4150,8 @@ impl Checker {
         // A `DType` or vector value binder (`_SequentialRange[dtype]`,
         // `AHasher[key]`) keys a struct specialized whole: only source
         // validation checks its members, and each specialization's member
-        // folds the values its trace names.
+        // folds the values its trace names. The method's own `DType`
+        // binders are among the declarations, folded as its scalar ones are.
         let plain_struct = decls.iter().all(|decl| {
             matches!(
                 decl,
@@ -4161,6 +4170,8 @@ impl Checker {
                     }
                 ))
                 || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
+                || matches!(decl, ParamDecl::Value { name, ty, variadic: false, .. }
+                    if matches!(**ty, Ty::Dtype) && value_binders.contains(&name.as_str()))
                 || (self.source_validation
                     && matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
                         if matches!(**ty, Ty::Dtype | Ty::Simd { .. })))
@@ -4632,20 +4643,23 @@ impl Checker {
     /// Every statement and expression occurrence of a body in pre-order, by
     /// the identity it had before the final re-key and its copy number.
     fn body_occurrences(&self, body: &[Stmt]) -> Vec<Occurrence> {
-        self.occurrences_over(body, &self.with_desugars.borrow())
+        self.occurrences_over(body, &self.with_desugars.borrow(), None)
     }
 
     /// The occurrences of `body` with each `with` statement's children read
     /// from its desugar in `desugars`: the statement stays an occurrence,
     /// and the nodes the desugar synthesized are occurrences beside the ones
-    /// it kept from the source.
+    /// it kept from the source. `template` holds the occurrences of the
+    /// checked template an instance body is matched against.
     fn occurrences_over(
         &self,
         body: &[Stmt],
         desugars: &HashMap<SourceSpan, super::with_stmt::WithDesugar>,
+        template: Option<&[OccurrenceId]>,
     ) -> Vec<Occurrence> {
         struct Occurrences<'a> {
             origins: &'a mojito_ast::ast::SyntaxOrigins,
+            template: Option<&'a [OccurrenceId]>,
             found: Vec<Occurrence>,
             copies: HashMap<SyntaxId, u32>,
             /// The `DType` object of each `DType.<member>` constant met so
@@ -4752,7 +4766,22 @@ impl Checker {
                     // The constant the elaborator writes for a type-position
                     // binder (`Scalar[Self.dtype]`) takes a fresh identity:
                     // the template spelled a type there, not an occurrence.
-                    if self.origins.origin(expr.syntax_id).is_fresh() {
+                    // A value-position binder (`Scalar[dt]`) folds under the
+                    // name's identity, which the template checked: matched
+                    // against that template, the constant stands for the
+                    // name's occurrence ([`VectorFold::Constant`]).
+                    let origin = self.origins.origin(expr.syntax_id);
+                    if origin.is_fresh() {
+                        if self
+                            .template
+                            .is_some_and(|template| template.iter().any(|id| id.syntax == origin))
+                        {
+                            let id = self.next_copy(expr.syntax_id);
+                            self.push_plain(id, expr.source_span());
+                            if let Some(occurrence) = self.found.last_mut() {
+                                occurrence.vector_fold = Some(VectorFold::Constant);
+                            }
+                        }
                         return;
                     }
                 }
@@ -4886,6 +4915,7 @@ impl Checker {
 
         let mut occurrences = Occurrences {
             origins: &self.syntax_origins,
+            template,
             found: Vec::new(),
             copies: HashMap::new(),
             constant_objects: HashSet::new(),
@@ -7515,8 +7545,9 @@ fn struct_vector_binders(decls: &[ParamDecl]) -> Vec<&str> {
         .collect()
 }
 
-/// The names of a method's own scalar value binders (`[n: Int]`), given its
-/// own declarations, or `None` when one is not a plain `Int` or `Bool`. The
+/// The names of a method's own value binders (`[n: Int]`, `[dt: DType]`),
+/// given its own declarations, or `None` when one is not a plain `Int`,
+/// `Bool`, or `DType`. The
 /// parser spells such a binder's type as a bound (`n: Int`), so only its
 /// declaration tells it from a trait-bounded type binder ([`bound_binder`]).
 fn method_value_binders<'m>(
@@ -7540,7 +7571,7 @@ fn method_value_binders<'m>(
                 infer_only: false,
                 variadic: false,
                 ..
-            } if matches!(**ty, Ty::Int | Ty::Bool))
+            } if matches!(**ty, Ty::Int | Ty::Bool | Ty::Dtype))
             .then_some(binder.name.as_str())
         })
         .collect()
@@ -12570,8 +12601,8 @@ impl BodyShape<'_> {
         })
     }
 
-    /// Whether the recorded type of `expr` is a closed scalar, or in a
-    /// keyed body a value-shaped vector ([`Self::value_shaped_scalar`]).
+    /// Whether the recorded type of `expr` is a closed scalar or a
+    /// value-shaped vector ([`Self::value_shaped_scalar`]).
     /// With no facts yet, the syntax alone never rules a type out.
     fn scalar(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
@@ -12582,13 +12613,14 @@ impl BodyShape<'_> {
         })
     }
 
-    /// A value-shaped vector a keyed body holds as a scalar
-    /// (`SIMD[DType.int64, w]`): every instance folds the binders its slots
+    /// A value-shaped vector a body holds as a scalar (`SIMD[DType.int64,
+    /// w]`, over a keyed `def`'s or a method's own binders, or a struct
+    /// lane): every instance folds the binders its slots
     /// name, and an operator, a reduction, or a lane read over it records
     /// nothing its dimensions decide, so the instance's facts are the
     /// template's under the folded dimensions.
     fn value_shaped_scalar(&self, ty: &Ty) -> bool {
-        (self.keyed && self.value_shaped_simd(ty)) || self.struct_lane_simd(ty)
+        self.value_shaped_simd(ty) || self.struct_lane_simd(ty)
     }
 
     /// A `SIMD` type whose open slots name only the struct's `DType`
@@ -12604,7 +12636,7 @@ impl BodyShape<'_> {
                 .all(|name| self.struct_lanes.contains(&name.as_str()))
     }
 
-    /// Whether the recorded type of `expr` is a value-shaped vector a keyed
+    /// Whether the recorded type of `expr` is a value-shaped vector the
     /// body holds ([`Self::value_shaped_scalar`]).
     fn value_shaped(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);

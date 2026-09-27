@@ -1862,6 +1862,35 @@ fn template_per_call_method_clones_derive() {
 }
 
 #[test]
+fn template_method_own_lane_derives() {
+    // A method keyed on its own `DType` or width binder derives each
+    // per-call clone: a body constructing at that lane is checked by source
+    // validation, since its elaborated template is a stub, and a `DType`
+    // folds to a constant under the name's identity.
+    let source = "struct Box:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def lanes[w: Int](self) -> Int:\n        var v = SIMD[DType.int32, w](self.x)\n        return len(v) + Int(v.reduce_add())\n\n    def kind[dt: DType](self, y: Int) -> Int:\n        var one = Scalar[dt](y + self.x)\n        return Int(one * one)\n\n    def twice[dt: DType](self, a: Scalar[dt]) -> Scalar[dt]:\n        return a + a\n\ndef main():\n    var b = Box(3)\n    print(b.lanes[4](), b.lanes[2]())\n    print(b.kind[DType.int16](2), b.kind[DType.uint8](1), b.twice(Int16(5)))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let per_call: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("Box.") && name.contains('$'))
+            .collect();
+        assert_eq!(per_call.len(), 5, "every per-call clone derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "16 8\n25 16 10\n"
+        );
+    }
+}
+
+#[test]
 fn discovery_scan_matches_the_checked_arena() {
     // Request discovery reads a `DiscoveryResult` instead of the assembled
     // arena. Every request kind is a function of the expressions visited,

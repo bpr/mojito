@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method keyed on a `DType` or vector-width binder of its own
+  (`kind[dt: DType](self, …)` building `Scalar[dt](…)`, `lanes[w: Int](self)`
+  building `SIMD[DType.int32, w](…)`) now derives each per-call clone from
+  its checked template (`assets/ok/template_method_own_lane.mojo`). Such
+  clones used to be checked again per call: the certificate refused a
+  `DType` binder, and a body constructing at its own lane had only a trap
+  stub as its template.
 - A method reading its struct's closed scalar value binder (`Self.rows` in
   `Grid[T, rows: Int]`, `Self.length` in `Array`) is now certified as a
   template, so `Grid.count`, `Array.__len__`, and `Array`'s literal

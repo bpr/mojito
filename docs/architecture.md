@@ -787,8 +787,11 @@ under its own source tag), a pack binding expands `*args:
 exactly as a def specialization does, and the template's method body
 becomes the `unspecialized_method_stub` trap when it only elaborates with
 the struct's or its own parameters bound, or constructs a vector at a lane
-its own parameters spell (`Scalar[dt](x)`, `synth::constructs_at_own_lane`):
-that construction checks symbolically but lowers only with the lane bound.
+its own parameters spell (`Scalar[dt](x)`,
+`mojito_ast::simd_width::method_constructs_at_own_lane`): that construction
+checks symbolically but lowers only with the lane bound, so source
+validation checks such a body as the template its per-call clones derive
+from.
 `specialize_method_clone` bakes
 the clone's *value* bindings into its signature types before its type
 bindings, as a def specialization does, so a value parameter standing in a

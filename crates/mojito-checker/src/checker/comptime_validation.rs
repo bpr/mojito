@@ -25,8 +25,11 @@ pub(super) struct ForwardedPack {
 
 impl Checker {
     /// Check the method bodies of a struct that hold compile-time control
-    /// flow, each with `self` bound at the struct's own parameters, and
-    /// every method body of a value-keyed struct (`value_keyed_struct`).
+    /// flow, each with `self` bound at the struct's own parameters, every
+    /// method body of a value-keyed struct (`value_keyed_struct`), and every
+    /// body constructing a vector at a lane its method's own binders spell
+    /// (`method_constructs_at_own_lane`), whose elaborated template is a
+    /// trap stub.
     pub(super) fn validate_comptime_method_bodies(
         &mut self,
         declaration: &StructDeclaration<'_>,
@@ -46,7 +49,8 @@ impl Checker {
                 &m.body,
                 body_keys_rebind(&m.body, &self.rebind_keyed_bodies),
             );
-            if !(validated || value_keyed) {
+            let own_lane = mojito_ast::simd_width::method_constructs_at_own_lane(m);
+            if !(validated || value_keyed || own_lane) {
                 continue;
             }
             let scopes = self.scopes.len();
@@ -59,9 +63,11 @@ impl Checker {
                 method_index,
                 overload_index,
             );
-            // A value-keyed member is validated only to produce its
-            // template: each specialization is still checked, or derived,
-            // so a body the symbolic check cannot type gets no verdict.
+            // A value-keyed member, and a method constructing a vector at a
+            // lane of its own binders, is validated only to produce its
+            // template: each specialization or per-call clone is still
+            // checked, or derived, so a body the symbolic check cannot type
+            // gets no verdict.
             let checked = match checked {
                 Err(error) if !validated && !matches!(error, TypeError::SymbolicBoundary(_)) => {
                     Err(TypeError::SymbolicBoundary(error.to_string()))
@@ -1218,7 +1224,9 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
                 for method in methods {
                     let class = if shell {
                         TemplateClass::ConcreteOnly
-                    } else if value_keyed(type_params) {
+                    } else if value_keyed(type_params)
+                        || mojito_ast::simd_width::method_constructs_at_own_lane(method)
+                    {
                         TemplateClass::ValidatedKeyed
                     } else {
                         body_class(type_params, &method.type_params, &method.body)

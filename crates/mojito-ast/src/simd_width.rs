@@ -2,7 +2,7 @@
 //! types, statements, and expressions. The elaborator specializes such a
 //! declaration per call, and source validation checks its template.
 
-use crate::ast::{Expr, ExprKind, ParamArg, Stmt, StmtKind, Type};
+use crate::ast::{Expr, ExprKind, Method, ParamArg, Stmt, StmtKind, Type, TypeParam};
 
 /// Whether a generic `def` uses one of its parameters as a lane width.
 ///
@@ -77,6 +77,69 @@ pub fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
                     .iter()
                     .any(|inner| stmt_uses_param_simd_width(inner, &names))
         })
+}
+
+/// Whether a struct method's template body constructs a vector at a lane its
+/// own parameters spell (`Scalar[dt](x)`, `SIMD[DType.int32, w](v)`).
+///
+/// Such a construction checks, but lowers only once the lane is bound: every call
+/// retargets to a per-call clone and the template body is a trap stub, as a
+/// free `def`'s template never reaches the program.
+pub fn method_constructs_at_own_lane(method: &Method) -> bool {
+    struct Finder<'a> {
+        own: &'a [TypeParam],
+        found: bool,
+    }
+
+    struct Names<'a> {
+        own: &'a [TypeParam],
+        found: bool,
+    }
+
+    impl crate::visit::Visitor for Names<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Identifier(name) = &expr.kind {
+                self.found |= self.own.iter().any(|parameter| &parameter.name == name);
+            }
+        }
+
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(name, arguments) = ty
+                && arguments.is_empty()
+            {
+                self.found |= self.own.iter().any(|parameter| &parameter.name == name);
+            }
+        }
+    }
+
+    impl crate::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            let ExprKind::Call {
+                name, param_args, ..
+            } = &expr.kind
+            else {
+                return;
+            };
+            if name != "SIMD" && name != "Scalar" {
+                return;
+            }
+            let mut names = Names {
+                own: self.own,
+                found: false,
+            };
+            for argument in param_args {
+                crate::visit::walk_param_arg(&mut names, argument);
+            }
+            self.found |= names.found;
+        }
+    }
+
+    let mut finder = Finder {
+        own: &method.type_params,
+        found: false,
+    };
+    crate::visit::walk_block(&mut finder, &method.body);
+    finder.found
 }
 
 fn type_uses_param_simd_width(ty: &Type, names: &[&str]) -> bool {

@@ -294,7 +294,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   typed, as is the body `value_keyed_def` names (a `def` keyed on a
   `DType` binder or using a parameter as a lane width, which the elaborator
   specializes per call — `mojito_ast::simd_width::def_uses_layout_dependent_param`,
-  shared with the elaborator, is the lane-width scan),
+  shared with the elaborator, is the lane-width scan), and
+  `validate_comptime_method_bodies` checks a method body
+  `mojito_ast::simd_width::method_constructs_at_own_lane` names (one
+  constructing a vector at its own binder's lane, stubbed by the
+  elaborator) the same way,
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
   guards with them, and `is_template_shell_member_error` names the errors
@@ -901,7 +905,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 |---|---|---|
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
-| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | The elaborator's per-call specialization (`comptime.rs`) and `checker/comptime_validation.rs:value_keyed_def`. |
+| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | The elaborator's per-call specialization (`comptime.rs`, `comptime/synth.rs`'s method stubs) and `checker/comptime_validation.rs` (`value_keyed_def`, `validate_comptime_method_bodies`). |
 | An AST walk (read-only `Visitor`, in-place `MutVisitor`) | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, `ast::stamp_source`, `checker/rebind.rs`. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |
