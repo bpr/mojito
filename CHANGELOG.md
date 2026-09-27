@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method calling an overloaded static of a generic struct whose
+  members differ only in closed parameter types (`Pair[Self.T].pick(v, 1)`
+  beside `pick(v: Self.T, f: Float64)`) now reuses its template's checked
+  facts, a spelled receiver naming the instance's clone of the ranked member
+  (`assets/ok/template_method_overloaded_generic_static_call.mojo`). Such
+  methods used to be checked again per instance.
 - A struct method declaring a nested `def` with a `mut`, `var`, or `ref`
   parameter, a closed-scalar default, or `raises` (`def bump(mut x: Int, y:
   Int)`, `def scaled(x: Int, by: Int = 3)`, `def check(x: Int) raises`) now

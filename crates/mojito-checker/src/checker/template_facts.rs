@@ -215,6 +215,9 @@ struct Occurrence {
     identifier: bool,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
+    /// The struct and `[...]` arguments a method call's receiver applies,
+    /// where it is a type application (`Pair[Self.T].pick(v, 1)`).
+    type_receiver: Option<(String, Vec<mojito_ast::ast::ParamArg>)>,
     /// An admitted operator's kind, its operand occurrences, and whether
     /// its right operand is a place, which a consuming dunder copies.
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
@@ -1839,6 +1842,7 @@ impl Checker {
             self.realize_method_call(&mut facts, index, occurrences, substitution)?;
         }
         self.realize_tuple_elements(&mut facts, occurrences)?;
+        self.realize_static_overloads(&mut facts, occurrences, substitution)?;
         // A construction selected its constructor from the arguments' types
         // and named the instance's clone of it, where one exists.
         for construction in &template.constructions {
@@ -2523,6 +2527,85 @@ impl Checker {
             reference.referent = self.instance_ty(&reference.referent, substitution);
         }
         Ok(Some(target))
+    }
+
+    /// Realize each overloaded static a body calls on a generic struct's
+    /// type application (`Pair[Self.T].pick(v, 1)`,
+    /// [`BodyShape::static_call`]): the member the template ranked, on the
+    /// instance's clone of the static where the receiver's arguments,
+    /// resolved in the instance, have one.
+    ///
+    /// The clone check re-ranks the clone family there, and its members
+    /// differ only in closed parameter types, so it selects the clone of the
+    /// template's member (`method_clone_target`). A receiver with no clone
+    /// keeps the erased member, as does a static on an inferred or
+    /// contextual receiver, which no instance retargets.
+    fn realize_static_overloads(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+        substitution: &TySubst,
+    ) -> Result<(), &'static str> {
+        for index in 0..facts.overload_targets.len() {
+            let (id, selected) = &facts.overload_targets[index];
+            if facts.selected_calls.iter().any(|(call, _)| call == id) {
+                continue;
+            }
+            let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
+            else {
+                continue;
+            };
+            let (Some((owner, applied)), Some((_, method))) =
+                (&occurrence.type_receiver, &occurrence.method_call)
+            else {
+                continue;
+            };
+            let Some(info) = self
+                .structs
+                .get(owner)
+                .filter(|info| !info.decls.is_empty())
+            else {
+                continue;
+            };
+            let arguments = self
+                .partition_struct_origin_args(owner, &info.source_params, applied)
+                .and_then(|partitioned| {
+                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
+                })
+                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
+                .1;
+            let Some(clone) = self.instance_method_clone(owner, method, &arguments) else {
+                continue;
+            };
+            // A lone clone is no overload set, and its call records no member.
+            if info
+                .methods
+                .get(&clone)
+                .is_none_or(|family| family.len() < 2)
+            {
+                return Err("an instance collapsed a static's overload family");
+            }
+            let self_ty = self.self_instance_ty(owner);
+            let declared = info
+                .methods
+                .get(method)
+                .and_then(|family| {
+                    family.iter().find(|member| {
+                        super::overload_support::method_lowered_name(
+                            owner,
+                            method,
+                            member,
+                            self_ty.as_ref(),
+                        ) == *selected
+                    })
+                })
+                .ok_or("a static's selected overload is not declared")?;
+            let target = self
+                .method_clone_target(owner, method, &arguments, declared, substitution)
+                .ok_or("a static's clone family has no overloaded member for the selection")?;
+            facts.overload_targets[index].1 = target;
+        }
+        Ok(())
     }
 
     /// Realize one call through a callable parameter for an instance.
@@ -3667,9 +3750,10 @@ impl Checker {
     ///   body introduces, under every instance. A nested body's effect reads
     ///   are the enclosing body's too.
     /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static records at
-    ///   most its overload member (none for a generic struct's) and, behind
-    ///   a leading-dot root, the expected type's head, neither of which an
-    ///   instance changes, so it inherits both.
+    ///   most its overload member and, behind a leading-dot root, the
+    ///   expected type's head. An instance inherits the head, and the member
+    ///   too, except that a generic struct's spelled receiver names the
+    ///   instance's clone of it (`realize_static_overloads`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -4305,6 +4389,7 @@ impl Checker {
                     keywords: Vec::new(),
                     identifier: false,
                     method_call: None,
+                    type_receiver: None,
                     operator: None,
                     prefix: None,
                     transfer: false,
@@ -4371,6 +4456,15 @@ impl Checker {
                             self.origins.origin(object.syntax_id),
                             "__getitem__".to_string(),
                         )),
+                        _ => None,
+                    },
+                    type_receiver: match &expr.kind {
+                        ExprKind::MethodCall { object, .. } => match &object.kind {
+                            ExprKind::TypeApply { name, args } => {
+                                Some((name.clone(), args.clone()))
+                            }
+                            _ => None,
+                        },
                         _ => None,
                     },
                     operator: match &expr.kind {
@@ -9746,16 +9840,18 @@ impl BodyShape<'_> {
     /// instance. An expected type that is a bare parameter refuses the
     /// leading-dot form outright.
     ///
-    /// A generic struct's static is one declaration with no binders of its
-    /// own, no availability condition, and no reference or variadic
-    /// parameter, so the call names the same declaration whatever solves the
-    /// struct's parameters, and records no overload target. Those are solved
-    /// from the receiver's `[...]` type arguments, or from the arguments'
-    /// types, and an instance solves them at the substituted types, as its
-    /// struct application is substituted. Where the instance's struct has a
-    /// clone of the static the call retargets to it by the receiver's
-    /// arguments, and records nothing that names it. An argument is a closed
-    /// scalar or a whole value bound to a parameter of its own type
+    /// Each member of a generic struct's static has no binders of its own,
+    /// no availability condition, and no reference or variadic parameter,
+    /// and the members differ only in closed parameter types, so the call
+    /// ranks the same member whatever solves the struct's parameters. Those
+    /// are solved from the receiver's `[...]` type arguments, or from the
+    /// arguments' types, and an instance solves them at the substituted
+    /// types, as its struct application is substituted. Where the instance's
+    /// struct has a clone of the static the call retargets to it by the
+    /// receiver's arguments: a lone declaration records nothing that names
+    /// it, and an overloaded member's recorded target is re-keyed to the
+    /// clone of that member (`realize_static_overloads`). An argument is a
+    /// closed scalar or a whole value bound to a parameter of its own type
     /// ([`Self::static_argument`]).
     fn static_call(
         &self,
@@ -9799,6 +9895,25 @@ impl BodyShape<'_> {
                     .iter()
                     .all(|convention| matches!(convention, None | Some(ArgConvention::Var)))
         };
+        // Members that differ only in closed parameter types rank alike
+        // under every instance: a parameter of the struct's parameter type
+        // is the same one in each of them.
+        let closed_differences = |signatures: &[super::MethodSig]| {
+            let arity = signatures.iter().map(|sig| sig.params.len()).max();
+            (0..arity.unwrap_or(0)).all(|position| {
+                let declared: Vec<Option<&Ty>> = signatures
+                    .iter()
+                    .map(|sig| sig.params.get(position))
+                    .collect();
+                declared
+                    .iter()
+                    .flatten()
+                    .all(|ty| !mojito_types::types::is_symbolic(ty))
+                    || declared
+                        .windows(2)
+                        .all(|pair| pair[0].is_some() && pair[0] == pair[1])
+            })
+        };
         let static_member = info
             .and_then(|info| {
                 let receiver = if generic {
@@ -9812,7 +9927,7 @@ impl BodyShape<'_> {
             })
             .is_some_and(|signatures| {
                 if generic {
-                    matches!(signatures.as_slice(), [sig] if plain_static(sig))
+                    signatures.iter().all(plain_static) && closed_differences(signatures)
                 } else {
                     signatures.iter().all(|sig| !sig.has_self)
                 }
@@ -9836,7 +9951,6 @@ impl BodyShape<'_> {
                     && fact_at(&facts.generic_instantiations, id).is_none()
                     && fact_at(&facts.method_instantiations, id).is_none()
                     && fact_at(&facts.parameterized_method_calls, id).is_none()
-                    && (!generic || fact_at(&facts.overload_targets, id).is_none())
                     && args.iter().all(|argument| {
                         fact_at(&facts.conversions, self.occurrence(argument)).is_none()
                     })

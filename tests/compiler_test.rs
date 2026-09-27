@@ -3652,6 +3652,46 @@ fn template_generic_static_call_derives() {
 }
 
 #[test]
+fn template_overloaded_generic_static_call_derives() {
+    // An overloaded static of a generic struct whose members differ only in
+    // closed parameter types ranks the template's member at every instance:
+    // a spelled receiver retargets to the instance's clone of it.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_overloaded_generic_static_call.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "3 x\n3 x\n6 7\n5 6\n3 x\n3 x\n",
+        &[
+            ("Shelf.by_int", 2),
+            ("Shelf.by_float", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.checked", 2),
+            ("Shelf.inferred", 2),
+            ("Shelf.contextual", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_overloaded_static_on_a_parameter_type_keeps_the_clone_check() {
+    // Members differing in a parameter of the struct's parameter type may
+    // rank apart at an instance's types, so the body stays outside the class.
+    let source = "@fieldwise_init\nstruct Pair[T: Copyable & Deinitable](Copyable, Movable):\n    var a: Self.T\n\n    @staticmethod\n    def pick(v: Self.T) -> Int:\n        return 1\n\n    @staticmethod\n    def pick(v: Float64) -> Int:\n        return 2\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def picked(self) -> Int:\n        return Pair[Self.T].pick(self.item)\n\n\ndef main():\n    print(Shelf[Int](3).picked(), Shelf[String](\"x\").picked())\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    let stats = program.template_stats();
+    assert_eq!(compiler.execute(&program).expect("execute").output, "1 1\n");
+    assert!(
+        stats.refused.iter().any(|(name, reason)| {
+            name.starts_with("Shelf.picked$") && reason == "its template is not certified"
+        }),
+        "a member typed by the struct's parameter leaves the body outside the class: {:?}",
+        stats.refused
+    );
+}
+
+#[test]
 fn template_string_literal_argument_derives() {
     // A string literal handed to a method's `StringSpan` or `String`
     // parameter converts by its syntax and the callee's declared parameter.
