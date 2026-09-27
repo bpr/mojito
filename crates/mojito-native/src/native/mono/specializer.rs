@@ -979,6 +979,8 @@ impl<'a> Specializer<'a> {
                     // are monomorphic in the supported subset — one whose
                     // signature still spells generic parameters (a lambda
                     // inside an unspecialized generic) rejects contextually.
+                    // A generic nested `def` is no body of its own: each
+                    // call site binding its parameters enqueues an instance.
                     MirInstr::MakeClosure {
                         function: target, ..
                     }
@@ -989,7 +991,12 @@ impl<'a> Specializer<'a> {
                         let Some(body) = self.functions.get(target.as_str()).copied() else {
                             continue;
                         };
-                        if function_types(body).any(is_symbolic) {
+                        if function_types(body).any(is_symbolic)
+                            || self
+                                .declarations
+                                .get(target.as_str())
+                                .is_some_and(|declaration| !declaration.param_decls.is_empty())
+                        {
                             continue;
                         }
                         *target = self.enqueue(target, self.base_bindings(), Vec::new())?;

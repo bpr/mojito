@@ -470,24 +470,7 @@ to section 3, however small.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A nested generic `def`'s value argument built from its own
-  parameter is not a native constant**
-
-  Problem: `scaled[k + 1]()` inside a nested `def inner[k: Int]()` runs on
-  the VM and is refused natively: ``in `scaled`: unsupported unresolved value
-  parameter `k```.
-  - A module-level `def` and a method evaluate the argument's recorded
-    expression under the caller instance's bindings
-    (`bind_explicit_value_arguments`).
-  - A nested generic `def` is called indirectly through its closure, and its
-    value parameter reaches the body as a runtime local, so the instance
-    binds no `k` to evaluate under.
-  - `conformance/probes/native_nested_def_value_argument.mojo` pins it; the
-    pinned Mojo runs it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.1 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2407,6 +2390,22 @@ last.
   - `conformance/probes/symbolic_instance_construction_in_method.mojo` pins
     it.
   - Found while closing the forwarded value argument (2026-09-27).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.93 A nested `def` cannot read its enclosing function's value
+  parameter**
+
+  Problem: `n` read inside a nested `def inner[k: Int]()` of
+  `def outer[n: Int]()` is rejected on both backends with "Could not infer
+  capture convention of the captured value n"; the pin runs it.
+  - A parameter is a compile-time value, so the nested body needs no
+    capture to read it.
+  - Mojito's capture analysis treats the enclosing function's value
+    parameter as a runtime local to capture.
+  - `conformance/probes/nested_def_reads_enclosing_parameter.mojo` pins it.
+  - Found while closing the nested generic `def`'s value argument
+    (2026-09-27).
   - Depends on nothing.
   - Model: Opus, Planned.
 

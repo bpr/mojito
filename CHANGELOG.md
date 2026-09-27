@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested generic `def` whose body builds a callee's value argument from
+  its own parameter (`scaled[k + 1]()` inside `inner[k: Int]`) now compiles
+  natively (`assets/ok/nested_def_value_argument.mojo`); the native backend
+  also compiled the nested `def` once with its parameter unbound and refused
+  the argument as unresolved. A generic nested `def` is now specialized only
+  at the call sites that bind its parameters.
 - A one-element tuple (`(7,)`) and a variadic struct over one element
   (`Bag[Bool](True)`) now compile natively
   (`assets/ok/tuple_one_element.mojo`); the native backend passed the lone
