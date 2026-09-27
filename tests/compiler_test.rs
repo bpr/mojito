@@ -1457,18 +1457,28 @@ fn template_folded_arithmetic_derives() {
         );
         assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
     }
-    // Literal division folds to a `FloatLiteral`, which the template's
-    // `Float64` does not record, so it keeps the clone check.
-    let dividing = "def halves[n: Int]() -> Float64:\n    var acc = 0.0\n    comptime for i in range(n):\n        acc += i / 2\n    return acc\n\ndef main():\n    print(halves[3]())\n";
-    let (output, stats) = run_source(dividing);
-    assert_eq!(output, "1.5\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .all(|name| !name.starts_with("halves$")),
-        "{stats:?}"
-    );
+    // Division folds to a `FloatLiteral` materialized to the template's
+    // `Float64`, `~` to an `IntLiteral` materialized to its `Int`, and a
+    // comparison is a `Bool` in both checks.
+    let folding = "def halves[n: Int]() -> Float64:\n    var acc = 0.0\n    comptime for i in range(n):\n        acc += i / 2\n        print(~i, i < 2)\n    return acc\n\ndef main():\n    print(halves[3]())\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(folding).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        assert!(
+            served.iter().any(|name| name.starts_with("halves$")),
+            "the instance derives: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "-1 True\n-2 True\n-3 False\n1.5\n"
+        );
+    }
 }
 
 #[test]

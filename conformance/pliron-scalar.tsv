@@ -539,6 +539,7 @@ assets/ok/template_def_try_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_value_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_var_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_folded_arithmetic.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_folded_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_folded_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_loop_local.mojo	-	ineligible	no-scalar-entry-shape

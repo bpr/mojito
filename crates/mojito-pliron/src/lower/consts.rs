@@ -194,9 +194,9 @@ impl FnLowering<'_> {
             self.pending_literals.insert(dest.0, negated);
             return Ok(());
         }
-        let operand_ty = self
-            .concrete_scalar_ty(a)?
-            .ok_or_else(|| self.unsupported_reg("untyped unary operand".into(), dest))?;
+        // A literal an operator already computed (`~(2 * 3)`) holds the
+        // value at the width `binop_operand_ty` gave it.
+        let operand_ty = self.binop_operand_ty(a, a)?;
         let value = self.reg_value(ctx, a, operand_ty)?;
         match (op, operand_ty) {
             (PrefixOp::Neg, ScalarTy::Int) => {

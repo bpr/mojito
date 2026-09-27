@@ -145,6 +145,20 @@ pub fn fold_neg(value: &CtValue) -> Result<CtValue, ParamError> {
     }
 }
 
+/// Fold unary `~` over one concrete value: an integer's two's-complement
+/// inversion, which an exact literal takes as `-value - 1`.
+pub fn fold_invert(value: &CtValue) -> Result<CtValue, ParamError> {
+    match value {
+        CtValue::Int(value) => Ok(CtValue::Int(!value)),
+        CtValue::UInt(value) => Ok(CtValue::UInt(!value)),
+        CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(
+            value.neg().sub(&IntLiteral::from(1i64)),
+        )),
+        CtValue::Bool(value) => Ok(CtValue::Bool(!value)),
+        _ => Err(unsupported("unary '~' expects a comptime integer value")),
+    }
+}
+
 /// Compare two concrete values numerically (`DType` supports `==`/`!=`).
 ///
 /// Numbers compare by exact rational value across kinds, so a literal and a

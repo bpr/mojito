@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A division, a comparison, or a `~` over folded `comptime for` variables,
+  value parameters, and literals alone (`print(~i, i * 2 < 5)`, `acc += i /
+  2`, `if n > 2:` in a runtime `def`) now reuses the template's checked
+  facts, as integer arithmetic already did; an `Int` fold past the machine
+  range wraps, as the clone check does (`assets/ok/template_folded_operators.mojo`).
+  Such bodies used to be checked again per instance.
+- The Pliron backend lowers a unary `-` or `~` over an operator on two
+  literals (`-(2 * 3)`, `~(i * 2)` in an unrolled loop), which it rejected as
+  an untyped operand.
 - A surviving trait-bound module-level `def` now derives its instances
   through a tuple unpacking of a direct call's result (`var head, tail =
   split(path)`, and `head, tail = split(head)` again) and a runtime `try`

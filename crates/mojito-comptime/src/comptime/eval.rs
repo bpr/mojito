@@ -323,12 +323,9 @@ impl Elab<'_> {
                 self.eval_parameterized_reflection_method(&ty, field, param_args, scope)
             }
             ExprKind::Prefix(PrefixOp::Invert, inner) => match self.eval(inner, scope)? {
-                CtValue::Int(value) => Ok(CtValue::Int(!value)),
-                CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(
-                    value
-                        .neg()
-                        .sub(&mojito_common::literal::IntLiteral::from(1i64)),
-                )),
+                value @ (CtValue::Int(_) | CtValue::IntLiteral(_)) => {
+                    Ok(mojito_types::param_expr::fold::fold_invert(&value)?)
+                }
                 _ => Err(ComptimeError::NotComptime(
                     "unary '~' expects a compile-time integer value".to_string(),
                 )),

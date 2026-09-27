@@ -97,22 +97,18 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A folded name in a division, comparison, or `~` keeps the clone
-  check**
+- [ ] **1.4 A runtime `if` in a keyed `def` keeps the clone check**
 
-  Problem: over folded values and literals alone, only integer arithmetic
-  and a negation derive; `i / 2`, `i < 3`, and `~i` in a `comptime for` body
-  are refused by `BodyShape::folding`.
-  - Division folds to a `FloatLiteral`, which would materialize to the
-    template's `Float64` as the integer case does to `Int`.
-  - A comparison yields `Bool` in both checks, so its operands would lose
-    their facts and the operator keep its own.
-  - `~` needs a folder beside `fold_neg` in `param_expr::fold`.
-  - `folded_arithmetic` refuses a value past `Int`'s range, which the clone
-    check (and the pin) wraps.
-  - A value parameter of a runtime `def` body folds the same way, so `if n >
-    2:` in `def scaled[T: Copyable, n: Int]` keeps that body's clone check.
-  - No bundled body needs any of these today.
+  Problem: `BodyShape::statement` admits `StmtKind::If` only outside the
+  keyed shape, so `if x < 3:` or `if i < 3:` inside a `comptime for` body
+  refuses the whole template.
+  - The condition itself already derives: a folded comparison (`i < 3`) is
+    a `Bool` in both checks and keeps its own facts, as `var even = i % 2 ==
+    0` in `assets/ok/template_folded_operators.mojo` shows.
+  - The runtime-body arm checks each condition with `condition` and each
+    arm with `block`; a keyed arm would be copied once per unrolled
+    iteration, as its other statements are.
+  - No bundled body needs it today.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2433,6 +2429,10 @@ last.
     the burn-down.
     - The result type of one operator changes, and every fixture and stdlib body
       that divides integers moves with it.
+    - The template-fact derivation materializes a folded name's `i / 2` to
+      the template's `Float64` (`folded_arithmetic`); once the template
+      records `Int` there it refuses, but the elaborator's literal fold then
+      divides an `IntLiteral` pair into a float where the pin keeps `Int`.
     - Model: Fable, Planned.
   - `simd-infix-comparison`: Mojito's `<`/`<=`/`>`/`>=` are elementwise at
     every width and its `==`/`!=` compare lane by lane. The pin constrains

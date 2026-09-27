@@ -218,8 +218,8 @@ struct Occurrence {
     /// An admitted operator's kind, its operand occurrences, and whether
     /// its right operand is a place, which a consuming dunder copies.
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
-    /// A unary `-`'s operand occurrence.
-    negated: Option<SyntaxId>,
+    /// A unary `-` or `~` and its operand occurrence.
+    prefix: Option<(mojito_ast::ast::PrefixOp, SyntaxId)>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// How the clone check ranks an overload member it is handed to.
@@ -4311,7 +4311,7 @@ impl Checker {
                     identifier: false,
                     method_call: None,
                     operator: None,
-                    negated: None,
+                    prefix: None,
                     transfer: false,
                     ranking: ArgumentRanking::default(),
                     literal: None,
@@ -4387,10 +4387,12 @@ impl Checker {
                         )),
                         _ => None,
                     },
-                    negated: match &expr.kind {
-                        ExprKind::Prefix(mojito_ast::ast::PrefixOp::Neg, value) => {
-                            Some(self.origins.origin(value.syntax_id))
-                        }
+                    prefix: match &expr.kind {
+                        ExprKind::Prefix(
+                            op @ (mojito_ast::ast::PrefixOp::Neg
+                            | mojito_ast::ast::PrefixOp::Invert),
+                            value,
+                        ) => Some((*op, self.origins.origin(value.syntax_id))),
                         _ => None,
                     },
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
@@ -10162,10 +10164,10 @@ impl BodyShape<'_> {
                     && self.scalar(value)
             }
             // A folded operand is a literal in every instance. Over literals
-            // alone an operator folds too, which only integer arithmetic
-            // does to a literal the template's `Int` materializes
-            // ([`folded_literals`]); anything else keeps a runtime value on
-            // the operand's other side.
+            // alone an operator folds too, to a literal the template's `Int`
+            // or `Float64` materializes or to a `Bool` ([`folded_literals`]);
+            // anything else keeps a runtime value on the operand's other
+            // side.
             ExprKind::Infix(op, left, right) => {
                 let runtime = |operand: &Expr| {
                     !self.folding(operand)
@@ -10766,22 +10768,25 @@ impl BodyShape<'_> {
                     || self.loop_vars.borrow().iter().any(|var| var == name)))
     }
 
-    /// Whether every instance folds `expr` to an integer literal: a folded
-    /// value, or integer arithmetic or a negation over folded values and
-    /// literals that names at least one folded value.
+    /// Whether every instance folds `expr` to a literal: a folded value, or
+    /// arithmetic, a comparison, a negation, or an inversion over folded
+    /// values and literals that names at least one folded value.
     fn folding(&self, expr: &Expr) -> bool {
         fn literal_tree(shape: &BodyShape<'_>, expr: &Expr) -> Option<bool> {
             use mojito_ast::ast::InfixOp::{
-                Add, BitAnd, BitOr, BitXor, FloorDiv, Mod, Mul, Pow, Shl, Shr, Sub,
+                Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Pow,
+                Shl, Shr, Sub,
             };
             match &expr.kind {
                 ExprKind::Int(_) => Some(false),
                 ExprKind::Identifier(_) => shape.folds(expr).then_some(true),
-                ExprKind::Prefix(mojito_ast::ast::PrefixOp::Neg, value) => {
-                    literal_tree(shape, value)
-                }
+                ExprKind::Prefix(
+                    mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert,
+                    value,
+                ) => literal_tree(shape, value),
                 ExprKind::Infix(
-                    Add | Sub | Mul | FloorDiv | Mod | Pow | Shl | Shr | BitAnd | BitOr | BitXor,
+                    Add | Sub | Mul | Div | FloorDiv | Mod | Pow | Shl | Shr | BitAnd | BitOr
+                    | BitXor | Eq | Ne | Lt | Le | Gt | Ge,
                     left,
                     right,
                 ) => Some(literal_tree(shape, left)? | literal_tree(shape, right)?),
@@ -11341,24 +11346,29 @@ fn folded_literals(
     Some(literals)
 }
 
-/// The integer arithmetic an instance folds where its template computed an
-/// `Int` from folded values: `i * 10 + j` over a `comptime for` variable
-/// is an `IntLiteral` in every instance. `None` when the fold leaves the
-/// literals, or its value does not fit the template's `Int`.
+/// The operators an instance folds where its template computed a value from
+/// folded values: `i * 10 + j` over a `comptime for` variable is an
+/// `IntLiteral` in every instance, `i / 2` a `FloatLiteral`, and `i < 3` a
+/// `Bool`. `None` when the fold leaves the literals, fails, or its value
+/// does not take the template's type.
 ///
-/// The outermost folded operator takes the literal type and materializes to
-/// the template's `Int`, where the template recorded nothing but that type
-/// and the temporary a read or `print` argument makes of it. Every operand
-/// below it is a literal typed as one and nothing else: a named value loses
+/// The outermost folded arithmetic takes the literal type and materializes
+/// to the template's `Int` (`Float64` for a division), where the template
+/// recorded nothing but that type and the temporary a read or `print`
+/// argument makes of it; an `Int` past the machine range wraps there, as
+/// the clone check's materialization does. The outermost folded comparison
+/// is a `Bool` in both checks and keeps its own facts. Every operand below
+/// either is a literal typed as one and nothing else: a named value loses
 /// its binding and a literal its own materialization.
 fn folded_arithmetic(
     template: &CheckedBodyFacts,
     occurrences: &[Occurrence],
     named: &impl Fn(&Occurrence) -> bool,
 ) -> Option<Vec<FoldedLiteral>> {
+    use mojito_ast::ast::PrefixOp;
     use mojito_common::literal::IntLiteral;
     use mojito_types::ct::CtValue;
-    use mojito_types::param_expr::fold::{fold_infix, fold_neg};
+    use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg};
     fn names<'a>(sites: impl IntoIterator<Item = &'a OccurrenceId>, id: OccurrenceId) -> bool {
         sites.into_iter().any(|site| site.syntax == id.syntax)
     }
@@ -11378,7 +11388,7 @@ fn folded_arithmetic(
     let mut values: HashMap<OccurrenceId, (CtValue, bool)> = HashMap::new();
     for occurrence in occurrences.iter().rev() {
         let id = occurrence.id;
-        let value = match (&occurrence.literal, occurrence.operator, occurrence.negated) {
+        let value = match (&occurrence.literal, occurrence.operator, occurrence.prefix) {
             (Some(CtValue::Int(value)), _, _) => Some((
                 CtValue::IntLiteral(IntLiteral::from(*value)),
                 named(occurrence),
@@ -11386,19 +11396,43 @@ fn folded_arithmetic(
             (Some(literal @ CtValue::IntLiteral(_)), _, _) => {
                 Some((literal.clone(), named(occurrence)))
             }
-            (None, Some((op, left, right, _)), _) => values
-                .get(&operand(id, left))
-                .zip(values.get(&operand(id, right)))
-                .and_then(|((left, left_named), (right, right_named))| {
-                    let value = fold_infix(op, left, right).ok()?;
-                    Some((value, *left_named || *right_named))
-                }),
-            (None, None, Some(value)) => values
-                .get(&operand(id, value))
-                .and_then(|(value, named)| Some((fold_neg(value).ok()?, *named))),
+            (None, Some((op, left, right, _)), _) => {
+                match (
+                    values.get(&operand(id, left)),
+                    values.get(&operand(id, right)),
+                ) {
+                    (Some((left, left_named)), Some((right, right_named))) => {
+                        let folded = *left_named || *right_named;
+                        match fold_infix(op, left, right) {
+                            Ok(value) => Some((value, folded)),
+                            // The instance's own check refuses the fold.
+                            Err(_) if folded => return None,
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            (None, None, Some((op, value))) => match values.get(&operand(id, value)) {
+                Some((value, folded)) => {
+                    let fold = match op {
+                        PrefixOp::Invert => fold_invert(value),
+                        _ => fold_neg(value),
+                    };
+                    match fold {
+                        Ok(value) => Some((value, *folded)),
+                        Err(_) if *folded => return None,
+                        Err(_) => None,
+                    }
+                }
+                None => None,
+            },
             _ => None,
         };
-        if let Some(value @ (CtValue::IntLiteral(_), _)) = value {
+        if let Some(
+            value @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) | CtValue::Bool(_), _),
+        ) = value
+        {
             values.insert(id, value);
         }
     }
@@ -11407,7 +11441,7 @@ fn folded_arithmetic(
         occurrence
             .operator
             .map(|(_, left, right, _)| vec![operand(id, left), operand(id, right)])
-            .or_else(|| occurrence.negated.map(|value| vec![operand(id, value)]))
+            .or_else(|| occurrence.prefix.map(|(_, value)| vec![operand(id, value)]))
             .unwrap_or_default()
     };
     let folding = |occurrence: &Occurrence| {
@@ -11419,9 +11453,14 @@ fn folded_arithmetic(
     for occurrence in occurrences {
         let id = occurrence.id;
         if inner.contains(&id) {
+            let ty = match values.get(&id)? {
+                (CtValue::IntLiteral(_), _) => Ty::IntLiteral,
+                (CtValue::FloatLiteral(_), _) => Ty::FloatLiteral,
+                _ => Ty::Bool,
+            };
             literals.push(FoldedLiteral {
                 occurrence: id,
-                ty: Ty::IntLiteral,
+                ty,
                 materialized: None,
                 read_temporary: false,
                 unconsumed_temporary: false,
@@ -11429,21 +11468,26 @@ fn folded_arithmetic(
         } else if !folding(occurrence) {
             continue;
         } else {
-            let Some((CtValue::IntLiteral(value), _)) = values.get(&id) else {
-                return None;
+            let (ty, materialized) = match values.get(&id)? {
+                (CtValue::IntLiteral(_), _) => (Ty::IntLiteral, Ty::Int),
+                (CtValue::FloatLiteral(_), _) => (Ty::FloatLiteral, Ty::Float64),
+                _ => {
+                    inner.extend(operands(occurrence));
+                    continue;
+                }
             };
             let bare = !names(
                 template.operation_adjustments.iter().map(|(site, _)| site),
                 id,
             ) && !names(template.overload_targets.iter().map(|(site, _)| site), id)
                 && !names(template.expression_effects.iter().map(|(site, _)| site), id);
-            if value.to_i64().is_none() || recorded(id) != Some(&Ty::Int) || !bare {
+            if recorded(id) != Some(&materialized) || !bare {
                 return None;
             }
             literals.push(FoldedLiteral {
                 occurrence: id,
-                ty: Ty::IntLiteral,
-                materialized: Some(Ty::Int),
+                ty,
+                materialized: Some(materialized),
                 read_temporary: names(&template.read_temporary_arguments, id),
                 unconsumed_temporary: names(&template.unconsumed_temporaries, id),
             });
