@@ -10373,9 +10373,10 @@ impl BodyShape<'_> {
         admitted && (through.is_none() || self.holds(MethodFeatures::SUBSCRIPT_STORES))
     }
 
-    /// A value stored to an element of a writable `self` or of one of its
-    /// fields, where the subscripted struct declares a setter
-    /// (`self.counts[i] = n`, `self.index[b] = entries^`, `self[k] = v^`).
+    /// A value stored to an element of a writable base
+    /// ([`Self::element_base`]), where the subscripted struct declares a
+    /// setter (`self.counts[i] = n`, `self.index[b] = entries^`,
+    /// `self[k] = v^`, `other.items[i] = x^` on a `mut other`).
     ///
     /// The store is a call of `__setitem__` recorded at the subscript, under
     /// the contract a sibling call has: the index and the value are its
@@ -10386,8 +10387,7 @@ impl BodyShape<'_> {
         let ExprKind::Index { object, index } = &place.kind else {
             return false;
         };
-        let admitted = self.self_writable()
-            && (self.receiver_field(object) || self.receiver_itself(object))
+        let admitted = self.element_base(object)
             && self.argument(place, index)
             && self.argument(place, value)
             && self.facts.is_none_or(|facts| {
@@ -10507,15 +10507,14 @@ impl BodyShape<'_> {
             })
     }
 
-    /// The subscript `place` of a writable `self` or of one of its fields,
+    /// The subscript `place` of a writable base ([`Self::element_base`]),
     /// stored through the mutable reference its getter yields.
     fn through_reference(&self, place: &Expr) -> bool {
         let ExprKind::Index { object, .. } = &place.kind else {
             return false;
         };
         let id = self.occurrence(place);
-        let admitted = self.self_writable()
-            && (self.receiver_field(object) || self.receiver_itself(object))
+        let admitted = self.element_base(object)
             && self.reference_call(place)
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.augmented_subscripts, id).is_some_and(|store| store.getter.is_none())
@@ -10531,7 +10530,7 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::SUBSCRIPT_STORES)
     }
 
-    /// The subscript `place` of a writable `self` or of one of its fields,
+    /// The subscript `place` of a writable base ([`Self::element_base`]),
     /// read through a value getter and written back through a setter that
     /// takes the element by value. Both change per instance only in their
     /// targets and, by substitution, their types.
@@ -10540,8 +10539,7 @@ impl BodyShape<'_> {
             return false;
         };
         let id = self.occurrence(place);
-        let admitted = self.self_writable()
-            && (self.receiver_field(object) || self.receiver_itself(object))
+        let admitted = self.element_base(object)
             && self.argument(place, index)
             && self.facts.is_none_or(|facts| {
                 self.named_contract(facts, place, object, "__setitem__")
@@ -10556,6 +10554,23 @@ impl BodyShape<'_> {
         admitted
             && self.holds(MethodFeatures::SIBLING_CALLS)
             && self.holds(MethodFeatures::SUBSCRIPT_STORES)
+    }
+
+    /// Whether `object` is a base whose elements a store may write: `self`
+    /// or one of its fields in a body that may write `self`, or a `mut`
+    /// parameter holding a struct or one of its fields. Either is bound to
+    /// the instance's argument and written where it lies, and a field has its
+    /// declared type under its base's recorded arguments in a template and a
+    /// clone alike.
+    fn element_base(&self, object: &Expr) -> bool {
+        let mut_parameter = |expr: &Expr| {
+            matches!(&expr.kind, ExprKind::Identifier(name)
+                if self.mut_params.contains(&name.as_str()))
+                && self.parameter_receiver(expr)
+        };
+        (self.self_writable() && (self.receiver_field(object) || self.receiver_itself(object)))
+            || mut_parameter(object)
+            || matches!(&object.kind, ExprKind::Member { object, .. } if mut_parameter(object))
     }
 
     /// Note that the subscript `id` is the base of a store.

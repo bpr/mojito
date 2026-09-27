@@ -3,7 +3,9 @@
 # instantiation-from-template.md`, class MethodBody): a requirement of a bare
 # parameter's bound on `self.items[j]`, read, mutating, or copying it, and one
 # on an element of a read parameter's field (`other.entries[i].key.copy()`),
-# with the built-in `len` of that field. Each instance re-selects the method
+# with the built-in `len` of that field; and an element stored from a read
+# parameter's field or into a `mut` parameter's field (`other.items[i] =
+# self.items[j].copy()`). Each instance re-selects the method
 # on its own element type, borrowing the element through the getter's
 # reference. The bundled `Dict.update` has the same shape.
 trait Bumpable:
@@ -58,6 +60,12 @@ struct Holder[T: Bumpable & Copyable & Movable & Deinitable](Copyable, Movable):
     def take(self, other: Holder[Self.T], i: Int) -> Self.T:
         return other.items[i].copy()
 
+    def pull(mut self, other: Holder[Self.T], i: Int, j: Int):
+        self.items[i] = other.items[j].copy()
+
+    def push(self, mut other: Holder[Self.T], i: Int, j: Int):
+        other.items[i] = self.items[j].copy()
+
 
 @fieldwise_init
 struct Entry[K: Copyable & Movable & Deinitable](Copyable, Movable):
@@ -94,6 +102,15 @@ def main() raises:
     t.dup(1, 0)
     t.bump_at(0)
     print(t.get_at(0), t.get_at(1), t.local_elem(0).n, t.take(t, 1).n)
+    var lc2: List[Counter] = [Counter(7), Counter(8)]
+    var c2 = Holder[Counter](lc2^)
+    c.pull(c2, 0, 1)
+    c.push(c2, 1, 0)
+    var lt2: List[Tally] = [Tally(5), Tally(6)]
+    var t2 = Holder[Tally](lt2^)
+    t.pull(t2, 1, 0)
+    t.push(t2, 0, 1)
+    print(c.get_at(0), c2.get_at(1), t.get_at(1), t2.get_at(0))
     var ei: List[Entry[Int]] = [Entry[Int](5, 1), Entry[Int](6, 2)]
     var a = Table[Int](ei^)
     var es: List[Entry[String]] = [Entry[String]("k", 3)]

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An element store into a `mut` parameter's field (`other.items[i] = x`,
+  `other.counts[i] += 1`) now derives from the method's checked template
+  (`assets/ok/template_method_subscripted_receiver.mojo`). The method grammar
+  admitted element stores only on `self`, so such a body was checked again
+  per instance; a store taking its value from a parameter's field already
+  derived.
 - A struct specialized whole because a value binder is a lane width
   (`Width[n: Int]` spelling `SIMD[dt, Self.n]`) now has its members and each
   per-call clone of a method keyed on its own binder (`w.rep[DType.int16](v)`)

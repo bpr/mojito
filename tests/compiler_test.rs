@@ -2455,9 +2455,11 @@ fn template_method_subscripted_receivers_derive() {
     // built-in `len` of that field, as `Dict.update` spells it.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_subscripted_receiver.mojo"),
-        "2 3 3 2\n22 2 11 1\n6 3 k 3\n2 3 2 2 y\n",
+        "2 3 3 2\n22 2 11 1\n8 8 10 10\n6 3 k 3\n2 3 2 2 y\n",
         &[
             ("Holder.dup", 2),
+            ("Holder.pull", 2),
+            ("Holder.push", 2),
             ("Holder.local_elem", 2),
             ("Holder.bump_at", 2),
             ("Holder.get_at", 2),
@@ -2466,6 +2468,13 @@ fn template_method_subscripted_receivers_derive() {
             ("Table.total", 2),
             ("Dict.update", 2),
         ],
+    );
+    // A scalar element of a `mut` parameter's field, stored augmented
+    // through its getter's mutable reference and stored whole.
+    assert_methods_derive(
+        "struct Tick[T: Copyable & Movable & Deinitable](Copyable, Movable):\n    var counts: List[Int]\n    var items: List[Self.T]\n\n    def __init__(out self, var items: List[Self.T]):\n        self.counts = [0, 5]\n        self.items = items^\n\n    def tick(self, mut other: Tick[Self.T], i: Int):\n        other.counts[i] += 1\n        other.counts[0] = self.counts[i]\n\ndef main():\n    var l1: List[Int] = [1]\n    var l2: List[Int] = [2]\n    var a = Tick[Int](l1^)\n    var b = Tick[Int](l2^)\n    a.tick(b, 1)\n    var l3: List[String] = [\"x\"]\n    var l4: List[String] = [\"y\"]\n    var s = Tick[String](l3^)\n    var t = Tick[String](l4^)\n    s.tick(t, 0)\n    print(b.counts[0], b.counts[1], t.counts[0], t.counts[1])\n",
+        "5 6 0 5\n",
+        &[("Tick.tick", 2)],
     );
 }
 
