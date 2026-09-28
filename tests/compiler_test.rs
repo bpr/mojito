@@ -1792,7 +1792,7 @@ fn template_vector_keyed_members_derive() {
         name.starts_with("__module$$ahash$AHasher$") && !name.contains("._update_with_simd")
     };
     assert!(
-        stats.derived.iter().any(|name| own(name)),
+        stats.derived.iter().any(&own),
         "AHasher's members derive: {stats:?}"
     );
     assert!(
@@ -2643,11 +2643,11 @@ fn template_value_keyed_struct_members_derive() {
 }
 
 #[test]
-fn template_value_keyed_struct_member_without_a_verdict_keeps_the_clone_check() {
-    // A member the symbolic check cannot type (`Pair64(3, 5)`, a vector
-    // alias called as a constructor) gets no verdict rather than an error,
-    // and one outside the method grammar (`Int(self.value)` over the
-    // symbolic lane) is not certified: both are checked per specialization.
+fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() {
+    // `Pair64(3, 5)` (a vector alias called as a constructor) and
+    // `Int(self.value)` (over a symbolic lane) both type under the symbolic
+    // check, so each member is certified rather than ending without a
+    // verdict. Their clones are still checked per specialization.
     let source = "comptime Pair64 = SIMD[DType.uint64, 2]\n\n\n\
         struct Lane[dt: DType](Copyable, Movable):\n\
         \x20   var value: Scalar[Self.dt]\n\n\
@@ -2670,14 +2670,13 @@ fn template_value_keyed_struct_member_without_a_verdict_keeps_the_clone_check() 
         "42\n2\n"
     );
     let stats = program.template_stats();
-    assert!(
-        stats
-            .no_verdict
-            .iter()
-            .any(|(name, _)| name.ends_with("Seeded.__init__")),
-        "the vector alias constructor ends validation without a verdict: {:?}",
-        stats.no_verdict
-    );
+    for member in ["Lane.widened", "Seeded.__init__"] {
+        assert!(
+            stats.certified.iter().any(|name| name == member),
+            "{member} is certified: {:?}",
+            stats.no_verdict
+        );
+    }
     for member in ["Lane$dint16;.widened", "Seeded$vuint64:2;[i1;i2;].__init__"] {
         assert!(
             stats.inferred_clones.iter().any(|name| name == member),
@@ -2757,7 +2756,7 @@ fn template_method_value_parameter_templates_reuse() {
         );
     }
     // With carry-over off, a `Self.rows` read is served by the catalog.
-    let uncarried = compile_entry(&compiler.clone().with_body_fact_reuse(false), source);
+    let uncarried = compile_entry(&compiler.with_body_fact_reuse(false), source);
     let uncarried = uncarried.template_stats();
     for name in ["Grid.count", "Grid.total", "Grid.full"] {
         assert!(
@@ -3063,21 +3062,12 @@ fn tuple_members_derive_from_their_templates() {
 }
 
 #[test]
-fn template_method_defaulted_destructor_keeps_the_clone_check() {
-    // A destructor's defaulted argument is evaluated in the callee's scope,
-    // which no recipe keeps yet, so the body stays outside the class.
+fn template_method_defaulted_destructor_derives() {
+    // A named destructor called with its argument left to its default
+    // (`ticket^.finish()`), which is evaluated in the callee's scope: the
+    // body is inside the class, so the method derives per instance.
     let source = "@explicit_destroy(\"finish the ticket\")\nstruct Ticket(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def finish(deinit self, bonus: Int = 1) -> Int:\n        return self.id + bonus\n\n\nstruct Desk[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self):\n        self.count = 0\n\n    def spend(self, n: Int) -> Int:\n        var ticket = Ticket(n)\n        return ticket^.finish()\n\n\ndef main():\n    print(Desk[Int]().spend(1))\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "2\n");
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Desk.spend$") && reason == "its template is not certified"
-        }),
-        "the defaulted argument leaves the body outside the class: {:?}",
-        stats.refused
-    );
+    assert_methods_derive(source, "2\n", &[("Desk.spend", 1)]);
 }
 
 #[test]

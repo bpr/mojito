@@ -3,6 +3,7 @@
 # a parameter expression the checker folds per instance (`uint16` for an
 # `int16` lane, `uint32` for `float32`, `uint8` for `bool`), as upstream's
 # `_unsigned_integral_type_of[dtype]()` default does.
+# requires: discovery
 def bits[dt: DType, w: Int](value: SIMD[dt, w]) -> UInt64:
     return value.to_bits().cast[DType.uint64]().reduce_add()
 

@@ -11,17 +11,29 @@
 # `comptime for` over a Tuple — moved to assets/extensions/, where
 # `--extensions` asserts the rejection instead.
 #
-# The three rows below are the 2026-09-21 re-pin's own arrivals: two library
-# surfaces the `26cfe94f40` window changed under Mojito's feet. Each has a
-# roadmap task; neither is a shape the pin refuses, so neither belongs in
-# assets/extensions/.
+# The `hasher-protocol` and `layout-alignment` rows are the 2026-09-21
+# re-pin's own arrivals: two library surfaces the `26cfe94f40` window changed
+# under Mojito's feet. Each has a roadmap task; neither is a shape the pin
+# refuses, so neither belongs in assets/extensions/.
+#
+# The five `divergence` rows arrived with 6b322977's loan-carrying type
+# arguments (2026-09-28 gate). They are one gap, not five: Mojito's
+# exclusivity check allows a call to take a mutable loan through a pointee
+# type's origin while a second argument borrows the same place mutably, and
+# the pin rejects the pair. The mutability is what each fixture pins, so none
+# of them respells; closing the gap means tightening the check.
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	718
+# swept-count	733
 fixture	family	first-error
+assets/ok/bundled_def_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
+assets/ok/bundled_instance_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
 assets/ok/dict_hasher_forwarding.mojo	hasher-protocol	error: 'LoudHasher' does not implement all requirements for 'Hasher'
+assets/ok/free_function_origin_binder_result.mojo	divergence	error: aliasing values passed mutably to 'items' argument and passed mutably to 'default' argument in 'pick' call
 assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not implement all requirements for 'Hasher'
 assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization
 assets/ok/template_method_simd_leaf.mojo	hasher-protocol	error: 'FoldHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits.mojo	hasher-protocol	error: 'BitsHasher' does not implement all requirements for 'Hasher'
+assets/ok/template_view_over_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'push' call
+assets/ok/unspelled_loan_carrying_type_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call

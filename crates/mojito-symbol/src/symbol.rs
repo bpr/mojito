@@ -910,8 +910,7 @@ pub fn lowered_method_name(
         // The enclosing struct's own instance type canonicalizes to `Self` in
         // the parameter keys, so a same-arity `self`-typed overload keys as
         // `$ov$Self` and matches the call side's canonicalized key.
-        let self_spelling = source_name
-            .rsplit_once('.')
+        let self_spelling = split_method_symbol(source_name)
             .and_then(|(type_name, _)| self_struct_spelling(type_name, type_params));
         let signature = signature_from_ast(
             params,
@@ -920,8 +919,7 @@ pub fn lowered_method_name(
             self_spelling.as_deref(),
         )
         .with_keyword_names(keyword_only_names(params, keyword_only));
-        match source_name
-            .rsplit_once('.')
+        match split_method_symbol(source_name)
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
             Some((type_name, method)) => {

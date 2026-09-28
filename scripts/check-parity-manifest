@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Byte collation for the whole script. The inventory checks below sort their
+# inputs and hand them to `comm`, which compares in the ambient locale: under
+# en_US.UTF-8 it read C-sorted input as unsorted, printed "comm: input is not
+# in sorted order" and exited 1, so `set -e` killed the script mid-check. The
+# scalar inventory and both ratchet checks never ran, and a missing manifest
+# row surfaced only in the heavy lane hours later (gate run 2026-09-28).
+export LC_ALL=C
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$root/conformance/parity.tsv"
 cases="$root/conformance/cases.tsv"
@@ -238,6 +246,27 @@ if [[ -n "$missing" ]]; then
     sed 's/^/  /' <<<"$missing" >&2
     exit 1
 fi
+
+# Each assets sweep compares its run against its manifest's '# swept-count'
+# header, so a header left behind when fixtures are added fails only once the
+# sweep has run the pinned Mojo over the whole corpus (16 minutes on the
+# 2026-09-28 gate). The folder lists are scripts/sweep-assets-mojo's own.
+check_swept_count() {
+    local manifest="$1"
+    shift
+    local recorded counted
+    recorded="$(awk -F '\t' '$1 == "# swept-count" { print $2 }' "$manifest")"
+    counted="$(find "$@" -name '*.mojo' | wc -l)"
+    if [[ "$recorded" != "$counted" ]]; then
+        echo "${manifest#"$root/"}: '# swept-count $recorded' but the swept folders hold $counted fixtures" >&2
+        exit 1
+    fi
+}
+check_swept_count "$assets_rejects" \
+    "$root/assets/ok" "$root/assets/ownership_ok" "$root/assets/origin_ok"
+check_swept_count "$assets_errors" \
+    "$root/assets/parse_error" "$root/assets/type_error" "$root/assets/runtime_error" \
+    "$root/assets/ownership_error" "$root/assets/origin_error"
 
 # The two generated Pliron manifests. Their own sweeps (tests/heavy/) are the
 # oracle for every row's status, but those cost 30-60 minutes and sit outside

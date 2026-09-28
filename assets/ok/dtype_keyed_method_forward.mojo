@@ -2,6 +2,7 @@
 # DType-keyed def (`helper[dt](x)`), alone or beside another key
 # (`pair[dt, 4](x)`), from an instance or a static method: each call's clone
 # reaches the def's clone for its own lane.
+# requires: discovery
 def helper[dt: DType](x: Int) -> Scalar[dt]:
     return Scalar[dt](x)
 

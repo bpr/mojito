@@ -2480,6 +2480,24 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **3.94 A mutable loan carried by a pointee type's origin does not
+  conflict with another argument's mutable borrow**
+
+  Problem: Mojito compiles `p.unsafe_write(Span(xs))` where `p` has type
+  `Pointer[Span[Int, origin_of(xs)], MutUntrackedOrigin]`; the pin rejects it
+  with "aliasing values passed mutably to 'self' argument and passed mutably
+  to 'value' argument in 'unsafe_write' call".
+  - The loan a pointee type's origin carries is not counted against the
+    call's other mutable arguments, so one place is borrowed mutably twice.
+  - Five `assets/ok` fixtures rely on it and are ledgered `divergence` in
+    [`conformance/assets-mojo-rejects.tsv`](../conformance/assets-mojo-rejects.tsv).
+  - The mutability is what each fixture pins, so none of them respells:
+    tightening the check is what withdraws all five rows at once.
+  - Arrived with 6b322977's loan-carrying type arguments and found by the
+    2026-09-28 gate, which is the first sweep that saw them.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 ### 4. Grow The CPU Standard Library *(demand-first)*
 
 - [ ] **4.1 Collection API parity**

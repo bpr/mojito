@@ -482,17 +482,17 @@ fn method_literal_uses_its_default_type() {
 }
 
 #[test]
-fn reports_substitution_induced_method_ambiguity_as_ambiguous() {
+fn substitution_induced_method_tie_selects_the_concrete_overload() {
     // On `Pair[Int]`, `m(Self.T)` and `m(Int)` substitute to the same
-    // signature; the tie must be reported as ambiguity, not "no method".
-    match err(
-        "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: Int) -> Int:\n        return 1\n\nvar p: Pair[Int] = Pair(5)\nvar r: Int = p.m(7)\n",
-    ) {
-        TypeError::BadCall { reason, .. } => {
-            assert!(reason.contains("ambiguous"), "got: {reason}");
-        }
-        other => panic!("expected an ambiguous method BadCall, got: {other:?}"),
-    }
+    // signature. The declared parameter still ranks them, so the concrete one
+    // wins rather than the call being ambiguous: the pinned Mojo compiles this
+    // program and prints `1`.
+    assert_eq!(
+        compiled(
+            "@fieldwise_init\nstruct Pair[T: Copyable & Movable & Deinitable]:\n    var a: Self.T\n    def m(self, x: Self.T) -> Int:\n        return 0\n    def m(self, x: Int) -> Int:\n        return 1\n\ndef main():\n    var p = Pair[Int](5)\n    print(p.m(7))\n"
+        ),
+        "1\n"
+    );
 }
 
 #[test]

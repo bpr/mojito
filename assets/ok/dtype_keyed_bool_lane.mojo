@@ -1,6 +1,7 @@
 # A `Bool` argument binds a lone `Scalar[dt]` pattern's lane at
 # `DType.bool`: the `Bool` converts into `Scalar[DType.bool]`, as the pinned
 # Mojo does, for a free `def` and for a method alike.
+# requires: discovery
 
 
 struct Lanes:

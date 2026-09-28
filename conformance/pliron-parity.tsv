@@ -746,6 +746,7 @@ assets/extensions/ok/origin_delegated_multi_binder_alias_field.mojo	main	exe-dif
 assets/extensions/ok/origin_delegated_parameter_receiver.mojo	main	exe-differential	sanitized
 assets/extensions/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/extensions/ok/parametric_mut_iterator_read.mojo	main	exe-differential	sanitized
+assets/extensions/ok/pliron_a1_gate.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pliron_closure_drop_order.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_comprehension_borrowed_named_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/pointer_field_parametric_mut_iterator_read.mojo	main	exe-differential	sanitized

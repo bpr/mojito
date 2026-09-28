@@ -1481,7 +1481,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
 fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
     let context = ParamContext::detached();
     let binder = test_binder("n");
-    let reference = context.decl_ref(binder.id.clone(), "n", MetaTy::int());
+    let reference = context.decl_ref(binder.id, "n", MetaTy::int());
     let one = context.constant(CtValue::Int(1)).expect("constant");
     let expr = context.infix(InfixOp::Add, &one, &reference).expect("sum");
     let call = |expr: Option<ParamExpr>| {

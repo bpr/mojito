@@ -4,6 +4,7 @@
 # does) (`docs/notes/instantiation-from-template.md`, class MethodBody). The
 # call's selection is the template's; each instance re-keys only the
 # application.
+from std.collections import Set
 from std.hashlib import Hasher
 
 

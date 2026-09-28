@@ -5,6 +5,7 @@
 # symbolic; a body naming the lane only in its signature is checked as the
 # template. Each clone folds the binder, a `DType` to a constant under the
 # name's identity.
+# requires: discovery
 struct Box:
     var x: Int
 
