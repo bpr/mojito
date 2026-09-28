@@ -1787,6 +1787,41 @@ fn unavailable_member_stub_derives() {
 }
 
 #[test]
+fn tuple_default_constructor_derives() {
+    // A Defaultable `Tuple` specialization's synthesized `__init__(out self)`
+    // builds its storage element by element (`__RuntimeTuple(Int(0),
+    // Optional[Int]())`) under identities of its own, so it is not the
+    // variadic initializer's copy: its first checked copy is its template,
+    // and every later discovery round derives from it.
+    let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    print(t[0], t[1] is None, u[0], u[1], u[2])\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "0 True 0 False 0.0\n"
+        );
+    }
+    let stats = derived.template_stats();
+    for instance in [
+        "Tuple$t2[y3:Inty13:Optional[Int]]",
+        "Tuple$t3[y6:UInt64y4:Booly7:Float64]",
+    ] {
+        let name = format!("{instance}.__init__");
+        let inferred = stats
+            .inferred_clones
+            .iter()
+            .filter(|clone| **clone == name)
+            .count();
+        assert_eq!(
+            inferred, 1,
+            "{name}: only the default constructor's first copy is inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn tuple_callable_binder_teardowns_derive() {
     // `Tuple.consume_elements` and `deinit_with` take a compile-time
     // callable binder, which every specialization keeps: each unrolled

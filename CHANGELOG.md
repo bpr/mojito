@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A Defaultable `Tuple` specialization's synthesized default initializer
+  is no longer inferred in every discovery round. It is spanned at the
+  struct and identified apart from the variadic initializer, builds its
+  storage at exactly the element types (`Int(0)` for an `Int` element), and
+  later rounds derive from its first checked copy. Hello World's clone
+  inferences drop from 62 to 55.
 - `Tuple`'s consuming teardowns (`consume_elements`, `deinit_with`) are no
   longer inferred in every specialization over plain-data elements. Their
   compile-time callable binder is kept by each clone, so each unrolled

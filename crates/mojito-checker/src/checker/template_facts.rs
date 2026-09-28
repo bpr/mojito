@@ -587,12 +587,13 @@ impl Checker {
         // class is retained as such without being captured.
         let shape = template.then(|| self.certificate(site, None).0);
         let admitted = matches!(shape, Some(TemplateCoverage::Certified(_)));
-        // The first copy of a shared stub checked is that stub's template.
+        // The first copy checked of a body the elaborator shaped itself is
+        // that body's template.
         let stub_template = (generated && derived.is_none())
             .then(|| self.instance_trace(site))
             .flatten()
             .filter(|trace| {
-                trace.shared_stub
+                trace.first_copy_template
                     && self
                         .template_catalog
                         .borrow()
@@ -1283,7 +1284,7 @@ impl Checker {
                 value_bindings: Vec::new(),
                 pack_bindings: Vec::new(),
                 residual: Vec::new(),
-                shared_stub: false,
+                first_copy_template: false,
             }
         } else {
             self.instance_trace(site)?
@@ -1686,8 +1687,9 @@ impl Checker {
                 kept_values: Vec::new(),
             });
         };
-        // A shared stub names nothing its receiver binds.
-        if site.role == BodyRole::Template || trace.shared_stub {
+        // A body the elaborator shaped itself names nothing its receiver
+        // binds.
+        if site.role == BodyRole::Template || trace.first_copy_template {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),
@@ -9782,6 +9784,7 @@ impl BodyShape<'_> {
             }
             _ if self.call_result(expr)
                 || self.pack_storage(expr)
+                || self.element_storage(expr)
                 || self.fieldwise_copy(expr)
                 || self.construction(expr)
                 || self.binder_construction(expr)
@@ -9876,6 +9879,21 @@ impl BodyShape<'_> {
             },
         );
         true
+    }
+
+    /// `__RuntimeTuple(String(), 0)`: a pack struct's storage built element
+    /// by element, as a specialization's synthesized default constructor
+    /// builds it, each element a value the grammar admits on its own.
+    fn element_storage(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Call { name, param_args, args, kwargs }
+        if name == "__RuntimeTuple"
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && !args.is_empty()
+            && args.iter().all(|element| {
+                (self.expression(element) && self.scalar(element))
+                    || self.whole_value(element)
+            }))
     }
 
     /// The iterable of a runtime `for`: a place the loop borrows (`self`, a

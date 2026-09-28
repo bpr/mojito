@@ -1819,7 +1819,7 @@ impl Elab<'_> {
                 method.where_clauses = vec![unavailable_method_clause(&condition)];
                 method.body = vec![unavailable_method_stub(orig, &method, &condition)];
                 members.push(TracedMember {
-                    shared_stub: true,
+                    first_copy: Some(FirstCopy::Shared),
                     ..TracedMember::whole(elaborated_methods.len(), &method.name, condition.span)
                 });
                 elaborated_methods.push(method);
@@ -2163,6 +2163,10 @@ impl Elab<'_> {
                     template.span,
                 )
             {
+                members.push(TracedMember {
+                    first_copy: Some(FirstCopy::OwnSpecialization),
+                    ..TracedMember::whole(elaborated_methods.len(), "__init__", template.span)
+                });
                 elaborated_methods.push(constructor);
             }
             self.append_tuple_transform_methods(
@@ -2683,7 +2687,7 @@ impl Elab<'_> {
                             .collect(),
                         value_bindings: Vec::new(),
                         pack_bindings: Vec::new(),
-                        shared_stub: false,
+                        first_copy_template: false,
                     });
             }
             clones.push(clone);
@@ -2903,7 +2907,7 @@ impl Elab<'_> {
                     .map(|binding| (binding.name.clone(), binding.value.clone()))
                     .collect(),
                 pack_bindings,
-                shared_stub: false,
+                first_copy_template: false,
             });
     }
 
@@ -2958,7 +2962,11 @@ impl Elab<'_> {
             };
             traces.push(super::MethodInstanceTrace {
                 owner: name.clone(),
-                template_owner: template.name.to_string(),
+                template_owner: if traced.first_copy == Some(FirstCopy::OwnSpecialization) {
+                    name.clone()
+                } else {
+                    template.name.to_string()
+                },
                 owner_module: template.module.map(str::to_string),
                 clone_name: member.name.clone(),
                 clone_module: module,
@@ -2966,7 +2974,7 @@ impl Elab<'_> {
                 body: traced.body,
                 clone_body: first,
                 type_bindings: traced.types.clone(),
-                value_bindings: if traced.shared_stub {
+                value_bindings: if traced.first_copy.is_some() {
                     Vec::new()
                 } else {
                     template
@@ -2976,12 +2984,12 @@ impl Elab<'_> {
                         .cloned()
                         .collect()
                 },
-                pack_bindings: if traced.shared_stub {
+                pack_bindings: if traced.first_copy.is_some() {
                     Vec::new()
                 } else {
                     template.packs.clone()
                 },
-                shared_stub: traced.shared_stub,
+                first_copy_template: traced.first_copy.is_some(),
             });
         }
     }
@@ -3621,16 +3629,15 @@ struct StructTemplate<'a> {
 /// (`__getitem_param__$k`, and its value twin), or the element type a
 /// per-element overload (`Tuple.__contains__`) erased.
 ///
-/// An unavailable member (`shared_stub`) instantiates the trap stub the
-/// specializer shaped once for its template method, whose first statement
-/// is `body`, and bakes nothing.
+/// A member whose body the specializer shaped itself (`first_copy`) bakes
+/// nothing, and `body` is that body's own first statement.
 struct TracedMember {
     index: usize,
     template_name: String,
     body: Span,
     values: Vec<(String, CtValue)>,
     types: Vec<(String, Type)>,
-    shared_stub: bool,
+    first_copy: Option<FirstCopy>,
 }
 
 impl TracedMember {
@@ -3642,9 +3649,21 @@ impl TracedMember {
             body,
             values: Vec::new(),
             types: Vec::new(),
-            shared_stub: false,
+            first_copy: None,
         }
     }
+}
+
+/// Which clones share a body the specializer shaped itself, whose first
+/// checked copy is their template.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FirstCopy {
+    /// An unavailable member's trap stub, one for its template method across
+    /// every specialization.
+    Shared,
+    /// A `Tuple` specialization's default constructor, its own in every
+    /// discovery round: the element constructions differ per specialization.
+    OwnSpecialization,
 }
 
 /// The first statement of a template method's body, which identifies it as a

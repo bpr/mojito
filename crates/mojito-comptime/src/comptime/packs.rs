@@ -373,6 +373,12 @@ pub(super) fn tuple_transform_method(
 /// specialization. A heterogeneous pack cannot retain `Ts[i]()` as runtime
 /// syntax, so specialization expands it into one ordinary concrete constructor
 /// call per element before semantic checking.
+///
+/// The constructor's statement is spanned at `span` (the struct's), which
+/// tells it apart from the variadic initializer it is copied from, and each
+/// element construction is identified by identities derived from that
+/// statement's, so every discovery round builds the same body: its first
+/// checked copy is the template the others derive from.
 pub(super) fn tuple_default_constructor(
     variadic_constructor: &mojito_ast::ast::Method,
     types: &[Type],
@@ -389,6 +395,8 @@ pub(super) fn tuple_default_constructor(
     let [statement] = constructor.body.as_mut_slice() else {
         return None;
     };
+    statement.span = span;
+    let parent = statement.syntax_id;
     let StmtKind::SetPlace { value, .. } = &mut statement.kind else {
         return None;
     };
@@ -402,6 +410,10 @@ pub(super) fn tuple_default_constructor(
         unreachable!("validated runtime Tuple constructor call")
     };
     *args = arguments;
+    let mut identities = DerivedIdentities { parent, next: 0 };
+    for argument in args {
+        mojito_ast::visit::walk_expr_mut(&mut identities, argument);
+    }
     Some(constructor)
 }
 
@@ -442,11 +454,29 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
             span,
         ));
     }
+    // A scalar element converts its zero literal explicitly, so the storage
+    // is built at exactly the element types, with no literal left for the
+    // store to materialize.
+    let scalar = match ty {
+        Type::Int => Some(("Int", ExprKind::Int(0.into()))),
+        Type::UInt => Some(("UInt", ExprKind::Int(0.into()))),
+        Type::Bool => Some(("Bool", ExprKind::Bool(false))),
+        Type::Float64 => Some(("Float64", ExprKind::Float(0.0.into()))),
+        _ => None,
+    };
+    if let Some((name, zero)) = scalar {
+        return Some(Expr::new(
+            ExprKind::Call {
+                name: name.to_string(),
+                param_args: Vec::new(),
+                args: vec![Expr::new(zero, span)],
+                kwargs: Vec::new(),
+            },
+            span,
+        ));
+    }
     let literal = match ty {
-        Type::Int | Type::UInt => Some(ExprKind::Int(0.into())),
-        Type::Bool => Some(ExprKind::Bool(false)),
         Type::StringLiteral => Some(ExprKind::Str(String::new())),
-        Type::Float64 => Some(ExprKind::Float(0.0.into())),
         Type::None => Some(ExprKind::None),
         _ => None,
     };
@@ -519,4 +549,18 @@ pub(super) fn select_top_level_whole_pack_abi(
     parameter.kind = ParamKind::Regular;
     *name = "__RuntimeTuple".to_string();
     Ok(())
+}
+
+/// Numbers synthesized expressions with identities derived from `parent`, in
+/// visiting order.
+struct DerivedIdentities {
+    parent: mojito_common::token::SyntaxId,
+    next: u32,
+}
+
+impl mojito_ast::visit::MutVisitor for DerivedIdentities {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        expr.syntax_id = mojito_common::token::SyntaxId::derived(self.parent, self.next);
+        self.next += 1;
+    }
 }

@@ -715,10 +715,11 @@ pub struct MethodInstanceTrace {
     /// A per-call clone's own type packs, or a variadic struct's, each with
     /// the source element types written in its signature.
     pub pack_bindings: Vec<(String, Vec<Type>)>,
-    /// Whether the clone is a copy of the trap stub the elaborator shaped
-    /// once for an unavailable template method: `body` is then the stub's
-    /// own first statement, and the clone binds nothing.
-    pub shared_stub: bool,
+    /// Whether the clone copies a body the elaborator shaped itself — the
+    /// trap stub of an unavailable template method, or a `Tuple`
+    /// specialization's synthesized default constructor: `body` is then that
+    /// body's own first statement, and the clone binds nothing.
+    pub first_copy_template: bool,
 }
 
 /// The declaration-level expansion trace of one generated `def` clone.
@@ -781,7 +782,7 @@ pub fn instance_traces(
                 value_bindings: trace.value_bindings,
                 pack_bindings: trace.pack_bindings,
                 residual: trace.residual,
-                shared_stub: false,
+                first_copy_template: false,
             },
         )
     });
@@ -804,7 +805,7 @@ pub fn instance_traces(
                 value_bindings: trace.value_bindings,
                 pack_bindings: trace.pack_bindings,
                 residual: Vec::new(),
-                shared_stub: trace.shared_stub,
+                first_copy_template: trace.first_copy_template,
             },
         )
     });
