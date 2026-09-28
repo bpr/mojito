@@ -147,7 +147,7 @@ The benchmarks also needed facts the gate never carried:
   expression as a parameter node. A call may record no place table.
 - Callees: a direct call names a function, a struct, or one of ten
   builtins (`verify::BUILTIN_CALLEES`). A method call without a
-  checker-selected symbol names one of six methods of compiler-private
+  checker-selected symbol names one of seven methods of compiler-private
   values (`verify::BUILTIN_METHODS`).
 - A projection may designate the referent of its last step's reference,
   as MIR does when it reads through a `ref` field.
@@ -261,12 +261,13 @@ and replacement stay with `ParamContext`.
     a subscript contract's parameter types unsubstituted. Both are fixed in
     `crates/mojito-native/src/native/mono/`. The native backend never ran
     `mir::verify` on its specialized input, so nothing had reported them.
-12. **Specialization is not VM-transparent beyond the gate.** For `tuple`,
-    `tstring`, and `stdlib_heavy` the specialized program does not run on
-    the VM as the original does (`String` has no copy constructor there).
-    The exported program runs exactly as the specialized one, and the
-    native backend runs all three with the VM's output. An A2 interpreter
-    over core inherits this.
+12. **Specialization was not VM-transparent beyond the gate.** For `tuple`,
+    `tstring`, and `stdlib_heavy` the specialized program did not run on
+    the VM as the original did: monomorphization dropped the nominal
+    `String`'s `__copyinit__` and `write_to`, which the native backend
+    bridges and the VM runs. Both are now kept, native reachability still
+    skips them, and the VM's display dispatch accepts a `write_to` whose
+    writer specialization bound to the builtin string writer.
 
 ## Coverage
 
@@ -279,9 +280,9 @@ One shadow run per focused input, debug build, coverage only.
 | `empty` | yes | 2 | 67 | 9,716 | 32,658 | 3.36 |
 | `hello` | yes | 5 | 201 | 36,411 | 113,377 | 3.11 |
 | `generic` | yes | 29 | 845 | 186,488 | 506,954 | 2.72 |
-| `tuple` | yes | 44 | 1,381 | 310,560 | 882,607 | 2.84 |
-| `tstring` | yes | 38 | 1,336 | 298,463 | 870,516 | 2.92 |
-| `stdlib_heavy` | yes | 170 | 5,954 | 2,077,034 | 6,513,540 | 3.14 |
+| `tuple` | yes | 48 | 1,484 | 334,630 | 948,453 | 2.83 |
+| `tstring` | yes | 42 | 1,439 | 322,533 | 936,365 | 2.90 |
+| `stdlib_heavy` | yes | 172 | 6,024 | 2,092,497 | 6,558,137 | 3.13 |
 | Gate ×16 | yes | 133 | 2,775 | 578,367 | 1,529,771 | 2.64 |
 | Gate ×64 | yes | 517 | 10,503 | 2,212,971 | 5,827,648 | 2.63 |
 
@@ -289,7 +290,7 @@ For each of the seven compile benchmarks, `a1_focused_inputs_convert`
 pins that the specialized closure passes `mir::verify`, that the importer
 has no refusal, that the exported v1 text is the specialized text byte for
 byte, and that the exported program runs on the VM as the specialized one
-does.
+does, and the specialized one as the original.
 
 Still refused by name, because no focused input reaches them: a `return`
 inside a `try` region, a subscript store through a slice, a floating

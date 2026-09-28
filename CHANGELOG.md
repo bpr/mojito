@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The program native monomorphization produces now runs on the VM as the
+  original does. It keeps the nominal `String`'s `__copyinit__` and
+  `write_to`, which native lowering bridges and never reaches, and the VM
+  displays through a `write_to` whose writer specialization bound to the
+  builtin string writer. `tuple`, `tstring`, and `stdlib_heavy` used to
+  fail there with "struct `String` has no copy constructor".
 - The Pliron A1 parameter payload now exports a closed atom kept unfolded
   (`8 // 2` after substitution) and a cancelled term holding a partial atom,
   through the new non-folding `ParamContext::rebuild`, instead of refusing

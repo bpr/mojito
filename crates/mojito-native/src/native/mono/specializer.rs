@@ -1259,12 +1259,9 @@ impl<'a> Specializer<'a> {
             }
             types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
             self.output_structs.push(declaration);
+            // The nominal String's `__copyinit__` stays too: native lowering
+            // bridges it and never reaches the body, but the VM runs it.
             for method in ["__init__", "__copyinit__", "__moveinit__", "__deinit__"] {
-                if method == "__copyinit__"
-                    && mojito_symbol::symbol::is_stdlib_string_struct(&template_name)
-                {
-                    continue;
-                }
                 // A closed instance whose clone of this lifecycle method
                 // exists runs that body, under the template-shaped symbol
                 // lowering composes for the instance. The clone was minted

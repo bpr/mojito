@@ -956,12 +956,16 @@ fn visit_call_edges<'p>(
                 // be declared.
                 MirInstr::Call { func, .. } if lower::intercepted_call(&func.0) => {}
                 // `print` or `String(...)` of a nominal struct calls its
-                // `write_to` instance in the lowered expansion.
+                // `write_to` instance in the lowered expansion. The nominal
+                // String displays through its own bytes instead: its
+                // `write_to` is there for the VM, never an edge here.
                 MirInstr::Call { func, args, .. }
                     if matches!(func.0.as_str(), "print" | "String") =>
                 {
                     for arg in args {
-                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0)
+                            && !mojito_symbol::symbol::is_stdlib_string_struct(name)
+                        {
                             let prefix = format!("{name}.write_to");
                             for fname in functions.keys() {
                                 if fname.starts_with(prefix.as_str()) {

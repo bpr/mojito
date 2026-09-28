@@ -98,10 +98,10 @@ fn vm_outcome(program: mojito::mir::MirProgram) -> Result<String, String> {
 
 /// Every focused benchmark converts: its specialized closure verifies, the
 /// shadow boundary exports its v1 text byte for byte, and the exported
-/// program runs as the specialized one does.
+/// program runs as the specialized one does, which runs as the original.
 #[test]
 fn a1_focused_inputs_convert() {
-    let mut coverage = String::from("input\tfunctions\toperations\tv1_bytes\tcore_bytes\tvm\n");
+    let mut coverage = String::from("input\tfunctions\toperations\tv1_bytes\tcore_bytes\n");
     for path in BENCHMARKS {
         let (original, specialized) = specialized_input(path);
         let findings = mojito::mir::verify::verify(&specialized.program);
@@ -116,19 +116,19 @@ fn a1_focused_inputs_convert() {
             .unwrap_or_else(|error| panic!("{path}: {error}"));
         assert_eq!(v1_text(&run.exported.program), expected_v1, "{path}");
         let expected = vm_outcome(specialized.program);
+        assert_eq!(
+            expected,
+            vm_outcome(original),
+            "{path}: specialized runs as the original"
+        );
         assert_eq!(vm_outcome(run.exported.program), expected, "{path}");
         let _ = writeln!(
             coverage,
-            "{path}\t{}\t{}\t{}\t{}\t{}",
+            "{path}\t{}\t{}\t{}\t{}",
             run.functions,
             run.operations,
             expected_v1.len(),
             run.core_text.len(),
-            if expected == vm_outcome(original) {
-                "as-original"
-            } else {
-                "specialized-only"
-            },
         );
     }
     std::fs::create_dir_all("target/pliron-a1").expect("output directory");

@@ -54,13 +54,14 @@ pub const BUILTIN_CALLEES: [&str; 10] = [
 
 /// The methods of compiler-private values a method call may name without
 /// a checker-selected symbol.
-pub const BUILTIN_METHODS: [&str; 6] = [
+pub const BUILTIN_METHODS: [&str; 7] = [
     "byte_length",
     "copy",
     "__hash__",
     "ptr",
     "unsafe_free",
     "write",
+    "write_string",
 ];
 
 /// Verify `op` against the registry rule of `kind`.
