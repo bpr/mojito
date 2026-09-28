@@ -539,7 +539,8 @@ impl Elab<'_> {
                 Ok(CtValue::Int(sequence.len() as i64))
             }
             // A typed scalar construction (`Int(1)`, `Float64(2.5)`) is the
-            // literal materialized at that type.
+            // literal materialized at that type; the nullary one (`Int()`)
+            // is its zero.
             ExprKind::Call {
                 name,
                 param_args,
@@ -547,7 +548,7 @@ impl Elab<'_> {
                 kwargs,
             } if kwargs.is_empty()
                 && param_args.is_empty()
-                && args.len() == 1
+                && args.len() <= 1
                 && !self.fns.contains_key(name.as_str())
                 && !self.structs.contains_key(name.as_str())
                 && matches!(
@@ -556,7 +557,11 @@ impl Elab<'_> {
                 ) =>
             {
                 let ty = scalar_type_name(name).expect("guard established a scalar type");
-                let value = self.eval(&args[0], scope)?;
+                let value = match args.first() {
+                    Some(argument) => self.eval(argument, scope)?,
+                    None if ty == Ty::Bool => CtValue::Bool(false),
+                    None => CtValue::IntLiteral(0.into()),
+                };
                 value.clone().materialize_as(&ty).ok_or_else(|| {
                     ComptimeError::NotComptime(format!(
                         "'{name}({value})' is not a compile-time value"

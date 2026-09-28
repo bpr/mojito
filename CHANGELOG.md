@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Int()`, `UInt()`, `Float64()`, and `Bool()` now construct their zeros,
+  at run time, in a compile-time constant, and through a `Defaultable` type
+  parameter, as upstream. They used to fail with "'Int' expects 1
+  argument(s), got 0".
+- A pack element's default construction, `Self.Ts[i]()` in a variadic
+  struct or `Ts[i]()` in a pack-keyed `def`, is now checked with the pack
+  symbolic and constructs the bound element in each instance. It used to
+  fail with "'Self.Ts' is not a type parameter of the enclosing struct" or
+  "Undefined variable 'Ts'". `Tuple`'s default initializer is still
+  synthesized per specialization (roadmap 1.4).
 - The program native monomorphization produces now runs on the VM as the
   original does. It keeps the nominal `String`'s `__copyinit__` and
   `write_to`, which native lowering bridges and never reaches, and the VM

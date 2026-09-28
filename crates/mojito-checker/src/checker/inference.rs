@@ -863,6 +863,13 @@ impl Checker {
                 {
                     return Ok(Ty::Bool);
                 }
+                if let ExprKind::Member { object, field } = &callee.kind
+                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                    && let Some(element) =
+                        self.infer_pack_element_construction(field, true, param_args, args, kwargs)
+                {
+                    return element;
+                }
                 if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
                     if let Some(value) = value? {
                         self.operation_adjustments.borrow_mut().insert(

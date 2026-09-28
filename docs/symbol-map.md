@@ -318,6 +318,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   builds the dependent element (`ParamContext::list_get`,
   `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
   bounded `Ty::Param` view and `restore_pack_elements` the way back,
+  `infer_pack_element_construction` types an element's `Ts[i]()` (each
+  instance's construction is `comptime/rewrite.rs:pack_element_construction`,
+  reached for a `def` through `fold_pack_element_constructions`),
   `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
   call argument (its placement through `call.rs:spread_position` and
   `bind_spread`) and `bind_forwarded_pack` binds it whole to a callee's pack

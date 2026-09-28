@@ -296,6 +296,7 @@ assets/ok/owned_iteration_iterator_owned_type.mojo	-	ineligible	no-scalar-entry-
 assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_rebind.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_forwarding_method.mojo	-	ineligible	no-scalar-entry-shape
@@ -473,6 +474,7 @@ assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/same_spelled_type_params.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/scalar_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_float_strided.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_range_sequential.mojo	-	ineligible	no-scalar-entry-shape

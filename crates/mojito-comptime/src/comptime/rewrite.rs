@@ -39,6 +39,29 @@ pub(super) fn materialize_block(
         .collect()
 }
 
+/// Elaborate every `Ts[k]()` of a pack-keyed `def` clone's body, its index
+/// already folded, into the bound element's own construction. The packs are
+/// not materialization constants: a bare pack name has no runtime spelling.
+pub(super) fn fold_pack_element_constructions(
+    body: &mut [Stmt],
+    packs: &HashMap<String, Vec<CtValue>>,
+) {
+    struct Fold<'a> {
+        packs: &'a HashMap<String, Vec<CtValue>>,
+    }
+    impl mojito_ast::visit::MutVisitor for Fold<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            let subs: Subs = &|name| self.packs.get(name).cloned().map(CtValue::Tuple);
+            if let Some(construction) = pack_element_construction(expr, subs) {
+                *expr = construction;
+            }
+        }
+    }
+    if !packs.is_empty() {
+        mojito_ast::visit::walk_block_mut(&mut Fold { packs }, body);
+    }
+}
+
 pub(super) fn materialize_expression(expr: &Expr, consts: &HashMap<String, CtValue>) -> Expr {
     let mut expr = expr.clone();
     let subs: Subs = &|name| consts.get(name).cloned();
@@ -419,6 +442,9 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
         };
         Some(values.len())
     }
+    if let Some(construction) = pack_element_construction(e, subs) {
+        return Some(construction);
+    }
     match &e.kind {
         ExprKind::Member { object, field } if field == "length" => {
             let length = pack_length(object, subs)?;
@@ -460,6 +486,51 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
         }
         _ => None,
     }
+}
+
+/// Elaborate a bound pack element's default construction — `Self.Ts[i]()`
+/// or a `def`'s own `Ts[i]()` at a folded index — into the element type's
+/// own concrete construction.
+fn pack_element_construction(e: &Expr, subs: Subs) -> Option<Expr> {
+    let (pack, param_args) = match &e.kind {
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+                (field, param_args)
+            }
+            _ => return None,
+        },
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if args.is_empty() && kwargs.is_empty() => (name, param_args),
+        _ => return None,
+    };
+    let [mojito_ast::ast::ParamArg::Value(index)] = param_args.as_slice() else {
+        return None;
+    };
+    let index = match &index.kind {
+        ExprKind::Int(value) => value.to_i64()?,
+        ExprKind::Identifier(name) => match subs(name)? {
+            CtValue::Int(value) => value,
+            CtValue::IntLiteral(value) => value.to_i64()?,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let CtValue::Tuple(elements) = subs(pack)? else {
+        return None;
+    };
+    let CtValue::Type(element) = elements.get(usize::try_from(index).ok()?)? else {
+        return None;
+    };
+    pack_element_default_construction(element, e.span, e.syntax_id)
 }
 
 /// The `Subs` marker for a name bound as a runtime local (a parameter or a

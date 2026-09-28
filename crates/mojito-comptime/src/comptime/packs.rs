@@ -417,6 +417,21 @@ pub(super) fn tuple_default_constructor(
     Some(constructor)
 }
 
+/// The concrete default construction a bound pack element's `Ts[i]()`
+/// elaborates to, its nodes identified by identities derived from the
+/// construction's own (`parent`), so every copy builds the same syntax.
+pub(super) fn pack_element_default_construction(
+    element: &Ty,
+    span: Span,
+    parent: mojito_common::token::SyntaxId,
+) -> Option<Expr> {
+    let mut construction = default_constructor_call(&source_type_from_ty(element)?, element, span)?;
+    let mut identities = DerivedIdentities { parent, next: 0 };
+    mojito_ast::visit::walk_expr_mut(&mut identities, &mut construction);
+    construction.syntax_id = parent;
+    Some(construction)
+}
+
 fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr> {
     // A nested Tuple element constructs through its minted specialization:
     // the public `Tuple[...]()` spelling would be folded as the compile-time

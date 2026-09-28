@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	442
+# swept-count	443
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -324,6 +324,7 @@ assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-rej
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'
 assets/type_error/pack_alias_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead
 assets/type_error/pack_bound_violation.mojo	compile-reject	agree	error: 'Pair' parameter 'Ts' has 'Copyable & Deinitable' type, but value has type 'AnyStruct[NoCopy]'
+assets/type_error/pack_element_construction_not_defaultable.mojo	compile-reject	agree	error: invalid initialization: missing required argument: 'move'
 assets/type_error/pack_element_missing_bound.mojo	compile-reject	agree	error: invalid call to 'write': an element of 'args' with type 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/pack_element_narrowing_without_rebind.mojo	compile-reject	agree	error: 'Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]' does not implement the '__eq__' method
 assets/type_error/pack_field_unqualified.mojo	compile-reject	agree	error: unqualified access to struct parameter 'Ts'; use 'Self.Ts' instead

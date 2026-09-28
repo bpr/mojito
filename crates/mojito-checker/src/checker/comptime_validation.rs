@@ -409,6 +409,67 @@ impl Checker {
         })
     }
 
+    /// Type a pack element's default construction while the pack is still a
+    /// parameter: `Self.Ts[i]()`, or a `def`'s own `Ts[i]()`, is the
+    /// dependent element type, and the element must be `Defaultable` by the
+    /// pack's bound or a `where` clause. `None` when `pack` (read through
+    /// `Self` when `through_self`) names no unbound pack or the call is not a
+    /// nullary construction at one index.
+    pub(super) fn infer_pack_element_construction(
+        &self,
+        pack: &str,
+        through_self: bool,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let [ParamArg::Value(index)] = param_args else {
+            return None;
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return None;
+        }
+        let (base, spelled) = if through_self {
+            let declared = self.self_decls.iter().any(|decl| {
+                matches!(decl, ParamDecl::Type { name, variadic: true, .. }
+                    if name.trim_start_matches('*') == pack)
+            });
+            self.pack_reference(pack).filter(|_| declared)?;
+            (
+                SourceType::SelfParam(pack.to_string()),
+                format!("Self.{pack}"),
+            )
+        } else {
+            self.pack_parameter_in_scope(pack)
+                .filter(|_| self.lookup(pack).is_none())?;
+            (
+                SourceType::Named(pack.to_string(), Vec::new()),
+                pack.to_string(),
+            )
+        };
+        Some(
+            self.ty_from_anno(&SourceType::IndexedProjection {
+                base: Box::new(base),
+                index: Box::new(index.clone()),
+            })
+            .and_then(|element| {
+                let view = self
+                    .opaque_element(&element)
+                    .unwrap_or_else(|| element.clone());
+                if self.conforms_to(&view, "Defaultable") {
+                    Ok(element)
+                } else {
+                    Err(TypeError::TraitNotSatisfied {
+                        param: spelled,
+                        ty: element.to_string(),
+                        trait_name: "Defaultable".to_string(),
+                        reason: self.trait_failure_reason(&view, "Defaultable"),
+                    })
+                }
+            }),
+        )
+    }
+
     /// `materialize[X]()` under source validation: the runtime value of a
     /// compile-time binding has the binding's own checked type (the display
     /// the elaborator materializes types the same way).

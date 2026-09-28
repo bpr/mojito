@@ -101,10 +101,19 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - Upstream spells it in source over the symbolic pack:
     `comptime for i in range(Self.__len__()):
     Pointer(to=self[i]).unsafe_write({})`.
-  - Mojito cannot check a pack element's construction (`Ts[i]()`) in any
-    template: `Ts` is an undefined variable there.
-  - Depends on 3.54: an `Int` element constructs as `Int()`.
-  - Model: Opus, Not Planned.
+  - A pack element's construction now checks symbolically: `Self.Ts[i]()`
+    and a `def`'s `Ts[i]()` are the dependent element, and each instance
+    elaborates the element's own construction
+    (`infer_pack_element_construction`, `pack_element_construction`).
+  - Mojito has no spelling that builds `__RuntimeTuple` storage element by
+    element, as upstream's `mark_initialized` and `unsafe_write` do.
+  - No recipe derives an elaborated element construction. Its facts differ
+    by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
+    as `Optional[Int]` with its overload target, a nested `Tuple` instance.
+  - A SIMD element needs its nullary construction (3.103), and a `String`
+    element needs `String` to be `Defaultable` (3.104).
+  - Depends on 3.103.
+  - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
 
@@ -132,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.99).
+    constructed default at all (3.98).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.99: until a constructed default runs, no fixture can take
+  - Depends on 3.98: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -343,7 +352,20 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.2 A compile-time `Float64` printed at run time does not compile
+  natively**
+
+  Problem: `comptime x = Float64(2.5)` then `print(x)` prints `2.5` on the
+  VM and the pin, but the native backend stops with "unsupported display
+  of a runtime FloatLiteral value".
+  - The folded constant reaches native lowering as a `FloatLiteral`
+    register, which `print` has no display for.
+  - `comptime z = Int()` prints natively
+    (`assets/ok/scalar_default_construction.mojo`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -531,7 +553,7 @@ last.
   - Pinned by `conformance/probes/tuple_unpack_string_element.mojo`.
   - `assets/ok/template_method_tuple_unpack.mojo` keeps its `String`
     instance to unpacks of a sibling call's result, which both backends run.
-  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.84 is
+  - Depends on nothing. The `named-tuple-unpack-copy` divergence in 3.83 is
     the same unpack plan and closes with it.
   - Model: Opus, Planned.
 
@@ -985,7 +1007,7 @@ last.
     own check even when the method is never called; without the `try` it
     runs. Pinned by `conformance/probes/generic_method_transfer_in_try.mojo`.
   - Depends on nothing. The `moved-parameter-into-local-collection`
-    divergence in 3.84 is the same stand-in place and closes with it.
+    divergence in 3.83 is the same stand-in place and closes with it.
   - Model: Opus, Not Planned.
 
 - [ ] **3.36 A value-returning body that ends in `abort(...)` is rejected**
@@ -1058,7 +1080,7 @@ last.
   - The pin materializes the literal and binds the parameter to the temporary.
   - Probe: `conformance/probes/literal_to_ref_parameter.mojo`.
   - Depends on nothing. It materializes through the same fallback the
-    `ref-binding-register-value` divergence in 3.84 wants narrowed, so the
+    `ref-binding-register-value` divergence in 3.83 wants narrowed, so the
     two answers must agree.
   - Model: Opus, Planned.
 
@@ -1181,6 +1203,8 @@ last.
   - Only `generate_struct_spec` binds a pack into the substitutions that
     `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
     materialization. `def` specialization never does.
+  - `def` specialization binds its packs for one fold only:
+    `fold_pack_element_constructions` elaborates `Ts[i]()`.
   - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
     (`pack-length-runtime-position`, `mojo-only`).
   - It stays in the elaborator, so it does not wait for section 1's symbolic
@@ -1253,7 +1277,7 @@ last.
     `Dtype::float_literal_lane`, and let the build's exhaustiveness errors
     list the rest. The native lowering matches with wildcards, so its sites
     need a manual `rg` pass.
-  - Depends on nothing. The bundled `struct DType` port in 3.83 rewrites the
+  - Depends on nothing. The bundled `struct DType` port in 3.82 rewrites the
     same table, so this lands first or folds into it.
   - Model: Opus, Planned.
 
@@ -1280,16 +1304,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.54 `Int()` has no zero-argument constructor**
-
-  Problem: `print(Int())` prints `0` at the pin, while Mojito reports "'Int'
-  expects 1 argument(s), got 0"; `Float64()` likewise.
-  - `Int` conforms to `Defaultable` at the pin, so a `conforms_to(FT,
-    Defaultable)` arm over an `Int` field selects `FT()` and then fails.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.55 A `mut self` witness does not conform to a read-`self`
+- [ ] **3.54 A `mut self` witness does not conform to a read-`self`
   requirement**
 
   Problem: a struct declaring `def __hash__(mut self, mut hasher:
@@ -1305,7 +1320,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.56 An imported alias in a generic struct's method signature is an
+- [ ] **3.55 An imported alias in a generic struct's method signature is an
   unknown type**
 
   Problem: `def feed(self, mut hasher: default_hasher)` on a generic struct
@@ -1319,7 +1334,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.57 An uncalled `rebind` method is checked for every instance**
+- [ ] **3.56 An uncalled `rebind` method is checked for every instance**
 
   Problem: a method whose `rebind` does not hold for one instance of its
   struct (`rebind[Int](self.value)` on `Box[String]`) is refused with "type
@@ -1333,7 +1348,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.58 A value-keyed `def` cannot forward its value to a keyed `def`**
+- [ ] **3.57 A value-keyed `def` cannot forward its value to a keyed `def`**
 
   Problem: `def forward[n: Int](x: Int) -> Int: return keyed[n]() + x`, over
   a `keyed[n: Int]` holding a `comptime if`, fails elaboration with
@@ -1347,7 +1362,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.59 A compile-time-keyed `def` cannot be passed as a function value**
+- [ ] **3.58 A compile-time-keyed `def` cannot be passed as a function value**
 
   Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
   `rebind` and `apply` declares a callable bound, runs at the pin and reports
@@ -1361,7 +1376,7 @@ last.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **3.60 A member-led arithmetic type argument does not parse in an alias
+- [ ] **3.59 A member-led arithmetic type argument does not parse in an alias
   body**
 
   Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
@@ -1375,7 +1390,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.61 An arithmetic `where` operand compiles for `def`s and struct methods
+- [ ] **3.60 An arithmetic `where` operand compiles for `def`s and struct methods
   only**
 
   Problem: `where n + 1 == m` needs its declaration's value parameters in
@@ -1392,7 +1407,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.62 `comptime assert` is not parsed**
+- [ ] **3.61 `comptime assert` is not parsed**
 
   Problem: upstream's `comptime assert conforms_to(FT, Hashable)` is a parse
   error at Mojito.
@@ -1406,7 +1421,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.63 `reflect[T]` over a function's type parameter is rejected**
+- [ ] **3.62 `reflect[T]` over a function's type parameter is rejected**
 
   Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
   `comptime count = r.field_count()`, called as `f[Point]()`, prints the
@@ -1425,7 +1440,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.64 `reflect[T]` of a non-struct type is rejected**
+- [ ] **3.63 `reflect[T]` of a non-struct type is rejected**
 
   Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
   Mojito rejects it with "requires a struct type".
@@ -1438,7 +1453,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.65 A field's value cannot be read by reflection**
+- [ ] **3.64 A field's value cannot be read by reflection**
 
   Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
   unsupported; the upstream hashing, equality, and writing defaults are
@@ -1448,11 +1463,11 @@ last.
     it yet.
   - Under validation the result's type is the opaque field type
     (`types[i]`), which the arm-licensing rule already covers.
-  - Depends on 3.62 for the upstream spelling of the defaults, and on 3.37,
+  - Depends on 3.61 for the upstream spelling of the defaults, and on 3.37,
     the body shape they are written in.
   - Model: Fable, Planned.
 
-- [ ] **3.66 A local compile-time type list is unknown in an instance's annotation**
+- [ ] **3.65 A local compile-time type list is unknown in an instance's annotation**
 
   Problem: `var v: types[i] = ...` over `comptime types =
   reflect[T].field_types()` validates, but the instance reports "unknown
@@ -1463,7 +1478,7 @@ last.
   - Depends on 3.25 when the annotation sits in a `comptime for` body.
   - Model: Opus, Not Planned.
 
-- [ ] **3.67 A handle chain in a call's type argument is read as a value**
+- [ ] **3.66 A handle chain in a call's type argument is read as a value**
 
   Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
   "expected a type, found a value" at the instance.
@@ -1472,7 +1487,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.68 A clone that is still checked re-ranks an overloaded call**
+- [ ] **3.67 A clone that is still checked re-ranks an overloaded call**
 
   Problem: the pinned Mojo binds a call inside a generic body once, while it
   checks the body, and Mojito ranks the overload set again for every
@@ -1491,7 +1506,7 @@ last.
     nothing in this section moves it.
   - Model: Fable, Not Planned.
 
-- [ ] **3.69 Ordering a tuple of mixed element types is rejected**
+- [ ] **3.68 Ordering a tuple of mixed element types is rejected**
 
   Problem: `(1, String("b")) < (1, String("c"))` reports "operator '<' is
   not defined for Tuple[Int, String] and Tuple[Int, String]"; the pin prints
@@ -1506,7 +1521,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.70 A struct keyed on a `DType` named like a bundled binder is
+- [ ] **3.69 A struct keyed on a `DType` named like a bundled binder is
   rejected**
 
   Problem: `struct T[dt: DType]` constructed as `T[DType.int8]()` reports
@@ -1525,7 +1540,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.71 A parametric nested `def` named as a value reports its marker**
+- [ ] **3.70 A parametric nested `def` named as a value reports its marker**
 
   Problem: `apply(inner, 3)` and `var g = inner`, for a nested
   `def inner[U: Copyable]`, report `Undefined variable
@@ -1538,11 +1553,11 @@ last.
     for the binding and an `invalid call to '__call__'` for the argument.
   - Pre-existing for a nested `def` the pass already registered; the nested
     compile-time-keyed work widened the class it reaches.
-  - Depends on 3.59, which decides which clone a bare reference to a
+  - Depends on 3.58, which decides which clone a bare reference to a
     parametric `def` names; the message follows from that.
   - Model: Opus, Not Planned.
 
-- [ ] **3.72 A generic struct's `DType`-keyed method is never cloned
+- [ ] **3.71 A generic struct's `DType`-keyed method is never cloned
   without a discovery round**
 
   Problem: `holder.double[DType.int64](9)`, over `def double[dt:
@@ -1559,7 +1574,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.73 A method forwarding its own `DType` parameter to a sibling
+- [ ] **3.72 A method forwarding its own `DType` parameter to a sibling
   keyed method is rejected**
 
   Problem: `def via[dt: DType](self, a: Scalar[dt]) -> Scalar[dt]: return
@@ -1573,7 +1588,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.74 `String` always owns a heap buffer, where upstream's has three
+- [ ] **3.73 `String` always owns a heap buffer, where upstream's has three
   representations**
 
   Problem: `String(literal)` allocates and copies the literal's bytes, while
@@ -1588,7 +1603,7 @@ last.
     last.
   - Model: Opus, Planned.
 
-- [ ] **3.75 A loan carried only by a container's element type does not keep
+- [ ] **3.74 A loan carried only by a container's element type does not keep
   its source alive**
 
   Problem: `var s = l[0].copy()` over `l: List[Span[Int, origin_of(xs)]]`,
@@ -1611,7 +1626,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.76 A copy of a loan-carrying value is taken as a borrow of its
+- [ ] **3.75 A copy of a loan-carrying value is taken as a borrow of its
   receiver**
 
   Problem: a method returning a struct that carries a loan through a type or
@@ -1632,13 +1647,13 @@ last.
     loan-carrying struct result of a non-consuming method.
   - Dropping the borrow when the declared return names only the struct's own
     origin binders was tried. It lost the only link from `c.get()`'s result
-    to the loans `c` carries, which 3.75 has to supply first.
+    to the loans `c` carries, which 3.74 has to supply first.
   - Not yet checked against the pin, which is expected to accept both
     spellings.
-  - Depends on 3.75.
+  - Depends on 3.74.
   - Model: Fable, Planned.
 
-- [ ] **3.77 A subscript of an element read through a `Span` of `Span`s fails
+- [ ] **3.76 A subscript of an element read through a `Span` of `Span`s fails
   on the VM**
 
   Problem: `var v = Span(l)` over `l: List[Span[Int, origin_of(xs)]]`, then
@@ -1653,7 +1668,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.78 A compile-time-keyed `def` applied to a loan-carrying type is
+- [ ] **3.77 A compile-time-keyed `def` applied to a loan-carrying type is
   rejected**
 
   Problem: `tag[Span[Int, origin_of(xs)]]()` on `def tag[T: AnyType]() ->
@@ -1667,7 +1682,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.79 Same-arity overloads of a generic method on a generic struct stop
+- [ ] **3.78 Same-arity overloads of a generic method on a generic struct stop
   at run time**
 
   Problem: `b.pick(1.5, 4)` on `Box[Int]`, whose `pick[U]` has a second
@@ -1682,7 +1697,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.80 A struct's callable-value parameter is undefined inside its
+- [ ] **3.79 A struct's callable-value parameter is undefined inside its
   methods**
 
   Problem: a method of `struct Apply[callback: def(Int) thin -> Int]` that
@@ -1697,7 +1712,7 @@ last.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **3.81 A loan-carrying element read out of a list does not keep its
+- [ ] **3.80 A loan-carrying element read out of a list does not keep its
   loans**
 
   Problem: `var x = spans[0]` or `var x = spans.pop()` over `spans:
@@ -1714,7 +1729,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.82 A pointer field of a struct read out of a list cannot be
+- [ ] **3.81 A pointer field of a struct read out of a list cannot be
   subscripted through**
 
   Problem: `var x = boxes[0].copy()` (or `boxes.pop()`) over `boxes:
@@ -1727,7 +1742,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.83 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
+- [ ] **3.82 Mojito-specific shortcuts to move toward Mojo's shape** *(standing,
   any order)*
 
   Problem: parts of Mojito's stdlib lean on the Rust runtime where upstream
@@ -1760,7 +1775,7 @@ last.
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.84 Behavioral divergences from the pinned Mojo — burn to zero**
+- [ ] **3.83 Behavioral divergences from the pinned Mojo — burn to zero**
   *(standing)*
 
   Every new divergence lands here with a probe or a `cases.tsv`
@@ -2163,7 +2178,7 @@ last.
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.85 An `Int` condition is rejected**
+- [ ] **3.84 An `Int` condition is rejected**
 
   Problem: `if x:` over `x: Int` runs at the pin, and Mojito rejects it with
   "type mismatch for if condition: expected Bool, found Int".
@@ -2173,7 +2188,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.86 A pointer returned by a call reads its owner after the owner is
+- [ ] **3.85 A pointer returned by a call reads its owner after the owner is
   destroyed**
 
   Problem: `print(idp(p)[])` over `def idp[o: MutOrigin](v: Pointer[Int, o])
@@ -2189,7 +2204,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.87 A pointer held in a generic struct's parameter-typed field cannot
+- [ ] **3.86 A pointer held in a generic struct's parameter-typed field cannot
   be dereferenced in place**
 
   Problem: `print(h.item[])` or `print(h.get()[])` over `h =
@@ -2207,7 +2222,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.88 A scalar does not splat implicitly into a multi-lane vector**
+- [ ] **3.87 A scalar does not splat implicitly into a multi-lane vector**
 
   Problem: `var v: SIMD[DType.int32, 4] = Int32(9)` is rejected with a type
   mismatch; the pin splats it through the implicit
@@ -2222,7 +2237,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.89 An annotated `comptime` literal ignores its declared type**
+- [ ] **3.88 An annotated `comptime` literal ignores its declared type**
 
   Problem: `comptime ONE: Int32 = 1` binds `ONE` as an `Int`, so
   `ONE.dtype` prints `int` where the pin prints `int32`.
@@ -2235,7 +2250,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A chained comparison copies its operands and accepts a middle
+- [ ] **3.89 A chained comparison copies its operands and accepts a middle
   operand the pin cannot copy**
 
   Problem: `b == c < d` over a `Copyable` struct prints `copy` three times
@@ -2253,7 +2268,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.91 A struct built over arithmetic on `Self.n` inside a method fails
+- [ ] **3.90 A struct built over arithmetic on `Self.n` inside a method fails
   MIR verification**
 
   Problem: `Counter[1 + Self.length](self.i)` in a method of
@@ -2270,7 +2285,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.92 A nested `def` cannot read its enclosing function's value
+- [ ] **3.91 A nested `def` cannot read its enclosing function's value
   parameter**
 
   Problem: `n` read inside a nested `def inner[k: Int]()` of
@@ -2286,7 +2301,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.93 A mutable loan carried by a pointee type's origin does not
+- [ ] **3.92 A mutable loan carried by a pointee type's origin does not
   conflict with another argument's mutable borrow**
 
   Problem: Mojito compiles `p.unsafe_write(Span(xs))` where `p` has type
@@ -2304,7 +2319,7 @@ last.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **3.94 A `Tuple` of SIMD scalars has no comparisons**
+- [ ] **3.93 A `Tuple` of SIMD scalars has no comparisons**
 
   Problem: `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` rejects with
   "operator '<' is not defined for Tuple$t2[...]", where the pin prints
@@ -2320,7 +2335,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.95 A reference-returning call cannot be assigned through**
+- [ ] **3.94 A reference-returning call cannot be assigned through**
 
   Problem: `bump(k) = 9` and `bump(k) += 1`, for `def bump(ref a: Int) ->
   ref[origin_of(a)] Int`, stop at parse with "invalid assignment target",
@@ -2334,7 +2349,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 Two same-arity generic overloads of one method collide when a
+- [ ] **3.95 Two same-arity generic overloads of one method collide when a
   call specializes them alike**
 
   Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
@@ -2349,7 +2364,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A witness whose defaults differ from its requirement's is
+- [ ] **3.96 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2367,17 +2382,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A trait requirement's default other than a literal is
+- [ ] **3.97 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.97: a default bound at the call would lift it.
+  - Depends on 3.96: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A call leaving out a constructed default fails at run time**
+- [ ] **3.98 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2391,7 +2406,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 An instance ranks a generic struct's overload family again
+- [ ] **3.99 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2408,7 +2423,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A generic static's per-call clone takes a call to its
+- [ ] **3.100 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2420,7 +2435,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A generic static with its own binder cannot infer its struct's
+- [ ] **3.101 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2431,7 +2446,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 A variadic struct's index-keyed method not named
+- [ ] **3.102 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2444,6 +2459,31 @@ last.
   - Found while the index-keyed accessor joined the method grammar
     (2026-09-28).
   - Probe: `conformance/probes/pack_index_named_method.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.103 A SIMD value has no nullary construction**
+
+  Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
+  `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
+  element(s) or 1 to splat, got 0"; the pin prints zeros.
+  - `SIMD` conforms to `Defaultable` in the checker already, so a
+    `Defaultable` parameter bound to `Float32` passes the bound and then
+    fails at `T()`.
+  - `check_simd_args` demands one lane or one splat, and `try_simd_call`
+    has no zero to splat.
+  - The scalar built-ins (`Int()`, `UInt()`, `Float64()`, `Bool()`) are
+    supported.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.104 `String` is not `Defaultable`**
+
+  Problem: `Tuple[String, Int]()` stops with "no constructor overload
+  matches the supplied arguments", and `make[String]()` over
+  `T: Defaultable` fails the bound; the pin runs both.
+  - The bundled `String` declares no `Defaultable` conformance, though
+    `String()` constructs an empty string.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

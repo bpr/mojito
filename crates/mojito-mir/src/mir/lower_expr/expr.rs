@@ -297,6 +297,9 @@ impl Flatten<'_> {
                             .expect("checked synthesized fieldwise copy has one argument"),
                     );
                 }
+                if let Some(zero) = self.default_scalar_construction(e) {
+                    return zero;
+                }
                 if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                     param,
                 }) = self.checked_adjustments(e).into_iter().find(|adjustment| {

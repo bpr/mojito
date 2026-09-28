@@ -503,6 +503,47 @@ impl Flatten<'_> {
         dest
     }
 
+    /// A nullary scalar built-in construction (`Int()`, `UInt()`,
+    /// `Float64()`, `Bool()`) is its zero; `None` for any other expression.
+    /// `UInt` has no constant of its own, so its zero converts an `Int` one.
+    pub(in crate::mir) fn default_scalar_construction(&mut self, e: &Expr) -> Option<Reg> {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &e.kind
+        else {
+            return None;
+        };
+        if !(param_args.is_empty() && args.is_empty() && kwargs.is_empty()) {
+            return None;
+        }
+        let zero = match (name.as_str(), self.checked_ty(e)?) {
+            ("Int" | "UInt", Ty::Int | Ty::UInt) => Const::Int(0),
+            ("Float64", Ty::Float64) => Const::Float(0.0),
+            ("Bool", Ty::Bool) => Const::Bool(false),
+            _ => return None,
+        };
+        let value = self.constant(e, zero);
+        if name != "UInt" {
+            return Some(value);
+        }
+        let dest = self.fresh_typed(span(e), None, Ty::UInt);
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named("UInt"),
+            raises: None,
+            args: vec![value],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+        });
+        Some(dest)
+    }
+
     /// Emit a `Const` writing a fresh register.
     pub(in crate::mir) fn constant(&mut self, e: &Expr, k: Const) -> Reg {
         let constant_ty = match &k {

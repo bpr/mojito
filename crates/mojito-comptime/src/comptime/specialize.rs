@@ -1056,6 +1056,7 @@ impl Elab<'_> {
         // select/unroll against the concrete arguments.
         let elaborated = self.block(body, &mut env, true)?;
         let mut final_body = materialize_block(elaborated, &subs, &self.struct_names);
+        fold_pack_element_constructions(&mut final_body, &type_pack_values);
         for parameter in &mut specialized_params {
             if let Some(default) = &mut parameter.default {
                 *default = materialize_expression(default, &subs);

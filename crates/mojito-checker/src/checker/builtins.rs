@@ -938,6 +938,10 @@ impl Checker {
         target: Ty,
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
+        // The scalar built-ins are `Defaultable`: the nullary form is zero.
+        if args.is_empty() {
+            return Ok(target);
+        }
         if args.len() != 1 {
             return Err(TypeError::ArityMismatch {
                 name: target.to_string(),
