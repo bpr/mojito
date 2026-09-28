@@ -818,7 +818,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instantiation), the
   origin-slot guards (`ty_mentions_origin_slotted_struct` finds such type
   arguments, a pointer whose origin is a place
-  `PointerOrigin::clone_bindable_place` admits among them;
+  `PointerOrigin::clone_bindable_place` admits among them, whose
+  `CloneBinderProjection` the binder's pointer re-applies below the place
+  it binds (`PointerOrigin::without_projection` peels it at the call);
   `clone_binding` rebinds an instance's slots to the
   `CloneOriginBinders` a clone declares, named by
   `symbol::CLONE_ORIGIN_BINDER_PREFIX`, for a bundled template's instance

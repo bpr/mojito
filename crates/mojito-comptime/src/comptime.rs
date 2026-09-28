@@ -1744,27 +1744,48 @@ fn source_type_from_ty_with_origins(
             ],
         ),
         // A pointer spells only over a clone's own origin binder
-        // (`Elab::clone_binding`); a place origin has no source spelling.
+        // (`Elab::clone_binding`), re-applying the binder's interior and
+        // subtree projection; a place origin has no source spelling.
         Ty::Pointer {
             element,
             origin:
                 mojito_types::origin::PointerOrigin::Param {
                     id,
                     interior,
-                    subtree: false,
+                    subtree,
                     ..
                 },
-        } if interior.is_empty() && !origin_names.contains_key(id) => Type::Named(
-            "Pointer".to_string(),
-            vec![
-                ParamArg::Type(source_type_from_ty_with_origins(
-                    element,
-                    origin_names,
-                    materialized_callables,
-                )?),
-                ParamArg::Type(Type::Named(CloneOriginBinders::name(*id)?, Vec::new())),
-            ],
-        ),
+        } if !origin_names.contains_key(id) => {
+            let mut origin = Type::Named(CloneOriginBinders::name(*id)?, Vec::new());
+            for tag in interior {
+                origin = Type::IndexedProjection {
+                    base: Box::new(Type::Assoc {
+                        base: Box::new(origin),
+                        name: "_get_owned_interior".to_string(),
+                        args: Vec::new(),
+                    }),
+                    index: Box::new(Expr::new(ExprKind::Str(tag.clone()), (0, 0))),
+                };
+            }
+            if *subtree {
+                origin = Type::Assoc {
+                    base: Box::new(origin),
+                    name: "_subtree".to_string(),
+                    args: Vec::new(),
+                };
+            }
+            Type::Named(
+                "Pointer".to_string(),
+                vec![
+                    ParamArg::Type(source_type_from_ty_with_origins(
+                        element,
+                        origin_names,
+                        materialized_callables,
+                    )?),
+                    ParamArg::Type(origin),
+                ],
+            )
+        }
         Ty::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
@@ -1837,28 +1858,22 @@ impl Elab<'_> {
     fn bind_clone_origins(&self, ty: &Ty, binders: &mut CloneOriginBinders) -> Option<Ty> {
         if let Ty::Pointer { element, origin } = ty {
             let element = Box::new(self.bind_clone_origins(element, binders)?);
-            let Some(mutable) = origin.clone_bindable_place() else {
+            let Some(projection) = origin.clone_bindable_place() else {
                 return Some(Ty::Pointer {
                     element,
                     origin: origin.clone(),
                 });
             };
-            let fixed = Expr::new(ExprKind::Bool(mutable), mojito_common::token::DUMMY_SPAN);
+            let fixed = Expr::new(
+                ExprKind::Bool(projection.mutable),
+                mojito_common::token::DUMMY_SPAN,
+            );
             let mojito_types::origin::Origin::Param(id) = binders.fresh(Some(&fixed))? else {
                 return None;
             };
             return Some(Ty::Pointer {
                 element,
-                origin: mojito_types::origin::PointerOrigin::Param {
-                    id,
-                    mutability: if mutable {
-                        mojito_types::origin::Mutability::Mutable
-                    } else {
-                        mojito_types::origin::Mutability::Immutable
-                    },
-                    interior: Vec::new(),
-                    subtree: false,
-                },
+                origin: projection.binder_origin(id),
             });
         }
         let Ty::Struct(name, arguments) = ty else {

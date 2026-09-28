@@ -1316,14 +1316,13 @@ fn bind_callable_origin_tails(
 }
 
 /// `ty` with each pointer origin naming an explicitly bound binder of fixed
-/// mutability rebound to the place it binds (see
-/// [`bind_callable_origin_tails`]); a projected binder is left for coercion
-/// to check.
+/// mutability rebound to the place it binds, below which it re-applies its
+/// interior and subtree projection (see [`bind_callable_origin_tails`]).
 fn bind_pointer_origin_tails(
     ty: &Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> Ty {
-    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
+    use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
     let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
     match ty {
         Ty::Pointer { element, origin } => {
@@ -1332,11 +1331,18 @@ fn bind_pointer_origin_tails(
                     id,
                     mutability,
                     interior,
-                    subtree: false,
-                } if interior.is_empty() => match (tails.get(id), mutability) {
+                    subtree,
+                } => match (tails.get(id), mutability) {
                     (Some(Origin::Place(place)), Mutability::Mutable | Mutability::Immutable) => {
+                        let mut place = place.clone();
+                        place.path.extend(
+                            interior
+                                .iter()
+                                .map(|tag| OriginSeg::Interior(tag.clone()))
+                                .chain(subtree.then_some(OriginSeg::Subtree)),
+                        );
                         Some(PointerOrigin::Place {
-                            place: place.clone(),
+                            place,
                             mutable: *mutability == Mutability::Mutable,
                         })
                     }

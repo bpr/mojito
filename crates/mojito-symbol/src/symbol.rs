@@ -1932,15 +1932,8 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
             element: Box::new(respell(element)),
             origin: origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
-                |mutable| mojito_types::origin::PointerOrigin::Param {
-                    id: mojito_types::origin::OriginParamId(u32::MAX),
-                    mutability: if mutable {
-                        mojito_types::origin::Mutability::Mutable
-                    } else {
-                        mojito_types::origin::Mutability::Immutable
-                    },
-                    interior: Vec::new(),
-                    subtree: false,
+                |projection| {
+                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
         },

@@ -15,6 +15,35 @@ pub(super) fn fields_equivalent(a: &[(String, Ty)], b: &[(String, Ty)]) -> bool 
             .all(|((a_name, a_ty), (b_name, b_ty))| a_name == b_name && ty_equivalent(a_ty, b_ty))
 }
 
+/// Whether two template functions have one native shape: the same frame,
+/// the same block and instruction counts, and equivalent parameter, return,
+/// and register types (see [`ty_equivalent`]). Two clones of one method that
+/// differ only in pointer provenance compare equal.
+pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
+    let types_equivalent = |a: &[Ty], b: &[Ty]| {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equivalent(a, b))
+    };
+    a.n_regs == b.n_regs
+        && a.n_vars == b.n_vars
+        && a.n_params == b.n_params
+        && a.blocks.len() == b.blocks.len()
+        && a.blocks
+            .iter()
+            .zip(&b.blocks)
+            .all(|(a, b)| a.instrs.len() == b.instrs.len())
+        && types_equivalent(&a.param_types, &b.param_types)
+        && match (&a.ret_ty, &b.ret_ty) {
+            (Some(a), Some(b)) => ty_equivalent(a, b),
+            (a, b) => a == b,
+        }
+        && a.reg_types.len() == b.reg_types.len()
+        && a.reg_types.iter().all(|(register, a)| {
+            b.reg_types
+                .get(register)
+                .is_some_and(|b| ty_equivalent(a, b))
+        })
+}
+
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (Ty::Pointer { .. }, Ty::Pointer { .. }) => true,

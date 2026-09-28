@@ -1514,13 +1514,26 @@ impl fmt::Display for Ty {
                     }
                     crate::origin::PointerOrigin::Param {
                         id,
-                        mutability: crate::origin::Mutability::Immutable,
-                        ..
+                        mutability,
+                        interior,
+                        subtree,
                     } => {
-                        write!(f, ", ImmOrigin(origin#{})", id.0)?;
-                    }
-                    crate::origin::PointerOrigin::Param { id, .. } => {
-                        write!(f, ", origin#{}", id.0)?;
+                        let immutable = *mutability == crate::origin::Mutability::Immutable;
+                        write!(
+                            f,
+                            ", {}origin#{}",
+                            if immutable { "ImmOrigin(" } else { "" },
+                            id.0
+                        )?;
+                        for tag in interior {
+                            write!(f, "._get_owned_interior[{tag}]")?;
+                        }
+                        if *subtree {
+                            write!(f, "._subtree")?;
+                        }
+                        if immutable {
+                            write!(f, ")")?;
+                        }
                     }
                     crate::origin::PointerOrigin::SelfPlace { .. } => {
                         write!(f, ", origin_of(self)")?;

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Pointer` type argument over an interior-projected or subtree place
+  (an array's `unsafe_ptr()`, `Pointer[Int,
+  origin_of(a)._get_owned_interior["element"]]`) now bakes into its clone
+  with a clone origin binder that re-applies the projection, so every such
+  place shares one clone of a generic `def` or struct method
+  (`interior_pointer_type_argument_clones_with_projected_binder`). It used
+  to mint one clone per place. Natively, two such clones of one method that
+  differ only in pointer provenance share one instance.
 - A generic `def` call whose loan-carrying type argument names an enclosing
   origin binder (`unsafe_alloc[Span[Int, o]](n)` inside `def slots[o:
   MutOrigin]`, or inside a clone whose own binder stands for `o`) now

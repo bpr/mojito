@@ -1798,10 +1798,18 @@ impl Elab<'_> {
                 return None;
             }
             self.clone_binder_arguments(element, element_source, out)?;
-            if let mojito_types::origin::PointerOrigin::Param { id, .. } = origin
+            if let mojito_types::origin::PointerOrigin::Param {
+                id,
+                interior,
+                subtree,
+                ..
+            } = origin
                 && CloneOriginBinders::name(*id).is_some()
             {
-                out.push((u32::MAX - id.0, origin_argument_expression(origin_source)?));
+                out.push((
+                    u32::MAX - id.0,
+                    projected_origin_base(origin_source, interior, *subtree)?,
+                ));
             }
             return Some(());
         }
@@ -2292,4 +2300,52 @@ fn origin_argument_expression(spelled: &ParamArg) -> Option<Expr> {
         }
         _ => None,
     }
+}
+
+/// The origin a binder pointer's spelled origin argument binds its binder
+/// to: the argument with the binder's trailing `._subtree` and
+/// `._get_owned_interior["tag"]` projections peeled, in type-annotation or
+/// expression spelling (`origin_of(x)._get_owned_interior["element"]`
+/// binds `origin_of(x)`).
+fn projected_origin_base(spelled: &ParamArg, interior: &[String], subtree: bool) -> Option<Expr> {
+    let mut spelled = spelled.clone();
+    if subtree {
+        spelled = match spelled {
+            ParamArg::Type(Type::Assoc { base, name, args })
+                if name == "_subtree" && args.is_empty() =>
+            {
+                ParamArg::Type(*base)
+            }
+            ParamArg::Value(Expr {
+                kind: ExprKind::Member { object, field },
+                ..
+            }) if field == "_subtree" => ParamArg::Value(*object),
+            _ => return None,
+        };
+    }
+    for tag in interior.iter().rev() {
+        spelled = match spelled {
+            ParamArg::Type(Type::IndexedProjection { base, index }) => match (*base, &index.kind) {
+                (Type::Assoc { base, name, args }, ExprKind::Str(spelled_tag))
+                    if name == "_get_owned_interior" && args.is_empty() && spelled_tag == tag =>
+                {
+                    ParamArg::Type(*base)
+                }
+                _ => return None,
+            },
+            ParamArg::Value(Expr {
+                kind: ExprKind::Index { object, index },
+                ..
+            }) => match (object.kind, &index.kind) {
+                (ExprKind::Member { object, field }, ExprKind::Str(spelled_tag))
+                    if field == "_get_owned_interior" && spelled_tag == tag =>
+                {
+                    ParamArg::Value(*object)
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+    }
+    origin_argument_expression(&spelled)
 }

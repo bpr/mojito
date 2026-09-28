@@ -632,7 +632,9 @@ fn bind_callable_tail_pattern(
         }
         // A pointer nested in a type argument (`Layout[Pointer[Int, o]]`)
         // binds its binder from the actual's provenance; a projected binder
-        // is checked by coercion, not bound.
+        // (`o._get_owned_interior["element"]`) binds the provenance below
+        // the projection, and one the actual does not end in is checked by
+        // coercion, not bound.
         (
             Ty::Pointer {
                 element: pattern_element,
@@ -646,12 +648,12 @@ fn bind_callable_tail_pattern(
             if let PointerOrigin::Param {
                 id,
                 interior,
-                subtree: false,
+                subtree,
                 ..
             } = declared
-                && interior.is_empty()
+                && let Some(base) = provenance.without_projection(interior, *subtree)
             {
-                bindings.bind_pointer(*id, provenance, conflict)?;
+                bindings.bind_pointer(*id, &base, conflict)?;
             }
             bind_callable_tail_pattern(pattern_element, element, bindings, conflict)
         }

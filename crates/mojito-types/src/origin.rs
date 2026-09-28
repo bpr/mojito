@@ -281,6 +281,34 @@ pub enum Mutability {
 /// mutable untracked origin (`MutUntrackedOrigin`, the origin of heap
 /// allocations); all spellings remain explicit through checked HIR/MIR and are
 /// erased only by the VM value representation.
+/// The pointer projection a clone origin binder re-applies when it stands
+/// for a caller place ([`PointerOrigin::clone_bindable_place`]): the place's
+/// mutability, then the interior-generation tags and terminal `._subtree`
+/// below the base place the binder binds.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CloneBinderProjection {
+    pub mutable: bool,
+    pub interior: Vec<String>,
+    pub subtree: bool,
+}
+
+impl CloneBinderProjection {
+    /// The binder pointer's provenance: `id` at this mutability and
+    /// projection.
+    pub fn binder_origin(&self, id: OriginParamId) -> PointerOrigin {
+        PointerOrigin::Param {
+            id,
+            mutability: if self.mutable {
+                Mutability::Mutable
+            } else {
+                Mutability::Immutable
+            },
+            interior: self.interior.clone(),
+            subtree: self.subtree,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PointerOrigin {
     Place {
@@ -326,19 +354,69 @@ pub enum PointerOrigin {
 }
 
 impl PointerOrigin {
-    /// The mutability of a provenance naming a caller place that a
-    /// generated clone's origin binder can stand for: a place without
-    /// interior-generation or subtree segments, whose domain a bare binder
-    /// would lose. Such a place never keys a clone's identity.
-    pub fn clone_bindable_place(&self) -> Option<bool> {
+    /// The clone origin binder a provenance naming a caller place can be
+    /// baked to: a place reached through fields, then any interior-generation
+    /// tags and an optional terminal `._subtree`, which the binder's pointer
+    /// re-applies below the base place it stands for. A place with a field
+    /// below an interior segment has no such binder. Such a place never keys
+    /// a clone's identity.
+    pub fn clone_bindable_place(&self) -> Option<CloneBinderProjection> {
         let Self::Place { place, mutable } = self else {
             return None;
         };
-        place
-            .path
+        let subtree = matches!(place.path.last(), Some(OriginSeg::Subtree));
+        let projected = &place.path[..place.path.len() - usize::from(subtree)];
+        let base = projected
             .iter()
-            .all(|segment| matches!(segment, OriginSeg::Field(_) | OriginSeg::AnyIndex))
-            .then_some(*mutable)
+            .take_while(|segment| matches!(segment, OriginSeg::Field(_) | OriginSeg::AnyIndex))
+            .count();
+        let interior = projected[base..]
+            .iter()
+            .map(|segment| match segment {
+                OriginSeg::Interior(tag) => Some(tag.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(CloneBinderProjection {
+            mutable: *mutable,
+            interior,
+            subtree,
+        })
+    }
+
+    /// The provenance a binder pointer projected by `interior` and
+    /// `subtree` binds its binder to when it matches `self`: `self` with
+    /// that trailing projection removed, or `None` when `self` does not end
+    /// in it.
+    pub fn without_projection(&self, interior: &[String], subtree: bool) -> Option<Self> {
+        match self {
+            Self::Place { place, mutable } => {
+                let tail = interior
+                    .iter()
+                    .map(|tag| OriginSeg::Interior(tag.clone()))
+                    .chain(subtree.then_some(OriginSeg::Subtree))
+                    .collect::<Vec<_>>();
+                place.path.ends_with(&tail).then(|| Self::Place {
+                    place: OriginPlace {
+                        root: place.root,
+                        path: place.path[..place.path.len() - tail.len()].to_vec(),
+                    },
+                    mutable: *mutable,
+                })
+            }
+            Self::Param {
+                id,
+                mutability,
+                interior: own,
+                subtree: own_subtree,
+            } if *own_subtree == subtree && own.ends_with(interior) => Some(Self::Param {
+                id: *id,
+                mutability: *mutability,
+                interior: own[..own.len() - interior.len()].to_vec(),
+                subtree: false,
+            }),
+            _ => (interior.is_empty() && !subtree).then(|| self.clone()),
+        }
     }
 
     /// The loan-tracked [`Origin`] a pointer provenance corresponds to, when it
@@ -810,6 +888,34 @@ mod tests {
         assert!(!place(1, std::slice::from_ref(&field_a)).overlaps(&place(1, &[field_b])));
         assert!(place(1, &[OriginSeg::AnyIndex]).overlaps(&place(1, &[field_a])));
         assert!(!place(1, &[]).overlaps(&place(2, &[])));
+    }
+
+    #[test]
+    fn clone_binder_re_applies_an_interior_or_subtree_projection() {
+        let pointer = |path: &[OriginSeg]| PointerOrigin::Place {
+            place: OriginPlace {
+                root: OwnerId(1),
+                path: path.to_vec(),
+            },
+            mutable: true,
+        };
+        let field = OriginSeg::Field("items".into());
+        let element = OriginSeg::Interior("element".into());
+        let projected = pointer(&[field.clone(), element.clone(), OriginSeg::Subtree]);
+        let projection = projected.clone_bindable_place().expect("bindable");
+        assert_eq!(projection.interior, ["element"]);
+        assert!(projection.subtree);
+        assert_eq!(
+            projected.without_projection(&projection.interior, projection.subtree),
+            Some(pointer(std::slice::from_ref(&field)))
+        );
+        assert_eq!(projected.without_projection(&[], false), Some(projected));
+        assert!(
+            pointer(&[element.clone()])
+                .without_projection(&[], true)
+                .is_none()
+        );
+        assert!(pointer(&[element, field]).clone_bindable_place().is_none());
     }
 
     #[test]

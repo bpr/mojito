@@ -236,6 +236,26 @@ impl<'a> Specializer<'a> {
             } else {
                 mojito_symbol::symbol::instance_symbol(template, &key.arguments)
             };
+        // Two clones of one method whose owner instance and arguments agree
+        // differ only in pointer provenance (a clone origin binder with and
+        // without an interior projection), which erases natively: the second
+        // is the instance the first already names.
+        if self.instances.iter().any(|(known, n)| {
+            n == &name
+                && known.owner.is_some()
+                && known.owner == key.owner
+                && known.arguments == key.arguments
+                && self
+                    .functions
+                    .get(known.template.as_str())
+                    .zip(self.functions.get(template))
+                    .is_some_and(|(known, template)| functions_equivalent(known, template))
+        }) {
+            if !speculative {
+                self.speculative.remove(&name);
+            }
+            return Ok(name);
+        }
         if (name != template && self.functions.contains_key(name.as_str()))
             || self.instances.iter().any(|(_, n)| n == &name)
         {

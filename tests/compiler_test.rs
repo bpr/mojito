@@ -4430,6 +4430,42 @@ fn pointer_type_argument_clones_with_origin_binder() {
 }
 
 #[test]
+fn interior_pointer_type_argument_clones_with_projected_binder() {
+    // A `Pointer` type argument over an interior-projected place bakes into
+    // its clone with a clone origin binder that re-applies the projection:
+    // both arrays share one clone of each `def` and struct-instance method,
+    // apart from the plain place's clone, and no clone names a place.
+    let compiler = Compiler::default();
+    let compiled = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/pointer_type_argument_interior_clone_binder.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&compiled).expect("execute").output,
+        "3 4 5 4\n30 50\n"
+    );
+    let defs: Vec<&str> = compiled
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for clone in [
+        "first$y60:Pointer[Int, origin#4294967295._get_owned_interior[element]]",
+        "first$y31:Pointer[Int, origin#4294967295]",
+    ] {
+        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
+    }
+    assert!(
+        defs.iter().all(|name| !name.contains("origin@")),
+        "no clone names a place: {defs:?}"
+    );
+}
+
+#[test]
 fn receiver_origin_iterator_argument_clones() {
     // An iterator recorded with its method's receiver origin
     // (`l.__iter__()` over a loan-carrying list) binds that slot to a clone
