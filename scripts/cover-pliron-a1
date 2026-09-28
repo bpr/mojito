@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Run the A1 shadow once per input and tally what it refuses.
+
+    scripts/cover-pliron-a1 --bin PATH --inputs FILE --out DIRECTORY [--jobs N]
+
+One `--mode shadow --phase compile` process per row of a frozen input list
+(`scripts/gen-pliron-a1-inputs`). Writes `coverage.tsv` (one row per input:
+status, counts, sizes, and the diagnostic) and `refusals.tsv` (every refusal
+class with the number of inputs holding it and its occurrences), and keeps
+each metrics row under `metrics/`.
+
+This is coverage only: nothing here is a timing. Exits nonzero while any
+input is refused. See docs/notes/pliron-a1.md.
+"""
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+COUNTED = re.compile(r"^(.*) x(\d+)$")
+CLASS = re.compile(
+    r", (?=(?:struct|declaration|type|form|call|callee|method|place|subscript|constant): )")
+
+
+def cover(binary, source, metrics, timeout):
+    try:
+        done = subprocess.run(
+            [binary, "--input", source, "--mode", "shadow", "--phase", "compile",
+             "--metrics", str(metrics)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": f"no result in {timeout} s"}
+    try:
+        row = json.loads(metrics.read_text())
+    except (OSError, ValueError):
+        row = {"status": "error"}
+    if done.returncode != 0 and row.get("status") != "error":
+        row = {"status": "error"}
+    if row["status"] == "error" and "error" not in row:
+        tail = done.stderr.decode(errors="replace").strip().splitlines()
+        row["error"] = f"exit {done.returncode}: " + " | ".join(tail[-3:])
+    return row
+
+
+def refusals(diagnostic):
+    """The counted refusals a diagnostic ends with, as (class, count)."""
+    _, found, listed = diagnostic.partition("; refusals: ")
+    if not found or not listed:
+        return []
+    out = []
+    # A refusal's own text may hold a comma: split before a class only.
+    for item in CLASS.split(listed):
+        counted = COUNTED.match(item)
+        if counted:
+            out.append((counted.group(1), int(counted.group(2))))
+    return out
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--bin", required=True)
+    parser.add_argument("--inputs", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--timeout", type=int, default=600)
+    arguments = parser.parse_args()
+
+    out = Path(arguments.out)
+    (out / "metrics").mkdir(parents=True, exist_ok=True)
+    inputs = []
+    for line in Path(arguments.inputs).read_text().splitlines():
+        if not line or line.startswith("#") or line.startswith("path\t"):
+            continue
+        path, recorded = line.split("\t")[:2]
+        actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        if actual != recorded:
+            sys.exit(f"{path}: sha256 {actual} is not the frozen {recorded}")
+        inputs.append(path)
+    if not inputs:
+        sys.exit(f"{arguments.inputs}: no inputs")
+
+    def one(numbered):
+        index, source = numbered
+        return cover(arguments.bin, source, out / "metrics" / f"{index:04d}.jsonl",
+                     arguments.timeout)
+
+    with ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
+        rows = list(pool.map(one, enumerate(inputs)))
+
+    holders = Counter()
+    occurrences = Counter()
+    unclassified = 0
+    with open(out / "coverage.tsv", "w") as coverage:
+        coverage.write(
+            "input\tstatus\tfunctions\toperations\tv1_bytes\tcore_bytes\tdiagnostic\n")
+        for source, row in zip(inputs, rows):
+            if row["status"] == "ok":
+                counts = row["counts"]
+                coverage.write(
+                    f"{source}\tok\t{counts['functions']}\t{counts['operations']}\t"
+                    f"{row['v1_bytes']}\t{row['core_bytes']}\t-\n")
+                continue
+            diagnostic = " ".join(row["error"].split())
+            coverage.write(f"{source}\terror\t-\t-\t-\t-\t{diagnostic}\n")
+            found = refusals(diagnostic)
+            unclassified += not found
+            for what, count in found:
+                holders[what] += 1
+                occurrences[what] += count
+
+    with open(out / "refusals.tsv", "w") as census:
+        census.write("refusal\tinputs\toccurrences\n")
+        for what, held in sorted(holders.items(), key=lambda item: (-item[1], item[0])):
+            census.write(f"{what}\t{held}\t{occurrences[what]}\n")
+
+    converted = sum(row["status"] == "ok" for row in rows)
+    print(f"{converted} of {len(inputs)} inputs convert")
+    print(f"{len(inputs) - converted} refused, {unclassified} of them with no counted refusal")
+    print(f"{len(holders)} refusal classes: {out / 'refusals.tsv'}")
+    if converted != len(inputs):
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
