@@ -159,7 +159,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         }
         // A value **parameter** argument (`Box[CAP](…)`, `UnsafePointer[CAP]`) may
         // reference a comptime constant, so rewrite the `Value` param args too.
-        ExprKind::TypeApply { args, .. } => rewrite_param_args(args, subs),
+        ExprKind::TypeApply { args, .. } => rewrite_spelled_param_args(args, subs, e.syntax_id),
         ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) => rewrite_expr(inner, subs),
         ExprKind::Infix(_, l, r) => {
             rewrite_expr(l, subs);
@@ -189,7 +189,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     // A bound vector type is concrete (the elaborator binds
                     // no symbolic slot), so a symbolic one is left as it is.
                     Ty::Simd { dtype, width } => {
-                        if let (Some(dtype), Some(width)) = (
+                        if let (Some(mut dtype), Some(mut width)) = (
                             dtype
                                 .known()
                                 .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span)),
@@ -197,6 +197,13 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                                 .known()
                                 .and_then(|width| CtValue::Int(width).materialize(e.span)),
                         ) {
+                            // The expansion's operands are named by the
+                            // spelled call, so every clone of one template
+                            // traces them to the same occurrences.
+                            dtype.syntax_id =
+                                mojito_common::token::SyntaxId::derived(e.syntax_id, 0);
+                            width.syntax_id =
+                                mojito_common::token::SyntaxId::derived(e.syntax_id, 1);
                             *name = "SIMD".to_string();
                             *param_args = vec![ParamArg::Value(dtype), ParamArg::Value(width)];
                         }
@@ -204,7 +211,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     _ => {}
                 }
             }
-            rewrite_param_args(param_args, subs);
+            rewrite_spelled_param_args(param_args, subs, e.syntax_id);
             rewrite_exprs(args, subs);
             for k in kwargs {
                 rewrite_expr(&mut k.value, subs);
@@ -332,7 +339,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
             kwargs,
         } => {
             rewrite_expr(callee, subs);
-            rewrite_param_args(param_args, subs);
+            rewrite_spelled_param_args(param_args, subs, e.syntax_id);
             rewrite_exprs(args, subs);
             for argument in kwargs {
                 rewrite_expr(&mut argument.value, subs);
@@ -1583,6 +1590,72 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
     }
 }
 
+/// Rewrite the parameter arguments of the expression `parent`. A type an
+/// alias or binder expands to (`c_int` spelling `SIMD[DType.int32, 1]`)
+/// brings expression nodes of its own; each takes an identity derived from
+/// `parent`, so every clone of one template names them alike. Ordinals 0
+/// and 1 are a vector alias call's dtype and width.
+fn rewrite_spelled_param_args(
+    args: &mut [mojito_ast::ast::ParamArg],
+    subs: Subs,
+    parent: mojito_common::token::SyntaxId,
+) {
+    let mut spelled = Spelled::default();
+    for argument in args.iter() {
+        mojito_ast::visit::walk_param_arg(&mut spelled, argument);
+    }
+    rewrite_param_args(args, subs);
+    let mut synthesized = spelled.synthesized(parent, 2);
+    for argument in args.iter_mut() {
+        mojito_ast::visit::walk_param_arg_mut(&mut synthesized, argument);
+    }
+}
+
+/// Rewrite the annotation of the statement `parent`, naming its expansion's
+/// nodes as [`rewrite_spelled_param_args`] does.
+fn rewrite_spelled_type(ty: &mut Type, subs: Subs, parent: mojito_common::token::SyntaxId) {
+    let mut spelled = Spelled::default();
+    mojito_ast::visit::walk_type(&mut spelled, ty);
+    rewrite_type(ty, subs);
+    mojito_ast::visit::walk_type_mut(&mut spelled.synthesized(parent, 0), ty);
+}
+
+/// The expression identities spelled in a node before its rewrite.
+#[derive(Default)]
+struct Spelled(HashSet<mojito_common::token::SyntaxId>);
+
+impl Spelled {
+    fn synthesized(self, parent: mojito_common::token::SyntaxId, next: u32) -> Synthesized {
+        Synthesized {
+            spelled: self.0,
+            parent,
+            next,
+        }
+    }
+}
+
+impl mojito_ast::visit::Visitor for Spelled {
+    fn visit_expr(&mut self, expr: &Expr) {
+        self.0.insert(expr.syntax_id);
+    }
+}
+
+/// Names each expression a rewrite introduced by its ordinal under `parent`.
+struct Synthesized {
+    spelled: HashSet<mojito_common::token::SyntaxId>,
+    parent: mojito_common::token::SyntaxId,
+    next: u32,
+}
+
+impl mojito_ast::visit::MutVisitor for Synthesized {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if !self.spelled.contains(&expr.syntax_id) {
+            expr.syntax_id = mojito_common::token::SyntaxId::derived(self.parent, self.next);
+            self.next += 1;
+        }
+    }
+}
+
 fn rewrite_type_parameter(parameter: &mut TypeParam, subs: Subs) {
     if let Some(value_type) = &mut parameter.value_type {
         rewrite_type(value_type, subs);
@@ -1629,7 +1702,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
         // parameters (`var x: Scalar[dt] = 2.5`), like a signature's.
         StmtKind::VarDecl { ty, value, .. } => {
             if let Some(ty) = ty {
-                rewrite_type(ty, subs);
+                rewrite_spelled_type(ty, subs, s.syntax_id);
             }
             rewrite_expr(value, subs);
         }

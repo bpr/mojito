@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `def` spelling a type alias in its body
+  (`external_call["close", c_int](c_int(fd))`, `var status: c_int`) now
+  reuses the template's checked facts: the alias's expansion takes the same
+  identities in every clone (`assets/ok/template_def_type_alias.mojo`). Such
+  bodies used to be checked again per instance.
 - A generic struct's static with an availability condition, a `mut` or
   `ref` parameter, a read-only variadic pack, or binders of its own
   (`Pair[Self.T].swap(a, b)`, `Pair[Self.T].show(5)` beside

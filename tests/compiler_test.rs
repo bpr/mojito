@@ -3223,6 +3223,34 @@ fn template_def_slice_stringify_derives() {
 }
 
 #[test]
+fn template_def_type_alias_derives() {
+    // `c_int = Int32` spelled in an `external_call` result type, a
+    // construction, and a local's annotation expands with the same
+    // identities in every clone.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_type_alias.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        assert!(
+            served.iter().any(|name| name.starts_with("closed_status$")),
+            "closed_status derives: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "-1\n-1\n"
+        );
+    }
+}
+
+#[test]
 fn template_method_explicit_destroy_call_derives() {
     // A consuming call on a `^` transfer: a named `deinit self` destructor on
     // a local or on a field of a consumed `self`, a `var self` method, and a

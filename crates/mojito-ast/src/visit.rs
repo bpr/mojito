@@ -1053,15 +1053,18 @@ pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
     }
 }
 
+/// Walk one parameter argument's expressions and types in place.
+pub fn walk_param_arg_mut<V: MutVisitor>(visitor: &mut V, argument: &mut ParamArg) {
+    match argument {
+        ParamArg::Type(ty) => walk_type_mut(visitor, ty),
+        ParamArg::Value(value) => walk_expr_mut(visitor, value),
+        ParamArg::Named { value, .. } => walk_param_arg_mut(visitor, value),
+    }
+}
+
 fn walk_param_args_mut<V: MutVisitor>(visitor: &mut V, args: &mut [ParamArg]) {
     for arg in args {
-        match arg {
-            ParamArg::Type(ty) => walk_type_mut(visitor, ty),
-            ParamArg::Value(value) => walk_expr_mut(visitor, value),
-            ParamArg::Named { value, .. } => {
-                walk_param_args_mut(visitor, std::slice::from_mut(value));
-            }
-        }
+        walk_param_arg_mut(visitor, arg);
     }
 }
 
