@@ -1972,6 +1972,7 @@ impl Checker {
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
+        let pack_accessors = self.realize_pack_accessors(&mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -2011,26 +2012,7 @@ impl Checker {
         if !self.copied_places_hold(&facts, occurrences) {
             return Err("a copied place is not implicitly copyable for the instance");
         }
-        // `infer_method_call`'s demand on a place a consuming call copies,
-        // at the instance's type.
-        let copied_receivers = facts
-            .implicitly_copied_consuming_receivers
-            .iter()
-            .all(|call| {
-                occurrences
-                    .iter()
-                    .find(|occurrence| occurrence.id == *call)
-                    .and_then(|occurrence| occurrence.method_call.as_ref())
-                    .and_then(|(receiver, _)| {
-                        let receiver = OccurrenceId {
-                            syntax: *receiver,
-                            copy: call.copy,
-                        };
-                        fact_at(&facts.expression_types, receiver)
-                    })
-                    .is_some_and(|ty| self.is_implicitly_copyable(ty))
-            });
-        if !copied_receivers {
+        if !self.copied_receivers_hold(&facts, occurrences) {
             return Err("a copied consuming receiver is not implicitly copyable for the instance");
         }
         // A call-through residue is republished verbatim on the same ground:
@@ -2174,6 +2156,7 @@ impl Checker {
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
         facts.struct_applications =
             self.instance_struct_applications(template, instance, &substitute);
+        realize_pack_accessor_applications(&mut facts, occurrences, &pack_accessors);
         // A call through a bound is realized first: a built-in instance
         // drops it from the calls, and a struct instance gives it a nominal
         // target the closed-call recipe then leaves as it stands.
@@ -2204,7 +2187,7 @@ impl Checker {
             }
             self.realize_method_call(&mut facts, index, occurrences, substitution, &substitute)?;
         }
-        self.realize_tuple_elements(&mut facts, occurrences)?;
+        self.realize_tuple_elements(&mut facts, occurrences, &pack_accessors)?;
         self.realize_static_overloads(&mut facts, occurrences, substitution)?;
         // A construction selected its constructor from the arguments' types
         // and named the instance's clone of it, where one exists.
@@ -2340,6 +2323,28 @@ impl Checker {
                 )
             })
             .collect()
+    }
+
+    /// `infer_method_call`'s demand on a place a consuming call copies, at
+    /// the instance's type.
+    fn copied_receivers_hold(&self, facts: &CheckedBodyFacts, occurrences: &[Occurrence]) -> bool {
+        facts
+            .implicitly_copied_consuming_receivers
+            .iter()
+            .all(|call| {
+                occurrences
+                    .iter()
+                    .find(|occurrence| occurrence.id == *call)
+                    .and_then(|occurrence| occurrence.method_call.as_ref())
+                    .and_then(|(receiver, _)| {
+                        let receiver = OccurrenceId {
+                            syntax: *receiver,
+                            copy: call.copy,
+                        };
+                        fact_at(&facts.expression_types, receiver)
+                    })
+                    .is_some_and(|ty| self.is_implicitly_copyable(ty))
+            })
     }
 
     /// `check_consuming`'s demand on each copied place, at the instance's
@@ -2524,9 +2529,13 @@ impl Checker {
         &self,
         facts: &mut CheckedBodyFacts,
         occurrences: &[Occurrence],
+        pack_accessors: &[OccurrenceId],
     ) -> Result<(), &'static str> {
         let mut realized = false;
-        for occurrence in occurrences {
+        for occurrence in occurrences
+            .iter()
+            .filter(|occurrence| !pack_accessors.contains(&occurrence.id))
+        {
             let (Some((receiver, method)), Some((_, position))) =
                 (&occurrence.method_call, occurrence.folded_index)
             else {
@@ -2639,6 +2648,94 @@ impl Checker {
             facts.copyable_reference_result_reads.sort_by_key(position);
         }
         Ok(())
+    }
+
+    /// Realize each pack accessor (`BodyShape::pack_accessor`) on the
+    /// instance's own Tuple: the template's `Tuple.__getitem_param__[i]`
+    /// request becomes the generated accessor for the position the
+    /// elaborator folded `i` to (`__getitem_param__$k`), a reference call
+    /// that declares no parameters and requests no clone. The reference's
+    /// origin is the template's, on the same field. Returns the accessors
+    /// realized, which the tuple element recipe leaves alone.
+    fn realize_pack_accessors(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+    ) -> Result<Vec<OccurrenceId>, &'static str> {
+        let requests: Vec<OccurrenceId> = facts
+            .method_instantiations
+            .iter()
+            .filter(|(_, request)| {
+                request.owner == mojito_types::types::TUPLE_TYPE_NAME
+                    && request.method == TUPLE_ELEMENT_ACCESSOR
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for &id in &requests {
+            let occurrence = occurrences
+                .iter()
+                .find(|occurrence| occurrence.id == id)
+                .ok_or("a pack accessor is not an occurrence of the instance")?;
+            let (Some((receiver, _)), Some((_, position))) =
+                (&occurrence.method_call, occurrence.folded_index)
+            else {
+                return Err("a pack accessor's index is not folded in the instance");
+            };
+            let receiver = OccurrenceId {
+                syntax: *receiver,
+                copy: id.copy,
+            };
+            let Some(tuple @ Ty::Struct(owner, _)) = fact_at(&facts.expression_types, receiver)
+            else {
+                return Err("a pack accessor's storage is not a nominal struct");
+            };
+            let accessor = format!("{TUPLE_ELEMENT_ACCESSOR}${position}");
+            let element = mojito_types::types::tuple_elements(tuple)
+                .and_then(|elements| {
+                    usize::try_from(position)
+                        .ok()
+                        .and_then(|position| elements.get(position).map(|ty| (*ty).clone()))
+                })
+                .ok_or("a pack accessor's position is outside the tuple")?;
+            if matches!(element, Ty::Ref(_)) {
+                return Err("a pack accessor's element holds a reference");
+            }
+            if !self
+                .structs
+                .get(owner)
+                .is_some_and(|info| info.methods.contains_key(&accessor))
+            {
+                return Err("a pack accessor's Tuple declares no accessor for its position");
+            }
+            let target = format!("{owner}.{accessor}");
+            facts.method_instantiations.retain(|(site, _)| *site != id);
+            facts
+                .parameterized_method_calls
+                .retain(|(site, _)| *site != id);
+            let call = facts
+                .selected_calls
+                .iter_mut()
+                .find(|(site, _)| *site == id)
+                .map(|(_, call)| call)
+                .ok_or("a pack accessor lost its contract")?;
+            let selected = std::mem::replace(&mut call.contract.target, target.clone());
+            call.contract.parameter_arguments.clear();
+            call.contract.param_decls.clear();
+            call.contract.result_ty = element.clone();
+            if let Some(reference) = &mut call.reference_result {
+                reference.referent = element.clone();
+            }
+            if let Some((_, reference)) = facts
+                .reference_results
+                .iter_mut()
+                .find(|(site, _)| *site == id)
+            {
+                reference.referent = element;
+            }
+            upsert(&mut facts.overload_targets, id, target.clone());
+            note_realized_callee(facts, &selected, &target);
+        }
+        Ok(requests)
     }
 
     /// Realize the value getter each element store through a setter embeds,
@@ -8295,6 +8392,57 @@ fn closed_differences(signatures: &[super::MethodSig]) -> bool {
     })
 }
 
+/// The applications a pack accessor's call reaches in the instance: the
+/// template's `Tuple[*Ts]` receiver is the generated Tuple the instance's
+/// field holds, recorded only from a source that records applications at
+/// all, as a tuple element's is (`realize_tuple_elements`).
+fn realize_pack_accessor_applications(
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+    pack_accessors: &[OccurrenceId],
+) {
+    if pack_accessors.is_empty() {
+        return;
+    }
+    facts.struct_applications.retain(|(name, arguments)| {
+        name != mojito_types::types::TUPLE_TYPE_NAME
+            || !arguments.iter().all(|argument| {
+                matches!(argument, mojito_types::types::TyArg::Ty(Ty::RuntimePack(_)))
+            })
+    });
+    for occurrence in occurrences
+        .iter()
+        .filter(|occurrence| pack_accessors.contains(&occurrence.id))
+    {
+        let source = occurrence.span.source.as_deref();
+        let receiver = occurrence
+            .method_call
+            .as_ref()
+            .map(|(receiver, _)| OccurrenceId {
+                syntax: *receiver,
+                copy: occurrence.id.copy,
+            });
+        if let Some(Ty::Struct(owner, arguments)) =
+            receiver.and_then(|receiver| fact_at(&facts.expression_types, receiver))
+            && source.is_some()
+            && !super::overload_support::is_bundled_module_source(source)
+        {
+            let application = (owner.clone(), arguments.clone());
+            facts.struct_applications.push(application);
+        }
+    }
+}
+
+/// Whether `result` is the bounded view binder standing for the dependent
+/// pack element `element` (`$view:Ts[i]`), which a call through the
+/// element's bound yields.
+fn views_element(result: &Ty, element: &Ty) -> bool {
+    matches!((result, element), (Ty::Param { binder, .. }, Ty::Dependent(dependent))
+    if binder.id.owner.strip_prefix("$view:").is_some_and(|name| {
+        name.ends_with(&dependent.expr().to_string())
+    }))
+}
+
 /// Set the entry a table holds at `id`, or add one.
 fn upsert<T>(table: &mut Vec<(OccurrenceId, T)>, id: OccurrenceId, value: T) {
     match table.iter_mut().find(|(site, _)| *site == id) {
@@ -9596,6 +9744,7 @@ impl BodyShape<'_> {
             || self.receiver_field(value)
             || self.slot(value)
             || self.reference_call(value)
+            || self.pack_accessor(value)
             || self.reference_member(value)
             || self.pack_element(value))
             && self
@@ -9652,6 +9801,72 @@ impl BodyShape<'_> {
             self.references.borrow_mut().push(self.occurrence(expr));
         }
         admitted && self.holds(MethodFeatures::REFERENCE_CALLS)
+    }
+
+    /// `self.storage[i]`: the element of a pack struct's `Tuple[*Ts]` field
+    /// at the method's own `Int` binder, in a variadic struct's
+    /// index-keyed accessor (`def __getitem__[i: Int](self) -> Self.Ts[i]`).
+    ///
+    /// The template selected `Tuple.__getitem_param__[i]` as a reference
+    /// call yielding the dependent `Ts[i]` and requested its per-call clone
+    /// keyed by the binder. Each unrolled instance folds the binder to its
+    /// position, where the check selects the generated Tuple's accessor for
+    /// that position instead (`__getitem_param__$k`), a reference call on
+    /// the same field ([`Checker::realize_pack_accessors`]). It is admitted
+    /// where a reference call is: returned as the method's reference result,
+    /// or the receiver of a call through the element's bound.
+    fn pack_accessor(&self, expr: &Expr) -> bool {
+        let ExprKind::Index { object, index } = &expr.kind else {
+            return false;
+        };
+        let admitted = !self.keyed
+            && self.pack_struct.is_some()
+            && self.receiver_field(object)
+            && self.folded_value(index)
+            && self.facts.is_none_or(|facts| {
+                let id = self.occurrence(expr);
+                let storage = fact_at(&facts.expression_types, self.occurrence(object))
+                    .is_some_and(|ty| {
+                        matches!(ty, Ty::Struct(name, arguments)
+                        if name == mojito_types::types::TUPLE_TYPE_NAME
+                            && mojito_types::types::pack_spread_argument(arguments).is_some())
+                    });
+                let requested = fact_at(&facts.method_instantiations, id).is_some_and(|request| {
+                    request.owner == mojito_types::types::TUPLE_TYPE_NAME
+                        && request.method == TUPLE_ELEMENT_ACCESSOR
+                        && request.owner_arguments.is_empty()
+                        && request.arguments.len() == 1
+                });
+                let element = fact_at(&facts.reference_results, id).is_some_and(|reference| {
+                    matches!(&reference.referent, Ty::Dependent(dependent)
+                    if dependent.pack_element().is_some_and(|(_, index)| {
+                        matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
+                    }))
+                });
+                let contract = fact_at(&facts.selected_calls, id).is_some_and(|call| {
+                    call.contract.target
+                        == format!(
+                            "{}.{TUPLE_ELEMENT_ACCESSOR}",
+                            mojito_types::types::TUPLE_TYPE_NAME
+                        )
+                        && call.contract.receiver_requires_place
+                        && call.contract.raises.is_none()
+                        && call.contract.arguments.is_empty()
+                        && call.contract.captures.is_empty()
+                        && call.invalidations.is_empty()
+                });
+                storage
+                    && requested
+                    && element
+                    && contract
+                    && fact_at(&facts.parameterized_method_calls, id).is_some()
+            });
+        if admitted {
+            self.references.borrow_mut().push(self.occurrence(expr));
+        }
+        admitted
+            && self.holds(MethodFeatures::REFERENCE_CALLS)
+            && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
     }
 
     /// A reference call read by value, which the template marked a copyable
@@ -9938,7 +10153,10 @@ impl BodyShape<'_> {
             ExprKind::Identifier(name) => {
                 self.reference_local(name) && self.holds(MethodFeatures::REFERENCE_LOCALS)
             }
-            _ => self.reference_call(expr) && self.holds(MethodFeatures::REFERENCE_RECEIVERS),
+            _ => {
+                (self.reference_call(expr) || self.pack_accessor(expr))
+                    && self.holds(MethodFeatures::REFERENCE_RECEIVERS)
+            }
         }
     }
 
@@ -13269,11 +13487,19 @@ impl BodyShape<'_> {
         let admitted = shape
             && self.facts.is_none_or(|facts| {
                 let id = self.occurrence(expr);
-                let Some(receiver @ Ty::Param { .. }) =
+                // A pack element an index-keyed accessor reads is the
+                // dependent `Ts[i]`, dispatched through the pack's bounds as a
+                // view binder the result names ([`Self::pack_accessor`]).
+                let element = fact_at(&facts.expression_types, self.occurrence(object))
+                    .filter(|ty| matches!(ty, Ty::Dependent(_)) && self.pack_accessor(object));
+                let Some(receiver) = element.or_else(|| {
                     fact_at(&facts.expression_types, self.occurrence(object))
-                else {
+                        .filter(|ty| matches!(ty, Ty::Param { .. }))
+                }) else {
                     return false;
                 };
+                let viewed =
+                    |result: &Ty| element.is_some_and(|element| views_element(result, element));
                 // A named place handed to a bounded parameter of the
                 // requirement: its own bounds prove the parameter's, or its
                 // type is closed, the same in every instance, and the
@@ -13375,6 +13601,7 @@ impl BodyShape<'_> {
                         Some(_) => false,
                     }
                     && (call.contract.result_ty == *receiver
+                        || viewed(&call.contract.result_ty)
                         || !mojito_types::types::is_symbolic(&call.contract.result_ty))
                     && call
                         .contract

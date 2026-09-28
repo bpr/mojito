@@ -36,7 +36,7 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
+Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
 
 - [ ] **1.1 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
@@ -88,20 +88,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A variadic struct's index-keyed accessor keeps the clone
-  check**
-
-  Problem: a user variadic struct's `def __getitem__[i: Int](self) ->
-  Self.Ts[i]` over `self.storage[i].copy()` sits outside the method
-  grammar, so each unrolled `__getitem__$k` is checked again.
-  - `Tuple`'s own accessors derive through a traced member with its index
-    value (`TracedMember`); a user struct's accessor has no such trace.
-  - Its facts name the dependent `Ts[i]` and a parameterized
-    `Tuple.__getitem_param__` call keyed by the method's own binder.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.5 `TString.write_to` keeps the clone check**
+- [ ] **1.4 `TString.write_to` keeps the clone check**
 
   Problem: `TString.write_to` binds each element with a `ref` local over a
   `Tuple` accessor inside a `comptime for`, which the method grammar
@@ -113,7 +100,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A float range's initializer and `__next__` keep the clone
+- [ ] **1.5 A float range's initializer and `__next__` keep the clone
   check**
 
   Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
@@ -128,7 +115,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.6 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -143,7 +130,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.7 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -161,7 +148,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.8 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -173,7 +160,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A `Pointer` type argument over an interior-projected place is
+- [ ] **1.9 A `Pointer` type argument over an interior-projected place is
   baked into its clone with its place**
 
   Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
@@ -187,7 +174,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A parameter expression cannot be rebuilt unfolded through the
+- [ ] **1.10 A parameter expression cannot be rebuilt unfolded through the
   front end's public constructors**
 
   Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
@@ -202,7 +189,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 Specialized MIR does not run on the VM as the original does**
+- [ ] **1.11 Specialized MIR does not run on the VM as the original does**
 
   Problem: for three compile benchmarks the program that native
   monomorphization produces fails on the VM, where the unspecialized program
@@ -217,7 +204,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.12 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that
@@ -235,7 +222,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on 3.54: an `Int` element constructs as `Int()`.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.13 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -252,7 +239,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A nested `def` with a constructed default keeps the clone
+- [ ] **1.14 A nested `def` with a constructed default keeps the clone
   check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar,
@@ -272,7 +259,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
     it.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 An explicitly applied or overloaded generic static with
+- [ ] **1.15 An explicitly applied or overloaded generic static with
   binders of its own keeps the clone check**
 
   Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
@@ -290,7 +277,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A field read of a sibling call's result keeps the clone
+- [ ] **1.16 A field read of a sibling call's result keeps the clone
   check**
 
   Problem: `return self.bumped().count`, a field of a sibling method's
@@ -303,7 +290,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 The A1 shadow core has never been run over the decision
+- [ ] **1.17 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -320,13 +307,13 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry, 1.12, 1.13, and 1.19 to 1.21 are the ones in this section
+  - This entry, 1.11, 1.12, and 1.18 to 1.20 are the ones in this section
     that do not move the check order. They shadow MIR below
     `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.19 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.18 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -340,7 +327,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.20 A1 core text is about three times the v1 text**
+- [ ] **1.19 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -355,7 +342,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.21 The Pliron pivot's overhead has never been measured**
+- [ ] **1.20 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -374,7 +361,7 @@ Pliron experiment rather than move the check order sit last, 1.18 to 1.21.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.18, 1.19, and 1.20.
+  - Depends on 1.17, 1.18, and 1.19.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -2467,6 +2454,22 @@ last.
   `Pair[Self.T].both(1, self.item)`; the pin runs both.
   - Either call alone runs.
   - Probe: `conformance/probes/static_binder_infers_struct_parameter.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.103 A variadic struct's index-keyed method not named
+  `__getitem__` is rejected**
+
+  Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
+  stops with "type 'Bag$t2[…]' has no associated type 'element_types'"
+  at `b.item[1]()`; the pin prints the element.
+  - Only `__getitem__` and `__getitem_param__` unroll per element
+    (`generate_struct_spec`, `dependent_index_accessor`).
+  - Any other method's `Self.Ts[i]` is rewritten to `Tuple`'s private
+    `Self.element_types[i]`, which a user struct does not declare.
+  - Found while the index-keyed accessor joined the method grammar
+    (2026-09-28).
+  - Probe: `conformance/probes/pack_index_named_method.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

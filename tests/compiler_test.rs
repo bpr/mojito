@@ -1851,6 +1851,37 @@ fn spread_pack_initializer_derives() {
 }
 
 #[test]
+fn pack_accessor_derives() {
+    // A user variadic struct's `__getitem__[i: Int]` over its `Tuple`
+    // storage, copying the element out or returning a reference to it,
+    // derives each unrolled `__getitem__$k` and its value twin.
+    let source = include_str!("../assets/ok/template_method_pack_accessor.mojo");
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "1 a\nTrue 2\n7 b\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let accessor = |name: &&String| {
+        (name.starts_with("Bag$") || name.starts_with("Shelf$")) && name.contains(".__getitem")
+    };
+    assert!(
+        stats.derived.iter().filter(|name| accessor(name)).count() >= 6,
+        "the accessors derive; refused: {:?}",
+        stats.refused
+    );
+    assert!(
+        !stats.inferred_clones.iter().any(|name| accessor(&name)),
+        "no accessor is inferred: {:?}",
+        stats.inferred_clones
+    );
+}
+
+#[test]
 fn unavailable_member_stub_derives() {
     // A member whose availability clause folds false is one trap stub per
     // template method, shared by every specialization under the same

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A user variadic struct's index-keyed accessor (`def __getitem__[i:
+  Int](self) -> Self.Ts[i]` over `self.storage[i].copy()`, or one returning
+  a reference to `self.storage[i]`) now reuses the template's checked facts
+  for each unrolled `__getitem__$k`
+  (`assets/ok/template_method_pack_accessor.mojo`). Each such accessor used
+  to be checked again per specialization.
 - A variadic struct's initializer building its storage with
   `Tuple(*args^)`, a user struct's and the bundled `TString`'s, now reuses
   the template's checked facts: each instance's per-element expansion takes
