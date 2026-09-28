@@ -423,7 +423,7 @@ impl Flatten<'_> {
             .captures
             .iter()
             .map(|capture| MirClosureCapture {
-                place: self.binding_place(capture.binding, &capture.name),
+                place: self.capture_place(capture),
                 mode: if forward_existing_environment {
                     // In a lifted body these names are already references into
                     // the declaration-created environment. Recursion and calls

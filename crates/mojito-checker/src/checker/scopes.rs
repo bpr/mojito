@@ -61,6 +61,16 @@ impl Checker {
         self.declare_with_mutability(name, ty, false)
     }
 
+    /// Bind a value parameter in its declaration's body: an immutable slot
+    /// that nested functions read without an explicit capture.
+    pub(super) fn declare_value_parameter(&mut self, name: &str, ty: Ty) -> Result<(), TypeError> {
+        self.declare_immutable(name, ty)?;
+        if let Some(owner) = self.lookup_owner(name) {
+            self.value_parameter_owners.insert(owner);
+        }
+        Ok(())
+    }
+
     pub(super) fn declare_with_mutability(
         &mut self,
         name: &str,
@@ -267,7 +277,8 @@ impl Checker {
                             mojito_ast::ast::CaptureKind::Imm
                         }
                     })
-                });
+                })
+                .or_else(|| self.implicit_value_parameter_capture(name));
             if let Some(kind) = kind {
                 self.check_capture_capability(name, kind)?;
                 let binding = self.lookup_owner(name).ok_or_else(|| {
@@ -340,7 +351,13 @@ impl Checker {
             .iter()
             .filter(|policy| scope < policy.base && name != policy.function_name)
         {
-            let Some(kind) = policy.entries.get(name).copied().or(policy.default) else {
+            let Some(kind) = policy
+                .entries
+                .get(name)
+                .copied()
+                .or(policy.default)
+                .or_else(|| self.implicit_value_parameter_capture(name))
+            else {
                 continue;
             };
             let checked = self.checked_capture(name, binding, ty.clone(), kind);
@@ -421,5 +438,14 @@ impl Checker {
                     .and_then(|(name, _)| mutability.get(name).copied())
             })
             .unwrap_or(false)
+    }
+
+    /// A value parameter denotes a compile-time value, so a nested function
+    /// reads it without naming it in a capture list; its runtime slot is
+    /// borrowed immutably.
+    fn implicit_value_parameter_capture(&self, name: &str) -> Option<mojito_ast::ast::CaptureKind> {
+        self.lookup_owner(name)
+            .filter(|owner| self.value_parameter_owners.contains(owner))
+            .map(|_| mojito_ast::ast::CaptureKind::Imm)
     }
 }

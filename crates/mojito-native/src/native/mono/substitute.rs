@@ -29,6 +29,7 @@ pub(super) fn substitute_function(
             function.var_tys.insert(var as u32, ty);
         }
     }
+    initialize_captured_value_parameters(function, &locals, &bindings.callables);
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -204,25 +205,10 @@ pub(super) fn substitute_value_parameter_reads(
                     Const::Function(callable.clone())
                 } else {
                     let value = locals[name];
-                    match value {
-                        CtValue::Int(value) => Const::Int(*value),
-                        CtValue::Bool(value) => Const::Bool(*value),
-                        CtValue::Dtype(value) => Const::Dtype(*value),
-                        CtValue::Str(value)
-                            if matches!(
-                                var_tys.get(var),
-                                Some(Ty::Func { .. } | Ty::GenericFunc { .. })
-                            ) =>
-                        {
-                            Const::Function(value.clone())
-                        }
-                        _ => {
-                            return Err(MonoError {
-                                function: None,
-                                construct: format!("unsupported runtime value parameter `{value}`"),
-                            });
-                        }
-                    }
+                    value_parameter_constant(value, var_tys.get(var)).ok_or_else(|| MonoError {
+                        function: None,
+                        construct: format!("unsupported runtime value parameter `{value}`"),
+                    })?
                 };
                 *instruction = MirInstr::Const {
                     dest: *dest,
@@ -753,6 +739,96 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
 }
 pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
+}
+
+/// The constant a value parameter's slot holds: a scalar, or a function
+/// named by a callable-typed slot.
+fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
+    match value {
+        CtValue::Int(value) => Some(Const::Int(*value)),
+        CtValue::Bool(value) => Some(Const::Bool(*value)),
+        CtValue::Dtype(value) => Some(Const::Dtype(*value)),
+        CtValue::Str(value)
+            if matches!(slot_ty, Some(Ty::Func { .. } | Ty::GenericFunc { .. })) =>
+        {
+            Some(Const::Function(value.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Every read of a value parameter's slot folds to its bound constant, so
+/// the slot itself is never stored; a closure capturing it would borrow
+/// uninitialized storage. The entry block stores the constant into each
+/// captured slot first.
+fn initialize_captured_value_parameters(
+    function: &mut MirFunction,
+    locals: &HashMap<String, &CtValue>,
+    callables: &HashMap<String, String>,
+) {
+    let mut captured = HashSet::new();
+    collect_captured_vars(&function.blocks, &mut captured);
+    let mut initializers = Vec::new();
+    for (var, name) in function.var_names.iter().enumerate() {
+        let var = var as u32;
+        if !captured.contains(&var) {
+            continue;
+        }
+        let Some(ty) = function.var_tys.get(&var).cloned() else {
+            continue;
+        };
+        let constant = callables
+            .get(name)
+            .map(|callable| Const::Function(callable.clone()))
+            .or_else(|| {
+                locals
+                    .get(name.as_str())
+                    .and_then(|value| value_parameter_constant(value, Some(&ty)))
+            });
+        let Some(k) = constant else {
+            continue;
+        };
+        let dest = Reg(function.n_regs);
+        function.n_regs += 1;
+        function.reg_types.insert(dest.0, ty.clone());
+        initializers.push(MirInstr::Const { dest, k });
+        initializers.push(MirInstr::DefVar {
+            var,
+            src: dest,
+            binding_ty: Some(ty),
+        });
+    }
+    if let Some(entry) = function.blocks.first_mut() {
+        entry.instrs.splice(0..0, initializers);
+    }
+}
+
+fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        match instruction {
+            MirInstr::MakeClosure { captures, .. } => {
+                captured.extend(captures.iter().map(|capture| capture.place.root));
+            }
+            MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } => {
+                collect_captured_vars(body, captured);
+                for blocks in handler
+                    .iter()
+                    .map(|(_, blocks)| blocks)
+                    .chain(orelse)
+                    .chain(finalbody)
+                {
+                    collect_captured_vars(blocks, captured);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The constant each compile-time parameter's local reads. MIR names a

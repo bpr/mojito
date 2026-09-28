@@ -1323,7 +1323,7 @@ impl Checker {
                 name, ty, variadic, ..
             } = declaration
             {
-                self.declare_immutable(
+                self.declare_value_parameter(
                     name.trim_start_matches('*'),
                     if *variadic {
                         Ty::VariadicPack(ty.clone())

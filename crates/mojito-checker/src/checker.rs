@@ -576,6 +576,10 @@ pub struct Checker {
     /// The positional collectors declared `var *args`: forwarding one as a
     /// whole needs the `^`, and a read one cannot be transferred.
     owned_packs: HashSet<mojito_types::origin::OwnerId>,
+    /// The bindings of executable bodies' value parameters. Each occupies a
+    /// runtime slot but denotes a compile-time value, so a nested function
+    /// or lambda reads it through an implicit `imm` capture.
+    value_parameter_owners: HashSet<mojito_types::origin::OwnerId>,
     /// Whether each function's positional collector is `var`, by name, for
     /// the ownership a forwarded pack must match (`Ty::GenericFunc` carries
     /// the regular conventions only). A name whose overloads disagree is
@@ -995,6 +999,7 @@ impl Checker {
             rebind_keyed_bodies: HashSet::new(),
             no_verdict_bodies: FactSet::default(),
             owned_packs: HashSet::new(),
+            value_parameter_owners: HashSet::new(),
             owned_collectors: HashMap::new(),
             compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),

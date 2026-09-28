@@ -2617,7 +2617,7 @@ impl Checker {
                     {
                         bindings.insert(name.trim_start_matches('*').to_string());
                     }
-                    result = self.declare_immutable(
+                    result = self.declare_value_parameter(
                         name.trim_start_matches('*'),
                         if matches!(d, ParamDecl::Value { variadic: true, .. }) {
                             Ty::VariadicPack(ty.clone())

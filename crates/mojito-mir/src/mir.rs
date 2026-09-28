@@ -1640,6 +1640,19 @@ impl Flatten<'_> {
         )
     }
 
+    /// A captured binding's place. A slot that no body expression typed —
+    /// a scalar value parameter read only by a nested function — takes the
+    /// checked capture's storage type.
+    fn capture_place(&mut self, capture: &NestedCapture) -> MirPlace {
+        let mut place = self.binding_place(capture.binding, &capture.name);
+        if place.root_ty.is_none() && place.through.is_none() {
+            place.root_ty = Some(capture.ty.clone());
+            place.ty = Some(capture.ty.clone());
+            self.var_types.insert(place.root, capture.ty.clone());
+        }
+        place
+    }
+
     fn resolved_place(&mut self, name: &str) -> MirPlace {
         let var = self.var(name);
         self.aliases.get(&var).map_or_else(

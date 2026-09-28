@@ -228,6 +228,7 @@ assets/ok/native_borrowed_reads.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
+assets/ok/nested_def_reads_enclosing_parameter.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_origin_binder_not_captured.mojo	main	exe-differential	sanitized

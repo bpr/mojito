@@ -110,9 +110,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.102), and a `String`
-    element needs `String` to be `Defaultable` (3.103).
-  - Depends on 3.102.
+  - A SIMD element needs its nullary construction (3.101), and a `String`
+    element needs `String` to be `Defaultable` (3.102).
+  - Depends on 3.101.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.97).
+    constructed default at all (3.96).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.97: until a constructed default runs, no fixture can take
+  - Depends on 3.96: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -2271,23 +2271,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A nested `def` cannot read its enclosing function's value
-  parameter**
-
-  Problem: `n` read inside a nested `def inner[k: Int]()` of
-  `def outer[n: Int]()` is rejected on both backends with "Could not infer
-  capture convention of the captured value n"; the pin runs it.
-  - A parameter is a compile-time value, so the nested body needs no
-    capture to read it.
-  - Mojito's capture analysis treats the enclosing function's value
-    parameter as a runtime local to capture.
-  - `conformance/probes/nested_def_reads_enclosing_parameter.mojo` pins it.
-  - Found while closing the nested generic `def`'s value argument
-    (2026-09-27).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **3.91 A mutable loan carried by a pointee type's origin does not
+- [ ] **3.90 A mutable loan carried by a pointee type's origin does not
   conflict with another argument's mutable borrow**
 
   Problem: Mojito compiles `p.unsafe_write(Span(xs))` where `p` has type
@@ -2305,7 +2289,7 @@ last.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **3.92 A `Tuple` of SIMD scalars has no comparisons**
+- [ ] **3.91 A `Tuple` of SIMD scalars has no comparisons**
 
   Problem: `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` rejects with
   "operator '<' is not defined for Tuple$t2[...]", where the pin prints
@@ -2321,7 +2305,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.93 A reference-returning call cannot be assigned through**
+- [ ] **3.92 A reference-returning call cannot be assigned through**
 
   Problem: `bump(k) = 9` and `bump(k) += 1`, for `def bump(ref a: Int) ->
   ref[origin_of(a)] Int`, stop at parse with "invalid assignment target",
@@ -2335,7 +2319,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 Two same-arity generic overloads of one method collide when a
+- [ ] **3.93 Two same-arity generic overloads of one method collide when a
   call specializes them alike**
 
   Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
@@ -2350,7 +2334,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A witness whose defaults differ from its requirement's is
+- [ ] **3.94 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2368,17 +2352,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A trait requirement's default other than a literal is
+- [ ] **3.95 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.95: a default bound at the call would lift it.
+  - Depends on 3.94: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A call leaving out a constructed default fails at run time**
+- [ ] **3.96 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2392,7 +2376,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 An instance ranks a generic struct's overload family again
+- [ ] **3.97 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2409,7 +2393,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A generic static's per-call clone takes a call to its
+- [ ] **3.98 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2421,7 +2405,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A generic static with its own binder cannot infer its struct's
+- [ ] **3.99 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2432,7 +2416,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A variadic struct's index-keyed method not named
+- [ ] **3.100 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2448,7 +2432,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A SIMD value has no nullary construction**
+- [ ] **3.101 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2463,7 +2447,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 `String` is not `Defaultable`**
+- [ ] **3.102 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2473,7 +2457,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 A `def` does not infer a value parameter from an argument's
+- [ ] **3.103 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2487,6 +2471,43 @@ last.
   - Found while closing the symbolic instance construction (2026-09-28).
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **3.104 A generic nested `def` that captures does not compile
+  natively**
+
+  Problem: a generic nested `def` with any capture, such as
+  `def inner[k: Int]() {x}` or one reading its enclosing function's value
+  parameter, runs on the VM but is refused natively: "generic retained
+  callable `outer$inner` has captures".
+  - Native monomorphization specializes a generic nested `def` at each call
+    by rewriting the indirect call into a direct call to the instance, which
+    erases the environment (`native/mono/specializer.rs`, `CallIndirect`).
+  - The lifted body takes its captures as leading reference parameters, so
+    the rewrite must pass them and `infer_call` must skip them.
+  - `conformance/probes/nested_def_reads_enclosing_parameter.mojo` pins it.
+  - Found while letting nested `def`s read an enclosing value parameter
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.105 A nested `def` reading only an enclosing value parameter is
+  not `thin`**
+
+  Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
+  `inner` reads only `outer[n]`'s `n`, is rejected ("expected def() thin ->
+  Int, found def() capturing[...] -> Int"); the pin prints the result.
+  - The pin reads a parameter as a compile-time value, so `inner` captures
+    nothing.
+  - Mojito gives a value parameter a runtime slot, and a nested `def` or
+    lambda reads it through an implicit `imm` capture
+    (`implicit_value_parameter_capture` in `checker/scopes.rs`).
+  - Making it thin needs the parameter's value inside the lifted body:
+    folded per instance, or passed as the lifted body's own parameter
+    argument.
+  - Found while letting nested `def`s read an enclosing value parameter
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

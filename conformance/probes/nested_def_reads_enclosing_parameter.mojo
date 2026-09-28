@@ -1,7 +1,9 @@
-# A nested `def` reading its enclosing function's value parameter (`n`
-# inside `inner`) is rejected on both backends: "Could not infer capture
-# convention of the captured value n". A parameter is a compile-time value
-# the nested body reads without a capture; the pinned Mojo prints 32 and 64.
+# A generic nested `def` reading its enclosing function's value parameter
+# (`n` inside `inner[k]`) runs on the VM and prints 32 and 64, as the pin
+# does. Natively it is refused: "generic retained callable `outer$inner` has
+# captures" — Mojito reads `n` through a capture of its runtime slot, and
+# native monomorphization cannot yet specialize a generic nested `def` that
+# carries an environment.
 def scaled[n: Int]() -> Int:
     return n
 

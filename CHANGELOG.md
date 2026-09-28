@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested `def` now reads its enclosing function's or method's value
+  parameter without naming it in a capture list, as the pin does. It used
+  to fail with "Could not infer capture convention of the captured value
+  n". A generic nested `def` reading one still runs on the VM only
+  (roadmap 3.104).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The
