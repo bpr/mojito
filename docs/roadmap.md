@@ -55,21 +55,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 `Tuple`'s consuming teardowns keep the clone check**
-
-  Problem: `consume_elements` and `deinit_with` take a callable binder
-  (`elt_handler: def[index: Int](var element: Self.Ts[index])`), which
-  `method_certificate` refuses as a method's own value binder.
-  - Hello World infers 30 such bodies.
-  - Each unrolled call `elt_handler[i](self.storage[i]^)` records a generic
-    instantiation and call parameters whose types are the pack sequence
-    indexed by the handler's own binder (`type_sequence[String, Int][index]`).
-  - The instance keeps the binder, so the derivation would also need the
-    call-through residue it publishes, which names that binder.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.3 `Tuple`'s synthesized default initializer keeps the clone
+- [ ] **1.2 `Tuple`'s synthesized default initializer keeps the clone
   check**
 
   Problem: `tuple_default_constructor` writes `__init__(out self)` from the
@@ -84,7 +70,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A generic hasher's wildcard `_update_with_simd` stub keeps the
+- [ ] **1.3 A generic hasher's wildcard `_update_with_simd` stub keeps the
   clone check**
 
   Problem: in each specialization of `AHasher[key]`, the member standing for
@@ -98,6 +84,23 @@ to section 3, however small.
   - Its facts name nothing the specialization binds. An unavailable
     member's stub is already shaped once per template method and inherited
     (`InstanceTrace::shared_stub`), and this stub could take the same path.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.4 A `Tuple` over loan-carrying elements keeps the clone check**
+
+  Problem: every member of `Tuple[StringSpan, StringSpan]` is inferred again
+  in each pass, because its elements carry a loan and a derivation admits
+  only plain-data instance arguments (`TemplateObligation::PlainDataArguments`).
+  - Hello World infers 29 such bodies, the largest share of its 62
+    re-inferred clones.
+  - Every one of its members already derives for a plain-data instance: the
+    comparisons, `__hash__`, `write_to`, the accessors, `copy`, and the
+    callable-binder teardowns.
+  - A clone whose only binders are the elaborator's origin binders already
+    takes a loan-carrying argument (obligation 12 in
+    `docs/notes/instantiation-from-template.md`); this instance has no such
+    binders.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

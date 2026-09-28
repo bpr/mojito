@@ -239,6 +239,9 @@ struct Occurrence {
     folded_index: Option<(SyntaxId, i64)>,
     /// A `SIMD[…](…)` construction's integer dimension occurrences.
     dimensions: Vec<SyntaxId>,
+    /// A direct call's compile-time arguments, each the value of an integer
+    /// or `Bool` literal the elaborator folded there, or `None`.
+    compile_time_literals: Vec<Option<mojito_types::ct::CtValue>>,
     /// A literal's kind.
     literal_kind: Option<LiteralKind>,
     /// What the elaborator wrote here for a vector the template spelled
@@ -1337,14 +1340,21 @@ impl Checker {
         // template's is, and no fact substitutes it. So is a method's own
         // scalar value binder (`VALUE_BINDERS`), which the parser spells as
         // a bound (`n: Int`): a per-instantiation clone keeps it, and an
-        // occurrence reading it is bound to the clone's own parameter.
+        // occurrence reading it is bound to the clone's own parameter. A
+        // compile-time callable binder (`CALLABLE_BINDERS`) is kept by every
+        // clone the same way.
         let kept_binders = matches!(class, TemplateClass::MethodBody(features)
                 if features.contains(MethodFeatures::ORIGIN_PARAMETERS)
                     || features.contains(MethodFeatures::BOUND_BINDERS)
-                    || features.contains(MethodFeatures::VALUE_BINDERS))
+                    || features.contains(MethodFeatures::VALUE_BINDERS)
+                    || features.contains(MethodFeatures::CALLABLE_BINDERS))
             && matches!(site.declaration, BodyDeclaration::Method(method)
             if method.type_params.iter().all(|binder| {
-                origin_binder(binder) || bound_binder(binder)
+                origin_binder(binder)
+                    || bound_binder(binder)
+                    || (callable_binder(binder)
+                        && matches!(class, TemplateClass::MethodBody(features)
+                            if features.contains(MethodFeatures::CALLABLE_BINDERS)))
             })
                 && trace.residual.iter().all(|name| {
                     method.type_params.iter().any(|binder| binder.name == *name)
@@ -1534,6 +1544,7 @@ impl Checker {
                 }
             })
             .collect();
+        let indices = transferred_element_indices(indices, &occurrences);
         let mut selected = checked.facts.selected(&ids, &folded);
         if !relocate_packs(&mut selected, &ids) {
             return refuse("a relocated pack is not the instance's transfer");
@@ -1967,6 +1978,16 @@ impl Checker {
             .all(|((_, ty), _)| self.residue_plain(ty));
         if residue && !substituted_plain {
             return Err("a substituted value may carry a loan where the body keeps a residue");
+        }
+        // A residue naming a compile-time callable names it by the binder's
+        // name, which only an instance keeping that binder still declares.
+        let kept_callables = template.call_throughs.iter().all(|residue| {
+            !matches!(&residue.callee,
+                mojito_checked::checked::CallThroughCallee::ValueParam(name)
+                    if !instance.kept_values.contains(name))
+        });
+        if !kept_callables {
+            return Err("a residue names a compile-time callable the instance does not keep");
         }
         // `Movable`, which a symbolic parameter always is.
         let movable = template.transfers.iter().all(|transfer| {
@@ -2928,17 +2949,58 @@ impl Checker {
     /// The call recorded the parameter's own contract symbol and parameters,
     /// in the caller's binder scope: the instance takes both from its own
     /// binding of the parameter, which the elaborator already substituted.
+    ///
+    /// A call through a compile-time callable binder the instance keeps
+    /// (`elt_handler[i](…)`) records the binder's application instead of a
+    /// contract target: the instance applies its own binder at the literals
+    /// the elaborator folded into its copy.
     fn realize_callable_call(
         &self,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
     ) -> Result<(), &'static str> {
-        let name = occurrences
+        let occurrence = occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
-            .and_then(|occurrence| occurrence.callee.as_deref())
             .ok_or("a callable call occurrence is not a direct call in the instance")?;
+        let name = occurrence
+            .callee
+            .as_deref()
+            .ok_or("a callable call occurrence is not a direct call in the instance")?;
+        if let Some(index) = facts
+            .generic_instantiations
+            .iter()
+            .position(|(site, _)| *site == id)
+        {
+            let Some(callee @ Ty::GenericFunc { names, params, .. }) = self.lookup(name) else {
+                return Err("an applied callable binder is not bound to a generic function type");
+            };
+            let arguments = occurrence
+                .compile_time_literals
+                .iter()
+                .map(|literal| literal.clone().map(mojito_types::types::TyArg::Val))
+                .collect::<Option<Vec<_>>>()
+                .filter(|arguments| !arguments.is_empty())
+                .ok_or("an applied callable binder's argument is not a folded literal")?;
+            facts.generic_instantiations[index].1 = mojito_checked::checked::GenericInstantiation {
+                callee: name.to_string(),
+                parameter_names: names.clone(),
+                parameter_types: params
+                    .iter()
+                    .map(|ty| {
+                        mojito_symbol::symbol::TypeKey::from_ty(ty)
+                            .as_str()
+                            .to_string()
+                    })
+                    .collect(),
+                variadic: mojito_symbol::symbol::VariadicKey::from_callable(callee),
+                arguments,
+            };
+            set_fact(&mut facts.call_parameters, id, call_parameter_facts(callee));
+            note_realized_callee(facts, name, name);
+            return Ok(());
+        }
         let Some(callee @ Ty::Func { .. }) = self.lookup(name) else {
             return Err("a called parameter is not bound to a function type");
         };
@@ -3785,6 +3847,7 @@ impl Checker {
             binder_constructions: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
             callable_calls: RefCell::new(Vec::new()),
+            callable_binders: Vec::new(),
             static_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
             lane_binders: Vec::new(),
@@ -4195,9 +4258,12 @@ impl Checker {
         // `[dt: DType]`) is folded by every per-call clone, as a value-keyed
         // `def`'s is; a vector over it (`Scalar[dt]`) is value-shaped.
         let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
-        let Some(value_binders) =
-            method_value_binders(method, &decls[self.self_decls.len().min(decls.len())..])
-        else {
+        // A compile-time callable binder of the method's own is kept by every
+        // clone, which the specializer never folds: it names no callable in
+        // generic identity (`CALLABLE_BINDERS`).
+        let own_decls = &decls[self.self_decls.len().min(decls.len())..];
+        let callable_binders = method_callable_binders(method, own_decls);
+        let Some(value_binders) = method_value_binders(method, own_decls) else {
             return outside("a method's own value binder is not an 'Int', 'Bool', or 'DType'");
         };
         let bound_type_binder = |binder: &mojito_ast::ast::TypeParam| {
@@ -4206,6 +4272,7 @@ impl Checker {
         if !method.type_params.iter().all(|binder| {
             origin_binder(binder)
                 || bound_binder(binder)
+                || callable_binders.contains(&binder.name.as_str())
                 || (self.source_validation && simd_wildcard_binder(binder))
         }) || !(method.decorators.is_empty() || is_static)
         {
@@ -4248,6 +4315,8 @@ impl Checker {
                 || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
                 || matches!(decl, ParamDecl::Value { name, ty, variadic: false, .. }
                     if matches!(**ty, Ty::Dtype) && value_binders.contains(&name.as_str()))
+                || matches!(decl, ParamDecl::Value { name, .. }
+                    if callable_binders.contains(&name.as_str()))
                 || (self.source_validation
                     && matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
                         if matches!(**ty, Ty::Dtype | Ty::Simd { .. })))
@@ -4333,6 +4402,7 @@ impl Checker {
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
             callable_calls: RefCell::new(Vec::new()),
+            callable_binders: callable_binders.clone(),
             static_calls: RefCell::new(Vec::new()),
             packs,
             pack_struct,
@@ -4378,6 +4448,11 @@ impl Checker {
                     features = features
                         .union(MethodFeatures::STATEMENTS)
                         .union(MethodFeatures::RAISES);
+                }
+                if !callable_binders.is_empty() {
+                    features = features
+                        .union(MethodFeatures::STATEMENTS)
+                        .union(MethodFeatures::CALLABLE_BINDERS);
                 }
                 features
             }),
@@ -4431,23 +4506,53 @@ impl Checker {
         let Some(facts) = facts else {
             return class();
         };
-        if !shape.references_recorded(facts) {
-            return outside("a reference is yielded or kept outside the method grammar");
+        if let Some(what) = self.method_facts_refusal(&shape, facts) {
+            return outside(what);
         }
-        if stray_method_call(facts, &shape) {
-            return outside("the body calls something other than a trivial method");
+        class()
+    }
+
+    /// Why a method body the grammar admitted still falls outside its class,
+    /// judged on the facts its check recorded; `None` when none applies.
+    fn method_facts_refusal(
+        &self,
+        shape: &BodyShape<'_>,
+        facts: &CheckedBodyFacts,
+    ) -> Option<&'static str> {
+        if !shape.references_recorded(facts) {
+            return Some("a reference is yielded or kept outside the method grammar");
+        }
+        if stray_method_call(facts, shape) {
+            return Some("the body calls something other than a trivial method");
         }
         // A residue the body publishes or reads is republished for an
         // instance, but only a body that calls or forwards its own callable
         // parameter records one the recipe covers.
         let residue = !facts.call_throughs.is_empty() || !facts.call_through_reads.is_empty();
-        if residue && !shape.holds(MethodFeatures::CALLABLE_PARAMETERS) {
-            return outside("a keyed body publishes or reads a call-through residue");
+        if residue
+            && !shape.holds(MethodFeatures::CALLABLE_PARAMETERS)
+            && !shape.holds(MethodFeatures::CALLABLE_BINDERS)
+        {
+            return Some("a keyed body publishes or reads a call-through residue");
+        }
+        // A residue naming a compile-time callable names one of the method's
+        // own binders, which every clone keeps under its name.
+        let own_binder_residues = facts
+            .call_throughs
+            .iter()
+            .all(|residue| match &residue.callee {
+                mojito_checked::checked::CallThroughCallee::RuntimeParam(_) => true,
+                mojito_checked::checked::CallThroughCallee::ValueParam(name) => {
+                    shape.callable_binders.contains(&name.as_str())
+                }
+            });
+        if !own_binder_residues {
+            return Some("a residue names a compile-time callable that is not the method's own");
         }
         if facts.replays_transfers()
             && (shape.keyed || !shape.holds(MethodFeatures::REPLAYED_TRANSFERS))
         {
-            return outside("a keyed body replays a transfer summary");
+            return Some("a keyed body replays a transfer summary");
         }
         let effects_closed = facts
             .expression_effects
@@ -4462,7 +4567,7 @@ impl Checker {
                         if shape.struct_lane_simd(target))
         });
         if !effects_closed || !adjustments_derive {
-            return outside("an expression has an effect or an adjustment with no recipe");
+            return Some("an expression has an effect or an adjustment with no recipe");
         }
         let wrote_through_origin = self
             .parametric_write_frames
@@ -4470,9 +4575,9 @@ impl Checker {
             .last()
             .is_some_and(|frame| !frame.is_empty());
         if wrote_through_origin {
-            return outside("the body writes through an origin parameter");
+            return Some("the body writes through an origin parameter");
         }
-        class()
+        None
     }
 
     /// The reference each reference call at the body's occurrences yields,
@@ -4827,6 +4932,7 @@ impl Checker {
                     literal: None,
                     folded_index: None,
                     dimensions: Vec::new(),
+                    compile_time_literals: Vec::new(),
                     literal_kind: None,
                     vector_fold: None,
                 });
@@ -4974,6 +5080,24 @@ impl Checker {
                                 {
                                     Some(self.origins.origin(value.syntax_id))
                                 }
+                                _ => None,
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    },
+                    compile_time_literals: match &expr.kind {
+                        ExprKind::Call { param_args, .. } => param_args
+                            .iter()
+                            .map(|argument| match argument {
+                                mojito_ast::ast::ParamArg::Value(value) => match &value.kind {
+                                    ExprKind::Int(value) => {
+                                        value.to_i64().map(mojito_types::ct::CtValue::Int)
+                                    }
+                                    ExprKind::Bool(value) => {
+                                        Some(mojito_types::ct::CtValue::Bool(*value))
+                                    }
+                                    _ => None,
+                                },
                                 _ => None,
                             })
                             .collect(),
@@ -5445,17 +5569,16 @@ impl Checker {
         if self.transfer_residue(reads) {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
         }
-        // A residue is republished verbatim, so it may name only slots and
-        // signature places: a compile-time callable is folded per instance,
-        // and a carried origin exists only while the argument's type carries
-        // a loan (`TemplateObligation::CallThroughResidue`).
+        // A residue is republished verbatim, so it may name only slots,
+        // signature places, and compile-time callables by name, which the
+        // certificate admits only for the method's own kept binders; a
+        // carried origin exists only while the argument's type carries a
+        // loan (`TemplateObligation::CallThroughResidue`).
         let republishable = self.transfer_frames.borrow().last().is_none_or(|frame| {
-            frame.call_throughs.iter().all(|residue| {
-                matches!(
-                    residue.callee,
-                    mojito_checked::checked::CallThroughCallee::RuntimeParam(_)
-                ) && residue.args.iter().all(|arg| arg.carried.is_empty())
-            })
+            frame
+                .call_throughs
+                .iter()
+                .all(|residue| residue.args.iter().all(|arg| arg.carried.is_empty()))
         });
         if !republishable {
             return Err(IncompleteReason::UnkeyedFact("call-through residue"));
@@ -7414,7 +7537,13 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         || !facts
             .generic_instantiations
             .iter()
-            .all(|(id, _)| direct_calls.iter().any(|(call, _)| call == id))
+            .all(|(id, instantiation)| {
+                direct_calls.iter().any(|(call, _)| call == id)
+                    || (callable_calls.contains(id)
+                        && shape
+                            .callable_binders
+                            .contains(&instantiation.callee.as_str()))
+            })
         || !facts
             .overload_targets
             .iter()
@@ -7426,6 +7555,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
                 || static_calls.iter().any(|(_, member)| member == callee)
                 || conformer_copy(callee)
                 || shape.callable_params.contains(&callee.as_str())
+                || shape.callable_binders.contains(&callee.as_str())
         })
 }
 
@@ -7627,13 +7757,16 @@ fn struct_vector_binders(decls: &[ParamDecl]) -> Vec<&str> {
 /// `Bool`, or `DType`. The
 /// parser spells such a binder's type as a bound (`n: Int`), so only its
 /// declaration tells it from a trait-bounded type binder ([`bound_binder`]).
+/// A compile-time callable binder is apart ([`method_callable_binders`]).
 fn method_value_binders<'m>(
     method: &'m mojito_ast::ast::Method,
     own_decls: &[ParamDecl],
 ) -> Option<Vec<&'m str>> {
+    let callables = method_callable_binders(method, own_decls);
     method
         .type_params
         .iter()
+        .filter(|binder| !callables.contains(&binder.name.as_str()))
         .filter_map(|binder| {
             own_decls
                 .iter()
@@ -7652,6 +7785,49 @@ fn method_value_binders<'m>(
             .then_some(binder.name.as_str())
         })
         .collect()
+}
+
+/// The names of a method's own compile-time callable binders
+/// (`elt_handler: def[index: Int](var element: Self.Ts[index])`), given its
+/// own declarations: a callable value with no default, which every clone
+/// keeps ([`MethodFeatures::CALLABLE_BINDERS`]).
+fn method_callable_binders<'m>(
+    method: &'m mojito_ast::ast::Method,
+    own_decls: &[ParamDecl],
+) -> Vec<&'m str> {
+    method
+        .type_params
+        .iter()
+        .filter(|binder| callable_binder(binder))
+        .filter(|binder| {
+            own_decls.iter().any(|decl| {
+                matches!(decl, ParamDecl::Value {
+                    name,
+                    ty,
+                    default: None,
+                    callable_default: None,
+                    infer_only: false,
+                    variadic: false,
+                    ..
+                } if *name == binder.name
+                    && matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }))
+            })
+        })
+        .map(|binder| binder.name.as_str())
+        .collect()
+}
+
+/// A binder spelled with a callable right-hand side and nothing else
+/// (`f: def(Int) -> Int`, whose bound the parser spells `<function type>`),
+/// whose declaration decides whether it is a compile-time callable value
+/// ([`method_callable_binders`]).
+fn callable_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
+    binder.callable_bound.is_some()
+        && binder.bounds.iter().all(|bound| bound == "<function type>")
+        && binder.origin_mutability.is_none()
+        && binder.value_type.is_none()
+        && binder.default.is_none()
+        && !binder.infer_only
 }
 
 /// Whether every origin a type argument names sits in a struct origin tail
@@ -8589,6 +8765,9 @@ struct BodyShape<'a> {
     /// The calls through such a parameter admitted, whose contract an
     /// instance takes from its own parameter binding.
     callable_calls: RefCell<Vec<OccurrenceId>>,
+    /// The method's own compile-time callable binders, which the body may
+    /// apply at a folded loop index and call (`CALLABLE_BINDERS`).
+    callable_binders: Vec<&'a str>,
     /// The `repr(value)` calls admitted, whose argument an instance proves
     /// `Writable` at its own type.
     repr_calls: RefCell<Vec<OccurrenceId>>,
@@ -11504,6 +11683,10 @@ impl BodyShape<'_> {
                 if self.callable_params.contains(&name.as_str()) {
                     return self.callable_call(id, param_args, args, kwargs, known);
                 }
+                if self.callable_binders.contains(&name.as_str()) && self.local_kind(name).is_none()
+                {
+                    return self.callable_binder_call(id, param_args, args, kwargs, known);
+                }
                 if self.local_kind(name) == Some(LocalKind::Callable) {
                     // A keyword argument binds the recorded parameter of its
                     // name; with no facts yet its position decides nothing.
@@ -12070,6 +12253,59 @@ impl BodyShape<'_> {
             }
         }
         admitted && self.holds(MethodFeatures::CALLABLE_PARAMETERS)
+    }
+
+    /// `elt_handler[i](self.storage[i]^)`: a call through one of the
+    /// method's own compile-time callable binders, applied at the innermost
+    /// `comptime for` variable and handed pack elements transferred out of
+    /// an owned receiver.
+    ///
+    /// The template recorded the binder's application at the loop's binder
+    /// and the binder's parameters over the struct's pack. An instance keeps
+    /// the binder, so it takes the application at the copy's literal and the
+    /// parameters from its own binding of it
+    /// ([`Checker::realize_callable_call`]); the residue the call puts on
+    /// the body's frame names the binder and the receiver's place, which no
+    /// instance renames, and is republished verbatim.
+    fn callable_binder_call(
+        &self,
+        id: OccurrenceId,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+        known: bool,
+    ) -> bool {
+        let loop_index = |argument: &mojito_ast::ast::ParamArg| {
+            matches!(argument, mojito_ast::ast::ParamArg::Value(value)
+                if matches!(&value.kind, ExprKind::Identifier(name)
+                    if self.loop_vars.borrow().last() == Some(name))
+                    && self.folded_value(value))
+        };
+        let owned_receiver = matches!(
+            self.self_convention,
+            Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
+        );
+        let transferred_element = |argument: &Expr| {
+            matches!(&argument.kind, ExprKind::Transfer(element)
+                if owned_receiver
+                    && matches!(&element.kind, ExprKind::Index { object, .. }
+                        if self.receiver_field(object))
+                    && self.pack_element(element))
+        };
+        let admitted = known
+            && !param_args.is_empty()
+            && param_args.iter().all(loop_index)
+            && kwargs.is_empty()
+            && args.iter().all(transferred_element);
+        if admitted {
+            let mut calls = self.callable_calls.borrow_mut();
+            if !calls.contains(&id) {
+                calls.push(id);
+            }
+        }
+        admitted
+            && self.holds(MethodFeatures::CALLABLE_BINDERS)
+            && self.holds(MethodFeatures::COMPTIME_CONTROL)
     }
 
     /// `repr(value)` and `_unqualified_type_name[T]()`: checker builtins that
@@ -12879,6 +13115,27 @@ fn folded_literals(
         })
     }));
     Some(literals)
+}
+
+/// `indices` with each `^` transfer of a pack element fixed at its
+/// element's index: the transfer is typed as the element it moves, and in
+/// pre-order the element is the occurrence right after it.
+fn transferred_element_indices(
+    mut indices: ElementIndices,
+    occurrences: &[Occurrence],
+) -> ElementIndices {
+    let transfers: Vec<_> = occurrences
+        .windows(2)
+        .filter_map(|pair| {
+            let [transfer, element] = pair else {
+                return None;
+            };
+            let index = indices.get(&element.id)?;
+            transfer.transfer.then(|| (transfer.id, index.clone()))
+        })
+        .collect();
+    indices.extend(transfers);
+    indices
 }
 
 /// Tell the syntax the elaborator wrote for a vector apart from the

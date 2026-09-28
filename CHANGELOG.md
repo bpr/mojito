@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Tuple`'s consuming teardowns (`consume_elements`, `deinit_with`) are no
+  longer inferred in every specialization over plain-data elements. Their
+  compile-time callable binder is kept by each clone, so each unrolled
+  `elt_handler[i](self.storage[i]^)` derives from the template checked with
+  the pack symbolic. Hello World's clone inferences drop from 88 to 62.
 - An unavailable member's trap stub (`Tuple[Int, Optional[Int]].__lt__`)
   is no longer inferred in every specialization. The specializer shapes one
   stub per template method, spanned and identified at the unavailable

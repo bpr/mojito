@@ -441,6 +441,7 @@ they are a set, not a ladder.
 | `SIMD_BINDERS` | the wildcard vector binder a `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])` desugars to (`$simd: $SIMD`, infer-only), on a method source validation checked | Only source validation certifies such a template (`method_certificate`, under `source_validation`), so the elaborated program's trap stub is never the body the catalog holds. Inside the body the parameter is `SIMD[$simd.dtype, $simd.size]` (`annotations.rs:simd_binder_view`): two hidden value binders owned beside the binder (`simd_binder_slots`), which the signature, the `Hasher` conformance check, call-site inference, and the clone names never see. Every per-call clone bakes the binder to one closed vector type; `instance_substitution` folds the dtype and width from that type's `simd_shape` and pairs the whole view with the type (`fold_binder_views`), since the native `UInt` has no lane form and folding its slots alone would spell it `SIMD[DType.uint64, 1]`. A lane-shaped type is one whose open slots name only those hidden binders (`BodyShape::lane_shaped_simd`); a `var` local may hold one whose dtype is closed (`var bits = value.to_bits[DType.uint64]()`). |
 | `SIMD_INTRINSICS` | a lane read on a closed or lane-shaped vector held by a parameter, a `var` local, a field of `self`, or another lane read: `v.to_bits[DType.<name>]()`, `v.to_bits()`, `v.cast[DType.<name>]()`, `v.length`, `v[i]` over a scalar index, or `v.reduce_*()` | Each is a compiler-known operation on `Ty::Simd` that selects no callee and converts nothing (`BodyShape::simd_intrinsic`). Over a closed receiver inference records the `SimdToBits`, `SimdCast`, or `SimdLength` adjustment, the same under every instance, so it derives as itself; over a lane-shaped receiver it records nothing, the grammar notes the read with its receiver (`simd_to_bits`, `simd_casts`, `simd_lengths`), and `realize_simd_intrinsics` writes the instance's adjustment from the substituted result and receiver types (obligation 27). A lane read or a reduction stands only on a receiver whose dtype is closed to one that keeps a vector at width one, since the native `Int`, `UInt`, and `Float64` have no lane reads: the wildcard parameter itself is read only through `to_bits[dt]()` and `.length`. `to_bits()` with its defaulted target on the symbolic lane is typed at the unsigned dtype of the lane's width, a parameter expression, so its result is read whole — cast (`value.to_bits().cast[DType.uint64]()`) or counted — and a lane of it keeps the clone check (roadmap 1.12). |
 | `VALUE_BINDERS` | the method's own scalar value binders, each a non-variadic `Int` or `Bool` with no default (`def scaled[n: Int](self)`), read where a `def`'s folded value may be: bound to a local, accumulated, lent to a read parameter, or folded with literals (`n * 10 + 1`) | The parser spells a scalar binder's type as a bound (`n: Int` has `bounds == ["Int"]`), so `method_certificate` tells a value binder from a trait-bounded type binder by the method's own `ParamDecl`, not its syntax; any other own value binder (`[dt: DType]`) refuses the template. A per-call clone folds the binder to a literal that keeps the name's identity, which takes a literal's facts (`folded_literals`), and `instance_substitution` binds the value its trace names. A per-instantiation clone (`Box.scaled$y3:Int`) still declares the binder: its substitution records it as kept (`kept_values`), and an occurrence reading it installs at the clone's own compile-time parameter of that name. The feature implies `STATEMENTS`, so such a template is a `MethodBody`. |
+| `CALLABLE_BINDERS` | a compile-time callable binder of the method's own (`elt_handler: def[index: Int](var element: Self.Ts[index])` on `Tuple.consume_elements` and `deinit_with`), applied at the innermost `comptime for` variable and called with pack elements transferred out of a `var` or `deinit` receiver (`elt_handler[i](self.storage[i]^)`) | The specializer never folds a callable into generic identity, so every clone keeps the binder under its name (`kept_values`), as a per-instantiation clone keeps a scalar one. The template recorded the application at the loop's binder and the binder's parameters over the struct's pack; the instance applies its own binding of the binder at the literal the elaborator folded into the copy, and takes the parameters from that binding (`realize_callable_call`). The transfer is typed as the element it moves, fixed at the element's index (`transferred_element_indices`). The call publishes a residue naming the binder (`CallThroughCallee::ValueParam`), which the instance republishes verbatim, as obligation 19 does a runtime parameter's; `method_callable_binders` classifies the binder by its declaration, since the parser spells its bound `<function type>`. |
 
 A method of a struct declaring a type pack (`Tuple[*Ts]`) is certified only
 under source validation, which is the one check that sees its body: the
@@ -748,7 +749,9 @@ only `Movable` records nothing there, and its `Int` clone would.
     parameter's contract symbol (`__trait_dispatch.__call__$ov$…`) and
     parameters in the caller's binder scope, and the instance takes both from
     its own binding of the parameter (`realize_callable_call`). A residue
-    naming a compile-time callable value refuses, and a read whose concrete
+    naming a compile-time callable value is admitted only for the method's
+    own binder, which every clone keeps under its name (`CALLABLE_BINDERS`),
+    and refuses for an instance that no longer declares it; a read whose concrete
     callable is a named declaration with effects of its own keeps the clone
     check (`EffectRead::Residue`).
 20. **Implicit conversions.** An `@implicit` constructor is selected from the
@@ -1286,8 +1289,8 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   per-element `__contains__` overloads, and `write_repr_to` derive, and Hello
   World's generated body inferences drop from 336 to 200. Of `Tuple`'s 122
   left, 56 are trap stubs of unavailable members, 30 the callable-binder
-  teardowns, and 11 the synthesized default initializer (roadmap 1.1–1.3);
-  the other 25 are members of an instance over a loan-carrying element.
+  teardowns, and 11 the synthesized default initializer; the other 25 are
+  members of an instance over a loan-carrying element (roadmap 1.4).
 - 2026-09-27, the `DType`-keyed ranges' members: every member of
   `_ZeroStartingRange`, `_SequentialRange`, and `_StridedRange` derives, and
   Hello World's re-inferred clones, summed over the discovery rounds, drop
@@ -1298,7 +1301,7 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   `_update`, `_large_update`, `_update_with_bytes`, `update`, and `finish`
   derive, and Hello World's re-inferred clones drop from 154 to 141, the
   three left of `AHasher` being the trap stub that stands for its wildcard
-  `_update_with_simd` (roadmap 1.4). Five recipes did it:
+  `_update_with_simd` (roadmap 1.3). Five recipes did it:
   - A module's integer constant (`UInt64(MULTIPLE)`) reads as the literal
     the elaborator folds it to; arithmetic the template typed as an
     `IntLiteral` (`64 - ROT`) keeps its facts, since its operands are
@@ -1320,6 +1323,11 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   availability clause folds false share one stub per template method, and
   Hello World's re-inferred clones drop from 138 to 88. The six left are
   the first copy of each comparison's stub, which becomes its template.
+- 2026-09-28, `Tuple`'s callable-binder teardowns: `consume_elements` and
+  `deinit_with` derive for every instance over plain-data elements
+  (`CALLABLE_BINDERS`), and Hello World's re-inferred clones drop from 88
+  to 62. Of the 62, 29 are the members of `Tuple[StringSpan, StringSpan]`,
+  whose elements carry a loan (roadmap 1.4), the teardowns among them.
 
 ## What is not covered
 
@@ -1359,16 +1367,16 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   body, and records temporaries there. A struct element's `+=` through its
   `__iadd__` likewise.
 - An instance whose argument may carry a loan, which includes every struct
-  with a field of a parameter type (`DictEntry[K, V, H]`).
+  with a field of a parameter type (`DictEntry[K, V, H]`), and every member
+  of a `Tuple` over views (`Tuple[StringSpan, StringSpan]`: roadmap 1.4).
 - A member of a struct specialized whole outside the pack grammar above
-  (`Tuple`'s callable-binder teardowns and synthesized default
-  initializer: roadmap 1.2, 1.3), a member of
+  (`Tuple`'s synthesized default initializer: roadmap 1.2), a member of
   `TString` or of a user variadic struct, whose receiver carries no pack
   arguments, and a member of a value-keyed one outside the method grammar
   (`_FloatStridedRange`'s `__ceil__` and `__fma__` on lane values, a
   comparison over a lane value: roadmap 1.24, 1.25), the trap stub standing
   for a wildcard vector binder's method in a generic hasher's
-  specialization (roadmap 1.4); a SIMD-keyed hasher
+  specialization (roadmap 1.3); a SIMD-keyed hasher
   leaf whose body reads a lane of `value.to_bits()` with its defaulted
   target before casting it (roadmap 1.12).
 - A surviving trait-bound `def` template whose body constructs a struct,
@@ -1378,8 +1386,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   (`assets/ok/template_def_value_local.mojo`).
 - Any call that records a conversion, an adjustment, or an origin, and a
   transfer residue: a call-through residue that names a compile-time
-  callable (`Tuple.deinit_with[elt_handler]`) or whose argument carries an
-  origin, a named callable's own effects behind a residue, a function
+  callable other than the method's own kept binder, or whose argument
+  carries an origin, a named callable's own effects behind a residue, a function
   value's baked effects, a destination a captured binding names, and an
   effect whose source is a union. The
   `CallableCaptureAccesses` adjustment is a concrete caller's fact: a

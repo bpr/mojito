@@ -976,6 +976,14 @@ impl MethodFeatures {
     /// the type's own dunder answers under every instance, and the
     /// template recorded nothing at the operator.
     pub const CLOSED_OPERATORS: Self = Self(1 << 44);
+    /// A compile-time callable binder of the method's own
+    /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`), which
+    /// every clone keeps, applied at a folded loop index and called with a
+    /// pack element transferred out of an owned receiver: the application
+    /// and its parameters are taken from the instance's own binder, and the
+    /// residue the call publishes names the binder, which no instance
+    /// renames ([`TemplateObligation::CallThroughResidue`]).
+    pub const CALLABLE_BINDERS: Self = Self(1 << 45);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {

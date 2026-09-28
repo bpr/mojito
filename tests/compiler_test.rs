@@ -1787,6 +1787,36 @@ fn unavailable_member_stub_derives() {
 }
 
 #[test]
+fn tuple_callable_binder_teardowns_derive() {
+    // `Tuple.consume_elements` and `deinit_with` take a compile-time
+    // callable binder, which every specialization keeps: each unrolled
+    // `elt_handler[i](self.storage[i]^)` applies the instance's own binder
+    // at the copy's literal, and the residue the call publishes names the
+    // binder, so every plain-data instance derives both teardowns.
+    let source = "def main():\n    var pair = (String(\"b\"), 1)\n    var words = (String(\"x\"), String(\"y\"), String(\"z\"))\n    print(pair[0], words[2])\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(compiler.execute(program).expect("execute").output, "b z\n");
+    }
+    let stats = derived.template_stats();
+    for instance in [
+        "Tuple$t2[y6:Stringy3:Int]",
+        "Tuple$t3[y6:Stringy6:Stringy6:String]",
+    ] {
+        for member in ["consume_elements", "deinit_with"] {
+            let name = format!("{instance}.{member}");
+            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+            assert!(
+                !stats.inferred_clones.contains(&name),
+                "{name} is never inferred: {stats:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn template_vector_keyed_members_derive() {
     // A struct keyed on a closed vector value, specialized whole as the
     // bundled `AHasher` is, reads `Self.key`, constructs through the vector
