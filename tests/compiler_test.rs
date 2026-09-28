@@ -4348,6 +4348,41 @@ fn template_generic_static_call_derives() {
 }
 
 #[test]
+fn template_generic_static_shapes_derive() {
+    // A generic struct's static with an availability condition, a `ref` or
+    // `mut` parameter, a read-only pack, or binders of its own derives; the
+    // last calls the per-call clone keyed by the instance's receiver.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_generic_static_shapes.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "14 14\n3 x\n4 3 y x\n9 z\n6 6\n3 3 0 0\n5\n5\n1 1\n",
+        &[
+            ("Shelf.width", 2),
+            ("Shelf.peeked", 2),
+            ("Shelf.swapped", 2),
+            ("Shelf.local_swap", 2),
+            ("Shelf.total", 2),
+            ("Shelf.counted", 2),
+            ("Shelf.none", 2),
+        ],
+    );
+    // Before the elaborator mints the per-call clone, the instance calls its
+    // own clone of the static, which no recipe repeats: the call derives from
+    // the round that has it.
+    let compiler = Compiler::default().with_template_verification(false);
+    let program = compile_entry(&compiler, &source);
+    let shown: std::collections::HashSet<&String> = program
+        .template_stats()
+        .derived
+        .iter()
+        .filter(|name| name.starts_with("Shelf.shown$"))
+        .collect();
+    assert_eq!(shown.len(), 2, "Shelf.shown derives for every instance");
+}
+
+#[test]
 fn template_overloaded_generic_static_call_derives() {
     // An overloaded static of a generic struct whose members differ only in
     // closed parameter types ranks the template's member at every instance:

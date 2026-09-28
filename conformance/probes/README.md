@@ -81,6 +81,9 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `constructed_default_argument.mojo` | Does a call leaving out a constructed default (`s: String = String("a")`) run? | **differs**: the pin prints `a`, Mojito checks it but its VM refuses the slot ("non-constant default") — `docs/roadmap.md` §3 |
 | `collapsed_static_overload_family.mojo` | Which member does `Pair[Self.T].pick(v)` call where `pick(v: Self.T)` and `pick(v: Float64)` collapse at `T = Float64`? | **differs**: the pin prints `1` (the member the template ranked), Mojito prints `2` — `docs/roadmap.md` §3 |
+| `static_binder_overload_arity.mojo` | Does `Pair[Self.T].pick(1, 2)` call the two-argument member beside `pick[U: Writable](u: U)`? | **differs**: the pin prints `3` twice, Mojito's instance check calls the one-argument per-call clone and stops — `docs/roadmap.md` §3 |
+| `static_binder_infers_struct_parameter.mojo` | Does `Pair.both(7, self.item)` infer `Pair`'s parameter beside a spelled `Pair[Self.T].both(...)` call? | **differs**: the pin runs both, Mojito rejects ("cannot infer type parameter 'T'") — `docs/roadmap.md` §3 |
+| `static_parameter_pack_native.mojo` | Does a static taking `*values: Self.T` compile natively? | **differs natively**: the pin and the VM print `2 2`, the native backend stops on the unresolved `T` — `docs/roadmap.md` §2 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 

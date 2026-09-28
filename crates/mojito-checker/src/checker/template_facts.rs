@@ -2890,7 +2890,9 @@ impl Checker {
     /// argument types (`ranked_static_member`) and must rank the template's
     /// member best, since the call's contract is that member's. A receiver
     /// with no clone keeps the erased member, as does a static on an
-    /// inferred or contextual receiver, which no instance retargets.
+    /// inferred or contextual receiver, which no instance retargets. A lone
+    /// static with binders of its own names its per-call clone
+    /// (`realize_static_instantiations`).
     fn realize_static_overloads(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -2983,6 +2985,86 @@ impl Checker {
                 .method_clone_target(owner, method, &arguments, declared, substitution)
                 .ok_or("a static's clone family has no overloaded member for the selection")?;
             facts.overload_targets[index].1 = target;
+        }
+        self.realize_static_instantiations(facts, occurrences)
+    }
+
+    /// Realize each static with binders of its own a body calls on a
+    /// generic struct's type application (`Pair[Self.T].show(n)`,
+    /// [`BodyShape::static_call`]): the per-call clone its request names,
+    /// keyed by the instance as well, once the elaborator has minted it.
+    ///
+    /// The request's own arguments are closed, or substitution would have
+    /// changed them (`realize_instance_facts`), so the instance requests the
+    /// template's clone of the static at its own receiver arguments, as the
+    /// clone check retargets to it (`instance_call_method_clone`). Before
+    /// that clone exists the clone check calls the instance's clone of the
+    /// static, if any, which no recipe repeats; with neither, both call the
+    /// erased static.
+    fn realize_static_instantiations(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        for index in 0..facts.method_instantiations.len() {
+            let (id, request) = &facts.method_instantiations[index];
+            let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
+            else {
+                continue;
+            };
+            let (Some((owner, applied)), Some((_, method))) =
+                (&occurrence.type_receiver, &occurrence.method_call)
+            else {
+                continue;
+            };
+            let Some(info) = self
+                .structs
+                .get(owner)
+                .filter(|info| !info.decls.is_empty())
+            else {
+                continue;
+            };
+            let [declared] = info
+                .methods
+                .get(method)
+                .map(Vec::as_slice)
+                .ok_or("a static with binders of its own is not declared")?
+            else {
+                return Err("a static with binders of its own is overloaded");
+            };
+            let arguments = self
+                .partition_struct_origin_args(owner, &info.source_params, applied)
+                .and_then(|partitioned| {
+                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
+                })
+                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
+                .1;
+            let clone = self.instance_call_method_clone(
+                owner,
+                &arguments,
+                method,
+                &declared.decls,
+                &request.arguments,
+            );
+            let target = match clone {
+                Some(clone) => format!("{owner}.{clone}"),
+                None if self
+                    .instance_method_clone(owner, method, &arguments)
+                    .is_some() =>
+                {
+                    return Err("an instance calls its own clone of a static with binders");
+                }
+                None => continue,
+            };
+            let id = *id;
+            match facts
+                .overload_targets
+                .iter_mut()
+                .find(|(site, _)| *site == id)
+            {
+                Some(entry) => entry.1 = target,
+                None => facts.overload_targets.push((id, target)),
+            }
         }
         Ok(())
     }
@@ -11179,8 +11261,15 @@ impl BodyShape<'_> {
     /// instance. An expected type that is a bare parameter refuses the
     /// leading-dot form outright.
     ///
-    /// Each member of a generic struct's static has no binders of its own,
-    /// no availability condition, and no reference or variadic parameter.
+    /// Each member of a generic struct's static takes its parameters by
+    /// value, `var`, `mut`, or `ref` with an inferred origin, or in a
+    /// positional pack, and returns no reference. An availability condition
+    /// the template called it under was proved with the struct's parameters
+    /// symbolic, so every instance meets it. A `mut` or `ref` argument is a
+    /// named place kept as the caller's (`CallPlaceUses`); a lone static's
+    /// read-only pack reads a named place where it lies. A lone static may
+    /// declare binders of its own: an instance calls the per-call clone
+    /// keyed by its own receiver (`realize_static_instantiations`).
     /// On an inferred or contextual receiver the members differ only in
     /// closed parameter types, so the call ranks the same member whatever
     /// solves the struct's parameters; on a spelled receiver the instance
@@ -11222,19 +11311,22 @@ impl BodyShape<'_> {
         };
         let info = self.structs.get(base);
         let generic = info.is_some_and(|info| !info.decls.is_empty());
-        let plain_static = |sig: &super::MethodSig| {
+        let derivable = |sig: &super::MethodSig| {
             !sig.has_self
-                && sig.decls.is_empty()
-                && sig.availability.is_empty()
-                && sig.variadic.is_none()
                 && sig.kw_variadic.is_none()
                 && sig.ref_return.is_none()
-                && sig.ref_params.iter().all(Option::is_none)
-                && sig.view_return.is_empty()
                 && sig
-                    .conventions
+                    .ref_params
                     .iter()
-                    .all(|convention| matches!(convention, None | Some(ArgConvention::Var)))
+                    .flatten()
+                    .all(|reference| reference.origin == mojito_types::origin::SigOrigin::Infer)
+                && sig.view_return.is_empty()
+                && sig.conventions.iter().all(|convention| {
+                    matches!(
+                        convention,
+                        None | Some(ArgConvention::Var | ArgConvention::Mut | ArgConvention::Ref)
+                    )
+                })
         };
         let static_member = info
             .and_then(|info| {
@@ -11253,11 +11345,21 @@ impl BodyShape<'_> {
                 // ranks alike under every instance only where the members
                 // differ in closed parameter types.
                 if generic {
-                    signatures.iter().all(plain_static)
+                    signatures.iter().all(derivable)
+                        && (signatures.len() == 1
+                            || signatures.iter().all(|sig| sig.decls.is_empty()))
                         && (!applied.is_empty() || closed_differences(signatures))
                 } else {
                     signatures.iter().all(|sig| !sig.has_self)
                 }
+            });
+        // A lone static's read-only pack reads each named place it is
+        // handed where it lies, recording nothing at the argument.
+        let pack_from = info
+            .and_then(|info| info.methods.get(method))
+            .and_then(|family| match family.as_slice() {
+                [sig] if sig.variadic_convention.is_none() => sig.variadic_index,
+                _ => None,
             });
         let shadowed =
             self.local_kind(spelled).is_some() || self.params.contains(&spelled.as_str());
@@ -11266,9 +11368,18 @@ impl BodyShape<'_> {
             && !shadowed
             && (static_member || (contextual && self.facts.is_none()))
             && kwargs.is_empty()
-            && args.iter().all(|argument| {
-                (self.expression(argument) && self.scalar(argument))
-                    || ((generic || self.facts.is_none()) && self.static_argument(argument))
+            && args.iter().enumerate().all(|(position, argument)| {
+                let kept = self.facts.is_some_and(|facts| {
+                    facts.call_place_uses.contains(&self.occurrence(argument))
+                });
+                let packed = pack_from.is_some_and(|from| position >= from);
+                if kept {
+                    self.static_argument(argument, packed)
+                } else {
+                    (self.expression(argument) && self.scalar(argument))
+                        || ((generic || self.facts.is_none())
+                            && self.static_argument(argument, packed))
+                }
             })
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id)
@@ -11276,7 +11387,7 @@ impl BodyShape<'_> {
                     && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.selected_calls, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
-                    && fact_at(&facts.method_instantiations, id).is_none()
+                    && (generic || fact_at(&facts.method_instantiations, id).is_none())
                     && fact_at(&facts.parameterized_method_calls, id).is_none()
                     && args.iter().all(|argument| {
                         fact_at(&facts.conversions, self.occurrence(argument)).is_none()
@@ -11292,27 +11403,39 @@ impl BodyShape<'_> {
 
     /// A whole value passed to a static call ([`Self::static_call`]) that
     /// records no contract: moved, a temporary, copied where the template
-    /// recorded the copy, or a named place read where it lies.
+    /// recorded the copy, a named place read where it lies (always, in a
+    /// read-only pack, `packed`), or a named place a `mut` or `ref`
+    /// parameter keeps as the caller's.
     ///
     /// The call records no conversion at it, so it binds a parameter of its
     /// own type under every instance, and what the call records for it is
     /// decided by its syntax and the callee's convention alone, as for a
     /// method's argument ([`Self::argument`]). A copy into a `var` parameter
     /// is owed again at the instance's type.
-    fn static_argument(&self, argument: &Expr) -> bool {
+    fn static_argument(&self, argument: &Expr, packed: bool) -> bool {
         let named = match &argument.kind {
             ExprKind::Identifier(name) => {
                 self.declared(name) || self.params.contains(&name.as_str())
             }
             _ => self.receiver_field(argument),
         };
+        let id = self.occurrence(argument);
+        let kept = self
+            .facts
+            .is_some_and(|facts| facts.call_place_uses.contains(&id));
         let admitted = !self.keyed
             && self.facts.is_none_or(|facts| {
-                let id = self.occurrence(argument);
-                let read_in_place = facts.borrowed_read_call_places.contains(&id) && named;
-                !facts.call_place_uses.contains(&id)
-                    && (read_in_place || self.whole_value(argument))
+                let read_in_place =
+                    (packed || facts.borrowed_read_call_places.contains(&id)) && named;
+                if kept {
+                    named
+                } else {
+                    read_in_place || self.whole_value(argument)
+                }
             });
+        if admitted && kept {
+            push_unique(&mut self.places.borrow_mut(), id);
+        }
         admitted && self.holds(MethodFeatures::VALUE_ARGUMENTS)
     }
 

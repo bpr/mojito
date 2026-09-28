@@ -38,7 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
 
-- [ ] **- [ ] **1.1 An overloaded witness beside a rival the recorded types cannot
+- [ ] **1.1 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
 
   Problem: a call through a bound whose witness overloads the requirement
@@ -58,7 +58,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **- [ ] **1.2 A field handed to a hasher the instance binds to a struct
+- [ ] **1.2 A field handed to a hasher the instance binds to a struct
   keeps the clone check**
 
   Problem: `hasher.update(self.value)` in a method whose own `H: Hasher`
@@ -73,7 +73,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **- [ ] **1.3 A string literal or other non-scalar value handed through a
+- [ ] **1.3 A string literal or other non-scalar value handed through a
   bound keeps the clone check**
 
   Problem: `self.s.scale(2, label="y")` through `S: Scaler` refuses the
@@ -88,23 +88,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A generic struct's static with binders of its own, an
-  availability condition, or a reference or variadic parameter keeps the
-  clone check**
-
-  Problem: `BodyShape::static_call` admits a generic struct's static only
-  when every member is a plain static (`plain_static`).
-  - A static's own binders would need a per-call clone request an instance
-    re-keys.
-  - An availability condition is judged at the instance's arguments.
-  - A reference or variadic parameter records call facts the static recipe
-    does not realize.
-  - Found while generic statics joined the method grammar (2026-09-26); no
-    bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.5 A type alias spelled in a template body keeps the clone check**
+- [ ] **1.4 A type alias spelled in a template body keeps the clone check**
 
   Problem: `external_call["close", c_int](…)` in a user `def` template is
   refused per instance: the clone's occurrences are not the template's.
@@ -118,7 +102,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A module `def` with a defaulted parameter keeps the clone
+- [ ] **1.5 A module `def` with a defaulted parameter keeps the clone
   check**
 
   Problem: `os.mkdir(path, mode: Int = 0o777)` and `os.makedirs` are
@@ -132,7 +116,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 `path.isdir`, `isfile`, and `islink` keep the clone check**
+- [ ] **1.6 `path.isdir`, `isfile`, and `islink` keep the clone check**
 
   Problem: their templates certify, but each instance is refused: a
   retargeted call has no retained application.
@@ -142,7 +126,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A variadic struct's initializer building its storage with
+- [ ] **1.7 A variadic struct's initializer building its storage with
   `Tuple(*args^)` keeps the clone check**
 
   Problem: a user variadic struct's `__init__` (`self.storage =
@@ -154,7 +138,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A variadic struct's index-keyed accessor keeps the clone
+- [ ] **1.8 A variadic struct's index-keyed accessor keeps the clone
   check**
 
   Problem: a user variadic struct's `def __getitem__[i: Int](self) ->
@@ -167,7 +151,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 `TString.write_to` keeps the clone check**
+- [ ] **1.9 `TString.write_to` keeps the clone check**
 
   Problem: `TString.write_to` binds each element with a `ref` local over a
   `Tuple` accessor inside a `comptime for`, which the method grammar
@@ -178,7 +162,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A float range's initializer and `__next__` keep the clone
+- [ ] **1.10 A float range's initializer and `__next__` keep the clone
   check**
 
   Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
@@ -193,7 +177,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.11 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -208,7 +192,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.12 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -226,7 +210,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.13 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -238,7 +222,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A `Pointer` type argument over an interior-projected place is
+- [ ] **1.14 A `Pointer` type argument over an interior-projected place is
   baked into its clone with its place**
 
   Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
@@ -252,7 +236,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A parameter expression cannot be rebuilt unfolded through the
+- [ ] **1.15 A parameter expression cannot be rebuilt unfolded through the
   front end's public constructors**
 
   Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
@@ -267,7 +251,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 Specialized MIR does not run on the VM as the original does**
+- [ ] **1.16 Specialized MIR does not run on the VM as the original does**
 
   Problem: for three compile benchmarks the program that native
   monomorphization produces fails on the VM, where the unspecialized program
@@ -282,7 +266,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.17 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that
@@ -300,7 +284,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on 3.54: an `Int` element constructs as `Int()`.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.18 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -317,7 +301,7 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A nested `def` with a constructed default keeps the clone
+- [ ] **1.19 A nested `def` with a constructed default keeps the clone
   check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar,
@@ -332,6 +316,24 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
     is known to need it.
   - Depends on 3.99: until a constructed default runs, no fixture can take
     it.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.20 An explicitly applied or overloaded generic static with
+  binders of its own keeps the clone check**
+
+  Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
+  call to an overloaded static one of whose members declares binders.
+  - The explicit application is an `Invoke` that `BodyShape::
+    parameterized_call` admits only on a value receiver, not a type.
+  - An overloaded family with binders would need the per-call clone of
+    the member the instance ranks; `realize_static_instantiations` handles
+    a lone static only.
+  - Before the per-call clone exists (round 0), the instance calls its own
+    clone of the static, which no recipe repeats, so such a call derives
+    only from round 1.
+  - Found while own binders joined generic statics in the method grammar
+    (2026-09-28); no bundled body is known to need it.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **1.21 The A1 shadow core has never been run over the decision
@@ -413,7 +415,22 @@ Pliron experiment rather than move the check order sit last, 1.21 to 1.24.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.1 A generic struct's static taking a pack of its parameter type
+  does not compile natively**
+
+  Problem: `Pair[Self.T].count(self.item, self.item)`, beside
+  `def count(*values: Self.T)`, prints `2 2` on the VM and the pin, but
+  the native backend stops with "unsupported unresolved type parameter
+  `T`" in `Pair.count`.
+  - The erased static reaches native lowering with its pack element still
+    the struct's symbolic parameter.
+  - A pack of a closed type (`*values: String`) compiles natively
+    (`assets/ok/template_method_generic_static_shapes.mojo`).
+  - Probe: `conformance/probes/static_parameter_pack_native.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2460,6 +2477,29 @@ last.
   - A lever: keep the template's member at every instance, which a
     collapsed family must then lower to one clone.
   - Probe: `conformance/probes/collapsed_static_overload_family.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.101 A generic static's per-call clone takes a call to its
+  overload sibling**
+
+  Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
+  `pick(u: Int, v: Int)`, stops with "'Pair.pick$y3:Int$y3:Int' expects 1
+  argument(s), got 2"; the pin prints `3`.
+  - The instance's check retargets the two-argument call to the per-call
+    clone the one-argument member minted.
+  - Probe: `conformance/probes/static_binder_overload_arity.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.102 A generic static with its own binder cannot infer its struct's
+  parameter beside a spelled call**
+
+  Problem: `Pair.both(7, self.item)` in a generic method is rejected with
+  "cannot infer type parameter 'T' of 'Pair'" when the same body also calls
+  `Pair[Self.T].both(1, self.item)`; the pin runs both.
+  - Either call alone runs.
+  - Probe: `conformance/probes/static_binder_infers_struct_parameter.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

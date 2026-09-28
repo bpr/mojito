@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's static with an availability condition, a `mut` or
+  `ref` parameter, a read-only variadic pack, or binders of its own
+  (`Pair[Self.T].swap(a, b)`, `Pair[Self.T].show(5)` beside
+  `show[U: Writable](u: U)`) now reuses the template's checked facts; with
+  its own binders each instance calls the per-call clone keyed by its own
+  receiver (`assets/ok/template_method_generic_static_shapes.mojo`). Such
+  bodies used to be checked again per instance.
 - A generic struct's overloaded static whose members differ in a parameter
   of the struct's parameter type (`Pair[Self.T].pick(v)` beside
   `pick(v: Self.T)` and `pick(v: Float64)`) now reuses the template's
