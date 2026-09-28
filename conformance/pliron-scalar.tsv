@@ -544,6 +544,7 @@ assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_def_bound_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_converting_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_defaulted_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_slice_stringify.mojo	-	ineligible	no-scalar-entry-shape

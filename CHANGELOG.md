@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `def` or method converting a parameter, a local, or a field
+  through its bound (`Int(mode)` on `mode: intable` with `intable:
+  Intable`, `Float64` on `Floatable`, `Bool` on `Boolable`) now reuses the
+  template's checked facts (`assets/ok/template_def_bound_conversion.mojo`). The bundled
+  `stat.S_ISDIR`, `S_ISREG`, and `S_ISLNK`, which `path.isdir`, `isfile`,
+  and `islink` call, used to be checked again per instance. A struct
+  declaring `Floatable` now satisfies a `Floatable` bound; it was rejected
+  as missing `__float__`.
 - A generic `def` declaring a literal parameter default
   (`mode: Int = 0o777` in `os.mkdir` and `os.makedirs`,
   `label: String = "tag"`, `note: Optional[Int] = None`) now reuses the

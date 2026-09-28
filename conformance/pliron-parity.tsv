@@ -544,6 +544,7 @@ assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
+assets/ok/template_def_bound_conversion.mojo	main	exe-differential	sanitized
 assets/ok/template_def_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_def_defaulted_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_def_slice_stringify.mojo	main	exe-differential	sanitized

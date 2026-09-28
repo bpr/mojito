@@ -133,6 +133,19 @@ pub(super) fn has_len_bound(ty: &Ty) -> bool {
     }
 }
 
+/// The conversion dunder and the bound an opaque argument needs for the
+/// conversion built-in `target` (`Int(x)` reads `__int__` and needs
+/// `Intable`, `Float64(x)` `__float__` and `Floatable`, `Bool(x)`
+/// `__bool__` and `Boolable`).
+pub(super) const fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static str)> {
+    match target {
+        Ty::Int => Some(("__int__", "Intable")),
+        Ty::Float64 => Some(("__float__", "Floatable")),
+        Ty::Bool => Some(("__bool__", "Boolable")),
+        _ => None,
+    }
+}
+
 /// Whether `ty` is an opaque type parameter carrying the named trait `bound`.
 /// The numeric-operation traits (roadmap milestone 7 — `Absable`/`Roundable`/`Powable`/
 /// `Intable`/`Floatable`/`Boolable`/`DivModable`) gate a corresponding built-in
@@ -943,16 +956,11 @@ impl Checker {
         // A concrete value routes through its conversion dunder
         // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
         // same protocol an opaque `T: Intable/Floatable/Boolable` uses.
-        let conversion = match target {
-            Ty::Int => Some(("__int__", Ty::Int)),
-            Ty::Float64 => Some(("__float__", Ty::Float64)),
-            Ty::Bool => Some(("__bool__", Ty::Bool)),
-            _ => None,
-        };
-        if let Some((dunder, expected)) = &conversion
+        let conversion = conversion_protocol(&target);
+        if let Some((dunder, _)) = conversion
             && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
         {
-            require_dunder_ret(result?, expected, dunder)?;
+            require_dunder_ret(result?, &target, dunder)?;
             self.borrow_nominal_place_argument(&args[0], &arg_ty);
             // A raising conversion dunder (`String.__int__() raises`) makes
             // the conversion a raising call.
@@ -965,12 +973,7 @@ impl Checker {
             }
             return Ok(target);
         }
-        let bounded = match target {
-            Ty::Int => param_has_bound(&arg_ty, "Intable"),
-            Ty::Float64 => param_has_bound(&arg_ty, "Floatable"),
-            Ty::Bool => param_has_bound(&arg_ty, "Boolable"),
-            _ => false,
-        };
+        let bounded = conversion.is_some_and(|(_, bound)| param_has_bound(&arg_ty, bound));
         // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
         // Mojo's scalar conversions accept it.
         let simd_scalar = is_scalar_simd(&arg_ty);

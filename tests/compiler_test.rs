@@ -3223,6 +3223,54 @@ fn template_def_slice_stringify_derives() {
 }
 
 #[test]
+fn template_def_bound_conversion_derives() {
+    // `Int`, `Float64`, and `Bool` of a parameter whose binder carries the
+    // conversion's bound, at a scalar and at a struct read in place through
+    // its dunder, and of a generic struct's field or local; the bundled
+    // `stat.S_ISDIR` family is this shape.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_bound_conversion.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for template in [
+            "masked$",
+            "halved$",
+            "truthy$",
+            "Holder.as_int$",
+            "Holder.local_float$",
+            "__module$stat$S_ISDIR$",
+            "__module$stat$S_ISREG$",
+            "__module$stat$S_ISLNK$",
+            "__module$path$isdir$",
+        ] {
+            assert!(
+                served.iter().any(|name| name.starts_with(template)),
+                "{template} derives: {stats:?}"
+            );
+        }
+        assert!(
+            !stats
+                .refused
+                .iter()
+                .any(|(name, _)| name.starts_with("__module$stat$")),
+            "no stat predicate is refused: {stats:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "16384 32768\n3.5 2.5\nTrue False\nTrue False\n7 3.0\nTrue False False\n"
+        );
+    }
+}
+
+#[test]
 fn template_def_type_alias_derives() {
     // `c_int = Int32` spelled in an `external_call` result type, a
     // construction, and a local's annotation expands with the same

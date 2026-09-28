@@ -2104,9 +2104,7 @@ impl Checker {
             self.realize_callable_call(&mut facts, *call, occurrences)?;
         }
         facts.callable_calls.clear();
-        for call in &template.builtin_len_calls {
-            self.realize_builtin_len(&mut facts, *call, occurrences)?;
-        }
+        self.realize_bound_builtins(template, &mut facts, occurrences)?;
         self.realize_iterations(&mut facts, &substitute)?;
         Self::realize_comprehension_bindings(&mut facts, &substitute);
         Self::realize_nested_defs(&mut facts, &substitute);
@@ -3512,6 +3510,72 @@ impl Checker {
             source_borrow: selected.source_borrow,
         };
         Ok(())
+    }
+
+    /// Realize the built-ins a template proved through a bound, each `len`
+    /// call and each bound conversion, for an instance.
+    fn realize_bound_builtins(
+        &self,
+        template: &CheckedBodyFacts,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        for call in &template.builtin_len_calls {
+            self.realize_builtin_len(facts, *call, occurrences)?;
+        }
+        for (target, argument) in bound_conversions(template, occurrences) {
+            self.realize_bound_conversion(facts, &target, argument, occurrences)?;
+        }
+        Ok(())
+    }
+
+    /// Realize one built-in conversion of a place whose type binder carries
+    /// the conversion's bound (`Int(mode)` on `mode: intable`) for an
+    /// instance, as `infer_conversion` decides it on the concrete type.
+    ///
+    /// The template proved the conversion through the bound and recorded
+    /// only its closed result. The instance owes the witness: an address
+    /// for `Int` of a pointer, a scalar the conversion reads natively, or a
+    /// struct's conversion dunder returning the target. A struct place is
+    /// then read in place, the one fact `infer_conversion` adds. A raising
+    /// dunder would add an effect the template did not record, so it
+    /// refuses the derivation, as does a missing witness.
+    fn realize_bound_conversion(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        target: &Ty,
+        argument: OccurrenceId,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let (dunder, bound) = super::builtins::conversion_protocol(target)
+            .ok_or("a bound conversion names no conversion protocol")?;
+        let ty = fact_at(&facts.expression_types, argument)
+            .cloned()
+            .ok_or("a bound conversion's argument has no retained type")?;
+        let ty = self.opaque_element(&ty).unwrap_or(ty);
+        if *target == Ty::Int && matches!(ty, Ty::Pointer { .. }) {
+            return Ok(());
+        }
+        if let Some(result) = self.struct_dunder(&ty, dunder, &[]) {
+            if result.ok().as_ref() != Some(target) {
+                return Err("the instance's conversion dunder does not return its target");
+            }
+            if self
+                .struct_dunder_signature_for(&ty, dunder, &[])
+                .is_some_and(|(_, signature, _)| signature.raises)
+            {
+                return Err("the instance's conversion dunder raises");
+            }
+            self.borrow_nominal_place_operand(facts, argument, &ty, occurrences);
+            return Ok(());
+        }
+        let converts = super::builtins::is_numeric(&ty)
+            || ty == Ty::Bool
+            || super::builtins::param_has_bound(&ty, bound)
+            || mojito_types::types::is_scalar_simd(&ty);
+        converts
+            .then_some(())
+            .ok_or("the instance's type has no conversion witness")
     }
 
     /// Realize one built-in `len(x)` for an instance, as `infer_len` decides
@@ -8879,6 +8943,46 @@ fn push_unique<V: PartialEq>(list: &mut Vec<V>, entry: V) {
     }
 }
 
+/// The built-in conversions of a bound-typed place an instance realizes
+/// (`Checker::realize_bound_conversion`): each call to `Int`, `Float64`, or
+/// `Bool` whose one argument the template typed as a binder carrying the
+/// conversion's bound, with its target and the argument's occurrence.
+fn bound_conversions(
+    template: &CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Vec<(Ty, OccurrenceId)> {
+    occurrences
+        .iter()
+        .filter(|occurrence| fact_at(&template.call_parameters, occurrence.id).is_none())
+        .filter_map(|occurrence| {
+            let target = conversion_target(occurrence.callee.as_deref()?)?;
+            let (_, bound) = super::builtins::conversion_protocol(&target)?;
+            let [syntax] = occurrence.arguments.as_slice() else {
+                return None;
+            };
+            let argument = OccurrenceId {
+                syntax: *syntax,
+                copy: occurrence.id.copy,
+            };
+            template
+                .expression_types
+                .iter()
+                .any(|(id, ty)| id.syntax == *syntax && super::builtins::param_has_bound(ty, bound))
+                .then_some((target, argument))
+        })
+        .collect()
+}
+
+/// The target type of a conversion built-in spelled `name`.
+fn conversion_target(name: &str) -> Option<Ty> {
+    match name {
+        "Int" => Some(Ty::Int),
+        "Float64" => Some(Ty::Float64),
+        "Bool" => Some(Ty::Bool),
+        _ => None,
+    }
+}
+
 fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
     table
         .iter()
@@ -12233,8 +12337,11 @@ impl BodyShape<'_> {
 
     /// A built-in scalar conversion of one value of a closed type
     /// (`Int(key_hash)`, or `Bool(result)` of a closed struct place, which
-    /// its conversion dunder reads in place), or of a value-shaped vector a
-    /// keyed body holds (`Int(Scalar[dt](v))`). It selects no callee and
+    /// its conversion dunder reads in place), of a value-shaped vector a
+    /// keyed body holds (`Int(Scalar[dt](v))`), or of a place whose type
+    /// binder carries the conversion's bound (`Int(mode)` on `mode: intable`
+    /// with `intable: Intable`, `Int(self.value)` on `value: Self.T`), whose
+    /// witness each instance realizes (`realize_bound_conversion`). It selects no callee and
     /// records only its closed result type, which no instance changes; a
     /// declaration of that name would record a selection at the call, and
     /// such a call is not this.
@@ -12258,11 +12365,20 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => self.receiver_field(argument),
             _ => false,
         };
+        let bounded = place
+            && conversion_target(name)
+                .and_then(|target| super::builtins::conversion_protocol(&target))
+                .is_some_and(|(_, bound)| {
+                    self.facts.is_some_and(|facts| {
+                        fact_at(&facts.expression_types, self.occurrence(argument))
+                            .is_some_and(|ty| super::builtins::param_has_bound(ty, bound))
+                    })
+                });
         matches!(name, "Int" | "UInt" | "Bool" | "Float64")
             && param_args.is_empty()
             && kwargs.is_empty()
             && (self.expression(argument) || place)
-            && (self.closed(argument) || self.value_shaped(argument))
+            && (self.closed(argument) || self.value_shaped(argument) || bounded)
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id).is_some_and(closed_scalar)
                     && fact_at(&facts.call_parameters, id).is_none()
