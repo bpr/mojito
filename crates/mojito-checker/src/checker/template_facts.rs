@@ -12134,7 +12134,9 @@ impl BodyShape<'_> {
     /// every instance. Over a lane-shaped receiver the template records no
     /// adjustment, and the instance records its own from the substituted
     /// types (`realize_simd_intrinsics`). A lane read and a reduction stand
-    /// on a receiver whose dtype is closed, so their results are closed; a
+    /// on a receiver whose dtype is closed, so their results are closed, or,
+    /// a lane read, on a value-shaped vector of a known width above one
+    /// ([`Self::value_shaped_vector`]), whose lane is value-shaped; a
     /// cast's or a reinterpretation's explicit target closes the result's
     /// dtype itself, a defaulted reinterpretation's is the unsigned dtype of
     /// the receiver's lane width, and a lane count is an `Int`.
@@ -12209,7 +12211,7 @@ impl BodyShape<'_> {
                 if !(self.expression(index) && self.scalar(index)) {
                     return false;
                 }
-                (object, !cast_source)
+                (object, !cast_source && !self.value_shaped_vector(object))
             }
             _ => return false,
         };
@@ -12235,10 +12237,9 @@ impl BodyShape<'_> {
             }
         };
         let adjustment = fact_at(&facts.operation_adjustments, id);
-        // A closed lane read into a place is copied out of the vector, as
-        // it is under every instance.
-        let closed_lane =
-            matches!(expr.kind, ExprKind::Index { .. }) && !mojito_types::types::is_symbolic(ty);
+        // A lane read into a place is copied out of the vector; each
+        // instance re-proves the copy implicit at its own lane type.
+        let lane = matches!(expr.kind, ExprKind::Index { .. });
         let source = fact_at(&facts.expression_types, self.occurrence(receiver));
         let open_source = source.is_some_and(mojito_types::types::is_symbolic);
         let adjusted = match (adjustment, &expr.kind) {
@@ -12272,7 +12273,7 @@ impl BodyShape<'_> {
             && fact_at(&facts.parameterized_method_calls, id).is_none()
             && fact_at(&facts.method_instantiations, id).is_none()
             && fact_at(&facts.subscript_descriptors, id).is_none()
-            && (!facts.copy_place_value_uses.contains(&id) || closed_lane);
+            && (!facts.copy_place_value_uses.contains(&id) || lane);
         // A reinterpretation or cast the template recorded over an open
         // source lane is noted too: its closed shape stands, but the
         // instance checks its own source lane against it.
@@ -12335,6 +12336,25 @@ impl BodyShape<'_> {
                 };
                 (!symbolic || self.lane_shaped_simd(ty) || self.value_shaped_scalar(ty))
                     && (!closed_dtype || vector)
+            })
+        })
+    }
+
+    /// Whether the recorded type of `expr` is a value-shaped vector of a
+    /// known width above one (`SIMD[dt, 4]`): every instance closes it to a
+    /// vector, whatever its dtype, so a lane of it is a value-shaped scalar
+    /// (`Scalar[dt]`) the instance's own facts close.
+    fn value_shaped_vector(&self, expr: &Expr) -> bool {
+        self.facts.is_some_and(|facts| {
+            fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
+                self.value_shaped_simd(ty)
+                    && matches!(
+                        ty,
+                        Ty::Simd {
+                            width: mojito_types::types::SimdWidth::Known(width),
+                            ..
+                        } if *width > 1
+                    )
             })
         })
     }

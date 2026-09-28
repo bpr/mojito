@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A keyed `def` reading a lane of a value-shaped vector of a fixed width
+  (`lanes[0]` on `SIMD[dt, 4]`), converting it or copying it into a local
+  (`var first = lanes[0]`), now reuses the template's checked facts: every
+  instance closes the receiver to a vector, and re-proves the copy at its
+  own lane type. Such bodies used to be checked again per instance.
 - A hasher leaf that holds the defaulted `value.to_bits()` in a local and
   casts each lane before using it (`bits[i].cast[DType.uint64]()`) now
   reuses the template's checked facts: a lane over the open dtype is

@@ -1757,6 +1757,33 @@ fn template_value_shaped_operations_derive() {
 }
 
 #[test]
+fn template_value_shaped_lane_copy_derives() {
+    // A lane of a value-shaped vector bound to a local copies a place; each
+    // instance re-proves the copy at its own lane type.
+    let source = "def first_lanes[dt: DType](v: Int) -> Int:\n    var lanes = SIMD[dt, 4](v)\n    var first = lanes[0]\n    var last = lanes[3]\n    first += last\n    return Int(first) + Int(lanes[1])\n\ndef widest[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    var first = lanes[0]\n    return Int(first) * w\n\ndef main():\n    print(first_lanes[DType.int16](3), first_lanes[DType.float32](2), first_lanes[DType.int64](4), first_lanes[DType.float64](1), widest[4](5), widest[2](7))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("first_lanes$") || name.starts_with("widest$"))
+            .collect();
+        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "9 6 12 3 20 14\n"
+        );
+    }
+}
+
+#[test]
 fn template_struct_lane_members_derive() {
     // A member of a `DType`-keyed struct specialized whole converts, builds,
     // and combines values of the symbolic lane with literals, and derives at
