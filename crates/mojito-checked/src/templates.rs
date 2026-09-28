@@ -1406,7 +1406,9 @@ pub enum TemplateObligation {
     /// exception: a clone whose only binders are the elaborator's origin
     /// binders takes an argument whose loans ride in struct origin tails
     /// bound to them (`Span[Int, __clone_origin0]`), whose transfers are the
-    /// template's own, replayed under [`Self::ReplayedTransfers`].
+    /// template's own, replayed under [`Self::ReplayedTransfers`]. So does
+    /// an argument whose every origin is an erased struct origin tail
+    /// (`StringSpan[_]`), whose loans name no place in either check.
     PlainDataArguments,
     /// Every `^` transfer of a value whose type mentioned a parameter must be
     /// of a `Movable` type for the instance. A parameter is always movable

@@ -1887,6 +1887,47 @@ fn tuple_callable_binder_teardowns_derive() {
 }
 
 #[test]
+fn tuple_over_erased_views_derives() {
+    // `split_at_grapheme` returns `Tuple[StringSpan, StringSpan]`, whose
+    // element origins the elaborator erases: the loans name no place in the
+    // clone's own check either, so every member derives as it does for
+    // plain-data elements, the teardowns and the `rebind`-keyed
+    // `__contains__` among them.
+    let source = "def main():\n    var text = String(\"h\u{e9}llo\")\n    var parts = text.split_at_grapheme(2)\n    print(parts[0], parts[1], len(parts))\n    var again = text.split_at_grapheme(2)\n    print(parts == again, parts != again)\n    print(parts)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "h\u{e9} llo 2\nTrue False\n(h\u{e9}, llo)\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let instance = "Tuple$t2[y10:StringSpany10:StringSpan]";
+    for member in [
+        "__eq__",
+        "__ne__",
+        "__hash__",
+        "__contains__",
+        "write_to",
+        "consume_elements",
+        "deinit_with",
+        "copy",
+    ] {
+        let name = format!("{instance}.{member}");
+        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+    }
+    assert!(
+        !stats
+            .inferred_clones
+            .iter()
+            .any(|name| name.starts_with(instance)),
+        "no member of {instance} is inferred: {stats:?}"
+    );
+}
+
+#[test]
 fn template_vector_keyed_members_derive() {
     // A struct keyed on a closed vector value, specialized whole as the
     // bundled `AHasher` is, reads `Self.key`, constructs through the vector

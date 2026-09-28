@@ -1403,8 +1403,10 @@ impl Checker {
         };
         // A clone whose only binders are the elaborator's origin binders
         // (`Span[Int, __clone_origin0]`) carries exactly those binders' loans
-        // in its arguments; the transfer recipe judges each replayed source
-        // by its binding's substituted type.
+        // in its arguments, and an argument whose origins the elaborator
+        // erased (`Tuple[StringSpan[_], StringSpan[_]]`) carries loans to no
+        // place in either check; the transfer recipe judges each replayed
+        // source by its binding's substituted type.
         let binder_clone = site
             .declaration
             .type_params()
@@ -1418,8 +1420,7 @@ impl Checker {
             .chain(substitution.packs.values().flatten())
             .all(|ty| {
                 self.plain_data(ty)
-                    || (binder_clone
-                        && binder_tail_loans(ty)
+                    || ((erased_tail_loans(ty) || (binder_clone && binder_tail_loans(ty)))
                         && !self.type_contains_reference(ty)
                         && !mentions_callable(ty))
             })
@@ -1610,13 +1611,15 @@ impl Checker {
 
     /// [`TemplateObligation::CallThroughResidue`] for one substituted type:
     /// closed, and holding no loan and no reference in its storage, its
-    /// fields at their own arguments. A callable is not refused as
+    /// fields at their own arguments, or holding only loans whose origins
+    /// the elaborator erased (`StringSpan[_]`), which name no place a
+    /// residue argument could carry. A callable is not refused as
     /// `loan_free` refuses one: what a callable's storage carries is its
     /// environment's, which no substitution changes, so a `thin` one carries
     /// nothing in either check and a `capturing` one the same open set.
     fn residue_plain(&self, ty: &Ty) -> bool {
         !mojito_types::types::is_symbolic(ty)
-            && !self.type_carries_loans(ty)
+            && (!self.type_carries_loans(ty) || erased_tail_loans(ty))
             && !self.type_contains_reference(ty)
     }
 
@@ -4762,7 +4765,7 @@ impl Checker {
         if self.transfer_residue(reads) {
             reasons.push("effects".to_string());
         }
-        let annotation = self.return_annotation_spans();
+        let annotation = self.annotation_spans_of(site.body);
         for (index, table) in FactTable::ALL.into_iter().enumerate() {
             let entries = self.span_table(table);
             let recorded = occurrences
@@ -5592,7 +5595,7 @@ impl Checker {
         if !republishable {
             return Err(IncompleteReason::UnkeyedFact("call-through residue"));
         }
-        let annotation = self.return_annotation_spans();
+        let annotation = self.annotation_spans_of(body);
         for (index, table) in FactTable::ALL.into_iter().enumerate() {
             if self.grew_outside_body(table, occurrences, baseline.tables[index], &annotation) {
                 return Err(IncompleteReason::FactOutsideBody(table));
@@ -6374,14 +6377,18 @@ impl Checker {
         growth < recorded || growth > recorded + annotated
     }
 
-    /// The expression spans of the return annotation the body being checked
-    /// re-resolves at each `return`, or none.
-    fn return_annotation_spans(&self) -> HashSet<SourceSpan> {
-        self.return_annotations
+    /// The expression spans of the annotations a body's check resolves
+    /// outside its occurrences: the return annotation the body being checked
+    /// re-resolves at each `return`, and every `rebind` target in `body`.
+    fn annotation_spans_of(&self, body: &[Stmt]) -> HashSet<SourceSpan> {
+        let mut spans = self
+            .return_annotations
             .last()
             .and_then(Option::as_ref)
             .map(|(annotation, _)| annotation_spans(annotation))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        spans.extend(self.rebind_targets.target_spans(body));
+        spans
     }
 
     /// The checker's storage for one occurrence-keyed fact table.
@@ -7861,6 +7868,29 @@ fn binder_tail_loans(ty: &Ty) -> bool {
     }
     });
     tail_binder && !other_origin
+}
+
+/// Whether every origin a type argument names is an erased struct origin
+/// tail (`StringSpan[_]`), with no pointer or reference beside it: the
+/// elaborator erased the loan's origin before minting the clone, so the
+/// clone's own check tracks the loan to no place either.
+fn erased_tail_loans(ty: &Ty) -> bool {
+    use mojito_types::origin::Origin;
+    use mojito_types::types::TyArg;
+    let erased_tail = mojito_types::types::mentions(ty, &|candidate| {
+        matches!(candidate, Ty::Struct(_, arguments)
+            if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(Origin::Unbound))))
+    });
+    let other_origin = mojito_types::types::mentions(ty, &|candidate| {
+        match candidate {
+        Ty::Pointer { .. } | Ty::Ref(_) => true,
+        Ty::Struct(_, arguments) => arguments.iter().any(
+            |argument| matches!(argument, TyArg::Origin(origin) if !matches!(origin, Origin::Unbound)),
+        ),
+        _ => false,
+    }
+    });
+    erased_tail && !other_origin
 }
 
 /// Whether a clone's binder is one the elaborator declared for an origin

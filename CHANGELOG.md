@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Tuple` over loan-carrying elements (`Tuple[StringSpan, StringSpan]`)
+  no longer infers every member again in each pass. An instance argument
+  whose origins the elaborator erased now derives from the checked
+  template as plain data does, and capture no longer mistakes the facts a
+  clone's `rebind[T]` target records for facts outside the body. Hello
+  World's clone inferences drop from 53 to 24.
 - A generic hasher's wildcard `_update_with_simd` trap stub
   (`AHasher[key]`) is no longer inferred in every specialization. The
   specializer shapes it once, spanned at the struct with identities derived

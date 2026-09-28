@@ -550,7 +550,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rejects writing through a by-value (`TrivialRegisterPassable`) rebind,
   outside `$`-mangled clones. The eraser turns `rebind[Dest](x) = value`
   into the plain `Assign` of `x`, whose retyping `rebind_assignment_target`
-  applies from the `Assign` arm. The parser admits the call as an
+  applies from the `Assign` arm. `RebindTargets::target_spans` names the
+  spans a body's erased targets embed, which template capture tolerates as
+  it does a return annotation's. The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).
   `rebind_keyed_bodies`, scanned before the erasure removes the calls, names
   the bodies source validation must check for this reason
