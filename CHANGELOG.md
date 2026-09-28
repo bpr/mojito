@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `print` of a whole value in a trait-bound `def` or a generic struct's
+  method (`print(x, s)`, `print("item", self.item)`) now reuses the
+  template's checked facts: `print` reads the argument where it lies, and
+  each instance proves it `Writable` again at its own type
+  (`assets/ok/template_print_whole_value.mojo`). Such bodies used to be
+  checked again per instance.
 - A method whose own `H: Hasher` an instance binds to `AHasher` now
   derives when it hands the hasher a multi-lane vector
   (`hasher._update_with_simd(SIMD[DType.int32, 4](...))`, or `update`):

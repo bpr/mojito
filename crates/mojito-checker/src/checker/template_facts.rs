@@ -2163,7 +2163,7 @@ impl Checker {
         }
         facts.repr_calls.clear();
         for call in &template.print_calls {
-            self.realize_print_call(&facts, *call, occurrences)?;
+            self.realize_print_call(&mut facts, *call, occurrences)?;
         }
         facts.print_calls.clear();
         // A conversion is selected last: its source type is one the call and
@@ -3310,10 +3310,11 @@ impl Checker {
     /// [`TemplateObligation::PrintableArguments`] for one `print` call: each
     /// argument must still be printable at the instance's type, the demand
     /// the builtin makes of it. The call selects no callee and records at an
-    /// argument only what its syntax decides.
+    /// argument what its syntax decides, beside the in-place read of a named
+    /// place the instance's type makes nominal, as `len`'s operand is.
     fn realize_print_call(
         &self,
-        facts: &CheckedBodyFacts,
+        facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
     ) -> Result<(), &'static str> {
@@ -3328,12 +3329,13 @@ impl Checker {
                 copy: id.copy,
             };
             let ty = fact_at(&facts.expression_types, argument)
-                .ok_or("a print call's argument has no retained type")?;
-            if self.printable_argument(ty) {
-                Ok(())
-            } else {
-                Err("a print call's argument is not Writable for the instance")
+                .ok_or("a print call's argument has no retained type")?
+                .clone();
+            if !self.printable_argument(&ty) {
+                return Err("a print call's argument is not Writable for the instance");
             }
+            self.borrow_nominal_place_operand(facts, argument, &ty, occurrences);
+            Ok(())
         })
     }
 
@@ -6612,6 +6614,7 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::TRY_STATEMENTS)
     .union(MethodFeatures::SLICE_VIEWS)
     .union(MethodFeatures::STRINGIFY)
+    .union(MethodFeatures::STRING_BUILTINS)
     .union(MethodFeatures::FOREIGN_CALLS)
     .union(MethodFeatures::CLOSED_OPERATORS)
     .union(MethodFeatures::BOUND_DISPATCH);
@@ -12522,12 +12525,15 @@ impl BodyShape<'_> {
     }
 
     /// `print(...)` as a statement: a checker builtin that selects no
-    /// callee, over closed scalars, pack elements, and string literals.
+    /// callee, over closed scalars, pack elements, string literals, and
+    /// arguments it reads where they lie, as `repr` does
+    /// ([`Self::sink_argument`], under `STRING_BUILTINS`).
     ///
     /// What the builtin records at an argument its syntax decides (an
     /// unconsumed temporary, a literal's materialization); what it proves,
-    /// that the argument is `Writable`, the instance proves again at its own
-    /// type ([`Checker::realize_print_call`]). A declaration of that name
+    /// that the argument is `Writable`, and whether a named place is read in
+    /// place at a nominal type, the instance decides again at its own type
+    /// ([`Checker::realize_print_call`]). A declaration of that name
     /// would record call parameters and a binding, and is not this.
     fn print_call(&self, expr: &Expr) -> bool {
         let ExprKind::Call {
@@ -12544,26 +12550,32 @@ impl BodyShape<'_> {
             fact_at(&facts.call_parameters, id).is_some()
                 || fact_at(&facts.expression_bindings, id).is_some()
         });
-        let admitted = name == "print"
-            && !declared
-            && param_args.is_empty()
-            && kwargs.is_empty()
-            && args.iter().all(|argument| {
-                (self.expression(argument) && self.scalar(argument))
-                    || self.pack_element(argument)
-                    || (matches!(argument.kind, ExprKind::Str(_))
-                        && self.facts.is_none_or(|facts| {
-                            fact_at(&facts.expression_types, self.occurrence(argument))
-                                == Some(&Ty::StringLiteral)
-                        }))
-            });
+        if name != "print" || declared || !param_args.is_empty() || !kwargs.is_empty() {
+            return false;
+        }
+        let mut sinks = false;
+        let admitted = args.iter().all(|argument| {
+            let closed = if let ExprKind::Str(_) = argument.kind {
+                self.facts.is_none_or(|facts| {
+                    fact_at(&facts.expression_types, self.occurrence(argument))
+                        == Some(&Ty::StringLiteral)
+                })
+            } else {
+                (self.expression(argument) && self.scalar(argument)) || self.pack_element(argument)
+            };
+            closed || {
+                let sink = self.sink_argument(argument);
+                sinks |= sink;
+                sink
+            }
+        });
         if admitted {
             let mut calls = self.print_calls.borrow_mut();
             if !calls.contains(&id) {
                 calls.push(id);
             }
         }
-        admitted
+        admitted && (!sinks || self.holds(MethodFeatures::STRING_BUILTINS))
     }
 
     /// Whether `expr` names a compile-time value the elaborator folds to a

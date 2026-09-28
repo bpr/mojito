@@ -1658,6 +1658,38 @@ fn template_print_statement_derives() {
 }
 
 #[test]
+fn template_print_whole_value_derives() {
+    // A `print` of a whole value reads it where it lies and selects no
+    // callee; each instance proves it `Writable` again at its own type.
+    let source = "def echo[T: Writable & ImplicitlyCopyable & Deinitable](x: T, s: String) -> Int:\n    var kept = x\n    print(x, s)\n    print(\"kept\", kept, 3)\n    return 1\n\n\nstruct Box[T: Writable & ImplicitlyCopyable & Deinitable](Movable):\n    var item: Self.T\n    var count: Int\n\n    def __init__(out self, var item: Self.T, count: Int):\n        self.item = item\n        self.count = count\n\n    def report(self, extra: String) -> Int:\n        print(\"item\", self.item, extra)\n        return self.count\n\n\ndef main():\n    print(echo[Int](7, \"a\"), echo[String](\"s\", \"b\"))\n    var a = Box[Int](1, 4)\n    var b = Box[String](\"x\", 9)\n    print(a.report(\"p\"), b.report(\"q\"))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler
+            .compile_source(
+                source,
+                std::path::Path::new("/tmp/mojito_template_print_whole_value.mojo"),
+            )
+            .expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| ["echo$", "Box.report$"].iter().any(|p| name.starts_with(p)))
+            .collect();
+        assert_eq!(derived.len(), 4, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "7 a\nkept 7 3\ns b\nkept s 3\n1 1\nitem 1 p\nitem x q\n4 9\n"
+        );
+    }
+}
+
+#[test]
 fn template_value_shaped_construction_derives() {
     // A keyed `def` constructing a `SIMD` whose dtype or width names its own
     // value binder records no dimensions in its template; each instance's
