@@ -1851,6 +1851,68 @@ fn spread_pack_initializer_derives() {
 }
 
 #[test]
+fn tstring_write_to_derives() {
+    // `TString.write_to` binds each element with a `ref` local over its
+    // `Tuple` storage inside a `comptime for` and writes it: every
+    // t-string specialization's unrolled body derives, each copy's local
+    // typed at its own element. A t-string nested in another is named by
+    // its specialization's symbol; the discovery round before its outer
+    // storage Tuple is declared still checks the outer `write_to` again.
+    for (source, expected, nested) in [
+        (
+            include_str!("../assets/ok/tstring_lazy.mojo"),
+            "x=1\n2\n",
+            false,
+        ),
+        (
+            include_str!("../assets/ok/tstring_generic_interpolation.mojo"),
+            "big=50 small=1\n",
+            false,
+        ),
+        (
+            include_str!("../assets/ok/tstring_forms.mojo"),
+            "answer: 7!\nraw \\n 7\n\nv=7 3\nouter=inner=1|\nwrapped:kept=7;\npoint=Point(2, 5), sum=7\n",
+            true,
+        ),
+    ] {
+        let compiler = Compiler::default();
+        let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+        let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+        for program in [&derived, &verified] {
+            assert_eq!(compiler.execute(program).expect("execute").output, expected);
+        }
+        let stats = derived.template_stats();
+        let member = |name: &String| {
+            name.starts_with("TString$")
+                && (name.ends_with(".write_to") || name.ends_with(".__init__"))
+        };
+        let inferred: Vec<&String> = stats
+            .inferred_clones
+            .iter()
+            .filter(|name| member(name))
+            .collect();
+        assert!(
+            stats
+                .derived
+                .iter()
+                .any(|name| member(name) && name.ends_with(".write_to")),
+            "TString.write_to derives; refused: {:?}",
+            stats.refused
+        );
+        assert!(
+            inferred.iter().all(|name| stats.derived.contains(name)),
+            "every TString member derives; refused: {:?}",
+            stats.refused
+        );
+        assert_eq!(
+            inferred.is_empty(),
+            !nested,
+            "only a nested t-string's early round is inferred: {inferred:?}"
+        );
+    }
+}
+
+#[test]
 fn pack_accessor_derives() {
     // A user variadic struct's `__getitem__[i: Int]` over its `Tuple`
     // storage, copying the element out or returning a reference to it,

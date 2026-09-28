@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `TString.write_to`, which binds each element with `ref element =
+  self.storage[i]` inside a `comptime for`, now reuses the template's
+  checked facts for every t-string specialization, including one nested in
+  another (`tstring_write_to_derives`). It used to be checked again per
+  specialization, and a nested t-string's members could not name their
+  element type at all.
 - A user variadic struct's index-keyed accessor (`def __getitem__[i:
   Int](self) -> Self.Ts[i]` over `self.storage[i].copy()`, or one returning
   a reference to `self.storage[i]`) now reuses the template's checked facts

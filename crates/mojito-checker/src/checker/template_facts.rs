@@ -1572,6 +1572,7 @@ impl Checker {
                 }
             })
             .collect();
+        let indices = loop_element_indices(indices, &checked.facts, &occurrences);
         let indices = transferred_element_indices(indices, &occurrences);
         let mut selected = checked.facts.selected(&ids, &folded);
         if !relocate_packs(&mut selected, &ids) {
@@ -1663,19 +1664,8 @@ impl Checker {
         trace: &InstanceTrace,
     ) -> Result<InstanceSubstitution, TypeError> {
         // A binding names the template's own binder; the declaration
-        // carries its identity. The source type is resolved as the clone's
-        // own signature resolved it: a generated declaration's spelling of
-        // an already-checked type (`StringLiteral`) is admitted where a
-        // user-spelled one is not.
-        let resolve = |source: &mojito_ast::ast::Type| {
-            let generated = self.generated_declaration.replace(true);
-            self.bare_string_literal_parameter
-                .set(super::declarations::is_string_literal_annotation(source));
-            let ty = self.ty_from_anno(source);
-            self.bare_string_literal_parameter.set(false);
-            self.generated_declaration.set(generated);
-            ty
-        };
+        // carries its identity.
+        let resolve = |source: &mojito_ast::ast::Type| self.trace_source_ty(source);
         let Some(arguments) = &site.receiver_arguments else {
             let decl_named = |name: &str| {
                 template
@@ -1894,6 +1884,39 @@ impl Checker {
             kept_values,
             named_self,
         })
+    }
+
+    /// A trace's source type, resolved as the clone's own signature
+    /// resolved it: a generated declaration's spelling of an already-checked
+    /// type (`StringLiteral`) is admitted where a user-spelled one is not. A
+    /// t-string element that is itself a t-string (`TString[StringLiteral,
+    /// Int]`) names the specialization discovery minted for its elements by
+    /// its symbol alone, as the clone check does; no annotation may spell it.
+    fn trace_source_ty(&self, source: &mojito_ast::ast::Type) -> Result<Ty, TypeError> {
+        if let mojito_ast::ast::Type::Named(name, arguments) = source
+            && name == mojito_types::types::TSTRING_TYPE_NAME
+        {
+            let elements = arguments
+                .iter()
+                .map(|argument| match argument {
+                    mojito_ast::ast::ParamArg::Type(element) => self.trace_source_ty(element),
+                    _ => Err(TypeError::UnknownType(name.clone())),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let symbol = mojito_symbol::symbol::tstring_specialization_symbol(&elements);
+            return if self.structs.contains_key(&symbol) {
+                Ok(Ty::Struct(symbol, Vec::new()))
+            } else {
+                Err(TypeError::UnknownType(symbol))
+            };
+        }
+        let generated = self.generated_declaration.replace(true);
+        self.bare_string_literal_parameter
+            .set(super::declarations::is_string_literal_annotation(source));
+        let ty = self.ty_from_anno(source);
+        self.bare_string_literal_parameter.set(false);
+        self.generated_declaration.set(generated);
+        ty
     }
 
     /// A substituted type as the clone check names it: a closed public
@@ -9015,7 +9038,7 @@ fn substituted_facts(
         (
             *id,
             TemplateReference {
-                referent: substitute(&reference.referent),
+                referent: substitute_at(id, &reference.referent),
                 ..reference.clone()
             },
         )
@@ -10120,7 +10143,7 @@ impl BodyShape<'_> {
             copy: 0,
         };
         let id = self.occurrence(value);
-        let admitted = (named || self.reference_call(value))
+        let admitted = (named || self.reference_call(value) || self.pack_accessor(value))
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.reference_binding_types, declaration).is_some_and(|reference| {
                     fact_at(&facts.expression_types, id) == Some(&reference.referent)
@@ -14004,6 +14027,73 @@ fn folded_literals(
         })
     }));
     Some(literals)
+}
+
+/// `indices` with every other occurrence whose template type names a pack
+/// element at a `comptime for` index (`element` of `ref element =
+/// self.storage[i]`) fixed at the index of its own unrolled copy: the one an
+/// indexed occurrence of that copy was folded to under the same binder.
+/// Copies are numbered per template occurrence in pre-order, so only an
+/// occurrence copied as often as the indexed one shares its numbering; one
+/// in a loop nested deeper is left unfixed, and its derivation refuses.
+fn loop_element_indices(
+    mut indices: ElementIndices,
+    template: &CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> ElementIndices {
+    let copies = |syntax: SyntaxId| {
+        occurrences
+            .iter()
+            .filter(|occurrence| occurrence.id.syntax == syntax)
+            .count()
+    };
+    let references = template
+        .reference_binding_types
+        .iter()
+        .chain(&template.reference_place_types)
+        .map(|(id, reference)| (id, &reference.referent));
+    let binders: HashMap<SyntaxId, mojito_types::param_expr::ParamId> = template
+        .expression_types
+        .iter()
+        .chain(&template.expression_place_types)
+        .chain(&template.binding_types)
+        .map(|(id, ty)| (id, ty))
+        .chain(references)
+        .filter_map(|(id, ty)| Some((id.syntax, element_index_binder(ty)?)))
+        .collect();
+    let fixed: Vec<_> = occurrences
+        .iter()
+        .filter(|occurrence| !indices.contains_key(&occurrence.id))
+        .filter_map(|occurrence| {
+            let binder = binders.get(&occurrence.id.syntax)?;
+            let count = copies(occurrence.id.syntax);
+            let (_, value) = indices.iter().find_map(|(id, index)| {
+                (id.copy == occurrence.id.copy && index.0 == *binder && copies(id.syntax) == count)
+                    .then_some(index)
+            })?;
+            Some((occurrence.id, (binder.clone(), value.clone())))
+        })
+        .collect();
+    indices.extend(fixed);
+    indices
+}
+
+/// The index binder of the pack element a type names, directly or as a
+/// reference's referent (`Ts[i]`, `ref Ts[i]`).
+fn element_index_binder(ty: &Ty) -> Option<mojito_types::param_expr::ParamId> {
+    let dependent = match ty {
+        Ty::Dependent(dependent) => dependent,
+        Ty::Ref(reference) => match &*reference.referent {
+            Ty::Dependent(dependent) => dependent,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (_, index) = dependent.pack_element()?;
+    match index.kind() {
+        mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
+        _ => None,
+    }
 }
 
 /// `indices` with each `^` transfer of a pack element fixed at its
