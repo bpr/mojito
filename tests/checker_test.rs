@@ -1399,6 +1399,32 @@ fn trait_method_conformance_may_narrow_but_not_widen_effects() {
 }
 
 #[test]
+fn trait_requirement_defaults_bind_every_witness_alike() {
+    // A call through the bound runs the requirement's default in current
+    // Mojo and the witness's own in an instance, so the two must agree.
+    let requirement = "trait Scaler:\n    def scale(self, value: Int, factor: Int = -2) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n";
+    ok(&format!(
+        "{requirement}    def scale(self, value: Int, factor: Int = -2) -> Int:\n        return value * factor\n"
+    ));
+    for witness in ["factor: Int = 7", "factor: Int"] {
+        let error = err(&format!(
+            "{requirement}    def scale(self, value: Int, {witness}) -> Int:\n        return value * factor\n"
+        ));
+        assert!(
+            matches!(error, TypeError::TraitMethodMismatch { .. }),
+            "{witness}"
+        );
+    }
+
+    let error = err(
+        "comptime TWO = 2\n\ntrait Scaler:\n    def scale(self, value: Int, factor: Int = TWO) -> Int: ...\n",
+    );
+    assert!(
+        matches!(error, TypeError::Unsupported(feature) if feature.contains("other than a literal"))
+    );
+}
+
+#[test]
 fn typed_trait_method_effects_reject_a_wider_error_family() {
     ok_std(
         "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",

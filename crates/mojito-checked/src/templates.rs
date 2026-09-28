@@ -556,17 +556,19 @@ fn closed_contract(
             None | Some(ArgConvention::Imm | ArgConvention::Mut)
         ) || (receiver.is_some() && *receiver_convention == receiver))
         && arguments.iter().all(|argument| {
-            let by_value = (values || closed_scalar(&argument.parameter_ty))
+            // A default is the callee's declaration, evaluated in the
+            // callee's scope, so it binds by value and never a place, at a
+            // type every instance shares when it is closed.
+            let default = argument.source == CheckedCallArgumentSource::Default;
+            let by_value = (values
+                || closed_scalar(&argument.parameter_ty)
+                || (default && !mojito_types::types::is_symbolic(&argument.parameter_ty)))
                 && !argument.requires_place
                 && matches!(
                     argument.convention,
                     None | Some(ArgConvention::Imm | ArgConvention::Var)
                 );
-            // A default is the callee's declaration, evaluated in the
-            // callee's scope, so it binds by value and never a place.
-            by_value
-                || (argument.source != CheckedCallArgumentSource::Default
-                    && kept_place_argument(argument))
+            by_value || (!default && kept_place_argument(argument))
         })
         && captures.is_empty()
         && reference_result.is_none()

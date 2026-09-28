@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait requirement may now declare a literal default, and a call
+  through the bound may leave it out; every witness must declare the same
+  defaults, since current Mojo runs the requirement's there. Such a call,
+  or one passing a keyword argument, now reuses the template's checked
+  facts (`assets/ok/template_method_bound_defaulted_argument.mojo`).
 - A keyed `def` reading a lane of a value-shaped vector of a fixed width
   (`lanes[0]` on `SIMD[dt, 4]`), converting it or copying it into a local
   (`var first = lanes[0]`), now reuses the template's checked facts: every

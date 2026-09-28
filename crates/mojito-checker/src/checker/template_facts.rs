@@ -12773,9 +12773,11 @@ impl BodyShape<'_> {
     /// The receiver is a place, so the template recorded at the call either
     /// the abstract contract (`__trait_dispatch.…`) or, for `write_to`, the
     /// inverted write, and nothing that depends on the receiver's type. Each
-    /// argument is a closed scalar or a named place of a bare parameter type
-    /// handed to a bounded `mut`/`ref` parameter of the requirement, whose
-    /// facts (a kept place, its generation refresh) the convention decides.
+    /// argument, positional or keyword, is a closed scalar or a named place
+    /// of a bare parameter type handed to a bounded `mut`/`ref` parameter of
+    /// the requirement, whose facts (a kept place, its generation refresh)
+    /// the convention decides. A parameter the call leaves out takes the
+    /// requirement's default, which every witness declares alike.
     /// An instance's own check reads a built-in receiver's place, feeds a
     /// leaf to the hasher, or selects the struct's own method, each from the
     /// type alone.
@@ -12820,10 +12822,10 @@ impl BodyShape<'_> {
                 || matches!(&argument.kind, ExprKind::Identifier(name)
                     if self.params.contains(&name.as_str()) || self.declared(name))
         };
+        let supplied = || args.iter().chain(kwargs.iter().map(|kwarg| &kwarg.value));
         let shape = !self.keyed
             && place
-            && kwargs.is_empty()
-            && args.iter().all(|argument| {
+            && supplied().all(|argument| {
                 (self.expression(argument) && self.scalar(argument)) || named(argument)
             });
         let admitted = shape
@@ -12878,6 +12880,13 @@ impl BodyShape<'_> {
                         && !facts.call_parameters.iter().any(|(site, _)| *site == id);
                 };
                 let kept_argument = |parameter: &mojito_checked::checked::CheckedCallArgument| {
+                    // A default the requirement declares, which every witness
+                    // declares alike and evaluates in its own scope.
+                    if parameter.source
+                        == mojito_checked::checked::CheckedCallArgumentSource::Default
+                    {
+                        return !parameter.requires_place;
+                    }
                     let Some(bound) = call
                         .arguments
                         .iter()
@@ -12885,9 +12894,8 @@ impl BodyShape<'_> {
                     else {
                         return false;
                     };
-                    let Some(argument) = args
-                        .iter()
-                        .find(|argument| self.occurrence(argument) == bound.value)
+                    let Some(argument) =
+                        supplied().find(|argument| self.occurrence(argument) == bound.value)
                     else {
                         return false;
                     };
@@ -12930,7 +12938,16 @@ impl BodyShape<'_> {
                     }
                     && (call.contract.result_ty == *receiver
                         || !mojito_types::types::is_symbolic(&call.contract.result_ty))
-                    && call.contract.arguments.len() == args.len()
+                    && call
+                        .contract
+                        .arguments
+                        .iter()
+                        .filter(|parameter| {
+                            parameter.source
+                                != mojito_checked::checked::CheckedCallArgumentSource::Default
+                        })
+                        .count()
+                        == args.len() + kwargs.len()
                     && call.contract.arguments.iter().all(kept_argument)
             });
         admitted

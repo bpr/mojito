@@ -73,17 +73,18 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A call through a bound leaving a defaulted parameter to its
-  default keeps the clone check**
+- [ ] **1.3 A string literal or other non-scalar value handed through a
+  bound keeps the clone check**
 
-  Problem: `BodyShape`'s bound-dispatch rule matches every contract
-  parameter to a supplied argument, so an omitted one refuses the template.
-  - A nominal receiver's call now derives with a default left out
-    (2026-09-27): the default is the callee's declaration.
-  - Through a bound the instance re-selects a witness, whose own default is
-    what the clone runs; whether a witness may default differently from its
-    requirement is unmeasured.
-  - No bundled body is known to need it.
+  Problem: `self.s.scale(2, label="y")` through `S: Scaler` refuses the
+  template, since `BodyShape::bound_dispatch` admits only a closed scalar
+  or a named place as an argument.
+  - A named local of a closed non-scalar type is refused the same way:
+    `kept_argument` asks a by-value argument to be a scalar.
+  - A default left out, and a keyword argument, derive
+    (`assets/ok/template_method_bound_defaulted_argument.mojo`).
+  - Found while defaults through a bound joined the method grammar
+    (2026-09-28); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2415,6 +2416,34 @@ last.
     conforming struct.
   - Probe: `conformance/probes/same_arity_generic_method_overloads.mojo`.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.97 A witness whose defaults differ from its requirement's is
+  rejected**
+
+  Problem: a witness declaring `factor: Int = 7`, or no default, for a
+  requirement's `factor: Int = 2` is rejected as a signature mismatch;
+  the pin accepts it.
+  - The pin runs the requirement's default through the bound and the
+    witness's own on a nominal receiver.
+  - An instance runs the witness's default, so Mojito demands the two
+    spelled alike (`MethodSig::defaults`).
+  - A witness adding a default its requirement lacks is rejected the same
+    way.
+  - A lever: bind an omitted slot at the call through the bound, from the
+    requirement's declaration.
+  - Probe: `conformance/probes/witness_default_differs_from_requirement.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.98 A trait requirement's default other than a literal is
+  rejected**
+
+  Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
+  rejected as unsupported.
+  - A literal means the same in the trait's scope as in every witness's; a
+    name may not.
+  - Depends on 3.97: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*

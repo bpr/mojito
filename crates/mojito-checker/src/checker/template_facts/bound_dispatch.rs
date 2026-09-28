@@ -61,7 +61,11 @@ enum BoundWitness<'a> {
 /// occurrence, its recorded type, the convention it was bound with, and
 /// whether the callee needs the caller's place.
 struct DispatchedArgument {
-    value: OccurrenceId,
+    /// The slot the call bound it from.
+    source: CheckedCallArgumentSource,
+    /// The argument's occurrence; `None` for a default the call leaves to
+    /// the callee.
+    value: Option<OccurrenceId>,
     ty: Ty,
     /// The parameter type the abstract call bound it to.
     parameter_ty: Ty,
@@ -128,6 +132,20 @@ impl Checker {
             .arguments
             .iter()
             .map(|parameter| {
+                // A default the requirement declares binds by value at its
+                // declared type, which every witness declares alike.
+                if parameter.source == CheckedCallArgumentSource::Default {
+                    return Ok(DispatchedArgument {
+                        source: parameter.source,
+                        value: None,
+                        ty: parameter.parameter_ty.clone(),
+                        parameter_ty: parameter.parameter_ty.clone(),
+                        convention: parameter.convention,
+                        requires_place: parameter.requires_place,
+                        ranked: false,
+                        owned: false,
+                    });
+                }
                 let value = call
                     .arguments
                     .iter()
@@ -139,7 +157,8 @@ impl Checker {
                     .ok_or("a dispatched argument has no retained type")?;
                 let occurrence = occurrences.iter().find(|occurrence| occurrence.id == value);
                 Ok(DispatchedArgument {
-                    value,
+                    source: parameter.source,
+                    value: Some(value),
                     ty,
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
@@ -247,7 +266,8 @@ impl Checker {
                     .cloned()
                     .ok_or("a dispatched argument has no retained type")?;
                 Ok(DispatchedArgument {
-                    value,
+                    source: parameter.source,
+                    value: Some(value),
                     ty,
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
@@ -362,7 +382,8 @@ impl Checker {
                 .cloned()
                 .ok_or("an inverted write's writer has no retained type")?;
             let arguments = [DispatchedArgument {
-                value: writer,
+                source: CheckedCallArgumentSource::Positional(0),
+                value: Some(writer),
                 parameter_ty: writer_ty.clone(),
                 ty: writer_ty,
                 convention: Some(ArgConvention::Mut),
@@ -706,8 +727,9 @@ impl Checker {
     /// How one declaration of the requirement's name binds the recorded
     /// arguments, if it is a witness of the requirement's shape: a read
     /// `self`, one parameter per argument bound with the recorded
-    /// convention, and no variadic, default, or reference result, raising
-    /// only where the template's call may (`raising`).
+    /// convention, a default wherever the call leaves one to the callee, and
+    /// no variadic or reference result, raising only where the template's
+    /// call may (`raising`).
     /// Each parameter's type, under `Self`, the struct's arguments, and the
     /// witness's own binders, is the argument's recorded type or a bounded
     /// parameter the argument's type satisfies. A binder of the witness is
@@ -726,7 +748,6 @@ impl Checker {
         let plain = declared.has_self
             && declared.self_convention == receiver_convention
             && declared.params.len() == arguments.len()
-            && declared.required.iter().all(|required| *required)
             && declared.variadic.is_none()
             && declared.kw_variadic.is_none()
             && (raising || !declared.raises)
@@ -754,7 +775,11 @@ impl Checker {
             let (Some((index, _)), None) = (named.next(), named.next()) else {
                 return Err("the instance's witness binder is not named by exactly one parameter");
             };
-            let argument = &arguments[index].ty;
+            let argument = &arguments[index];
+            if argument.value.is_none() {
+                return Err("the instance's witness binder is named by a defaulted parameter");
+            }
+            let argument = &argument.ty;
             let carried = match argument {
                 Ty::Param { bounds: given, .. } => bounds.iter().all(|bound| {
                     given
@@ -772,6 +797,12 @@ impl Checker {
             binders.insert(decl.id().clone(), argument.clone());
         }
         for (index, argument) in arguments.iter().enumerate() {
+            // A slot the call supplies binds any witness parameter; one it
+            // leaves out binds the witness's default, which conformance
+            // proved the requirement's.
+            if declared.required[index] && argument.value.is_none() {
+                return Err("the instance's witness declares no default the call leaves out");
+            }
             let convention = declared.conventions[index];
             if convention != argument.convention
                 || argument.requires_place
@@ -1075,7 +1106,8 @@ impl Checker {
         let arguments = occurrence
             .arguments
             .iter()
-            .map(|argument| {
+            .enumerate()
+            .map(|(index, argument)| {
                 let value = OccurrenceId {
                     syntax: *argument,
                     copy: id.copy,
@@ -1091,7 +1123,8 @@ impl Checker {
                     .cloned()
                     .ok_or("a hasher argument has no retained type")?;
                 Ok(DispatchedArgument {
-                    value,
+                    source: CheckedCallArgumentSource::Positional(index),
+                    value: Some(value),
                     parameter_ty: ty.clone(),
                     ty,
                     convention: None,
@@ -1102,7 +1135,9 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
         for argument in arguments.iter().filter(|argument| !argument.owned) {
-            if fact_at(&facts.expression_bindings, argument.value)
+            if argument
+                .value
+                .and_then(|value| fact_at(&facts.expression_bindings, value))
                 .is_none_or(|bound| *bound == root)
             {
                 return Err("a hasher argument's place is unbound or overlaps the receiver");
@@ -1162,9 +1197,12 @@ impl Checker {
             } else {
                 vec![&mut facts.borrowed_read_call_places]
             };
+            let Some(value) = argument.value else {
+                continue;
+            };
             for table in tables {
-                if !table.contains(&argument.value) {
-                    table.push(argument.value);
+                if !table.contains(&value) {
+                    table.push(value);
                 }
             }
         }
@@ -1255,7 +1293,9 @@ impl Checker {
                 if !argument.requires_place {
                     return Ok(Vec::new());
                 }
-                let root = fact_at(&facts.expression_bindings, argument.value)
+                let root = argument
+                    .value
+                    .and_then(|value| fact_at(&facts.expression_bindings, value))
                     .cloned()
                     .ok_or("a kept argument of a witness is not a bound place")?;
                 Ok(vec![TemplateInvalidation {
@@ -1277,21 +1317,20 @@ impl Checker {
         let boundaries = arguments
             .iter()
             .zip(&invalidations)
-            .enumerate()
-            .map(|(index, (argument, invalidations))| {
-                let source = CheckedCallArgumentSource::Positional(index);
+            .filter_map(|(argument, invalidations)| {
+                let value = argument.value?;
                 let adjustments = call
                     .arguments
                     .iter()
-                    .find(|bound| bound.source == source)
+                    .find(|bound| bound.source == argument.source)
                     .map(|bound| bound.adjustments.clone())
                     .unwrap_or_default();
-                TemplateArgumentBoundary {
-                    source,
-                    value: argument.value,
+                Some(TemplateArgumentBoundary {
+                    source: argument.source,
+                    value,
                     adjustments,
                     invalidations: invalidations.clone(),
-                }
+                })
             })
             .collect();
         call.contract.target.clone_from(target);
@@ -1300,9 +1339,8 @@ impl Checker {
         call.contract.arguments = arguments
             .iter()
             .zip(&parameter_tys)
-            .enumerate()
-            .map(|(index, (argument, parameter_ty))| CheckedCallArgument {
-                source: CheckedCallArgumentSource::Positional(index),
+            .map(|(argument, parameter_ty)| CheckedCallArgument {
+                source: argument.source,
                 parameter_ty: parameter_ty.clone(),
                 requires_place: argument.requires_place,
                 convention: argument.convention,
@@ -1336,16 +1374,16 @@ impl Checker {
                 .sort_by_key(|(site, _)| order(site));
         }
         for (argument, invalidations) in arguments.iter().zip(invalidations) {
-            if !argument.requires_place {
+            let (true, Some(value)) = (argument.requires_place, argument.value) else {
                 continue;
-            }
-            if !facts.call_place_uses.contains(&argument.value) {
-                facts.call_place_uses.push(argument.value);
+            };
+            if !facts.call_place_uses.contains(&value) {
+                facts.call_place_uses.push(value);
             }
             match facts
                 .interior_invalidations
                 .iter_mut()
-                .find(|(site, _)| *site == argument.value)
+                .find(|(site, _)| *site == value)
             {
                 Some(entry) => {
                     for invalidation in invalidations {
@@ -1354,9 +1392,7 @@ impl Checker {
                         }
                     }
                 }
-                None => facts
-                    .interior_invalidations
-                    .push((argument.value, invalidations)),
+                None => facts.interior_invalidations.push((value, invalidations)),
             }
         }
         if let Some(request) = request {

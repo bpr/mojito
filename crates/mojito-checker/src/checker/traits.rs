@@ -127,11 +127,22 @@ impl Checker {
                     &m.params,
                     m.positional_only,
                     m.keyword_only,
-                    true,
+                    false,
                     true,
                     false,
                 ) {
                     return Err(TypeError::Unsupported(feature.to_string()));
+                }
+                // A requirement's default is spelled as a literal, which means
+                // the same in the trait's scope as in every witness's.
+                if m.params
+                    .iter()
+                    .filter_map(|param| param.default.as_ref())
+                    .any(|default| !literal_default(default))
+                {
+                    return Err(TypeError::Unsupported(
+                        "a trait requirement's default value other than a literal".to_string(),
+                    ));
                 }
                 if m.positional_only.is_some() || m.keyword_only.is_some() {
                     return Err(TypeError::Unsupported(
@@ -223,7 +234,11 @@ impl Checker {
                         .iter()
                         .map(|(_, param)| param.name.clone())
                         .collect(),
-                    required: vec![true; regular.len()],
+                    required: required_mask(&regular_params, None)?,
+                    defaults: regular_params
+                        .iter()
+                        .map(|param| param.default.clone())
+                        .collect(),
                     variadic: None,
                     variadic_index: None,
                     variadic_convention: None,
@@ -1175,6 +1190,7 @@ impl Checker {
                             .collect(),
                         names: req_sig.names.clone(),
                         required: req_sig.required.clone(),
+                        defaults: req_sig.defaults.clone(),
                         variadic: req_sig.variadic.as_ref().map(|ty| {
                             Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))
                         }),
@@ -3046,4 +3062,19 @@ type StructMemberTypes = (
 /// `def __mlir_index__(self) -> __mlir_type.index`.
 pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
     method.has_self && method.params.is_empty() && method.ret == Ty::Int && method.ret_mlir_index
+}
+
+/// Whether a default is a literal, or a negated numeric one: an expression
+/// that names nothing, so a trait requirement and its witness mean the same
+/// value by the same spelling.
+fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
+    use mojito_ast::ast::{ExprKind, PrefixOp};
+    match &default.kind {
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) => true,
+        ExprKind::None => true,
+        ExprKind::Prefix(PrefixOp::Neg, operand) => {
+            matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_))
+        }
+        _ => false,
+    }
 }

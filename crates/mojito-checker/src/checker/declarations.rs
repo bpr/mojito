@@ -378,6 +378,7 @@ impl Checker {
                 &regular.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
                 keyword_only,
             )?,
+            defaults: regular.iter().map(|(_, p)| p.default.clone()).collect(),
             variadic: variadic_idx.map(|index| Box::new(all_types[index].clone())),
             variadic_index: regular_marker_index(&method.params, variadic_idx),
             variadic_convention: variadic_idx.and_then(|index| method.params[index].convention),

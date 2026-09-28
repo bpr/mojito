@@ -4410,6 +4410,25 @@ fn template_defaulted_argument_derives() {
 }
 
 #[test]
+fn template_bound_defaulted_argument_derives() {
+    // A call through a bound leaving a defaulted parameter of the requirement
+    // to its default records only the omitted slot: every witness declares
+    // the requirement's default alike.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_bound_defaulted_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "x7 x4 x6\nxabababababab xababab xababababab\n",
+        &[
+            ("Holder.both_default", 2),
+            ("Holder.one_default", 2),
+            ("Holder.keyword_offset", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_field_of_field_derives() {
     // A field of a `self` field holding a struct, and a field of a struct
     // parameter, is read and written at the same path under every instance.

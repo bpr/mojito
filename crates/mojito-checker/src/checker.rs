@@ -2112,6 +2112,11 @@ struct MethodSig {
     params: Vec<Ty>,
     names: Vec<String>,
     required: Vec<bool>,
+    /// Per regular parameter, its declared default. A conforming method must
+    /// declare its requirement's defaults alike: a call through the bound
+    /// leaving one out runs the requirement's default in current Mojo, and
+    /// the witness's own in an instance.
+    defaults: Vec<Option<mojito_ast::ast::Expr>>,
     variadic: Option<Box<Ty>>,
     variadic_index: Option<usize>,
     /// The positional collector's convention (`var *args`), which a pack
@@ -2180,6 +2185,7 @@ impl MethodSig {
             params,
             names: (0..len).map(|i| format!("arg{i}")).collect(),
             required: vec![true; len],
+            defaults: vec![None; len],
             variadic: None,
             variadic_index: None,
             variadic_convention: None,
