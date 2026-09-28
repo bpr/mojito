@@ -124,6 +124,7 @@ struct BodyTransfers {
 }
 
 /// One declaration body as the template mechanism sees it.
+#[derive(Clone)]
 struct BodySite<'a> {
     /// The name diagnostics, counters, and statistics use.
     display: String,
@@ -171,6 +172,7 @@ impl BodyRole {
     }
 }
 
+#[derive(Clone, Copy)]
 enum BodyDeclaration<'a> {
     Def(&'a Stmt),
     Method(&'a mojito_ast::ast::Method),
@@ -582,9 +584,26 @@ impl Checker {
         // class is retained as such without being captured.
         let shape = template.then(|| self.certificate(site, None).0);
         let admitted = matches!(shape, Some(TemplateCoverage::Certified(_)));
+        // The first copy of a shared stub checked is that stub's template.
+        let stub_template = (generated && derived.is_none())
+            .then(|| self.instance_trace(site))
+            .flatten()
+            .filter(|trace| {
+                trace.shared_stub
+                    && self
+                        .template_catalog
+                        .borrow()
+                        .template(&trace.template)
+                        .is_none()
+            })
+            .map(|trace| trace.template);
         let census = site.participates && !decls.is_empty() && timing::enabled();
-        let baseline = (derived.is_some() || admitted || census || timing::notes_enabled())
-            .then(|| self.body_fact_baseline(body));
+        let baseline = (derived.is_some()
+            || admitted
+            || stub_template.is_some()
+            || census
+            || timing::notes_enabled())
+        .then(|| self.body_fact_baseline(body));
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
         // A nested body records what it reads for its enclosing body too.
         let queries =
@@ -684,6 +703,13 @@ impl Checker {
             && let Some(shape) = shape
         {
             self.record_template(site, param_owners, &baseline, &reads, shape);
+        } else if let Some(template_id) = stub_template {
+            let shape = self.certificate(site, None).0;
+            let stub = BodySite {
+                template_id,
+                ..site.clone()
+            };
+            self.record_template(&stub, param_owners, &baseline, &reads, shape);
         } else if (traced || template) && timing::notes_enabled() {
             // Capture emits the `template_capture.tables` note: what this
             // body recorded, for comparing a clone with its template.
@@ -1254,6 +1280,7 @@ impl Checker {
                 value_bindings: Vec::new(),
                 pack_bindings: Vec::new(),
                 residual: Vec::new(),
+                shared_stub: false,
             }
         } else {
             self.instance_trace(site)?
@@ -1648,7 +1675,8 @@ impl Checker {
                 kept_values: Vec::new(),
             });
         };
-        if site.role == BodyRole::Template {
+        // A shared stub names nothing its receiver binds.
+        if site.role == BodyRole::Template || trace.shared_stub {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),

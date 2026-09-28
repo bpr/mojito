@@ -239,8 +239,17 @@ symbol.
   each overload under a source tag of its own (`TracedMember`). The
   synthesized `copy` keeps its struct's module, so it is traced as a source
   body is. A member synthesized otherwise (the default constructor, the
-  transforms) or stubbed (an unavailable member, a SIMD-keyed method, one
-  constructing at its own lane) is not traced.
+  transforms) or stubbed (a SIMD-keyed method, one constructing at its own
+  lane) is not traced. An unavailable member is traced to a shared stub
+  instead (`InstanceTrace::shared_stub`): the specializer shapes its trap
+  stub at the unavailable clause, each node's identity derived from the
+  clause's (`unavailable_method_stub`), so every specialization of the
+  template method holds the same stub under the same identities, in every
+  discovery round. No check validates that stub, so the first copy the
+  checker infers is recorded as its template under the trace's identity
+  (the clause's span), and every other copy derives from it with the
+  identity substitution: the stub is one `_mojito_abort` call over a string
+  literal and names nothing its receiver binds.
   A VM-CTFE subprogram traces what it mints — the per-leaf hasher clones of
   a plain struct and the members of a value-keyed struct it specializes
   whole — into a catalog of its own (`TemplateCatalog::for_subprogram`),
@@ -1307,6 +1316,10 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   - `value.__hash__(self)` on the method's own `Some[Hashable]` stays a
     dispatch through the bound in the instance, which reads every
     conformer's summaries again (`Checker::dispatch_conformers`).
+- 2026-09-28, unavailable members' trap stubs: `Tuple`'s comparisons whose
+  availability clause folds false share one stub per template method, and
+  Hello World's re-inferred clones drop from 138 to 88. The six left are
+  the first copy of each comparison's stub, which becomes its template.
 
 ## What is not covered
 
@@ -1348,8 +1361,8 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - An instance whose argument may carry a loan, which includes every struct
   with a field of a parameter type (`DictEntry[K, V, H]`).
 - A member of a struct specialized whole outside the pack grammar above
-  (an unavailable member's trap stub, `Tuple`'s callable-binder teardowns
-  and synthesized default initializer: roadmap 1.1–1.3), a member of
+  (`Tuple`'s callable-binder teardowns and synthesized default
+  initializer: roadmap 1.2, 1.3), a member of
   `TString` or of a user variadic struct, whose receiver carries no pack
   arguments, and a member of a value-keyed one outside the method grammar
   (`_FloatStridedRange`'s `__ceil__` and `__fma__` on lane values, a

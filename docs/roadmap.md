@@ -37,18 +37,21 @@ parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small.
 
-- [ ] **1.1 An unavailable member's trap stub keeps the clone check**
+- [ ] **1.1 A variadic struct's `self.copy()` derives with its template's
+  result type**
 
-  Problem: a member whose availability clause folds false for a
-  specialization (`Tuple[Int, Optional[Int]].__lt__`) becomes a trap stub,
-  which is inferred in every specialization and never traced.
-  - Hello World infers 56 such bodies, all of them `Tuple` comparisons.
-  - `unspecialized_method_stub` writes the stub afresh per specialization:
-    it has no template, and its nodes take fresh syntax identities.
-  - Its facts name nothing the specialization binds: one
-    `_mojito_abort("…")` call over a string literal.
-  - A stub shaped once per template method, whose copies keep its
-    identities, could be checked once and inherited.
+  Problem: in `Bag$t2[Bool, Int].bumped` (`var other = self.copy()`), the
+  derived call contract of `self.copy()` keeps the template's result type
+  `Bag[*Ts]`, where the clone's own check has `Bag$t2[Bool, Int]`.
+  - Only `MOJITO_VERIFY_TEMPLATE_FACTS=1` sees it: it fails
+    `assets/ok/template_method_variadic_struct.mojo` with "derived facts for
+    'Bag$t2[y4:Booly3:Int].bumped' differ from its own check".
+  - A normal compilation installs the derived facts and the program prints
+    the right answer.
+  - The difference is in `selected_calls`: the contract's `result_ty` is not
+    substituted for a receiver specialized whole.
+  - Found while landing the shared unavailable-member stub; HEAD `ef841721`
+    fails the same way.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -92,9 +95,9 @@ to section 3, however small.
   - `desugar_simd_keyed_methods` gives the wildcard binder a `$simd` binder,
     and the elaborated program holds one `_mojito_abort("…")` call in its
     place, whose clone carries no `MethodInstanceTrace`.
-  - Its facts name nothing the specialization binds, like the unavailable
-    members' stubs of 1.1, so one stub checked per template method could be
-    inherited.
+  - Its facts name nothing the specialization binds. An unavailable
+    member's stub is already shaped once per template method and inherited
+    (`InstanceTrace::shared_stub`), and this stub could take the same path.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2497,6 +2500,22 @@ last.
     2026-09-28 gate, which is the first sweep that saw them.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **3.95 A `Tuple` of SIMD scalars has no comparisons**
+
+  Problem: `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` rejects with
+  "operator '<' is not defined for Tuple$t2[...]", where the pin prints
+  `True`.
+  - Mojito's SIMD scalar conforms to neither `Equatable` nor `Comparable`
+    (`def f[T: Equatable](x: T)` rejects `f(UInt64(1))`).
+  - `Tuple`'s comparisons carry `where conforms_to(Self.Ts.values,
+    Comparable)`, so each folds false and becomes an unavailable trap stub.
+  - Hello World mints these stubs for every tuple of `UInt64`s it reaches.
+  - Probe: `conformance/probes/tuple_of_scalars_comparison.mojo`.
+  - Related to 4.1's `and`/`or` over `UInt64` comparisons, which also
+    stems from a scalar comparison not being a `Bool`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

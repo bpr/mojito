@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An unavailable member's trap stub (`Tuple[Int, Optional[Int]].__lt__`)
+  is no longer inferred in every specialization. The specializer shapes one
+  stub per template method, spanned and identified at the unavailable
+  clause, so each copy keeps the first copy's identities and derives from
+  its check. Hello World's clone inferences drop from 138 to 88.
 - Scalar arithmetic on a direct `ref` field (`self.exact + self.source`,
   with `var source: ref[o] Int`) now compiles natively
   (`assets/extensions/ok/pliron_a1_gate.mojo`); the native backend fed the

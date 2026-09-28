@@ -1754,6 +1754,39 @@ fn template_struct_lane_members_derive() {
 }
 
 #[test]
+fn unavailable_member_stub_derives() {
+    // A member whose availability clause folds false is one trap stub per
+    // template method, shared by every specialization under the same
+    // identities: the first copy checked is its template, and the others
+    // derive from it.
+    let source = "struct Opaque(Copyable, Movable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef main():\n    var a = (1, Opaque(2))\n    var b = (String(\"s\"), Opaque(3))\n    print(a[1].n + b[1].n)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(compiler.execute(program).expect("execute").output, "5\n");
+    }
+    let stats = derived.template_stats();
+    for member in ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"] {
+        let copies = |names: &[String]| {
+            names
+                .iter()
+                .filter(|name| name.contains("Opaque") && name.ends_with(&format!(".{member}")))
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert!(
+            !copies(&stats.derived).is_empty(),
+            "an unavailable {member} derives: {stats:?}"
+        );
+        assert!(
+            copies(&stats.inferred_clones).len() <= 1,
+            "one copy of the {member} stub at most is inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn template_vector_keyed_members_derive() {
     // A struct keyed on a closed vector value, specialized whole as the
     // bundled `AHasher` is, reads `Self.key`, constructs through the vector

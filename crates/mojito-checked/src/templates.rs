@@ -2278,6 +2278,11 @@ pub struct InstanceTrace {
     pub pack_bindings: Vec<(String, Vec<mojito_ast::ast::Type>)>,
     /// The parameters the clone still declares.
     pub residual: Vec<String>,
+    /// Whether the template is a body the elaborator shaped once and copied
+    /// into every clone with its syntax identities (an unavailable member's
+    /// trap stub). No check validates it, so the first clone checked is its
+    /// template, and the others inherit that check.
+    pub shared_stub: bool,
 }
 
 /// The per-compilation store of checked templates and clone traces.

@@ -1817,7 +1817,11 @@ impl Elab<'_> {
                 // (upstream's note, spelled from the source clause) rather
                 // than a missing member, and the stub body never runs.
                 method.where_clauses = vec![unavailable_method_clause(&condition)];
-                method.body = vec![unspecialized_method_stub(orig, &method)];
+                method.body = vec![unavailable_method_stub(orig, &method, &condition)];
+                members.push(TracedMember {
+                    shared_stub: true,
+                    ..TracedMember::whole(elaborated_methods.len(), &method.name, condition.span)
+                });
                 elaborated_methods.push(method);
                 continue;
             }
@@ -2679,6 +2683,7 @@ impl Elab<'_> {
                             .collect(),
                         value_bindings: Vec::new(),
                         pack_bindings: Vec::new(),
+                        shared_stub: false,
                     });
             }
             clones.push(clone);
@@ -2898,6 +2903,7 @@ impl Elab<'_> {
                     .map(|binding| (binding.name.clone(), binding.value.clone()))
                     .collect(),
                 pack_bindings,
+                shared_stub: false,
             });
     }
 
@@ -2925,9 +2931,10 @@ impl Elab<'_> {
     }
 
     /// Record how each member of a struct specialized whole came from its
-    /// template: `members` lists each traced member ([`TracedMember`]). A
-    /// member the specializer stubbed or synthesized is not listed, nor is a
-    /// per-call clone minted inside the specialization.
+    /// template: `members` lists each traced member ([`TracedMember`]),
+    /// an unavailable member's shared stub among them. Any other member the
+    /// specializer stubbed or synthesized is not listed, nor is a per-call
+    /// clone minted inside the specialization.
     fn trace_struct_members(
         &self,
         spec: &Stmt,
@@ -2959,13 +2966,22 @@ impl Elab<'_> {
                 body: traced.body,
                 clone_body: first,
                 type_bindings: traced.types.clone(),
-                value_bindings: template
-                    .values
-                    .iter()
-                    .chain(&traced.values)
-                    .cloned()
-                    .collect(),
-                pack_bindings: template.packs.clone(),
+                value_bindings: if traced.shared_stub {
+                    Vec::new()
+                } else {
+                    template
+                        .values
+                        .iter()
+                        .chain(&traced.values)
+                        .cloned()
+                        .collect()
+                },
+                pack_bindings: if traced.shared_stub {
+                    Vec::new()
+                } else {
+                    template.packs.clone()
+                },
+                shared_stub: traced.shared_stub,
             });
         }
     }
@@ -3567,6 +3583,28 @@ pub(super) fn template_shell(template: &Stmt) -> Stmt {
     shell
 }
 
+/// The trap stub of a member whose availability clause `condition` folded
+/// false: `unspecialized_method_stub` spanned at the clause, each node
+/// identified by an identity derived from the clause's. Every specialization
+/// of the template method thereby holds the same stub, identities and all.
+fn unavailable_method_stub(owner: &str, method: &Method, condition: &Expr) -> Stmt {
+    use mojito_common::token::SyntaxId;
+    let mut stub = unspecialized_method_stub(owner, method);
+    stub.span = condition.span;
+    stub.syntax_id = SyntaxId::derived(condition.syntax_id, 0);
+    if let StmtKind::Expr(call) = &mut stub.kind {
+        call.span = condition.span;
+        call.syntax_id = SyntaxId::derived(stub.syntax_id, 0);
+        if let ExprKind::Call { args, .. } = &mut call.kind {
+            for (ordinal, argument) in (0..).zip(args.iter_mut()) {
+                argument.span = condition.span;
+                argument.syntax_id = SyntaxId::derived(call.syntax_id, ordinal);
+            }
+        }
+    }
+    stub
+}
+
 /// The template of a struct specialized whole, and what its compile-time
 /// parameters became: folded values, or a type pack's source element types.
 struct StructTemplate<'a> {
@@ -3582,12 +3620,17 @@ struct StructTemplate<'a> {
 /// baked beyond the struct's own parameters — an unrolled accessor's index
 /// (`__getitem_param__$k`, and its value twin), or the element type a
 /// per-element overload (`Tuple.__contains__`) erased.
+///
+/// An unavailable member (`shared_stub`) instantiates the trap stub the
+/// specializer shaped once for its template method, whose first statement
+/// is `body`, and bakes nothing.
 struct TracedMember {
     index: usize,
     template_name: String,
     body: Span,
     values: Vec<(String, CtValue)>,
     types: Vec<(String, Type)>,
+    shared_stub: bool,
 }
 
 impl TracedMember {
@@ -3599,6 +3642,7 @@ impl TracedMember {
             body,
             values: Vec::new(),
             types: Vec::new(),
+            shared_stub: false,
         }
     }
 }
