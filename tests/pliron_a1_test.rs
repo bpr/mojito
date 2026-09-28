@@ -1662,15 +1662,12 @@ fn a1_param_substitution() {
     );
     assert!(matches!(unfolded.payload(ctx).node, PayloadNode::Op { .. }));
     assert!(!is_executable(ctx, unfolded) || unfolded != nine);
-    // The payload keeps the atom, but the front end has no public
-    // constructor that rebuilds a closed operator unfolded, so export
-    // refuses the node instead of folding it to 4.
-    let refused = export_param(ctx, &params, unfolded).expect_err("export refuses to fold");
-    assert_eq!(refused.kind, a1::A1ErrorKind::Export);
-    assert!(
-        refused.message.contains("unfolded closed atom"),
-        "{refused}"
-    );
+    // The payload keeps the atom, and export rebuilds it unfolded rather
+    // than folding it to 4.
+    let exported = export_param(ctx, &params, unfolded).expect("exports unfolded");
+    assert_eq!(exported, atom);
+    assert!(exported.as_constant().is_none());
+    assert_eq!(save(ctx, &exported), unfolded);
 
     let shadowing = int_param(&params, "g", 0, "n");
     let inner = save(
@@ -1700,13 +1697,10 @@ fn a1_param_substitution() {
         matches!(key.payload(ctx).node, PayloadNode::Op { .. }),
         "and so does the payload"
     );
-    // The front end keeps the partial atom under a term its public
-    // constructors would cancel, so export refuses this node too.
-    let refused = export_param(ctx, &params, key).expect_err("export refuses to cancel");
-    assert!(
-        refused.message.contains("unfolded closed atom"),
-        "{refused}"
-    );
+    // Export keeps the partial atom under the cancelled term too.
+    let exported = export_param(ctx, &params, key).expect("exports uncancelled");
+    assert_eq!(exported, cancelled);
+    assert!(exported.as_constant().is_none());
     let target = &mut a1::ir_framework::new_context();
     let cloned = clone_param(ctx, key, target).expect("a clone needs no constructor");
     assert_eq!(cloned, save(target, &cancelled));

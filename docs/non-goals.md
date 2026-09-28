@@ -171,6 +171,9 @@ allows.
   semantics; nothing documents it.
 - The shared folder (`mojito_types::param_expr::fold`) keeps the structured
   error, and a closed partial operator in an untaken branch stays unevaluated.
+- A cancellation keeps the error only in the node it builds: an operator
+  built over that node (`(1 // 0 - 1 // 0) + 1`), and `fold`, drop the
+  zero-coefficient term again, which lands on the pin's answer.
 - Revisit only if upstream documents the fold as the rule.
 
 ### `Pointer(to=<temporary>)` is unsupported

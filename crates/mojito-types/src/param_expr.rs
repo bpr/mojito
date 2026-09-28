@@ -231,6 +231,34 @@ impl ParamContext {
         }
     }
 
+    /// Rebuild `op` over `operands` as the canonical constructors kept it:
+    /// an opaque atom stays unfolded even over constants, as
+    /// [`Self::replace`] keeps it, and a product by a constant zero keeps a
+    /// monomial holding a partial atom, as a cancellation keeps it. Every
+    /// other operator is [`Self::op`]. A node the canonical constructors
+    /// built is a fixed point, so an importer rebuilding one from its
+    /// operands keeps its identity.
+    pub fn rebuild(&self, op: ParamOp, operands: &[ParamExpr]) -> Result<ParamExpr, ParamError> {
+        if !op.accepts_arity(operands.len()) {
+            return Err(ParamError::Arity {
+                operation: op.name().to_string(),
+                found: operands.len(),
+            });
+        }
+        let operands = operands
+            .iter()
+            .map(|operand| self.intern(operand))
+            .collect::<Vec<_>>();
+        match op {
+            ParamOp::Add | ParamOp::Mul => self.build_ring_with(op, operands, ZeroTerms::Keep),
+            _ if op.is_atom() => {
+                let meta = op.result_meta(&operands)?;
+                Ok(self.make(meta, ParamKind::Op { op, operands }))
+            }
+            _ => self.op(op, &operands),
+        }
+    }
+
     /// Whole-value identity of two expressions of one meta-type. Distinct from
     /// numeric `==`: types, generic arguments, and float bits compare here.
     pub fn identical(&self, left: &ParamExpr, right: &ParamExpr) -> ParamExpr {
@@ -572,22 +600,27 @@ impl ParamContext {
     /// coefficients. Outside the integers the operator folds constants and is
     /// otherwise opaque, with its operand order kept (no float reassociation).
     fn build_ring(&self, op: ParamOp, operands: Vec<ParamExpr>) -> Result<ParamExpr, ParamError> {
+        self.build_ring_with(op, operands, ZeroTerms::Drop)
+    }
+
+    fn build_ring_with(
+        &self,
+        op: ParamOp,
+        operands: Vec<ParamExpr>,
+        zeros: ZeroTerms,
+    ) -> Result<ParamExpr, ParamError> {
         let Some(domain) = Self::arithmetic_domain(op, &operands)? else {
             return self.build_opaque(op, operands);
         };
-        let mut result = if op == ParamOp::Add {
-            Polynomial::zero(domain)
+        let result = if op == ParamOp::Add {
+            let mut sum = Polynomial::zero(domain);
+            for operand in &operands {
+                sum = sum.add(&Polynomial::of_with(domain, operand, zeros)?);
+            }
+            sum
         } else {
-            Polynomial::constant(domain, &IntLiteral::from(1_i64))
+            Polynomial::product(domain, &operands, zeros)?
         };
-        for operand in &operands {
-            let operand = Polynomial::of(domain, operand)?;
-            result = if op == ParamOp::Add {
-                result.add(&operand)
-            } else {
-                result.mul(&operand)?
-            };
-        }
         Ok(self.polynomial_node(&result))
     }
 
@@ -860,8 +893,7 @@ impl ParamContext {
                     .map(|operand| self.replace_at(operand, bindings, depth, memo))
                     .collect::<Result<_, _>>()?;
                 if op.is_atom() {
-                    let meta = op.result_meta(&operands)?;
-                    self.make(meta, ParamKind::Op { op: *op, operands })
+                    self.rebuild(*op, &operands)?
                 } else {
                     self.op(*op, &operands)?
                 }
@@ -2179,6 +2211,10 @@ impl Polynomial {
     /// Decompose a canonical node. Operands are canonical already, so `Add`
     /// and `Mul` decompose structurally and anything else is one atom.
     fn of(domain: IntDomain, expr: &ParamExpr) -> Result<Self, ParamError> {
+        Self::of_with(domain, expr, ZeroTerms::Drop)
+    }
+
+    fn of_with(domain: IntDomain, expr: &ParamExpr, zeros: ZeroTerms) -> Result<Self, ParamError> {
         if let Some(value) = expr.as_constant().and_then(fold::integer_value) {
             return Ok(Self::constant(domain, &value));
         }
@@ -2189,26 +2225,44 @@ impl Polynomial {
             } if IntDomain::of(expr.meta()).is_some() => {
                 let mut sum = Self::zero(domain);
                 for operand in operands {
-                    sum = sum.add(&Self::of(domain, operand)?);
+                    sum = sum.add(&Self::of_with(domain, operand, zeros)?);
                 }
                 Ok(sum)
             }
             ParamKind::Op {
                 op: ParamOp::Mul,
                 operands,
-            } if IntDomain::of(expr.meta()).is_some() => {
-                let mut product = Self::constant(domain, &IntLiteral::from(1_i64));
-                for operand in operands {
-                    product = product.mul(&Self::of(domain, operand)?)?;
-                }
-                Ok(product)
-            }
+            } if IntDomain::of(expr.meta()).is_some() => Self::product(domain, operands, zeros),
             _ => {
                 let mut atom = Self::zero(domain);
                 atom.insert(vec![expr.clone()], &IntLiteral::from(1_i64));
                 Ok(atom)
             }
         }
+    }
+
+    /// The product of `factors`. Keeping zero terms, the constant factors
+    /// scale the product of the rest last, so a zero among them leaves a
+    /// monomial that holds a partial atom at coefficient zero.
+    fn product(
+        domain: IntDomain,
+        factors: &[ParamExpr],
+        zeros: ZeroTerms,
+    ) -> Result<Self, ParamError> {
+        let mut product = Self::constant(domain, &IntLiteral::from(1_i64));
+        let mut scale = IntLiteral::from(1_i64);
+        for factor in factors {
+            let factor = Self::of_with(domain, factor, zeros)?;
+            match factor.as_constant().filter(|_| zeros == ZeroTerms::Keep) {
+                Some(value) => scale = scale.mul(&value),
+                None => product = product.mul(&factor)?,
+            }
+        }
+        let mut scaled = Self::zero(domain);
+        for (monomial, coefficient) in &product.terms {
+            scaled.insert(monomial.clone(), &coefficient.mul(&scale));
+        }
+        Ok(scaled)
     }
 
     fn add(&self, other: &Self) -> Self {
@@ -2273,6 +2327,15 @@ impl Polynomial {
             self.terms.insert(monomial, updated);
         }
     }
+}
+
+/// Whether a product by a constant zero drops a monomial that holds a
+/// partial atom ([`ParamContext::op`]) or keeps it as a cancellation left it
+/// ([`ParamContext::rebuild`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ZeroTerms {
+    Drop,
+    Keep,
 }
 
 static CONTEXTS_CREATED: AtomicU64 = AtomicU64::new(0);

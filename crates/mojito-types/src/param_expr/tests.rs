@@ -349,6 +349,55 @@ fn partial_operators_stay_unevaluated_until_required() {
     assert!(cancelled.as_constant().is_none());
 }
 
+/// `rebuild` keeps what replacement and cancellation kept, where `op` folds
+/// or cancels it, and is `op` on every other canonical node.
+#[test]
+fn rebuild_keeps_unfolded_atoms_and_cancelled_partial_terms() {
+    let context = ParamContext::new();
+    let rebuilt = |expr: &ParamExpr| match expr.kind() {
+        ParamKind::Op { op, operands } => context.rebuild(*op, operands).expect("rebuilds"),
+        _ => expr.clone(),
+    };
+    let n = int_param(&context, "f", 0, "n");
+    let halved = infix(&context, InfixOp::FloorDiv, &n, &literal(&context, 2));
+    let mut bindings = ParamBindings::new();
+    bindings.bind_name("n", literal(&context, 8));
+    let atom = context.replace(&halved, &bindings).expect("replacement");
+    assert_eq!(atom.to_string(), "8 // 2");
+    assert_eq!(rebuilt(&atom), atom);
+    let closed = [literal(&context, 8), literal(&context, 2)];
+    assert_eq!(
+        context
+            .op(ParamOp::FloorDiv, &closed)
+            .expect("folds")
+            .as_constant(),
+        Some(&CtValue::IntLiteral(IntLiteral::from(4_i64)))
+    );
+
+    let one = context.constant(CtValue::Int(1)).expect("constant");
+    let zero = context.constant(CtValue::Int(0)).expect("constant");
+    let divided = infix(&context, InfixOp::FloorDiv, &one, &zero);
+    let m = int_param(&context, "f", 1, "m");
+    let product = infix(&context, InfixOp::Mul, &m, &divided);
+    let cancelled = infix(&context, InfixOp::Sub, &product, &product);
+    let shifted = context
+        .rebuild(ParamOp::Add, &[cancelled.clone(), n.clone()])
+        .expect("rebuilds");
+    for kept in [&cancelled, &shifted] {
+        assert!(!kept.is_total(), "{kept}");
+        assert_eq!(&rebuilt(kept), kept);
+    }
+    for canonical in [&halved, &product, &infix(&context, InfixOp::Mul, &n, &m)] {
+        assert_eq!(&rebuilt(canonical), canonical);
+    }
+    // A shape no constructor keeps is canonicalized as `op` would.
+    let total = context.rebuild(ParamOp::Mul, &[zero, n]);
+    assert_eq!(
+        total.expect("rebuilds").as_constant(),
+        Some(&CtValue::Int(0))
+    );
+}
+
 #[test]
 fn propositions_are_three_valued() {
     let context = ParamContext::new();

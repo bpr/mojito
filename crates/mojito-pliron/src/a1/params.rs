@@ -491,14 +491,14 @@ pub fn export_param(
         PayloadNode::IndexRef { depth, index } => Ok(params.index_ref(*depth, *index, meta)),
         PayloadNode::Op { op, operands } => {
             let operands = operands.iter().map(child).collect::<Result<Vec<_>, _>>()?;
-            let rebuilt = built(params.op(op.op(), &operands))?;
+            let rebuilt = built(params.rebuild(op.op(), &operands))?;
             if same_node(ctx, key, &rebuilt) {
                 return Ok(rebuilt);
             }
             Err(A1Error::new(
                 A1ErrorKind::Export,
                 format!(
-                    "the front end's constructor rebuilds the stored `{:?}` node as `{rebuilt}`: an unfolded closed atom has no public constructor",
+                    "the stored `{:?}` node is not canonical: the front end rebuilds it as `{rebuilt}`",
                     op.op()
                 ),
             ))

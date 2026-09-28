@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The Pliron A1 parameter payload now exports a closed atom kept unfolded
+  (`8 // 2` after substitution) and a cancelled term holding a partial atom,
+  through the new non-folding `ParamContext::rebuild`, instead of refusing
+  both. A stored operator that is not canonical is still refused.
 - A `Pointer` type argument over an interior-projected or subtree place
   (an array's `unsafe_ptr()`, `Pointer[Int,
   origin_of(a)._get_owned_interior["element"]]`) now bakes into its clone

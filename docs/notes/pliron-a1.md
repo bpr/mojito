@@ -239,12 +239,12 @@ and replacement stay with `ParamContext`.
    canonicalization and the fresh parse are 780 ms of 870 ms.
 6. **Core text is large.** 2.6 to 3.4 times v1. Identity and provenance
    attributes repeat the function symbol on every operation.
-7. **Export through the front end's public constructors is not
-   identity-preserving for two node shapes.** `ParamContext::op` folds the
-   closed atom `8 // 2` to `4`, and cancels a term holding a partial atom,
-   where `replace` and `infix` keep both. The payload keeps them and a clone
-   keeps them. Export refuses them rather than change identity. A
-   non-folding public constructor in `mojito-types` would close this.
+7. **Export needs a constructor that does not fold.** `ParamContext::op`
+   folds the closed atom `8 // 2` to `4`, and cancels a term holding a
+   partial atom, where `replace` and `infix` keep both. Export rebuilds an
+   operator through `ParamContext::rebuild`, which keeps both shapes, so
+   every canonical node round-trips; a stored operator that is not
+   canonical is still refused rather than given another identity.
 8. **The VM runs `finally` on a trap.** Normalized core has no trap edge, as
    the native backend has none. Both backends execute exported MIR here, so
    the adapter cannot show the difference. An A2 interpreter must decide it.
