@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Paired baseline/shadow measurements for the A1 shadow core.
+
+    scripts/bench-pliron-a1 --bin PATH --inputs FILE --out DIRECTORY
+                            --warmup N --runs N --order alternating
+                            [--phase compile|artifact]
+
+Each sample is one fresh child process, timed and measured through wait4,
+so a peak is that input's own and never the wrapper's cumulative one. Every
+raw sample is written before anything is summarized. A failing child fails
+its row and keeps its stderr; nothing is retried, dropped, or pooled.
+
+Run it alone on a quiet machine: see docs/notes/pliron-a1.md.
+"""
+
+import argparse
+import hashlib
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+MODES = ("baseline", "shadow")
+
+
+def measure(binary, source, mode, phase, metrics, stderr):
+    started = time.monotonic_ns()
+    with open(stderr, "wb") as errors:
+        child = subprocess.Popen(
+            [binary, "--input", source, "--mode", mode, "--phase", phase,
+             "--metrics", metrics],
+            stdout=subprocess.DEVNULL, stderr=errors)
+        _, status, usage = os.wait4(child.pid, 0)
+        child.returncode = os.waitstatus_to_exitcode(status)
+    wall = time.monotonic_ns() - started
+    return {
+        "wall_ns": wall,
+        "user_ns": int(usage.ru_utime * 1e9),
+        "sys_ns": int(usage.ru_stime * 1e9),
+        "peak_kib": usage.ru_maxrss,
+        "status": "ok" if child.returncode == 0 else "error",
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--bin", required=True)
+    parser.add_argument("--inputs", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--warmup", type=int, required=True)
+    parser.add_argument("--runs", type=int, required=True)
+    parser.add_argument("--order", choices=["alternating"], required=True)
+    parser.add_argument("--phase", choices=["compile", "artifact"], default="compile")
+    arguments = parser.parse_args()
+
+    out = Path(arguments.out)
+    (out / "metrics").mkdir(parents=True, exist_ok=True)
+    (out / "stderr").mkdir(parents=True, exist_ok=True)
+    inputs = []
+    for line in Path(arguments.inputs).read_text().splitlines():
+        if not line or line.startswith("#") or line.startswith("path\t"):
+            continue
+        path, recorded = line.split("\t")[:2]
+        actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        if actual != recorded:
+            sys.exit(f"{path}: sha256 {actual} is not the frozen {recorded}")
+        inputs.append(path)
+    if not inputs:
+        sys.exit(f"{arguments.inputs}: no inputs")
+
+    samples = out / "samples.tsv"
+    detail = out / "samples-detail.tsv"
+    failed = False
+    with open(samples, "w") as raw, open(detail, "w") as full:
+        raw.write("input\tmode\trun\twall_ns\tpeak_kib\tstatus\n")
+        full.write("input\tmode\trun\twall_ns\tuser_ns\tsys_ns\tpeak_kib\tstatus\n")
+        for index, source in enumerate(inputs):
+            for run in range(-arguments.warmup, arguments.runs):
+                # Alternate which mode goes first, so neither always runs
+                # on the cache the other warmed.
+                order = MODES if run % 2 == 0 else MODES[::-1]
+                for mode in order + ("shadow-opt",):
+                    tag = f"{index:04d}.{mode}.{run}"
+                    sample = measure(
+                        arguments.bin, source, mode, arguments.phase,
+                        str(out / "metrics" / f"{tag}.jsonl"),
+                        str(out / "stderr" / f"{tag}.txt"))
+                    failed |= sample["status"] != "ok"
+                    if run < 0:
+                        continue
+                    raw.write(
+                        f"{source}\t{mode}\t{run}\t{sample['wall_ns']}\t"
+                        f"{sample['peak_kib']}\t{sample['status']}\n")
+                    full.write(
+                        f"{source}\t{mode}\t{run}\t{sample['wall_ns']}\t"
+                        f"{sample['user_ns']}\t{sample['sys_ns']}\t"
+                        f"{sample['peak_kib']}\t{sample['status']}\n")
+                    raw.flush()
+                    full.flush()
+
+    for mode in ("shadow", "shadow-opt"):
+        summary = subprocess.run(
+            [arguments.bin, "--summarize", str(samples), "--shadow-mode", mode],
+            check=True, capture_output=True, text=True).stdout
+        (out / f"summary.{mode}.tsv").write_text(summary)
+        print(f"# {mode}")
+        print(summary, end="")
+    if failed:
+        sys.exit("a sample failed: coverage is incomplete, and no verdict follows")
+
+
+if __name__ == "__main__":
+    main()

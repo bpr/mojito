@@ -171,6 +171,7 @@ pub(super) fn dunder_method_call(
     resolved: Option<String>,
     args: Vec<Reg>,
 ) -> MirInstr {
+    let arg_places = vec![None; args.len()];
     MirInstr::MethodCall {
         dest,
         recv,
@@ -183,7 +184,7 @@ pub(super) fn dunder_method_call(
         kwargs: Vec::new(),
         recv_place: None,
         recv_writes: false,
-        arg_places: Vec::new(),
+        arg_places,
         kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),

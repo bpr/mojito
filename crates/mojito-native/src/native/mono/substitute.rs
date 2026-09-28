@@ -519,6 +519,14 @@ pub(super) fn substitute_subscript_call(
 ) -> Result<(), MonoError> {
     sub_opt_ty(&mut call.raises, bindings)?;
     call.result_ty = substitute_ty(&call.result_ty, bindings)?;
+    // A parameter type closes under the caller's bindings when the checker
+    // instantiated it at the call; one naming the callee's own binder stays
+    // as the contract wrote it.
+    for argument in &mut call.arguments {
+        if let Ok(ty) = substitute_ty(&argument.parameter_ty, bindings) {
+            argument.parameter_ty = ty;
+        }
+    }
     sub_ref_opt(&mut call.reference_result, bindings)
 }
 

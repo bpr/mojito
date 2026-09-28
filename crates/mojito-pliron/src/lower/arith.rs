@@ -117,8 +117,8 @@ impl FnLowering<'_> {
                 dest,
             ));
         }
-        let lhs = self.reg_value(ctx, a, operand_ty)?;
-        let rhs = self.reg_value(ctx, b, operand_ty)?;
+        let lhs = self.operand_value(ctx, a, operand_ty)?;
+        let rhs = self.operand_value(ctx, b, operand_ty)?;
         // `Float32 / Float32` (and `Float16`) stays a narrow lane: divide at
         // f64 and round (`runtime::simd_binop`), unlike the scalar promotions
         // below.

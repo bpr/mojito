@@ -98,36 +98,26 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 The Pliron pivot has no falsifiable proof yet**
+- [ ] **1.5 The A1 shadow core has never been run over the decision
+  corpus**
 
-  Problem: [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md)
-  stages a migration to a required Pliron IR framework, but its Stage A1 slice
-  has never been built, so the decision rests on paper.
-  - Build the A1 vertical slice from that plan's §Smallest falsifiable proof.
-  - Measure construction time, verification time, peak memory, and text size
-    against the budget the plan names.
-  - Decide from the measurements: continue to A2, or record the rejection in
-    [`docs/non-goals.md`](non-goals.md).
-  - This is the decision point for MIR-as-a-dialect, not a commitment to it.
-  - The attribute layer [`docs/pliron-future.md`](pliron-future.md) found
-    missing is landed as independent Rust data
-    (`docs/notes/param-expr-attributes.md`); A1 carries it as `#[pliron_attr]`
-    wrappers over `uniqued_any`, with its own construction, substitution,
-    identity, cross-context clone, and canonical-text tests. That alone is
-    not the proof.
-  - The plan and the measurement design are the broadest scope in this document:
-    they reopen the waist and the dialect policy. The A1 slice is built and
-    measured once planned.
-  - The rest of this section does not gate it: those entries move the check
-    order above `CheckedProgram`, while A1 shadows MIR below it. Waiting for
-    them only ages the decision.
-  - Depends on section 2, for the native defects whose shapes the slice
-    itself uses: a specialized generic struct whose constructor mangles into
-    an existing symbol, a consuming move out of a `deinit self` with
-    droppable fields, and a one-element tuple. The slice runs natively and
-    on the VM from one
-    module, so a backend that miscompiles those shapes can be measured for
-    neither conversion totality nor execution parity.
+  Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
+  and nobody knows how many of the 848 inputs of Stage A1's decision corpus
+  it refuses, so the bulk measurement lane cannot run.
+  - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md) §Coverage.
+  - 25 MIR forms are still rejected by name. Variants, closures, slices,
+    tuple construction, and uninitialized storage are among them.
+  - A `return` inside a `try` region, a floating constant or default, and a
+    call with captured-owner effects are refused by name too.
+  - Run `examples/pliron_a1.rs` over `target/pliron-a1/corpus-inputs.tsv`
+    first. A refused input ends its diagnostic with every refusal, counted
+    (`import::refusals`).
+  - The inventory is closed on purpose: each new form needs an operation, a
+    verifier rule, an import and export rule, and positive and negative
+    cases (`inventory::CoreOpKind`).
+  - This entry and 1.29 to 1.33 are the ones in this section that do not
+    move the check order. They shadow MIR below `CheckedProgram`.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **1.6 A reference-typed call result in a method keeps the clone
@@ -462,6 +452,87 @@ to section 3, however small.
   - A bare binder cannot carry the interior or subtree projection, so such
     a place keeps the old per-place clone.
   - A binder whose declaration re-applies the projection would serve it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.29 The A1 adapter has never been rehearsed against a newer
+  Pliron**
+
+  Problem: the pivot's maintenance model assumes an upgrade stays inside the
+  adapter, and nothing has tested that since the A1 slice landed.
+  - Rehearse one recorded upstream SHA in a disposable copy of the checkout.
+  - Record the hours, the changed files, and any change that escapes
+    `crates/mojito-pliron` and its feature-gated tests.
+  - The budget is one working day. A needed fork rejects the model.
+  - The 0.17 to `477e6b0` upgrade in `docs/notes/pliron-promotion.md` is
+    historical evidence, not this rehearsal.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **1.30 A1 core text is about three times the v1 text**
+
+  Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
+  text of the same module, over the 2.0 line that makes a design review
+  mandatory.
+  - The gate is 199,537 bytes of core for 69,504 of v1, and `stdlib_heavy`
+    is 6,513,540 for 2,077,034.
+  - Identity and provenance attributes repeat the function symbol on every
+    operation (`a1/attrs.rs`, `IdentityAttr`, `ProvenanceAttr`).
+  - Text also dominates the boundary's time: printing and parsing are 780 of
+    870 ms in the debug diagnostic.
+  - A custom operation format or a per-function symbol table are the levers.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **1.31 A parameter expression cannot be rebuilt unfolded through the
+  front end's public constructors**
+
+  Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
+  cancels a term that holds a partial atom, where `replace` and `infix` keep
+  both, so the A1 payload exports neither.
+  - Export refuses such a node rather than change its identity
+    (`a1/params.rs`, `export_param`).
+  - `a1_param_substitution` pins both refusals.
+  - A public constructor that builds an operator without folding it, in
+    `mojito_types::param_expr`, would close this.
+  - A clone between contexts needs no constructor and keeps both shapes.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.32 The Pliron pivot's overhead has never been measured**
+
+  Problem: the A1 slice passes four of the plan's five falsifiers, and the
+  fifth, overhead, has no release measurement, so the pivot is neither
+  approved nor rejected.
+  - The record and the verdict table are in
+    [`docs/notes/pliron-a1.md`](notes/pliron-a1.md).
+  - The budget is a paired compile-time ratio strictly below 1.20 and a
+    peak-memory ratio strictly below 1.30, each with three median absolute
+    deviations of margin.
+  - `scripts/bench-pliron-a1` collects the samples. The note lists the
+    commands.
+  - The bulk run is its own lane: ten pairs over 848 inputs, alone, on a
+    quiet machine.
+  - Decide from the measurements: plan A2, or record the rejection in
+    [`docs/non-goals.md`](non-goals.md) and remove the experiment as the
+    note's §Removal lists.
+  - This is the decision point for MIR-as-a-dialect, not a commitment to it.
+  - The focused lane needs nothing more: all ten focused inputs convert.
+  - Depends on 1.5, 1.29, and 1.30.
+  - Model: Fable, Planned.
+
+- [ ] **1.33 Specialized MIR does not run on the VM as the original does**
+
+  Problem: for three compile benchmarks the program that native
+  monomorphization produces fails on the VM, where the unspecialized program
+  runs, so nothing but the native backend can execute it.
+  - `tuple`, `tstring`, and `stdlib_heavy` fail with ``struct
+    '__module$std$string$String' has no copy constructor``.
+  - The gate and the four smaller benchmarks run identically both ways.
+  - `a1_focused_inputs_convert` writes which inputs differ to
+    `target/pliron-a1/benchmark-coverage.tsv`.
+  - It matters to the pivot only: an A2 interpreter over core would execute
+    specialized programs.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

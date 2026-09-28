@@ -197,7 +197,7 @@ impl FnLowering<'_> {
         // A literal an operator already computed (`~(2 * 3)`) holds the
         // value at the width `binop_operand_ty` gave it.
         let operand_ty = self.binop_operand_ty(a, a)?;
-        let value = self.reg_value(ctx, a, operand_ty)?;
+        let value = self.operand_value(ctx, a, operand_ty)?;
         match (op, operand_ty) {
             (PrefixOp::Neg, ScalarTy::Int) => {
                 let zero = self.int_constant(ctx, 0);

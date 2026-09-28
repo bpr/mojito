@@ -174,6 +174,24 @@ impl FnLowering<'_> {
         Err(self.unsupported(construct, self.reg_span(reg)))
     }
 
+    /// An arithmetic operand's value: a register holding a handle to scalar
+    /// storage reads its referent, as the VM's place load does; every other
+    /// register is its own value.
+    pub(super) fn operand_value(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        expected: ScalarTy,
+    ) -> Result<Value, PlironError> {
+        if self.referent_scalar_ty(reg)?.is_none() {
+            return self.reg_value(ctx, reg, expected);
+        }
+        let pointer = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+        let load = LoadOp::new(ctx, pointer, expected.handle(ctx));
+        self.append(ctx, load.get_operation(), Some(reg));
+        Ok(load.get_result(ctx))
+    }
+
     /// Fold a pending literal into one constant of the target scalar type
     /// with the VM's exact semantics (`runtime::materialize_literal`):
     /// integers wrap modulo 2^64, floats convert exactly.
@@ -305,11 +323,13 @@ impl FnLowering<'_> {
     /// wins (the checker rejects mixing concrete kinds); two literal operands
     /// promote to Float64 when either is a float literal, else Int.
     pub(super) fn binop_operand_ty(&self, a: Reg, b: Reg) -> Result<ScalarTy, PlironError> {
-        if let Some(ty) = self.concrete_scalar_ty(a)? {
-            return Ok(ty);
-        }
-        if let Some(ty) = self.concrete_scalar_ty(b)? {
-            return Ok(ty);
+        for operand in [a, b] {
+            if let Some(ty) = self.referent_scalar_ty(operand)? {
+                return Ok(ty);
+            }
+            if let Some(ty) = self.concrete_scalar_ty(operand)? {
+                return Ok(ty);
+            }
         }
         let float = matches!(self.func.reg_types.get(&a.0), Some(Ty::FloatLiteral))
             || matches!(self.func.reg_types.get(&b.0), Some(Ty::FloatLiteral));
@@ -330,6 +350,24 @@ impl FnLowering<'_> {
             return Ok(None);
         }
         scalar_type(self.name, ty, self.reg_span(reg)).map(Some)
+    }
+
+    /// The scalar a reference-typed `reg` addresses, or `None` when `reg` is
+    /// no reference or its referent is a pointer or an aggregate, which
+    /// stay handles.
+    pub(super) fn referent_scalar_ty(&self, reg: Reg) -> Result<Option<ScalarTy>, PlironError> {
+        let Some(Ty::Ref(reference)) = self.func.reg_types.get(&reg.0) else {
+            return Ok(None);
+        };
+        match *reference.referent {
+            Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool => {
+                scalar_type(self.name, &reference.referent, self.reg_span(reg)).map(Some)
+            }
+            ref referent if scalar_simd_dtype(referent).is_some() => {
+                scalar_type(self.name, referent, self.reg_span(reg)).map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     pub(super) fn var_lower_ty(&self, var: u32) -> Result<LowerTy, PlironError> {

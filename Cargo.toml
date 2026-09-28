@@ -111,6 +111,9 @@ backend-pliron = [
     "dep:object",
     "dep:sha2",
 ]
+# The A1 shadow core: an optional, removable experiment that re-expresses
+# verified MIR as a Pliron dialect. See docs/notes/pliron-a1.md.
+pliron-a1 = ["backend-pliron", "mojito-pliron/a1-core"]
 
 [dependencies]
 # Direct llvm-sys (same 231/LLVM-23.1 pin pliron-llvm resolves) powers the
@@ -173,6 +176,14 @@ required-features = ["backend-pliron"]
 [[test]]
 name = "heavy"
 required-features = ["backend-pliron"]
+
+[[example]]
+name = "pliron_a1"
+required-features = ["pliron-a1"]
+
+[[test]]
+name = "pliron_a1_test"
+required-features = ["pliron-a1"]
 
 [[test]]
 name = "pliron_toolchain_test"

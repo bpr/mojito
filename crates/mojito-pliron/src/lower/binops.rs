@@ -67,8 +67,8 @@ impl FnLowering<'_> {
             return self.lower_true_div(ctx, dest, a, b, operand_ty);
         }
 
-        let lhs = self.reg_value(ctx, a, operand_ty)?;
-        let rhs = self.reg_value(ctx, b, operand_ty)?;
+        let lhs = self.operand_value(ctx, a, operand_ty)?;
+        let rhs = self.operand_value(ctx, b, operand_ty)?;
 
         if is_comparison(op) {
             return self.lower_compare(ctx, op, dest, lhs, rhs, operand_ty);

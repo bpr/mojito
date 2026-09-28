@@ -237,12 +237,22 @@ its own roadmap entry in §3.
 
 Existing lifecycle and place defects come first, but not all of
 [`docs/roadmap.md`](roadmap.md) §2 and §3, since §3 reopens at every re-pin.
-What gates the pivot is the handful of §2 native-backend defects whose shapes
-the Stage A1 slice itself uses: a specialized generic struct whose constructor
-mangles into an existing symbol, a consuming move out of a `deinit self` with droppable
-fields, and a one-element tuple. The slice executes natively and on the VM
-from one module, so a backend that miscompiles those shapes cannot be judged
-for conversion totality or execution parity. §1's own entries do not gate it:
+What gated the pivot was the handful of §2 native-backend defects whose shapes
+the Stage A1 slice itself uses. Those have landed, the last of them with the
+slice: scalar arithmetic on a direct `ref` field fed a pointer to the
+operator. The slice executes natively and on the VM from one module, so a
+backend that miscompiles those shapes cannot be judged for conversion
+totality or execution parity.
+
+The slice is built ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md),
+2026-09-27). It confirms two things this assessment predicted and corrects
+one. Canonical text is not stable from Pliron's printer alone, because value
+names follow allocation history; A1 prints after a parse into a fresh
+context. The parametric gap is as described: A1's core is closed and
+monomorphic, and its parameter attributes carry no generic body. The
+correction is on cost: core text is 2.6 to 3.4 times the v1 text, and the
+interpreter question is still open, because both backends ran MIR exported
+from core. §1's own entries do not gate it:
 they move the check order above `CheckedProgram`, while A1 shadows MIR below
 it. The pivot entry's `Depends on` bullet carries the current numbers, which
 move as §1 closes. The rest of §2 and §3 is orthogonal to steps 1 and 2 below

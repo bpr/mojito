@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+# The A1 shadow core (`src/a1/`), default off.
+a1-core = []
+
 [dependencies]
 llvm-sys = { version = "231" }
 mojito-analysis = { path = "../mojito-analysis" }

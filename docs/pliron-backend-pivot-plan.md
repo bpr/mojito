@@ -3,7 +3,9 @@
 ## Decision
 
 **Conditional GO for option A, implemented as a gated migration rather than a
-rewrite.** Pliron is capable enough to become Mojito's required IR framework
+rewrite.** The condition is untested, not met: the Stage A1 vertical slice
+passes, and its overhead and full-corpus exit have not been measured
+([`docs/notes/pliron-a1.md`](notes/pliron-a1.md)). Pliron is capable enough to become Mojito's required IR framework
 below `CheckedProgram` for Mojito's current, CPU-first scope. It is not an MLIR
 replacement in ecosystem breadth, optimizer inventory, target coverage, tooling,
 or organizational maturity, and it cannot give Mojito Mojo's heterogeneous
@@ -81,12 +83,19 @@ It should not initially mean:
 
 ## Evidence and evaluated pins
 
-The implementation baseline is the repository's exact crates.io pin:
+This assessment was written against the crates.io pin of its day:
 
 - `pliron = 0.17.0`, released 2026-08-07;
 - `pliron-llvm = 0.17.0`;
 - `llvm-sys = 221.0.1`, requiring LLVM 22 (locally 22.1.8);
 - Rust 1.96.1; Apache-2.0 licensing.
+
+The repository has since moved to a git pin, and the A1 slice was built on
+it (2026-09-27):
+
+- `pliron` and `pliron-llvm` at `477e6b0edb18b29df4cf7b90f0f468dc8a872f22`;
+- `llvm-sys = 231`, requiring LLVM 23.1 (locally 23.1.0);
+- Rust 1.96.1.
 
 The 2026-08-18 Stage 0 audit records 609 upstream commits, active maintenance,
 frequent breaking 0.x releases, a strong single-maintainer concentration, no
@@ -231,6 +240,13 @@ analysis, optimization, or multiple lowering paths a stable contract.
   fails diagnostically, and overhead stays under an agreed budget (initially
   20% compile time and 30% peak memory on the corpus).
 - This stage lands with Pliron optional.
+- **Result, 2026-09-27.** The vertical slice is built and passes
+  ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md)). The exit above is still
+  open: the slice's inventory converts 6 of the 10 focused inputs, and no
+  overhead has been measured. A passing slice is not this stage's exit.
+- The slice took the adapter route: core is exported to verified MIR, and
+  both backends run that. It says nothing about the speed of a VM that walks
+  core operations.
 
 ### Stage A2 — VM consumes Pliron core
 
@@ -334,7 +350,9 @@ Declare the pivot complete only when:
 | Semantic drift during port | ownership/drop/try behavior differs | dual pipelines, VM differential, lifecycle traces, randomized tests; never delete old path early. |
 | LLVM leakage | default build links/discovers LLVM | dependency-tree guard separating `pliron` from `pliron-llvm`. |
 | LLVM dialect gaps | broad local operation patch set | upstream narrow additions; use `mojito.abi` temporarily; fall back to Cranelift from core. |
-| Artifact instability | canonical text changes across Pliron upgrades | own `.mir` syntax/version adapter or pin printer semantics independent of upstream IDs. |
+| Artifact instability | canonical text changes across Pliron upgrades | own `.mir` syntax/version adapter or pin printer semantics independent of upstream IDs. A1 found value and block names follow allocation history: its canonical text is printed after a parse into a fresh context, which costs a print and a parse. |
+| Artifact size | core text exceeds twice the v1 text | A1 measured 2.6 to 3.4 times. A design review is owed before A4: identity and provenance repeat on every operation. |
+| Framework introspection gaps | a closed inventory cannot be read back from the framework | A1 found no public enumeration of a dialect's operations at the pin, and a string printer its parser cannot read back. Both are worked around in the adapter; upstream before A4. |
 | False Mojo analogy | architecture expands toward GPU goals ahead of their schedule | scope goals explicitly; add hardware dialects only behind demonstrated programs and funding. |
 
 ## Rejected alternatives
@@ -370,6 +388,18 @@ This slice stresses every reason to retain a language-aware IR. The pivot is
 falsified if Pliron cannot represent and verify it cleanly, if source locations
 or lifecycle order become lossy, if conversion totality remains informal, if
 the default build acquires LLVM, or if measured overhead is disproportionate.
+
+**Result, 2026-09-27: `PASS-SLICE`, decision `INCOMPLETE`.** All seven items
+pass on `assets/extensions/ok/pliron_a1_gate.mojo`. Four of the five
+falsifiers were tested and did not fire: representation and verification,
+locations and lifecycle order, conversion totality, and default-build
+isolation. The fifth, overhead, is not measured, so the pivot is neither
+confirmed nor falsified. The record, its limits, and the commands that
+resume the measurement are in
+[`docs/notes/pliron-a1.md`](notes/pliron-a1.md).
+
+The slice is a vertical proof. It is not Stage A1's exit, which asks for
+every canonical fixture and a corpus budget.
 
 ## Final assessment
 

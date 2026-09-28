@@ -677,6 +677,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   ABI bump: integer display and a String's `repr` are bundled Mojo now). It must never depend
   on the `mojito` crate (the VM `Value` stays out of the ABI);
   `tests/native_abi_test.rs` pins the Rust-side agreement.
+- `backend/pliron/a1.rs` (feature `pliron-a1`, default off) is the optional
+  A1 shadow core, a removable experiment recorded in
+  `docs/notes/pliron-a1.md`. It moves no waist: the backends still consume
+  MIR. `inventory::CoreOpKind` is the closed registry; `import`/`export`
+  convert MIR to and from the bridge stage, and `import::refusals` counts
+  everything the importer refuses in a program; `outcomes::{normalize,
+  denormalize}` and `lifecycle::check_contract` own the executable stage;
+  `text::canonical_text` and `provenance` own text and locations; `params`
+  re-homes `ParamExpr`; `measure` and `examples/pliron_a1.rs` are the
+  measurement harness.
 - `backend/pliron.rs` (feature `backend-pliron`) owns the supported native
   backend: `compile` orchestration (reachable closure, verify, mem2reg/DCE,
   canonical text), `NativeModule` emission/JIT entry points,

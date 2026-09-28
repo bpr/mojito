@@ -579,6 +579,139 @@ fn print_fixture_exes_match_vm_output() {
     }
 }
 
+/// Scalar arithmetic over a register loaded from a direct `ref` field: the
+/// VM's place load reads the referent, so the native operand path reads
+/// through the handle. Owned scalars are the control row.
+const REFERENCE_OPERANDS: &str = r"struct IntView[o: Origin[mut=False]]:
+    var source: ref[o] Int
+
+    def __init__(out self, ref [Self.o] source: Int):
+        self.source = source
+
+    def sums(self) -> Int:
+        return self.source + 1 + self.source * self.source - self.source
+
+    def left(self) -> Int:
+        return 5 + self.source
+
+    def negated(self) -> Int:
+        return -self.source
+
+    def less(self) -> Bool:
+        return self.source < 11
+
+
+struct FloatView[o: Origin[mut=False]]:
+    var ratio: ref[o] Float64
+
+    def __init__(out self, ref [Self.o] ratio: Float64):
+        self.ratio = ratio
+
+    def scaled(self) -> Float64:
+        return self.ratio * 2.0 + self.ratio / 4.0
+
+
+struct BoolView[o: Origin[mut=False]]:
+    var flag: ref[o] Bool
+
+    def __init__(out self, ref [Self.o] flag: Bool):
+        self.flag = flag
+
+    def inverted(self) -> Bool:
+        return not self.flag
+
+
+struct Cell[o: Origin[mut=True]]:
+    var slot: ref[o] Int
+
+    def __init__(out self, ref [Self.o] slot: Int):
+        self.slot = slot
+
+    def doubled(self) -> Int:
+        return self.slot * 2
+
+
+def main():
+    var source: Int = 10
+    var ratio: Float64 = 1.5
+    var flag: Bool = True
+    var slot: Int = 21
+    var view = IntView(source)
+    print(view.sums(), view.left(), view.negated(), view.less())
+    print(FloatView(ratio).scaled(), BoolView(flag).inverted())
+    print(Cell(slot).doubled())
+    print(source + 1, 2 * source)
+";
+
+/// The A1 gate fixture and the reference operand matrix match the VM's
+/// stdout at both levels and its ordered lifecycle trace.
+#[test]
+fn a1_reference_field_arithmetic_matches_vm() {
+    let gate = "assets/extensions/ok/pliron_a1_gate.mojo";
+    let gate_src = std::fs::read_to_string(gate).expect("fixture exists");
+    for (fixture, src) in [
+        (gate, gate_src.as_str()),
+        ("reference_operands.mojo", REFERENCE_OPERANDS),
+    ] {
+        let compiler = Compiler::default();
+        let compiled = compiler
+            .compile_source(src, Path::new(fixture))
+            .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
+        let execution = compiler
+            .execute(&compiled)
+            .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
+        let mut vm = mojito::backend::VmBackend::new();
+        vm.enable_lifecycle_log();
+        vm.run_elaborated(compiled.elaborated_mir().clone())
+            .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
+        let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (level, opt, trace_lifecycle) in [
+            ("O0", OptLevel::O0, false),
+            ("release", OptLevel::Release, false),
+            ("traced", OptLevel::O0, true),
+        ] {
+            let options = CompileOptions {
+                entries: vec!["main".to_string()],
+                sources: vec![(fixture.to_string(), src.to_string())],
+                target: host_target(),
+                trace_lifecycle,
+            };
+            let mut module = native::compile(compiled.elaborated_mir(), &options)
+                .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+            let exe = dir.path().join(level);
+            module
+                .write_executable(&exe, opt, DebugInfo::Lines)
+                .unwrap_or_else(|error| panic!("{fixture}: exe emission at {level}: {error}"));
+            let run = std::process::Command::new(&exe)
+                .output()
+                .expect("executable runs");
+            assert_eq!(run.status.code(), Some(0), "{fixture}: exit at {level}");
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                execution.output,
+                "{fixture}: stdout bytes diverge from the VM at {level}"
+            );
+            let native_events: Vec<String> = String::from_utf8_lossy(&run.stderr)
+                .lines()
+                .filter_map(|line| line.strip_prefix("mjtrace ").map(str::to_string))
+                .collect();
+            if trace_lifecycle {
+                assert_eq!(
+                    native_events, vm_events,
+                    "{fixture}: ordered lifecycle traces diverge"
+                );
+            } else {
+                assert!(
+                    run.stderr.is_empty(),
+                    "{fixture}: stderr must be empty at {level}"
+                );
+            }
+        }
+    }
+}
+
 /// `String(x)` over a live place copies the bytes rather than aliasing them.
 ///
 /// MIR types the stringify builtin's result as a fresh owned string carrying

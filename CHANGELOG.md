@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Scalar arithmetic on a direct `ref` field (`self.exact + self.source`,
+  with `var source: ref[o] Int`) now compiles natively
+  (`assets/extensions/ok/pliron_a1_gate.mojo`); the native backend fed the
+  field's handle to the operator and failed IR verification. An operator's
+  operand now reads through a handle to scalar storage, as the VM's place
+  load does.
+- The A1 shadow core now converts all ten focused benchmark inputs, where
+  it refused four of the seven compile benchmarks
+  (`a1_focused_inputs_convert`). Its closed inventory grows from 26 to 37
+  operations, and its types, declarations, and calls carry the facts those
+  benchmarks need (`docs/notes/pliron-a1.md`). Still optional and default
+  off.
+- Native monomorphization now produces MIR that passes `mir::verify` for
+  `benchmarks/compile/stdlib_heavy.mojo`: a rewritten dunder call records
+  one place per argument, and a subscript contract's parameter types are
+  substituted with the rest of the call.
+- The Stage A1 shadow core is built as an optional, default-off experiment
+  (`pliron-a1`): verified MIR re-expressed as a `mojito_core` Pliron dialect
+  and exported back. The vertical slice passes and the pivot decision is
+  open, since overhead is unmeasured (`docs/notes/pliron-a1.md`). No
+  pipeline, schema, or backend input changed.
 - A nested generic `def` whose body builds a callee's value argument from
   its own parameter (`scaled[k + 1]()` inside `inner[k: Int]`) now compiles
   natively (`assets/ok/nested_def_value_argument.mojo`); the native backend
