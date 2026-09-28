@@ -973,6 +973,74 @@ pub fn lifecycle_method_name(m: &Method) -> &str {
     }
 }
 
+/// The declaration that owns each struct method's own binders.
+///
+/// It is `Struct.method`, or for an overloaded method the symbol its
+/// template lowers to, so two overloads own distinct binders and every clone
+/// of one shares its template's. The checker and the elaborator both number
+/// a method's binders under this owner.
+#[derive(Debug, Clone, Default)]
+pub struct MethodBinderOwners {
+    /// The lowered symbol of every overloaded template method, keyed by its
+    /// template struct and the byte range of its first body statement: a
+    /// clone keeps its template's body spans but not its signature, so the
+    /// owner is computed once, from the template.
+    overloaded: HashMap<(String, mojito_common::token::Span), String>,
+}
+
+impl MethodBinderOwners {
+    pub fn scan(program: &[Stmt], sets: &OverloadSets) -> Self {
+        let overloaded = program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Struct {
+                    name,
+                    type_params,
+                    methods,
+                    ..
+                } if specialization_template(name).is_none() => Some((name, type_params, methods)),
+                _ => None,
+            })
+            .flat_map(|(name, type_params, methods)| {
+                methods
+                    .iter()
+                    .filter(|m| m.self_ty.is_none() && specialization_template(&m.name).is_none())
+                    .filter_map(move |m| {
+                        let source = format!("{name}.{}", lifecycle_method_name(m));
+                        let lowered = lowered_method_name(
+                            &source,
+                            type_params,
+                            &m.params,
+                            m.keyword_only,
+                            m.has_self,
+                            m.self_convention,
+                            sets,
+                        );
+                        let first = m.body.first()?;
+                        (lowered != source).then(|| ((name.clone(), first.span), lowered))
+                    })
+            })
+            .collect();
+        Self { overloaded }
+    }
+
+    /// The owner of `m`'s own binders on the struct `owner` names, a
+    /// template or one of its specializations.
+    pub fn owner(&self, owner: &str, m: &Method) -> String {
+        let template = specialization_template(owner).unwrap_or(owner);
+        m.body
+            .first()
+            .and_then(|first| self.overloaded.get(&(template.to_string(), first.span)))
+            .cloned()
+            .unwrap_or_else(|| {
+                format!(
+                    "{template}.{}",
+                    specialization_template(&m.name).unwrap_or(&m.name)
+                )
+            })
+    }
+}
+
 /// The lifted name of a nested `def` (`inner` declared inside `outer`).
 pub fn nested_lifted_name(outer: &str, inner: &str) -> String {
     format!("{outer}${inner}")

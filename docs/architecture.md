@@ -611,10 +611,14 @@ second expression tree.
   signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
   of one name never share a binder. An overloaded struct method is owned the
   same way, by the symbol its template lowers to (`Box.pick$ov$…`):
-  `overloaded_method_owners` computes it once per template and keys it by
+  `symbol::MethodBinderOwners` computes it once per template and keys it by
   the template struct and its first body statement's range, which every
   clone keeps, so a clone whose substituted signature lowers differently
-  still shares its template's binders. A trait requirement is owned by
+  still shares its template's binders. The checker and the elaborator
+  (`comptime/params.rs`, `elaborated_binder`) both name a method's binders
+  through it, and both number a binder by `TypeParam::binder_slot` — its
+  position with the erased `Origin`/`OriginSet` parameters and their
+  mutability binders skipped — so one binder has one id in both. A trait requirement is owned by
   `Trait.method`, or, overloaded, by the symbol `lowered_method_name` gives
   it (`Picker.pick$ov$T`): `OverloadSets` counts requirements as it counts
   struct methods. A type binder is the same identity: `ParamDecl`

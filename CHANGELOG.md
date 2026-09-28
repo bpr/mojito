@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator now gives a struct method's own binders the checker's
+  identities. Two overloads whose parameter slots agree own distinct
+  binders there too, named through the shared
+  `symbol::MethodBinderOwners`, and a binder's slot skips the erased
+  `Origin` parameters and their mutability binders, as the checker's does.
 - Two overloaded trait requirements whose parameter slots agree
   (`def pick[T](self, a: T)` beside `def pick[T](self, a: T, b: T)`) no
   longer give their binders one identity. Each is owned by the

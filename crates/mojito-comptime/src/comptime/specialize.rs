@@ -1766,8 +1766,11 @@ impl Elab<'_> {
                 matches!(method.name.as_str(), "__getitem__" | "__getitem_param__")
                     && !method.type_params.is_empty()
                     && matches!(
-                        classify_ct_params(&method.type_params, &format!("{orig}.{}", method.name))
-                            .as_slice(),
+                        classify_ct_params(
+                            &method.type_params,
+                            &self.method_binder_owners.owner(orig, &method),
+                        )
+                        .as_slice(),
                         [ParamDecl::Value { .. }]
                     );
             let mut env = self.top_consts.borrow().clone();
@@ -1951,8 +1954,10 @@ impl Elab<'_> {
             // substituted and the `Ts[i]` annotation folded to that element.
             if dependent_index_accessor {
                 let accessor_name = method.name.clone();
-                let index_decls =
-                    classify_ct_params(&method.type_params, &format!("{orig}.{accessor_name}"));
+                let index_decls = classify_ct_params(
+                    &method.type_params,
+                    &self.method_binder_owners.owner(orig, &method),
+                );
                 let (
                     [
                         ParamDecl::Value {
@@ -2105,7 +2110,7 @@ impl Elab<'_> {
                 {
                     let mut origin_binders = CloneOriginBinders::default();
                     let Some((values, bindings)) = self.method_request_values(
-                        &format!("{owner}.{}", method.name),
+                        &self.method_binder_owners.owner(orig, &method),
                         &method.type_params,
                         request.arguments(),
                         &mut origin_binders,
@@ -2380,9 +2385,7 @@ impl Elab<'_> {
             .iter()
             .filter(|argument| !matches!(argument, TyArg::Origin(_)));
         for parameter in type_params {
-            if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                || parameter.is_origin_mutability_binder(type_params)
-            {
+            if parameter.is_erased_origin_param(type_params) {
                 continue;
             }
             let argument = cursor.next()?;
@@ -2822,7 +2825,7 @@ impl Elab<'_> {
             // clone, which declares the instance's first.
             let mut binders = base_binders.cloned().unwrap_or_default();
             let Some((call_values, call_bindings)) = self.method_request_values(
-                &format!("{template}.{}", method.name),
+                &self.method_binder_owners.owner(template, method),
                 &method.type_params,
                 request.arguments(),
                 &mut binders,

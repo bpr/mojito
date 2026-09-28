@@ -171,7 +171,10 @@ parameters by the template's name, a `def`'s by its name, a method's by
 `Struct.method` (`binder_owner`/`Checker::method_binder_owner` in
 `checker/annotations.rs`). An overloaded `def` or struct method is owned by
 the signature-qualified symbol its template lowers to, so two overloads never
-share a binder. A `$` clone demangles to its template, so it shares
+share a binder. The elaborator's binders take the same ids: it names a
+method's owner through the same `symbol::MethodBinderOwners` and numbers a
+binder by `TypeParam::binder_slot`, which skips the erased origin
+parameters as the checker's classification does. A `$` clone demangles to its template, so it shares
 its template's parameters rather than minting fresh ones, and repeated
 discovery rounds agree. Same-spelled parameters of unrelated declarations are
 different parameters.

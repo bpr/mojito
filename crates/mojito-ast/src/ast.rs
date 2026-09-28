@@ -237,6 +237,25 @@ pub struct TypeParam {
 }
 
 impl TypeParam {
+    /// Whether this parameter is semantic-only origin metadata: an `Origin` or
+    /// `OriginSet` parameter, or the infer-only `Bool` binding one's
+    /// mutability ([`Self::is_origin_mutability_binder`]). Such a parameter
+    /// is inferred from places rather than occupying a binder slot.
+    pub fn is_erased_origin_param(&self, siblings: &[Self]) -> bool {
+        matches!(self.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+            || self.is_origin_mutability_binder(siblings)
+    }
+
+    /// This parameter's binder slot among `siblings`, its own list: its
+    /// position once the erased origin parameters are skipped.
+    pub fn binder_slot(&self, siblings: &[Self]) -> usize {
+        siblings
+            .iter()
+            .take_while(|sibling| sibling.name != self.name)
+            .filter(|sibling| !sibling.is_erased_origin_param(siblings))
+            .count()
+    }
+
     /// Whether this parameter is an infer-only `Bool` that exists to bind a
     /// sibling origin parameter's mutability (`iterable_mut: Bool, //,
     /// iterable_origin: Origin[mut=iterable_mut]`). Like the origin parameter

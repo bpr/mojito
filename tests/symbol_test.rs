@@ -185,6 +185,38 @@ fn overloaded_trait_requirements_get_qualified_names() {
 }
 
 #[test]
+fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
+    // The checker and the elaborator share one owner per method and one slot
+    // per binder: two `pick[T]` overloads own distinct `T`s, and the origin
+    // parameter before `U` takes no slot.
+    use mojito::ast::StmtKind;
+    use mojito::symbol::{MethodBinderOwners, OverloadSets};
+    let program = parse(
+        "struct Box:\n\
+         \x20   def pick[T: Copyable](self, a: T) -> T:\n\
+         \x20       return a.copy()\n\
+         \x20   def pick[T: Copyable](self, a: T, b: Int) -> T:\n\
+         \x20       return a.copy()\n\
+         \x20   def view[o: Origin, U: Copyable](self, a: U) -> U:\n\
+         \x20       return a.copy()\n",
+    )
+    .expect("parse error");
+    let owners = MethodBinderOwners::scan(&program, &OverloadSets::scan(&program));
+    let methods = program
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            StmtKind::Struct { methods, .. } => Some(methods),
+            _ => None,
+        })
+        .expect("struct");
+    let named: Vec<_> = methods.iter().map(|m| owners.owner("Box", m)).collect();
+    assert_eq!(named, ["Box.pick$ov$T", "Box.pick$ov$T$Int", "Box.view"]);
+    assert_eq!(owners.owner("Box$y3:Int", &methods[1]), "Box.pick$ov$T$Int");
+    let view = &methods[2].type_params;
+    assert_eq!(view[1].binder_slot(view), 0);
+}
+
+#[test]
 fn mojo_copy_constructor_counts_as_copyinit_not_an_init_overload() {
     // One ordinary `__init__` plus the `out self, *, copy: Self` form: the copy
     // constructor is modeled as `__copyinit__`, so neither is overloaded.

@@ -11,7 +11,8 @@ impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
         self.overload_sets = mojito_symbol::symbol::OverloadSets::scan(stmts);
-        self.overloaded_method_owners = overloaded_method_owners(stmts, &self.overload_sets);
+        self.method_binder_owners =
+            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
         self.declared_structs
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),

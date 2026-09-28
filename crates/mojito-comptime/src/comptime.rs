@@ -1090,6 +1090,10 @@ pub fn elaborate_prepared(
         comptime_generics: collect_comptime_generic_templates(program),
         dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
+        method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::scan(
+            program,
+            &mojito_symbol::symbol::OverloadSets::scan(program),
+        ),
         method_requests: method_requests_by_owner,
         instance_requests,
         hash_leaf_types: hash_leaf_types.to_vec(),
@@ -2124,6 +2128,9 @@ struct Elab<'a> {
     /// to such a name is served only from the checker's recorded
     /// instantiation, which names the selected overload.
     overload_families: HashMap<String, Vec<&'a Stmt>>,
+    /// The owner of each struct method's own binders, as the checker names
+    /// it: an overloaded method's is its lowered symbol.
+    method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
     /// Checker-discovered generic-method instantiations on specialized
     /// variadic structs, by owner name: each becomes a per-call clone.
     method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,

@@ -15,10 +15,7 @@ use super::*;
 /// [`CtValue`] would incorrectly require the compile-time universe to own VM
 /// closures and captured storage.
 pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypeParam]) -> bool {
-    if matches!(tp.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
-        return true;
-    }
-    if tp.is_origin_mutability_binder(siblings) {
+    if tp.is_erased_origin_param(siblings) {
         return true;
     }
     matches!(
@@ -151,21 +148,19 @@ pub(super) fn classify_ct_param(
     })
 }
 
-/// The identity of an elaborator-classified binder: the declaration `owner`
-/// names — its template, so a `$` clone shares its template's binders, as
-/// the checker's owners do — and the binder's slot among its siblings.
+/// The identity of an elaborator-classified binder, as the checker numbers
+/// it: the declaration `owner` names — its template, so a `$` clone shares
+/// its template's binders; a method's is
+/// [`mojito_symbol::symbol::MethodBinderOwners::owner`] — and the binder's
+/// slot among its siblings, erased origin parameters skipped.
 pub(super) fn elaborated_binder(
     tp: &TypeParam,
     siblings: &[TypeParam],
     owner: &str,
 ) -> mojito_types::param_expr::ParamId {
-    let slot = siblings
-        .iter()
-        .position(|sibling| sibling.name == tp.name)
-        .unwrap_or_default();
     mojito_types::param_expr::ParamId::new(
         mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner),
-        slot,
+        tp.binder_slot(siblings),
     )
 }
 

@@ -489,10 +489,8 @@ pub struct Checker {
     /// The program's overloaded top-level names, so an overloaded `def` owns
     /// its binders under the signature-qualified symbol MIR names it by.
     overload_sets: mojito_symbol::symbol::OverloadSets,
-    /// The binder owner of each overloaded struct method, keyed by its
-    /// template struct and its body's byte range, which every clone keeps
-    /// ([`overloaded_method_owners`]).
-    overloaded_method_owners: HashMap<(String, mojito_common::token::Span), String>,
+    /// The binder owner of each struct method, shared with the elaborator.
+    method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -973,7 +971,7 @@ impl Checker {
             structs: HashMap::new(),
             declared_structs: HashSet::new(),
             overload_sets: mojito_symbol::symbol::OverloadSets::default(),
-            overloaded_method_owners: HashMap::new(),
+            method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
             predeclared_traits: HashSet::new(),
             predeclared_generated_tuple_arguments: HashMap::new(),

@@ -6,19 +6,9 @@ pub use mojito_types::types::splats_to;
 
 impl Checker {
     /// The declaration that owns method `m`'s own binders on the struct
-    /// `owner` ([`binder_owner`]): `Struct.method`, or for an overloaded
-    /// method the symbol its template lowers to, so two overloads own
-    /// distinct binders and every clone of one shares its template's.
+    /// `owner` ([`mojito_symbol::symbol::MethodBinderOwners`]).
     pub(super) fn method_binder_owner(&self, owner: &str, m: &Method) -> String {
-        let template = binder_owner(owner);
-        m.body
-            .first()
-            .and_then(|first| {
-                self.overloaded_method_owners
-                    .get(&(template.clone(), first.span))
-            })
-            .cloned()
-            .unwrap_or_else(|| format!("{template}.{}", binder_owner(&m.name)))
+        self.method_binder_owners.owner(owner, m)
     }
 
     /// [`Self::method_binder_owner`] of `m` on the struct `self_ty` names.
@@ -347,50 +337,6 @@ pub(super) fn binder_owner(name: &str) -> String {
     mojito_symbol::symbol::specialization_template(name)
         .unwrap_or(name)
         .to_string()
-}
-
-/// The binder owner of every overloaded struct method in `program`: the
-/// symbol its template lowers to, keyed by the template struct and the byte
-/// range of the method's first body statement, as
-/// [`Checker::method_binder_owner`] looks it up. A clone keeps its template's
-/// body spans but not its signature, so the owner is computed once, from the
-/// template.
-pub(super) fn overloaded_method_owners(
-    program: &[Stmt],
-    sets: &mojito_symbol::symbol::OverloadSets,
-) -> HashMap<(String, mojito_common::token::Span), String> {
-    program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct {
-                name,
-                type_params,
-                methods,
-                ..
-            } if binder_owner(name) == *name => Some((name, type_params, methods)),
-            _ => None,
-        })
-        .flat_map(|(name, type_params, methods)| {
-            methods
-                .iter()
-                .filter(|m| m.self_ty.is_none() && binder_owner(&m.name) == m.name)
-                .filter_map(move |m| {
-                    let source =
-                        format!("{name}.{}", mojito_symbol::symbol::lifecycle_method_name(m));
-                    let lowered = mojito_symbol::symbol::lowered_method_name(
-                        &source,
-                        type_params,
-                        &m.params,
-                        m.keyword_only,
-                        m.has_self,
-                        m.self_convention,
-                        sets,
-                    );
-                    let first = m.body.first()?;
-                    (lowered != source).then(|| ((name.clone(), first.span), lowered))
-                })
-        })
-        .collect()
 }
 
 /// The checker's diagnostic for a parameter-expression error.
