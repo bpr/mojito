@@ -1995,6 +1995,7 @@ impl Checker {
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
         realize_lane_float_methods(template, &mut facts, occurrences)?;
+        realize_lane_comparisons(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
         let pack_accessors = self.realize_pack_accessors(&mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
@@ -8959,6 +8960,47 @@ fn realize_lane_float_methods(
     Ok(())
 }
 
+/// [`BodyShape::lane_comparison`]'s comparisons, re-typed at the instance's
+/// lane: over a sized scalar vector the comparison stays the template's
+/// mask, and over a native scalar it compares natively to a `Bool`. Any
+/// other lane refuses, for the clone check to report. A condition's
+/// truthiness mark is judged again from the re-typed value afterwards.
+fn realize_lane_comparisons(
+    template: &CheckedBodyFacts,
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Result<(), &'static str> {
+    for occurrence in occurrences {
+        let Some((op, left, _, _)) = occurrence.operator else {
+            continue;
+        };
+        let at = |syntax| OccurrenceId {
+            syntax,
+            copy: occurrence.id.copy,
+        };
+        let open = fact_at(&template.expression_types, at(left)).is_some_and(|ty| {
+            matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
+        });
+        if !comparison(op)
+            || !open
+            || fact_at(&template.expression_types, occurrence.id) != Some(&lane_mask())
+        {
+            continue;
+        }
+        let lane = fact_at(&facts.expression_types, at(left))
+            .ok_or("a lane comparison's operand has no retained type")?;
+        if closed_scalar(lane) {
+            if super::operators::scalar_operator_result(op, lane) != Some(Ty::Bool) {
+                return Err("a lane comparison is not the instance's scalar operation");
+            }
+            set_fact(&mut facts.expression_types, occurrence.id, Ty::Bool);
+        } else if mojito_types::types::simd_shape(lane).is_none_or(|(_, width)| width != 1) {
+            return Err("a lane comparison's instance lane is not a scalar");
+        }
+    }
+    Ok(())
+}
+
 /// The hidden dtype and width values a clone folds where its template
 /// viewed the wildcard vector binder `decl` as a lane-shaped vector
 /// (`simd_binder_view`): the slots of the closed vector type `ty` the clone
@@ -10513,7 +10555,14 @@ impl BodyShape<'_> {
                 })
                 && self.holds(MethodFeatures::TRUTHINESS)
         };
-        boolean || lane() || self.truthiness_condition(expr)
+        let comparison = || {
+            self.lane_comparison(expr)
+                && self
+                    .facts
+                    .is_none_or(|facts| facts.truthiness_conditions.contains(&id))
+                && self.holds(MethodFeatures::TRUTHINESS)
+        };
+        boolean || lane() || comparison() || self.truthiness_condition(expr)
     }
 
     /// A condition that reads a parameter, a local, or a field of `self`
@@ -12529,28 +12578,23 @@ impl BodyShape<'_> {
                 // A comparison over a value-shaped operand is a
                 // `SIMD[DType.bool, 1]` mask while the lane is a vector, but
                 // a `Bool` where it folds to a native scalar
-                // (`Scalar[DType.int]` is `Int`).
-                let lane_comparison = matches!(
-                    op,
-                    mojito_ast::ast::InfixOp::Lt
-                        | mojito_ast::ast::InfixOp::Gt
-                        | mojito_ast::ast::InfixOp::Le
-                        | mojito_ast::ast::InfixOp::Ge
-                        | mojito_ast::ast::InfixOp::Eq
-                        | mojito_ast::ast::InfixOp::Ne
-                ) && [left, right].iter().any(|operand| {
-                    self.facts.is_some_and(|facts| {
-                        fact_at(&facts.expression_types, self.occurrence(operand))
-                            .is_some_and(|ty| self.value_shaped_scalar(ty))
-                    })
-                });
-                (folds
-                    && !lane_comparison
-                    && self.expression(left)
-                    && self.expression(right)
-                    && self.scalar(left)
-                    && self.scalar(right))
-                    || self.operator(expr, *op, left, right)
+                // (`Scalar[DType.int]` is `Int`): its value is admitted only
+                // where each instance reads it alike
+                // ([`Self::lane_comparison`]).
+                let lane_comparison = comparison(*op)
+                    && [left, right].iter().any(|operand| {
+                        self.facts.is_some_and(|facts| {
+                            fact_at(&facts.expression_types, self.occurrence(operand))
+                                .is_some_and(|ty| self.value_shaped_scalar(ty))
+                        })
+                    });
+                !lane_comparison
+                    && ((folds
+                        && self.expression(left)
+                        && self.expression(right)
+                        && self.scalar(left)
+                        && self.scalar(right))
+                        || self.operator(expr, *op, left, right))
             }
             ExprKind::Call {
                 name,
@@ -12787,10 +12831,11 @@ impl BodyShape<'_> {
                             .is_some_and(|ty| super::builtins::param_has_bound(ty, bound))
                     })
                 });
+        let comparison = name == "Bool" && self.lane_comparison(argument);
         matches!(name, "Int" | "UInt" | "Bool" | "Float64")
             && param_args.is_empty()
             && kwargs.is_empty()
-            && (self.expression(argument) || place)
+            && (self.expression(argument) || place || comparison)
             && (self.closed(argument) || self.value_shaped(argument) || bounded)
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.expression_types, id).is_some_and(closed_scalar)
@@ -12869,6 +12914,42 @@ impl BodyShape<'_> {
     /// the receiver's lane width, and a lane count is an `Int`.
     fn simd_intrinsic(&self, expr: &Expr) -> bool {
         self.lane_read(expr, false)
+    }
+
+    /// A comparison between two values of one value-shaped scalar type
+    /// (`self.pos < Scalar[Self.dtype](limit)`), read only as a condition or
+    /// through `Bool(...)`.
+    ///
+    /// Over the open lane it is a `SIMD[DType.bool, 1]` mask, which a
+    /// condition tests through `__bool__`; an instance whose lane folds to a
+    /// sized vector records the same, but one folding to a native scalar
+    /// compares natively to a `Bool`, which a condition reads as it stands.
+    /// Each instance re-types the comparison (`realize_lane_comparisons`),
+    /// and the truthiness mark follows the type, so its value may go only
+    /// where that is all that changes.
+    fn lane_comparison(&self, expr: &Expr) -> bool {
+        let ExprKind::Infix(op, left, right) = &expr.kind else {
+            return false;
+        };
+        let id = self.occurrence(expr);
+        let admitted = comparison(*op)
+            && [left, right].iter().all(|operand| {
+                !self.folding(operand) && self.expression(operand) && self.value_shaped(operand)
+            })
+            && self.facts.is_none_or(|facts| {
+                let operand =
+                    |operand: &Expr| fact_at(&facts.expression_types, self.occurrence(operand));
+                operand(left) == operand(right)
+                    && fact_at(&facts.expression_types, id) == Some(&lane_mask())
+                    && fact_at(&facts.conversions, self.occurrence(left)).is_none()
+                    && fact_at(&facts.conversions, self.occurrence(right)).is_none()
+                    && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.conversions, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::SIMD_INTRINSICS)
     }
 
     /// A float lane's rounding dunder or fused multiply-add on a value of a
@@ -13927,7 +14008,11 @@ impl BodyShape<'_> {
                                 && mojito_types::types::is_symbolic(right)
                                 && matches!(right, Ty::Struct(..))
                         } else {
+                            // A comparison of a symbolic lane's values is
+                            // native where the lane folds to a scalar, and a
+                            // value no dunder types ([`Self::lane_comparison`]).
                             mojito_types::types::is_symbolic(left)
+                                && !(comparison(op) && self.value_shaped_scalar(left))
                                 && (left == right
                                     || (right_literal && matches!(left, Ty::Struct(..))))
                         }
@@ -14629,6 +14714,21 @@ fn sorted_applications(
 /// result is the operand's own type (`Float64` for `/`).
 const fn operator_dispatch(op: mojito_ast::ast::InfixOp) -> bool {
     super::builtins::infix_operation_trait(op).is_some()
+}
+
+/// Equality and ordering, which [`BodyShape::lane_comparison`] admits over
+/// values of a symbolic lane.
+const fn comparison(op: mojito_ast::ast::InfixOp) -> bool {
+    use mojito_ast::ast::InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+    matches!(op, Lt | Gt | Le | Ge | Eq | Ne)
+}
+
+/// The width-1 `Bool` mask a comparison over a value-shaped scalar yields.
+const fn lane_mask() -> Ty {
+    Ty::Simd {
+        dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
+        width: mojito_types::types::SimdWidth::Known(1),
+    }
 }
 
 const fn closed_scalar(ty: &Ty) -> bool {

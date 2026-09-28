@@ -371,7 +371,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instance folds it to `Int` or `Float64`. `BodyShape::lane_float_method`
   admits a float lane's rounding dunder or `__fma__` on such values, and
   `realize_lane_float_methods` records the borrows the native `Float64`'s
-  method takes. `BodyShape::struct_vector` admits a
+  method takes. `BodyShape::lane_comparison` admits a comparison of such
+  values as a condition or `Bool(...)`'s argument, and
+  `realize_lane_comparisons` re-types its mask to `Bool` where the lane is
+  native. `BodyShape::struct_vector` admits a
   closed vector binder read as `Self.key`, whose clone construction
   `fold_vector_values` tells from the template's syntax and
   `construct_folded_vectors` records; `operators.rs:vector_alias` types a

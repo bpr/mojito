@@ -941,7 +941,9 @@ impl MethodFeatures {
     /// `v.length`, `v[i]`, or a `reduce_*()`. Each selects no callee; the
     /// dtype and width the clone check records at a reinterpretation or a
     /// lane count are the instance's substituted shape, which it records
-    /// itself where the template's stayed open.
+    /// itself where the template's stayed open. A comparison between values
+    /// of a symbolic lane, tested as a condition or through `Bool(...)`,
+    /// is one too: its mask becomes a `Bool` where the lane is native.
     pub const SIMD_INTRINSICS: Self = Self(1 << 37);
     /// A scalar value binder of the method's own (`scaled[n: Int]`): every
     /// per-call clone folds it to a literal, which keeps the identifier's

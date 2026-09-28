@@ -1851,6 +1851,40 @@ fn float_lane_methods_derive() {
 }
 
 #[test]
+fn lane_comparisons_derive() {
+    // A comparison between values of a symbolic lane, as a condition or
+    // through `Bool(...)`, derives at a sized lane, whose mask a condition
+    // tests through `__bool__`, and at a native `Int` or `Float64`, which
+    // compares to a plain `Bool`. Bound to a local, the mask keeps the
+    // clone check.
+    let source = "struct W[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        self.pos = pos\n\n    def below(self, limit: Int) -> Bool:\n        return Bool(self.pos < Scalar[Self.dtype](limit))\n\n    def clamp(self, limit: Int) -> Scalar[Self.dtype]:\n        if self.pos < Scalar[Self.dtype](limit):\n            return self.pos\n        return Scalar[Self.dtype](limit)\n\n    def same(self, other: Scalar[Self.dtype]) -> Bool:\n        var m = self.pos == other\n        return Bool(m)\n\ndef sign[dt: DType](x: Scalar[dt], y: Scalar[dt]) -> Int:\n    if x > y:\n        return 1\n    elif x != y:\n        return -1\n    return 0\n\ndef main():\n    var a = W[DType.int](3)\n    var b = W[DType.float64](3.5)\n    var c = W[DType.int32](7)\n    print(a.below(5), b.below(2), c.below(9))\n    print(a.clamp(2), b.clamp(9), c.clamp(4))\n    print(a.same(3), b.same(3.5), c.same(1))\n    print(sign(Int(1), Int(4)), sign(Float32(3), Float32(2)), sign(UInt16(2), UInt16(2)))\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "True False True\n2 3.5 4\nTrue True False\n-1 1 0\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let lanes = ["dint", "dfloat64", "dint32"];
+    let members = lanes
+        .iter()
+        .flat_map(|lane| ["below", "clamp"].map(|member| format!("W${lane};.{member}")))
+        .chain(["dint", "dfloat32", "duint16"].map(|lane| format!("sign${lane};")));
+    for name in members {
+        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+    }
+    for name in lanes.map(|lane| format!("W${lane};.same")) {
+        assert!(
+            !stats.derived.contains(&name),
+            "{name} keeps the clone check: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn spread_pack_initializer_derives() {
     // `self.storage = Tuple(*args^)` in a variadic struct's initializer, a
     // user struct's and the bundled `TString`'s (named by its public

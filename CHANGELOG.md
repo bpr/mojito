@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A comparison between two values of a symbolic lane (`self.pos <
+  Scalar[Self.dtype](limit)` in a `DType`-keyed struct's member, `x > y`
+  over a keyed `def`'s `Scalar[dt]` parameters), tested as a condition or
+  through `Bool(...)`, now reuses the template's checked facts at every
+  lane, comparing to a mask at a sized lane and to a `Bool` at `Int` or
+  `Float64` (`lane_comparisons_derive`).
 - A member of a `DType`-keyed struct calling `__ceil__`, `__floor__`,
   `__trunc__`, or `__fma__` on values of its symbolic lane, including the
   bundled float range's initializer and `__next__`, now reuses the
