@@ -3282,6 +3282,53 @@ fn template_method_value_parameter_templates_reuse() {
 }
 
 #[test]
+fn array_members_reuse_templates() {
+    // `Array`'s pointer-writing initializers, its comparisons over pointer
+    // slots and over whole values, `__contains__`, `unsafe_ptr`, and
+    // `write_repr_to` are certified templates whose facts every later pass
+    // reuses, verified against their own check.
+    let source = "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n";
+    let expected = "False True True True False False\nTrue False 1\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&program, &verified] {
+        assert_eq!(compiler.execute(program).expect("execute").output, expected);
+    }
+    let stats = program.template_stats();
+    // The literal, default, and fill initializers; the copy and move
+    // initializers take `existing`-shaped receivers the class refuses.
+    for (name, bodies) in [
+        ("Array.__init__", 3),
+        ("Array.__eq__", 1),
+        ("Array.__ne__", 1),
+        ("Array.__lt__", 1),
+        ("Array.__le__", 1),
+        ("Array.__gt__", 1),
+        ("Array.__ge__", 1),
+        ("Array.__contains__", 1),
+        ("Array.__hash__", 1),
+        ("Array.unsafe_ptr", 1),
+        ("Array.write_to", 1),
+        ("Array.write_repr_to", 1),
+    ] {
+        assert_eq!(
+            certified_count(stats, name),
+            bodies,
+            "{name}: one template inference per body"
+        );
+        assert!(
+            stats
+                .reused
+                .iter()
+                .chain(&stats.carried)
+                .any(|reused| reused == name),
+            "{name}: later passes reuse or carry the template's own facts: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn template_raise_forms_derive() {
     // A raised string literal, and a call of a raising sibling method or
     // module function, in a method and in a module-level `def` that raises.

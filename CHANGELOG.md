@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Array`'s fill and default initializers, its comparison operators,
+  `__contains__`, `unsafe_ptr`, and `write_repr_to` are now inferred once
+  as templates and reused in every later checker pass, where each used to
+  be inferred again (`array_members_reuse_templates`). The same widening
+  lets `List`, `Dict`, `Optional`, and `Set.__ne__` reuse theirs.
 - A comparison between two values of a symbolic lane (`self.pos <
   Scalar[Self.dtype](limit)` in a `DType`-keyed struct's member, `x > y`
   over a keyed `def`'s `Scalar[dt]` parameters), tested as a condition or

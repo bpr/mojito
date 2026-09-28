@@ -2011,12 +2011,21 @@ impl Checker {
         }
         // Inference marks a reference result a copyable read where its
         // referent is implicitly copyable, whatever reads it. A mark the
-        // template made is one a by-value read may rest on.
+        // template made is one a by-value read may rest on. A copying
+        // pointer write marks its value whatever the value's type, with no
+        // reference result there (`BodyShape::copied_writes`).
         facts.copyable_reference_result_reads = facts
             .reference_results
             .iter()
             .filter(|(_, reference)| self.is_implicitly_copyable(&reference.referent))
             .map(|(id, _)| *id)
+            .chain(
+                template
+                    .copyable_reference_result_reads
+                    .iter()
+                    .filter(|id| fact_at(&template.reference_results, **id).is_none())
+                    .copied(),
+            )
             .collect();
         if !template
             .copyable_reference_result_reads
@@ -3479,6 +3488,13 @@ impl Checker {
             set_fact(&mut facts.overload_targets, id, target);
             return Ok(());
         }
+        // A type parameter the instance keeps symbolic (the template's own
+        // reuse, or a clone keeping a bounded binder) is operated on through
+        // its bound or `where` clause, as the template was, which recorded
+        // nothing at the operator.
+        if matches!(left_ty, Ty::Param { .. }) && right_ty == left_ty {
+            return Ok(());
+        }
         if closed_scalar(&left_ty) {
             return if right_ty == left_ty
                 && super::operators::scalar_operator_result(op, &left_ty) == Some(result)
@@ -4258,6 +4274,7 @@ impl Checker {
             pack_relocations: RefCell::new(Vec::new()),
             pack_spreads: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
+            copied_writes: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
@@ -4897,6 +4914,7 @@ impl Checker {
             pack_relocations: RefCell::new(Vec::new()),
             pack_spreads: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
+            copied_writes: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
             return outside("the body is outside the method grammar");
@@ -9531,6 +9549,10 @@ struct BodyShape<'a> {
     /// The stringify calls admitted ([`Self::stringify`]), each routed to
     /// the builtin by an overload target no instance changes.
     stringified: RefCell<Vec<OccurrenceId>>,
+    /// The values of the copying pointer writes admitted
+    /// ([`Self::pointer_statement`]), each a copyable read with no
+    /// reference result.
+    copied_writes: RefCell<Vec<OccurrenceId>>,
 }
 
 /// What a local of a certified body is.
@@ -10179,6 +10201,7 @@ impl BodyShape<'_> {
         let receivers = self.receivers.borrow();
         let subscripts = self.subscripts.borrow();
         let places = self.places.borrow();
+        let copied_writes = self.copied_writes.borrow();
         facts.subscript_descriptors.len() == subscripts.len()
             && facts
                 .subscript_descriptors
@@ -10205,7 +10228,7 @@ impl BodyShape<'_> {
                 .map(|(id, _)| id)
                 .chain(facts.interior_references.iter().map(|(id, _)| id))
                 .chain(&facts.copyable_reference_result_reads)
-                .all(|id| references.contains(id))
+                .all(|id| references.contains(id) || copied_writes.contains(id))
     }
 
     /// The place a `ref` declaration binds: `self`, a field of it, a
@@ -10638,6 +10661,8 @@ impl BodyShape<'_> {
                 || self.fieldwise_copy(expr)
                 || self.construction(expr)
                 || self.binder_construction(expr)
+                || self.struct_binder_construction(expr)
+                || self.receiver_pointer(expr)
                 || self.operator_value(expr)
                 || self.comprehension(expr)
                 || self.tuple_display(expr)
@@ -11233,6 +11258,44 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::BOUND_BINDERS)
     }
 
+    /// A construction of one of the enclosing struct's type binders
+    /// (`Self.T()`): a temporary of the binder's type, recorded as the
+    /// `ConstructTypeParam` of that binder.
+    ///
+    /// The template's own later passes keep the binder symbolic and reuse
+    /// the adjustment as recorded; a clone that binds it substitutes the
+    /// recorded type, whose adjustment then has no recipe
+    /// (`kept_binder_construction`), so the clone keeps its own check.
+    fn struct_binder_construction(&self, expr: &Expr) -> bool {
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let id = self.occurrence(expr);
+        let admitted = !self.keyed
+            && self.receiver
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            && args.is_empty()
+            && kwargs.is_empty()
+            && self.facts.is_none_or(|facts| {
+                matches!(fact_at(&facts.operation_adjustments, id),
+                    Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param })
+                        if *param.name == **method
+                            && matches!(fact_at(&facts.expression_types, id),
+                            Some(Ty::Param { binder, .. })
+                                if binder == param && self.struct_binders.contains(&&binder.id)))
+            });
+        if admitted {
+            self.binder_constructions.borrow_mut().push(id);
+        }
+        admitted
+    }
+
     /// A construction of a declared struct: a temporary of the constructed
     /// type, whose constructor an instance re-selects on its own arguments.
     ///
@@ -11363,13 +11426,17 @@ impl BodyShape<'_> {
     /// ones.
     fn pointer(&self, expr: &Expr) -> bool {
         let admitted = match &expr.kind {
-            // An untracked pointer field or `var` local, or a field whose
-            // provenance is the struct's own origin parameter (`Span._data`):
-            // neither names a checker-local place, so the retained type is
-            // the template's under every instance.
+            // An untracked pointer field of `self`, of a local, or of a
+            // parameter, or a `var` local, or a field whose provenance is the
+            // struct's own origin parameter (`Span._data`): neither names a
+            // checker-local place, so the retained type is the template's
+            // under every instance.
             ExprKind::Member { .. } | ExprKind::Identifier(_) => {
                 let local = matches!(&expr.kind, ExprKind::Identifier(name) if self.declared(name));
-                (self.receiver_field(expr) || self.local_field(expr) || local)
+                (self.receiver_field(expr)
+                    || self.local_field(expr)
+                    || self.parameter_field(expr)
+                    || local)
                     && self.facts.is_none_or(|facts| {
                         fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(|ty| {
                             matches!(ty, Ty::Pointer { origin, .. }
@@ -11397,13 +11464,16 @@ impl BodyShape<'_> {
         admitted && self.holds(MethodFeatures::POINTER_SLOTS)
     }
 
-    /// A tracked pointer to `self` or a field of it, rebound to the whole
-    /// receiver: `Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`.
+    /// A tracked pointer to `self` or a field of it, or a pointer field of
+    /// `self`, rebound to the whole receiver or an interior of it:
+    /// `Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`,
+    /// `self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["element"]]()`.
     ///
     /// The pointee is the place's declared type under the instance's
     /// arguments, and both provenances are the receiver's own place, the
-    /// inner one rooted at `self` and the cast's the symbolic
-    /// `origin_of(self)`, so an instance roots them at its own `self`.
+    /// inner one rooted at `self` or untracked and the cast's the symbolic
+    /// `origin_of(self)` with its interior tags, so an instance roots them
+    /// at its own `self`.
     fn receiver_pointer(&self, expr: &Expr) -> bool {
         let ExprKind::Invoke {
             callee,
@@ -11418,24 +11488,46 @@ impl BodyShape<'_> {
             return false;
         };
         let receiver_origin = matches!(param_args.as_slice(),
-            [mojito_ast::ast::ParamArg::Value(Expr { kind: ExprKind::Call { name, param_args, args, kwargs }, .. })]
-                if name == "origin_of"
-                    && param_args.is_empty()
-                    && kwargs.is_empty()
-                    && matches!(args.as_slice(), [origin] if self.receiver_itself(origin)));
+            [mojito_ast::ast::ParamArg::Value(origin)] if self.receiver_origin(origin));
         let pointer_to_receiver = matches!(&object.kind, ExprKind::Call { name, param_args, args, kwargs }
             if name == "Pointer"
                 && param_args.is_empty()
                 && args.is_empty()
                 && matches!(kwargs.as_slice(), [to]
                     if to.name == "to"
-                        && (self.receiver_itself(&to.value) || self.receiver_field(&to.value))));
+                        && (self.receiver_itself(&to.value) || self.receiver_field(&to.value))))
+            || (self.receiver_field(object) && self.pointer(object));
         field == "unsafe_origin_cast"
             && receiver_origin
             && args.is_empty()
             && kwargs.is_empty()
             && pointer_to_receiver
             && self.holds(MethodFeatures::RECEIVER_POINTERS)
+    }
+
+    /// `origin_of(self)`, or an interior of it named by a string literal
+    /// (`origin_of(self)._get_owned_interior["element"]`): the receiver's
+    /// own symbolic place, which names no binding.
+    fn receiver_origin(&self, origin: &Expr) -> bool {
+        match &origin.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                name == "origin_of"
+                    && param_args.is_empty()
+                    && kwargs.is_empty()
+                    && matches!(args.as_slice(), [place] if self.receiver_itself(place))
+            }
+            ExprKind::Index { object, index } => {
+                matches!(&object.kind, ExprKind::Member { object, field }
+                    if field == "_get_owned_interior" && self.receiver_origin(object))
+                    && matches!(index.kind, ExprKind::Str(_))
+            }
+            _ => false,
+        }
     }
 
     /// One element slot of such a pointer, `pointer[scalar]`.
@@ -11445,13 +11537,54 @@ impl BodyShape<'_> {
     }
 
     /// A statement-level pointer operation that yields nothing: destroying
-    /// the pointee, or freeing the allocation.
+    /// the pointee, freeing the allocation, or initializing the pointee with
+    /// a whole value moved in (`unsafe_write(Self.T())`) or a copy of a
+    /// named place (`unsafe_write(copy=fill)`).
+    ///
+    /// A copying write marks its value a copyable read whatever its type, so
+    /// an instance keeps the template's mark ([`Self::copied_writes`]).
     fn pointer_statement(&self, expr: &Expr) -> bool {
-        matches!(&expr.kind, ExprKind::MethodCall { object, method, args, kwargs }
-            if matches!(method.as_str(), "unsafe_deinit_pointee" | "unsafe_free" | "free")
-                && args.is_empty()
-                && kwargs.is_empty()
-                && self.pointer(object))
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let operand = match (method.as_str(), args.as_slice(), kwargs.as_slice()) {
+            ("unsafe_deinit_pointee" | "unsafe_free" | "free", [], []) => true,
+            ("unsafe_write", [value], []) => self.whole_value(value),
+            ("unsafe_write", [], [copy]) if copy.name == "copy" => {
+                let admitted = self.copied_place(&copy.value);
+                if admitted {
+                    self.copied_writes
+                        .borrow_mut()
+                        .push(self.occurrence(&copy.value));
+                }
+                admitted
+            }
+            _ => false,
+        };
+        operand && self.pointer(object)
+    }
+
+    /// A named place a copying write reads where it lies: `self`, a
+    /// parameter, a local, a field of any of them, or a pointer slot.
+    fn copied_place(&self, place: &Expr) -> bool {
+        match &place.kind {
+            ExprKind::Identifier(name) => {
+                self.receiver_itself(place)
+                    || (self.params.contains(&name.as_str())
+                        && !self.callable_params.contains(&name.as_str()))
+                    || self.declared(name)
+            }
+            ExprKind::Member { .. } => {
+                self.receiver_field(place) || self.local_field(place) || self.parameter_field(place)
+            }
+            _ => self.slot(place),
+        }
     }
 
     /// A whole value stored to a field of a writable `self` or of a `var`
@@ -13917,7 +14050,9 @@ impl BodyShape<'_> {
                 self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
             }
             ExprKind::Member { .. } => {
-                self.receiver_field(argument) || self.reference_member(argument)
+                self.receiver_field(argument)
+                    || self.reference_member(argument)
+                    || (self.struct_value(argument) && self.expression(argument))
             }
             ExprKind::Index { .. } => {
                 self.slot(argument)
@@ -13965,7 +14100,9 @@ impl BodyShape<'_> {
     ) -> bool {
         let operand = |operand: &Expr| match &operand.kind {
             ExprKind::Identifier(name) => {
-                self.params.contains(&name.as_str()) || self.local_kind(name).is_some()
+                self.params.contains(&name.as_str())
+                    || self.local_kind(name).is_some()
+                    || self.receiver_itself(operand)
             }
             ExprKind::Member { .. } => {
                 self.receiver_field(operand) || self.reference_member(operand)

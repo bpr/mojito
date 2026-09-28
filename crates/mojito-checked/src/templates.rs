@@ -168,10 +168,10 @@ pub fn derive_adjustment(
                 .then_some(SemanticAdjustment::MaterializeLiteral(target))
         }
         // Element arithmetic names no type, and a take, a destroy, or a
-        // moving write names only the pointee, which substitutes. Each is
-        // selected by the method's name on a receiver that is a pointer under
-        // every instance. A copying write also marks a reference-result read,
-        // a table that takes type-dependent entries too, so it has no recipe.
+        // write names only the pointee, which substitutes. Each is selected
+        // by the method's name on a receiver that is a pointer under every
+        // instance. A copying write also marks its value a copyable read,
+        // whatever the value's type, which an instance keeps as recorded.
         SemanticAdjustment::PointerOffset => Some(SemanticAdjustment::PointerOffset),
         SemanticAdjustment::PointerStorageTake { element } => {
             Some(SemanticAdjustment::PointerStorageTake {
@@ -183,13 +183,12 @@ pub fn derive_adjustment(
                 element: substitute(element),
             })
         }
-        SemanticAdjustment::PointerWrite {
-            element,
-            copy: false,
-        } => Some(SemanticAdjustment::PointerWrite {
-            element: substitute(element),
-            copy: false,
-        }),
+        SemanticAdjustment::PointerWrite { element, copy } => {
+            Some(SemanticAdjustment::PointerWrite {
+                element: substitute(element),
+                copy: *copy,
+            })
+        }
         // An inverted write names no type. A closed receiver's stands as
         // recorded; one on a parameter-typed receiver is re-selected on the
         // instance's type after substitution (`realize_inverted_writes`),
@@ -265,12 +264,17 @@ pub fn derive_adjustment(
         }
         // A type name is one type's spelling: the instance re-renders it from
         // the substituted type, as the resolution rendered the template's. A
-        // type that is still symbolic has no spelling an instance could use.
+        // type the instance keeps as recorded (a binder it keeps symbolic)
+        // keeps the template's spelling; any other type that is still
+        // symbolic has no spelling an instance could use.
         SemanticAdjustment::TypeName { ty, .. } => {
-            let ty = substitute(ty);
-            (!mojito_types::types::is_symbolic(&ty)).then(|| SemanticAdjustment::TypeName {
-                text: mojito_symbol::symbol::unqualified_instance_name(&ty),
-                ty,
+            let realized = substitute(ty);
+            if realized == *ty {
+                return Some(adjustment.clone());
+            }
+            (!mojito_types::types::is_symbolic(&realized)).then(|| SemanticAdjustment::TypeName {
+                text: mojito_symbol::symbol::unqualified_instance_name(&realized),
+                ty: realized,
             })
         }
         // An augmented subscript or place embeds its calls' contracts, whose
@@ -336,7 +340,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::VariantDeinitWith { .. }
         | SemanticAdjustment::UninitStorageTake { .. }
         | SemanticAdjustment::UninitStorageDestroy { .. }
-        | SemanticAdjustment::PointerWrite { copy: true, .. }
         | SemanticAdjustment::SliceDescriptors { .. }
         | SemanticAdjustment::InteriorReference { .. }
         | SemanticAdjustment::InvalidateInteriors { .. } => None,
@@ -953,10 +956,12 @@ impl MethodFeatures {
     /// it records only the binder's statement binding and type, which is the
     /// error type its body's raising calls declare and substitutes with them.
     pub const TRY_STATEMENTS: Self = Self(1 << 39);
-    /// A tracked pointer to `self` or a field of it, rebound to the whole
-    /// receiver (`Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`)
-    /// and handed to a construction: its provenance is the receiver's own
-    /// place, which an instance roots at its own `self`.
+    /// A tracked pointer to `self` or a field of it, or a pointer field of
+    /// `self`, rebound to the whole receiver or an interior of it
+    /// (`Pointer(to=self.items).unsafe_origin_cast[origin_of(self)]()`)
+    /// and handed to a construction or moved as a whole value: its
+    /// provenance is the receiver's own place, which an instance roots at
+    /// its own `self`.
     pub const RECEIVER_POINTERS: Self = Self(1 << 40);
     /// A keyword slice of a named place of a closed type (`text[byte=:i]`):
     /// its getter, selected on that type, returns a view whose origin is
