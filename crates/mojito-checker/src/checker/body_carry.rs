@@ -257,7 +257,7 @@ pub struct InternalStores {
     call_parameters: FactMap<SourceSpan, Vec<super::CallParameter>>,
     with_desugars: FactMap<SourceSpan, super::with_stmt::WithDesugar>,
     rebind_assertions: FactMap<SourceSpan, mojito_checked::templates::RebindAssertion>,
-    hash_leaf_demands: FactVec<mojito_types::types::Ty>,
+    hash_leaf_demands: FactVec<super::HashLeafDemand>,
     copyable_reference_result_reads: FactSet<SourceSpan>,
     discarded_reference_results: FactSet<SourceSpan>,
     borrowed_reference_receivers: FactSet<SourceSpan>,

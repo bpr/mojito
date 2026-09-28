@@ -947,7 +947,7 @@ impl Checker {
                 "update" => {
                     self.check_place(object)?;
                     let tys = self.builtin_args("Hasher.update", 1, args)?;
-                    if !self.conforms_to(&tys[0], "Hashable") {
+                    if !self.keyed_hash_leaves(span, || self.conforms_to(&tys[0], "Hashable")) {
                         return Err(TypeError::TraitNotSatisfied {
                             param: "T".to_string(),
                             ty: tys[0].to_string(),
@@ -989,7 +989,7 @@ impl Checker {
                             context: "Hasher._update_with_simd".to_string(),
                         });
                     }
-                    self.record_hash_leaf(&tys[0]);
+                    self.keyed_hash_leaves(span, || self.record_hash_leaf(&tys[0]));
                     return Ok(Ty::None);
                 }
                 "finish" if args.is_empty() => {

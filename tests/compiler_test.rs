@@ -1822,6 +1822,32 @@ fn simd_keyed_method_stub_derives() {
 }
 
 #[test]
+fn struct_hasher_simd_update_derives() {
+    // A method whose own `H: Hasher` an instance binds to `AHasher` hands it
+    // multi-lane vectors: the template withholds the leaves those bound calls
+    // demanded, so each instance, selecting the struct's own `update` and
+    // `_update_with_simd`, derives without them.
+    let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n\n    def __init__(out self, value: Int):\n        self.value = value\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher._update_with_simd(SIMD[DType.int32, 4](1, 2, 3, 4))\n        hasher.update(SIMD[DType.uint8, 8](self.value))\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "True False\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let instances = stats
+        .derived
+        .iter()
+        .filter(|name| name.starts_with("Tag.__hash__$") && name.contains("AHasher"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    assert_eq!(instances, 2, "both hasher instances derive: {stats:?}");
+}
+
+#[test]
 fn tuple_default_constructor_derives() {
     // A Defaultable `Tuple` specialization's synthesized `__init__(out self)`
     // builds its storage element by element (`__RuntimeTuple(Int(0),

@@ -1101,16 +1101,6 @@ impl Checker {
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        // The template's leaves are unkeyed, so one only this call demanded
-        // cannot be withdrawn from the instance, whose own check records none
-        // at the struct's method.
-        let leaf = |ty: &Ty| facts.hash_leaves.contains(ty);
-        if arguments
-            .iter()
-            .any(|argument| mojito_types::types::mentions(&argument.ty, &leaf))
-        {
-            return Err("a hasher argument hashes a leaf the template recorded unkeyed");
-        }
         for argument in arguments.iter().filter(|argument| !argument.owned) {
             if fact_at(&facts.expression_bindings, argument.value)
                 .is_none_or(|bound| *bound == root)

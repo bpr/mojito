@@ -739,8 +739,12 @@ only `Movable` records nothing there, and its `Int` clone would.
     call on a `mut` receiver, with the receiver's generation refreshed at
     the call and its per-call request, and each argument is borrowed where
     it lies or, a temporary, borrowed and destroyed after the call. A
-    transferred argument, one overlapping the receiver, and one hashing a
-    leaf the template recorded (roadmap 1.2) refuse.
+    transferred argument, one overlapping the receiver, and a field read
+    with no binding of its own (roadmap 1.2) refuse. The template keeps no
+    leaf a bound update alone demanded: the checker keys each hash-leaf
+    demand by the bound hasher call whose check made it
+    (`keyed_hash_leaves`), and `record_template` withholds those, since the
+    builtin records them again and a struct's own method records none.
 18. **Constructions.** Each admitted construction is re-selected on the
     substituted constructed type (`realize_construction`). A `copy:`
     construction and a fieldwise one select nothing; the fieldwise one's

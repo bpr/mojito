@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method whose own `H: Hasher` an instance binds to `AHasher` now
+  derives when it hands the hasher a multi-lane vector
+  (`hasher._update_with_simd(SIMD[DType.int32, 4](...))`, or `update`):
+  each hash-leaf demand is keyed by the bound call that made it, so the
+  template withholds the leaf the instance's struct method never records.
 - A call through a bound whose witness overloads the requirement now
   derives beside a generic rival the recorded argument types alone rank:
   the rival's binders are inferred as the clone check infers them, inside

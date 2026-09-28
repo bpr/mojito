@@ -2239,7 +2239,7 @@ impl Checker {
         // The template's leaves are closed; a bound builtin or dispatch
         // realized above recorded the instance's own.
         let mut leaves = std::mem::take(&mut facts.hash_leaves);
-        leaves.extend_from_slice(&self.hash_leaf_demands.borrow()[demands..]);
+        leaves.extend(self.hash_leaves_since(demands));
         facts.hash_leaves = canonical_hash_leaves(leaves);
         Ok(facts)
     }
@@ -3503,6 +3503,27 @@ impl Checker {
                         // grammar names them.
                         facts.operators = notes.operators;
                         facts.bound_builtins = notes.bound_builtins;
+                        // A bound hasher update's leaf is the instance's to
+                        // record: at the builtin it realizes again, at a
+                        // struct's own method it records none.
+                        let updates: Vec<OccurrenceId> = facts
+                            .bound_builtins
+                            .iter()
+                            .filter(|(_, builtin)| {
+                                matches!(builtin, BoundBuiltin::Update | BoundBuiltin::UpdateSimd)
+                            })
+                            .map(|(id, _)| *id)
+                            .collect();
+                        if !updates.is_empty() {
+                            let sites = self
+                                .body_occurrences(site.body)
+                                .into_iter()
+                                .filter(|occurrence| updates.contains(&occurrence.id))
+                                .map(|occurrence| occurrence.span)
+                                .collect();
+                            facts.hash_leaves =
+                                self.hash_leaves_outside(baseline.hash_leaf_demands, &sites);
+                        }
                         facts.constructions = notes.constructions;
                         facts.callable_calls = notes.callable_calls;
                         facts.repr_calls = notes.repr_calls;
@@ -6308,14 +6329,32 @@ impl Checker {
     /// deduplicated and in canonical order, so a template's bundle and an
     /// instance's compare whatever order their checks demanded them in.
     fn hash_leaves_since(&self, start: usize) -> Vec<Ty> {
-        canonical_hash_leaves(self.hash_leaf_demands.borrow()[start..].to_vec())
+        self.hash_leaves_outside(start, &HashSet::new())
+    }
+
+    /// The leaves hashed since the demand log held `start` entries, as
+    /// [`Checker::hash_leaves_since`] reads them, less those a bound hasher
+    /// call at one of `sites` alone demanded.
+    fn hash_leaves_outside(&self, start: usize, sites: &HashSet<SourceSpan>) -> Vec<Ty> {
+        canonical_hash_leaves(
+            self.hash_leaf_demands.borrow()[start..]
+                .iter()
+                .filter(|demand| {
+                    demand
+                        .site
+                        .as_ref()
+                        .is_none_or(|site| !sites.contains(site))
+                })
+                .map(|demand| demand.ty.clone())
+                .collect(),
+        )
     }
 
     /// Whether the body's check hashed a leaf whose type names a parameter.
     fn symbolic_hash_leaf(&self, baseline: &BodyFactBaseline) -> bool {
         self.hash_leaf_demands.borrow()[baseline.hash_leaf_demands..]
             .iter()
-            .any(mojito_types::types::is_symbolic)
+            .any(|demand| mojito_types::types::is_symbolic(&demand.ty))
     }
 
     /// The template-local identity of a binding a body's fact names: one of

@@ -2606,11 +2606,26 @@ impl Checker {
         if !matches!(ty, Ty::Simd { width, .. } if width.known().is_some_and(|width| width > 1)) {
             return;
         }
-        self.hash_leaf_demands.borrow_mut().push(ty.clone());
+        self.hash_leaf_demands
+            .borrow_mut()
+            .push(super::HashLeafDemand {
+                site: self.hash_leaf_site.borrow().clone(),
+                ty: ty.clone(),
+            });
         let mut recorded = self.hash_leaf_types.borrow_mut();
         if !recorded.contains(ty) {
             recorded.push(ty.clone());
         }
+    }
+
+    /// Run `demand` with every hash leaf it records keyed by the bound
+    /// hasher call at `site`, which an instance binding the hasher to a
+    /// struct realizes without those leaves.
+    pub(super) fn keyed_hash_leaves<R>(&self, site: SourceSpan, demand: impl FnOnce() -> R) -> R {
+        let outer = self.hash_leaf_site.replace(Some(site));
+        let result = demand();
+        *self.hash_leaf_site.borrow_mut() = outer;
+        result
     }
 
     pub(super) fn is_comparable(&self, ty: &Ty) -> bool {

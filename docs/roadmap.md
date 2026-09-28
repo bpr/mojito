@@ -58,19 +58,18 @@ Pliron experiment rather than move the check order sit last, 1.24 to 1.27.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 A hasher call over a multi-lane vector keeps the clone check
-  when the instance binds the hasher to a struct**
+- [ ] **1.2 A field handed to a hasher the instance binds to a struct
+  keeps the clone check**
 
-  Problem: `hasher._update_with_simd(SIMD[DType.int32, 4](...))` in a
-  method whose own `H: Hasher` an instance binds to `AHasher` refuses the
-  derivation.
-  - The template's check records the vector as a hash leaf, while the
-    instance's check selects `AHasher._update_with_simd` and records none.
-  - The template's `hash_leaves` are unkeyed, so the leaf this call alone
-    demanded cannot be withdrawn
-    (`template_facts/bound_dispatch.rs:realize_nominal_hasher_call`).
-  - Keying each leaf by the occurrence that demanded it would let the
-    instance drop it.
+  Problem: `hasher.update(self.value)` in a method whose own `H: Hasher`
+  an instance binds to `AHasher` refuses the derivation.
+  - `realize_nominal_hasher_call` borrows a read argument where it lies
+    only when `expression_bindings` names its place, and a field read
+    through `self` has no entry there.
+  - It then cannot tell the field from the receiver, so it refuses as for
+    an overlapping place ("a hasher argument's place is unbound or overlaps
+    the receiver").
+  - A temporary argument (a `SIMD` construction) already derives.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

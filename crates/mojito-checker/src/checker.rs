@@ -653,7 +653,9 @@ pub struct Checker {
     /// Every demand `record_hash_leaf` accepted, in order and repeated, so a
     /// body's capture can tell which leaves its own check hashed even when
     /// an earlier body recorded them first.
-    hash_leaf_demands: RefCell<FactVec<Ty>>,
+    hash_leaf_demands: RefCell<FactVec<HashLeafDemand>>,
+    /// The bound hasher call whose check is recording hash leaves, if any.
+    hash_leaf_site: RefCell<Option<SourceSpan>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -1012,6 +1014,7 @@ impl Checker {
             struct_instantiations: RefCell::new(FactVec::default()),
             hash_leaf_types: RefCell::new(FactVec::default()),
             hash_leaf_demands: RefCell::new(FactVec::default()),
+            hash_leaf_site: RefCell::new(None),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
@@ -2721,6 +2724,15 @@ type StructApplications = Vec<(String, Vec<TyArg>)>;
 struct CallParameter {
     name: String,
     convention: Option<ArgConvention>,
+    ty: Ty,
+}
+
+/// One hash-leaf demand: the vector type, and the bound hasher call that
+/// demanded it where one did, which an instance binding the hasher to a
+/// struct realizes without the leaf.
+#[derive(Debug, Clone, PartialEq)]
+struct HashLeafDemand {
+    site: Option<SourceSpan>,
     ty: Ty,
 }
 
