@@ -804,7 +804,9 @@ impl Checker {
     /// the fewest-ranked member among those that take the arguments
     /// ([`Self::member_rank`]), then the fewest `SIMD`-pattern erasures, then
     /// the one whose receiver convention matches the call's transfer. A lone
-    /// member of the arguments' arity is selected unranked.
+    /// member of the arguments' arity is selected unranked, and a static
+    /// member never competes beside the instance members, as the clone check
+    /// drops it.
     /// Arguments or members the recorded types cannot rank, and a tie those
     /// terms leave, are the clone check's to judge.
     fn ranked_member<'a>(
@@ -817,7 +819,7 @@ impl Checker {
     ) -> Result<&'a MethodSig, &'static str> {
         let taking: Vec<&MethodSig> = candidates
             .iter()
-            .filter(|member| takes_arity(member, arguments.len()))
+            .filter(|member| member.has_self && takes_arity(member, arguments.len()))
             .collect();
         if let [member] = taking.as_slice() {
             return Ok(member);
@@ -860,12 +862,13 @@ impl Checker {
 
     /// A member's rank and `SIMD`-pattern erasures on the recorded argument
     /// types, as `score_method_call` scores it, or `None` where some
-    /// argument reaches no parameter of it: the conversions, the `**kwargs`
-    /// bit, its own binders' count and generic bit, and the copies a `var`
-    /// parameter makes of a place. A defaulted parameter past the arguments
-    /// is not scored. A variadic member, a static one, a reference
-    /// parameter, a parameter left symbolic, and binders
-    /// [`Self::member_binders`] cannot infer are the clone check's to rank.
+    /// argument reaches no parameter of it or its availability condition
+    /// fails at the instance: the conversions, the `**kwargs` bit, its own
+    /// binders' count and generic bit, and the copies a `var` parameter
+    /// makes of a place. A defaulted parameter past the arguments is not
+    /// scored. A variadic member, a reference parameter, a parameter left
+    /// symbolic, and binders [`Self::member_parameters`] cannot infer are
+    /// the clone check's to rank.
     fn member_rank(
         &self,
         member: &MethodSig,
@@ -873,35 +876,34 @@ impl Checker {
         substitution: &TySubst,
         arguments: &[DispatchedArgument],
     ) -> Result<Option<(usize, usize)>, &'static str> {
-        if !member.has_self || member.variadic.is_some() {
-            return Err("a member of the instance's overloaded witness is static or variadic");
+        if member.variadic.is_some() {
+            return Err("a member of the instance's overloaded witness is variadic");
         }
-        let Some(binders) = self.member_binders(member, arguments)? else {
+        let Some(parameters) = self.member_parameters(member, receiver, substitution, arguments)?
+        else {
             return Ok(None);
         };
         let mut conversions = 0;
         let mut simd_erasures = 0;
         let mut binding = crate::checker::overload_support::ArgumentBinding::new(None);
-        for (index, argument) in arguments.iter().enumerate() {
-            let parameter =
-                self.witness_parameter_ty(&member.params[index], receiver, substitution, &binders);
+        for (index, (argument, parameter)) in arguments.iter().zip(&parameters).enumerate() {
             if matches!(parameter, Ty::Ref(_))
-                || (parameter != argument.ty && mojito_types::types::is_symbolic(&parameter))
+                || (*parameter != argument.ty && mojito_types::types::is_symbolic(parameter))
             {
                 return Err(
                     "a member of the instance's overloaded witness has a parameter \
                      the recorded types cannot rank",
                 );
             }
-            let reaches = self.value_coerces(&argument.ty, &parameter)
+            let reaches = self.value_coerces(&argument.ty, parameter)
                 || self
-                    .implicit_conversion_target(&argument.ty, &parameter)
+                    .implicit_conversion_target(&argument.ty, parameter)
                     .is_ok_and(|target| target.is_some());
             if !reaches {
                 return Ok(None);
             }
             conversions +=
-                crate::checker::overload_support::conversion_count(&argument.ty, &parameter);
+                crate::checker::overload_support::conversion_count(&argument.ty, parameter);
             simd_erasures += usize::from(
                 matches!(member.params[index], Ty::Param { .. })
                     && mojito_types::types::simd_shape(&argument.ty).is_some(),
@@ -918,19 +920,71 @@ impl Checker {
         Ok(Some((rank, simd_erasures)))
     }
 
-    /// How a member's own binders bind the recorded arguments, as the clone
-    /// check infers them, or `None` where an argument lacks a binder's
-    /// bounds. Each binder is a plain type binder only one parameter
-    /// mentions, as that parameter's whole type, and binds the argument's
-    /// recorded type there: a caller binder that carries its bounds, or a
-    /// closed non-literal type. Any other binder is the clone check's to
-    /// infer.
-    fn member_binders(
+    /// A member's parameter types at the recorded arguments, under the
+    /// receiver and the member's own binders as the clone check binds them,
+    /// or `None` where the member does not take the arguments.
+    ///
+    /// Over closed argument types the binders are inferred as
+    /// `instantiate_method_generics` infers them, from the argument types
+    /// alone — inside a parameter type (`List[U]`), a value or `DType`
+    /// binder, a literal's own type — and the availability condition is
+    /// judged at the inferred arguments; a member that fails either takes
+    /// nothing, as the clone check drops it. Over a caller binder the
+    /// instance keeps, each binder must be a plain type binder only one
+    /// parameter names, as that parameter's whole type, bound to the
+    /// argument's type when that carries its bounds; any other binder is
+    /// the clone check's to infer.
+    fn member_parameters(
         &self,
         member: &MethodSig,
+        receiver: &Ty,
+        substitution: &TySubst,
         arguments: &[DispatchedArgument],
-    ) -> Result<Option<TySubst>, &'static str> {
+    ) -> Result<Option<Vec<Ty>>, &'static str> {
         const UNINFERRED: &str = "a member's own binder is not inferred from one argument's type";
+        let Ty::Struct(owner, struct_arguments) = receiver else {
+            return Err("a dispatched receiver is not a struct");
+        };
+        let info = self
+            .structs
+            .get(owner)
+            .ok_or("a dispatched receiver's struct is not declared")?;
+        if arguments
+            .iter()
+            .all(|argument| !mojito_types::types::is_symbolic(&argument.ty))
+        {
+            let patterns: Vec<Ty> = member.params[..arguments.len()]
+                .iter()
+                .map(|ty| crate::checker::generics::substitute_at(ty, info, struct_arguments))
+                .collect();
+            let actuals: Vec<Ty> = arguments
+                .iter()
+                .map(|argument| argument.ty.clone())
+                .collect();
+            let Ok((binders, method_arguments)) =
+                self.resolve_use_params(owner, &member.decls, &[], &patterns, &actuals)
+            else {
+                return Ok(None);
+            };
+            if !self.method_constraints_apply(
+                member,
+                &method_arguments,
+                &info.decls,
+                struct_arguments,
+            ) {
+                return Ok(None);
+            }
+            let values = Self::value_argument_environment(&member.decls, &method_arguments);
+            return Ok(patterns
+                .iter()
+                .map(|ty| {
+                    let substituted =
+                        self.resolve_assoc_ty(&mojito_types::types::substitute(ty, &binders));
+                    self.resolve_dependent_ty(&substituted, &values)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .ok());
+        }
         let mut binders = HashMap::new();
         for decl in &member.decls {
             let ParamDecl::Type {
@@ -978,7 +1032,22 @@ impl Checker {
             }
             binders.insert(decl.id().clone(), argument.ty.clone());
         }
-        Ok(Some(binders))
+        let method_arguments: Vec<TyArg> = member
+            .decls
+            .iter()
+            .filter_map(|decl| binders.get(decl.id()).cloned())
+            .map(TyArg::Ty)
+            .collect();
+        if !self.method_constraints_apply(member, &method_arguments, &info.decls, struct_arguments)
+        {
+            return Ok(None);
+        }
+        Ok(Some(
+            member.params[..arguments.len()]
+                .iter()
+                .map(|ty| self.witness_parameter_ty(ty, receiver, substitution, &binders))
+                .collect(),
+        ))
     }
 
     /// Realize `hasher.update(x)` or `hasher._update_with_simd(x)` whose

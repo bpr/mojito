@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound whose witness overloads the requirement now
+  derives beside a generic rival the recorded argument types alone rank:
+  the rival's binders are inferred as the clone check infers them, inside
+  a parameter type (`List[U]`), from a `Scalar[dt]` pattern, or from a
+  literal, and an unavailable or static member drops out as it does there.
 - The elaborator now gives a struct method's own binders the checker's
   identities. Two overloads whose parameter slots agree own distinct
   binders there too, named through the shared

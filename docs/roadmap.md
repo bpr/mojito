@@ -46,13 +46,14 @@ Pliron experiment rather than move the check order sit last, 1.24 to 1.27.
   recorded argument types (`template_facts/bound_dispatch.rs:member_rank`).
   - A rival with a reference-typed parameter is ranked by the argument's
     place and origin (`infer_storage_value`), which no recorded type holds.
-  - A rival binder the clone check infers from inside a parameter type
-    (`List[U]`), a value or `DType` binder, and a literal handed to a binder
-    need `instantiate_method_generics` itself: pinned by
-    `template_method_nested_binder_witness_rival_keeps_the_clone_check`.
-  - A variadic rival, and a collection or tuple display, a leading-dot
-    member, or an explicit application as the argument, take their rank
-    from the argument expression checked against each rival's parameter.
+  - A variadic rival ranks each collected argument's literal-ness and
+    by-value binding, which the recorded type does not tell.
+  - A collection or tuple display, a leading-dot member, or an explicit
+    application as the argument takes its type from each rival's
+    parameter, so only the argument expression ranks it.
+  - A rival's binder beyond a bare parameter type (`List[U]`, `Scalar[dt]`)
+    is inferred only over closed argument types; over a caller binder the
+    instance keeps, it still refuses (`member_parameters`).
   - No bundled type overloads a requirement, so `stdlib_heavy` is unmoved.
   - Depends on nothing.
   - Model: Opus, Not Planned.

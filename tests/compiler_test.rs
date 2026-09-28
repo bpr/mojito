@@ -3688,23 +3688,15 @@ fn template_method_ranked_witness_overloads_derive() {
 }
 
 #[test]
-fn template_method_nested_binder_witness_rival_keeps_the_clone_check() {
-    // A rival whose own binder sits inside a parameter type is inferred by
-    // the clone check alone, so the instance is checked as a clone.
-    let compiler = Compiler::default();
-    let program = compile_entry(
-        &compiler,
-        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
-    );
-    let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "4\n");
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Ledger.plain$")
-                && reason == "a member's own binder is not inferred from one argument's type"
-        }),
-        "the nested binder refuses the derivation: {:?}",
-        stats.refused
+fn template_method_generic_witness_rivals_derive() {
+    // Each rival's own binders are inferred from the recorded argument types
+    // as the clone check infers them: a binder inside `List[U]` and a
+    // `DType` binder of `Scalar[dt]` take no `Int`, and a literal handed to
+    // a bare binder ranks below the closed `Int` member on its generic bit.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n    def total[dt: DType](self, by: Scalar[dt], scale: Int = 2) -> Int:\n        return -2\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -3\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
+        "4 7\n",
+        &[("Ledger.plain", 1), ("Ledger.literal", 1)],
     );
 }
 
