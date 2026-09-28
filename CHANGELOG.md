@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic struct specialized whole (`Bag$t2[Bool, Int]`) now derives a
+  member's `self.copy()` call with the specialization as its result type,
+  where the derived contract kept the template's `Bag[*Ts]`: a derived
+  method call's result, raised, parameter, and referent types substitute
+  the instance's pack and folded values too. Only
+  `MOJITO_VERIFY_TEMPLATE_FACTS=1` saw the difference.
 - A `Tuple` over loan-carrying elements (`Tuple[StringSpan, StringSpan]`)
   no longer infers every member again in each pass. An instance argument
   whose origins the elaborator erased now derives from the checked

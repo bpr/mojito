@@ -2132,16 +2132,16 @@ impl Checker {
         // element where the template dispatched it through the element's
         // bound; a closed one stands as the template selected it
         // (`substituted_element_stores`).
-        self.realize_element_getters(&mut facts, occurrences, substitution)?;
+        self.realize_element_getters(&mut facts, occurrences, substitution, &substitute)?;
         self.realize_element_dunders(&mut facts)?;
-        self.realize_inplace_updates(&mut facts, substitution)?;
+        self.realize_inplace_updates(&mut facts, substitution, &substitute)?;
         let inverted_writes = self.realize_inverted_writes(&mut facts, occurrences)?;
         for index in 0..facts.selected_calls.len() {
             let id = facts.selected_calls[index].0;
             if bound_dispatches.contains(&id) || inverted_writes.contains(&id) {
                 continue;
             }
-            self.realize_method_call(&mut facts, index, occurrences, substitution)?;
+            self.realize_method_call(&mut facts, index, occurrences, substitution, &substitute)?;
         }
         self.realize_tuple_elements(&mut facts, occurrences)?;
         self.realize_static_overloads(&mut facts, occurrences, substitution)?;
@@ -2378,6 +2378,7 @@ impl Checker {
         index: usize,
         occurrences: &[Occurrence],
         substitution: &TySubst,
+        substitute: &dyn Fn(&Ty) -> Ty,
     ) -> Result<(), &'static str> {
         let id = facts.selected_calls[index].0;
         let (receiver, method) = method_call_at(occurrences, id)
@@ -2419,7 +2420,7 @@ impl Checker {
             &mut facts.selected_calls[index].1,
             (&owner, &arguments),
             &method,
-            substitution,
+            (substitution, substitute),
         )?
         else {
             note_realized_callee(facts, &selected, &selected);
@@ -2431,7 +2432,7 @@ impl Checker {
             .find(|(site, _)| *site == id)
         {
             for parameter in parameters {
-                parameter.ty = self.instance_ty(&parameter.ty, substitution);
+                parameter.ty = substitute(&parameter.ty);
             }
         }
         if let Some(entry) = facts
@@ -2587,6 +2588,7 @@ impl Checker {
         facts: &mut CheckedBodyFacts,
         occurrences: &[Occurrence],
         substitution: &TySubst,
+        substitute: &dyn Fn(&Ty) -> Ty,
     ) -> Result<(), &'static str> {
         let mut realized = Vec::new();
         for (id, store) in &mut facts.augmented_subscripts {
@@ -2606,7 +2608,7 @@ impl Checker {
                     getter,
                     (owner, arguments),
                     &method,
-                    substitution,
+                    (substitution, substitute),
                 )?
                 .unwrap_or_else(|| selected.clone());
             realized.push((selected, target));
@@ -2654,6 +2656,7 @@ impl Checker {
         &self,
         facts: &mut CheckedBodyFacts,
         substitution: &TySubst,
+        substitute: &dyn Fn(&Ty) -> Ty,
     ) -> Result<(), &'static str> {
         let mut realized = Vec::new();
         let mut parameters = Vec::new();
@@ -2682,7 +2685,7 @@ impl Checker {
                     call,
                     (owner, arguments),
                     method,
-                    substitution,
+                    (substitution, substitute),
                 )?
                 .unwrap_or_else(|| selected.clone());
             if let Some((_, parameters)) = facts
@@ -2691,7 +2694,7 @@ impl Checker {
                 .find(|(site, _)| site == id)
             {
                 for parameter in parameters {
-                    parameter.ty = self.instance_ty(&parameter.ty, substitution);
+                    parameter.ty = substitute(&parameter.ty);
                 }
             }
             realized.push((selected, target));
@@ -2723,15 +2726,19 @@ impl Checker {
     /// the struct `owner` under `arguments`: the target is the instance's
     /// clone of the selected declaration, where one exists, or the copy a
     /// struct specialized whole holds of it, and the result,
-    /// raised, parameter, and referent types substitute. `None` where the template
-    /// already selected the receiver's clone, whose contract stands.
+    /// raised, parameter, and referent types substitute under the whole
+    /// instance (`substitute`: its packs and folded values too, so a variadic
+    /// struct specialized whole names itself, `Bag$t2[…]`, where the template
+    /// has `Bag[*Ts]`). The receiver's own arguments judge an availability
+    /// condition under `substitution`. `None` where the template already
+    /// selected the receiver's clone, whose contract stands.
     fn realize_method_contract(
         &self,
         types: &[(OccurrenceId, Ty)],
         call: &mut TemplateCallContract,
         (owner, arguments): (&str, &[mojito_types::types::TyArg]),
         method: &str,
-        substitution: &TySubst,
+        (substitution, substitute): (&TySubst, &dyn Fn(&Ty) -> Ty),
     ) -> Result<Option<String>, &'static str> {
         let info = self
             .structs
@@ -2795,7 +2802,7 @@ impl Checker {
                 .iter()
                 .find(|bound| bound.source == parameter.source)
                 .and_then(|bound| fact_at(types, bound.value))
-                .is_some_and(|ty| *ty == self.instance_ty(&parameter.parameter_ty, substitution))
+                .is_some_and(|ty| *ty == substitute(&parameter.parameter_ty))
         });
         if !closed_family && !exact {
             return Err("an overloaded callee declares a parameter of a parameter type");
@@ -2859,16 +2866,13 @@ impl Checker {
         // whether the receiver is `self` or a field of another struct.
         let contract = &mut call.contract;
         contract.target.clone_from(&target);
-        contract.result_ty = self.instance_ty(&contract.result_ty, substitution);
-        contract.raises = contract
-            .raises
-            .as_ref()
-            .map(|raised| self.instance_ty(raised, substitution));
+        contract.result_ty = substitute(&contract.result_ty);
+        contract.raises = contract.raises.as_ref().map(substitute);
         for argument in &mut contract.arguments {
-            argument.parameter_ty = self.instance_ty(&argument.parameter_ty, substitution);
+            argument.parameter_ty = substitute(&argument.parameter_ty);
         }
         if let Some(reference) = &mut call.reference_result {
-            reference.referent = self.instance_ty(&reference.referent, substitution);
+            reference.referent = substitute(&reference.referent);
         }
         Ok(Some(target))
     }
