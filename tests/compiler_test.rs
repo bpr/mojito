@@ -1813,6 +1813,44 @@ fn template_struct_lane_members_derive() {
 }
 
 #[test]
+fn spread_pack_initializer_derives() {
+    // `self.storage = Tuple(*args^)` in a variadic struct's initializer, a
+    // user struct's and the bundled `TString`'s (named by its public
+    // segments, not its storage pack), derives for every specialization.
+    for (source, expected, owner) in [
+        (
+            include_str!("../assets/ok/template_method_variadic_struct.mojo"),
+            "3 2 4\n6\n",
+            "Bag$",
+        ),
+        (
+            include_str!("../assets/ok/tstring_lazy.mojo"),
+            "x=1\n2\n",
+            "TString$",
+        ),
+    ] {
+        let compiler = Compiler::default();
+        let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+        let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+        for program in [&derived, &verified] {
+            assert_eq!(compiler.execute(program).expect("execute").output, expected);
+        }
+        let stats = derived.template_stats();
+        let initializer = |name: &&String| name.starts_with(owner) && name.ends_with(".__init__");
+        assert!(
+            stats.derived.iter().any(|name| initializer(&name)),
+            "{owner} initializers derive; refused: {:?}",
+            stats.refused
+        );
+        assert!(
+            !stats.inferred_clones.iter().any(|name| initializer(&name)),
+            "no {owner} initializer is inferred: {:?}",
+            stats.inferred_clones
+        );
+    }
+}
+
+#[test]
 fn unavailable_member_stub_derives() {
     // A member whose availability clause folds false is one trap stub per
     // template method, shared by every specialization under the same

@@ -20,7 +20,7 @@ use super::{Checker, EffectRead, callable_contract_target, callable_lowered_name
 use mojito_ast::ast::{CaptureKind, Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, FoldedLiteral,
-    IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId,
+    IncompleteReason, InstanceName, InstanceTrace, MethodFeatures, OccurrenceId, PackElementNode,
     TemplateArgumentBoundary, TemplateAugmentedSubscript, TemplateCallContract,
     TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass, TemplateCoverage,
     TemplateEffectSource, TemplateId, TemplateInvalidation, TemplateObligation, TemplateOrigin,
@@ -314,6 +314,11 @@ struct InstanceSubstitution {
     /// symbolic (`VALUE_BINDERS`): an occurrence reading one is bound to
     /// the clone's own compile-time parameter of that name.
     kept_values: Vec<String>,
+    /// The template's `Self` at the instance's pack, with the specialization
+    /// the instance names it by where that is not the pack's own mangling:
+    /// a `TString` is named by its public segments, while its storage pack
+    /// holds each textual segment as an owning `String`.
+    named_self: Option<(Ty, Ty)>,
 }
 
 /// The loop index each pack-element occurrence of an instance was copied
@@ -336,6 +341,7 @@ struct GrammarNotes {
     simd_casts: Vec<(OccurrenceId, OccurrenceId)>,
     simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
     pack_relocations: Vec<mojito_checked::templates::PackRelocation>,
+    pack_spreads: Vec<mojito_checked::templates::PackSpread>,
 }
 
 impl Checker {
@@ -1438,13 +1444,30 @@ impl Checker {
         // keyed one keeps the arms the elaborator selected, once per loop
         // iteration it unrolled, and drops the rest, facts and all.
         let keyed = class.keyed();
-        // A relocated pack's spread and transfer have no instance occurrence.
+        // A relocated pack's spread and transfer have no instance occurrence,
+        // nor has a spread pack's collector, which each element names anew.
         let relocated: Vec<SyntaxId> = checked
             .facts
             .pack_relocations
             .iter()
             .flat_map(|relocation| [relocation.spread.syntax, relocation.transfer.syntax])
+            .chain(checked.facts.pack_spreads.iter().flat_map(|spread| {
+                [
+                    spread.spread.syntax,
+                    spread.transfer.syntax,
+                    spread.pack.syntax,
+                ]
+            }))
             .collect();
+        let spread_element = |occurrence: &Occurrence| {
+            PackElementNode::of(occurrence.id.syntax).is_some_and(|(spread, _, _)| {
+                checked
+                    .facts
+                    .pack_spreads
+                    .iter()
+                    .any(|pack| pack.spread.syntax == spread)
+            })
+        };
         // A folded struct value (`Self.key`, `Self.n`) drops the `Self` its
         // name was read on, the template occurrence right after the name's
         // in pre-order, which the instance no longer holds; a vector adds
@@ -1480,7 +1503,7 @@ impl Checker {
             matches!(
                 occurrence.vector_fold,
                 Some(VectorFold::Lane(_) | VectorFold::Dimension)
-            )
+            ) || spread_element(occurrence)
         };
         let lanes = occurrences
             .iter()
@@ -1691,6 +1714,7 @@ impl Checker {
                 views,
                 values,
                 kept_values: Vec::new(),
+                named_self: None,
             });
         };
         // A body the elaborator shaped itself names nothing its receiver
@@ -1702,6 +1726,7 @@ impl Checker {
                 views: Vec::new(),
                 values: Vec::new(),
                 kept_values: Vec::new(),
+                named_self: None,
             });
         }
         let unresolved = || {
@@ -1743,6 +1768,7 @@ impl Checker {
         let mut views = Vec::new();
         let mut values = Vec::new();
         let mut kept_values = Vec::new();
+        let mut named_self = None;
         match struct_decls {
             [
                 ParamDecl::Type {
@@ -1774,10 +1800,18 @@ impl Checker {
                             )),
                         )
                     });
-                    if !matches!(own, Some(Ty::Struct(name, arguments))
-                        if arguments.is_empty() && site.instance.owner.as_deref() == Some(&*name))
-                    {
-                        return Err(unresolved());
+                    match own {
+                        Some(Ty::Struct(name, arguments))
+                            if arguments.is_empty()
+                                && site.instance.owner.as_deref() == Some(&*name) => {}
+                        Some(own) => {
+                            named_self = Some((
+                                own,
+                                self.tstring_specialization(site, &elements)
+                                    .ok_or_else(unresolved)?,
+                            ));
+                        }
+                        None => return Err(unresolved()),
                     }
                     elements
                 } else if traced.len() == arguments.len() {
@@ -1785,7 +1819,7 @@ impl Checker {
                 } else {
                     return Err(unresolved());
                 };
-                if elements.is_empty() {
+                if elements.is_empty() && named_self.is_none() {
                     return Err(unresolved());
                 }
                 packs.insert(id.clone(), elements);
@@ -1858,7 +1892,39 @@ impl Checker {
             views,
             values,
             kept_values,
+            named_self,
         })
+    }
+
+    /// A substituted type as the clone check names it: a closed public
+    /// `Tuple` by the specialization selected for it
+    /// (`canonicalize_public_tuple_types`), a value-keyed or variadic struct
+    /// at closed arguments likewise (`specialized_value_structs`), and a
+    /// `TString`'s `Self` by its own symbol (`named_self`).
+    fn instance_names(&self, ty: Ty, named_self: &[(Ty, Ty)]) -> Ty {
+        fold_binder_views(
+            &self.specialized_value_structs(&self.canonicalize_public_tuple_types(ty)),
+            named_self,
+        )
+    }
+
+    /// The `TString` specialization a member instance belongs to, when its
+    /// storage is the public tuple of `elements`: the type the clone check
+    /// names its `Self` by. Its symbol names the public segments, which the
+    /// storage pack no longer tells apart (`tstring_storage_elements`).
+    fn tstring_specialization(&self, site: &BodySite<'_>, elements: &[Ty]) -> Option<Ty> {
+        let owner = site.instance.owner.as_deref()?;
+        let storage = self.public_tuple_type(elements.to_vec());
+        let stored = self
+            .structs
+            .get(owner)?
+            .fields
+            .iter()
+            .all(|(_, ty)| *ty == storage);
+        (stored
+            && mojito_symbol::symbol::specialization_template(owner)
+                == Some(mojito_types::types::TSTRING_TYPE_NAME))
+        .then(|| Ty::Struct(owner.to_string(), Vec::new()))
     }
 
     /// A template's facts for one instance: every retained type substituted,
@@ -1889,13 +1955,9 @@ impl Checker {
             views,
             values,
             kept_values,
+            named_self,
         } = instance;
-        // A closed public `Tuple` names the specialization the clone check
-        // selects for it (`canonicalize_public_tuple_types`), and so does a
-        // value-keyed or variadic struct at closed arguments
-        // (`specialized_value_structs`).
-        let canonical =
-            |ty: Ty| self.specialized_value_structs(&self.canonicalize_public_tuple_types(ty));
+        let canonical = |ty: Ty| self.instance_names(ty, named_self.as_slice());
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
                 &fold_binder_views(ty, views),
@@ -1906,6 +1968,7 @@ impl Checker {
         };
         let demands = self.hash_leaf_demands.borrow().len();
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
+        spread_packs(&mut facts, occurrences)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
@@ -3711,6 +3774,7 @@ impl Checker {
                         facts.simd_casts = notes.simd_casts;
                         facts.simd_lengths = notes.simd_lengths;
                         facts.pack_relocations = notes.pack_relocations;
+                        facts.pack_spreads = notes.pack_spreads;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -4070,6 +4134,7 @@ impl Checker {
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
+            pack_spreads: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
         };
         if !shape.block(body)
@@ -4708,6 +4773,7 @@ impl Checker {
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
+            pack_spreads: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
         };
         if !shape.block(&method.body) {
@@ -8990,6 +9056,34 @@ fn fact_at<V>(table: &[(OccurrenceId, V)], id: OccurrenceId) -> Option<&V> {
         .map(|(_, fact)| fact)
 }
 
+/// Insert `entry` into a table kept in the occurrences' pre-order `order`.
+fn insert_ranked<E: Ranked>(table: &mut Vec<E>, order: &[OccurrenceId], entry: E) {
+    let rank = |id: OccurrenceId| order.iter().position(|entry| *entry == id);
+    let at = rank(entry.occurrence());
+    let position = table
+        .iter()
+        .position(|existing| rank(existing.occurrence()) > at)
+        .unwrap_or(table.len());
+    table.insert(position, entry);
+}
+
+/// A fact table's entry, keyed by the occurrence it was recorded at.
+trait Ranked {
+    fn occurrence(&self) -> OccurrenceId;
+}
+
+impl Ranked for OccurrenceId {
+    fn occurrence(&self) -> OccurrenceId {
+        *self
+    }
+}
+
+impl<V> Ranked for (OccurrenceId, V) {
+    fn occurrence(&self) -> OccurrenceId {
+        self.0
+    }
+}
+
 /// Replace the fact at `id`, keeping the table's occurrence order.
 fn set_fact<V>(table: &mut [(OccurrenceId, V)], id: OccurrenceId, value: V) {
     if let Some(entry) = table.iter_mut().find(|(site, _)| *site == id) {
@@ -9171,6 +9265,9 @@ struct BodyShape<'a> {
     /// The pack storages admitted ([`Self::pack_storage`]), which an
     /// instance reads as its own relocation.
     pack_relocations: RefCell<Vec<mojito_checked::templates::PackRelocation>>,
+    /// The pack storages built through the public tuple
+    /// ([`Self::pack_storage`]), whose elements an instance moves one by one.
+    pack_spreads: RefCell<Vec<mojito_checked::templates::PackSpread>>,
     /// The stringify calls admitted ([`Self::stringify`]), each routed to
     /// the builtin by an overload target no instance changes.
     stringified: RefCell<Vec<OccurrenceId>>,
@@ -9736,6 +9833,7 @@ impl BodyShape<'_> {
             simd_casts: self.simd_casts.borrow().clone(),
             simd_lengths: self.simd_lengths.borrow().clone(),
             pack_relocations: self.pack_relocations.borrow().clone(),
+            pack_spreads: self.pack_spreads.borrow().clone(),
         }
     }
 
@@ -10246,10 +10344,11 @@ impl BodyShape<'_> {
                 && matches!(args.as_slice(), [receiver] if self.receiver_itself(receiver)))
     }
 
-    /// `__RuntimeTuple(*args^)`: a pack struct's storage built from the
-    /// initializer's own pack collector, moved whole. The template typed
-    /// the storage and the collector over the symbolic pack, which an
-    /// instance substitutes element by element.
+    /// `__RuntimeTuple(*args^)` or `Tuple(*args^)`: a pack struct's storage
+    /// built from the initializer's own pack collector, moved whole into
+    /// the private storage, or element by element into the public tuple.
+    /// The template typed the storage and the collector over the symbolic
+    /// pack, which an instance substitutes element by element.
     fn pack_storage(&self, expr: &Expr) -> bool {
         let ExprKind::Call {
             name,
@@ -10275,24 +10374,49 @@ impl BodyShape<'_> {
             }
             _ => None,
         };
-        let Some(param) = param.filter(|_| {
-            name == "__RuntimeTuple"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && self.pack_struct.is_some()
-        }) else {
+        let Some(param) = param
+            .filter(|_| param_args.is_empty() && kwargs.is_empty() && self.pack_struct.is_some())
+        else {
             return false;
         };
-        push_unique(
-            &mut self.pack_relocations.borrow_mut(),
-            mojito_checked::templates::PackRelocation {
-                call: self.occurrence(expr),
-                spread: self.occurrence(argument),
-                transfer: self.occurrence(transfer),
-                pack: self.occurrence(pack),
-                param,
-            },
+        let (call, spread, transfer, pack) = (
+            self.occurrence(expr),
+            self.occurrence(argument),
+            self.occurrence(transfer),
+            self.occurrence(pack),
         );
+        match name.as_str() {
+            "__RuntimeTuple" => push_unique(
+                &mut self.pack_relocations.borrow_mut(),
+                mojito_checked::templates::PackRelocation {
+                    call,
+                    spread,
+                    transfer,
+                    pack,
+                    param,
+                },
+            ),
+            // The public tuple, as the check typed it: a user `Tuple` would
+            // type the call as its own struct.
+            "Tuple"
+                if self.facts.is_none_or(|facts| {
+                    matches!(fact_at(&facts.expression_types, call),
+                        Some(Ty::Struct(tuple, _)) if tuple == "Tuple")
+                }) =>
+            {
+                push_unique(
+                    &mut self.pack_spreads.borrow_mut(),
+                    mojito_checked::templates::PackSpread {
+                        call,
+                        spread,
+                        transfer,
+                        pack,
+                        param,
+                    },
+                );
+            }
+            _ => return false,
+        }
         true
     }
 
@@ -13790,19 +13914,6 @@ fn closed_pack_values(
 /// the moved place the call's value is, bound to its parameter. `false` when
 /// the instance holds no such read.
 fn relocate_packs(facts: &mut CheckedBodyFacts, order: &[OccurrenceId]) -> bool {
-    fn insert<V>(
-        table: &mut Vec<(OccurrenceId, V)>,
-        order: &[OccurrenceId],
-        at: OccurrenceId,
-        value: V,
-    ) {
-        let rank = |id: &OccurrenceId| order.iter().position(|entry| entry == id);
-        let position = table
-            .iter()
-            .position(|(id, _)| rank(id) > rank(&at))
-            .unwrap_or(table.len());
-        table.insert(position, (at, value));
-    }
     for relocation in std::mem::take(&mut facts.pack_relocations) {
         let pack = relocation.pack;
         let Some(ty) = fact_at(&facts.expression_types, relocation.call).cloned() else {
@@ -13811,23 +13922,101 @@ fn relocate_packs(facts: &mut CheckedBodyFacts, order: &[OccurrenceId]) -> bool 
         if !order.contains(&pack) || fact_at(&facts.expression_types, pack).is_some() {
             return false;
         }
-        let rank = |id: &OccurrenceId| order.iter().position(|entry| entry == id);
-        let position = facts
-            .transfers
-            .iter()
-            .position(|id| rank(id) > rank(&relocation.call))
-            .unwrap_or(facts.transfers.len());
-        facts.transfers.insert(position, relocation.call);
-        insert(&mut facts.expression_types, order, pack, ty.clone());
-        insert(&mut facts.expression_place_types, order, pack, ty);
-        insert(
+        insert_ranked(&mut facts.transfers, order, relocation.call);
+        insert_ranked(&mut facts.expression_types, order, (pack, ty.clone()));
+        insert_ranked(&mut facts.expression_place_types, order, (pack, ty));
+        insert_ranked(
             &mut facts.expression_bindings,
             order,
-            pack,
-            mojito_checked::templates::TemplateOwner::Param(relocation.param),
+            (
+                pack,
+                mojito_checked::templates::TemplateOwner::Param(relocation.param),
+            ),
         );
     }
     true
+}
+
+/// Lay each [`PackSpread`](mojito_checked::templates::PackSpread) over the
+/// instance's substituted facts: the public tuple the call constructs names its
+/// element types, and each element `args[k]^` the elaborator spelled moves
+/// the collector's `k`-th element out of its place, the collector bound to
+/// its parameter. An `Err` when the instance's elements are not exactly one
+/// such move per element type.
+fn spread_packs(
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Result<(), &'static str> {
+    use mojito_types::types::TyArg;
+    const REFUSAL: &str = "a spread pack's elements are not the instance's moves";
+    let order: Vec<OccurrenceId> = occurrences.iter().map(|occurrence| occurrence.id).collect();
+    let order = order.as_slice();
+    for spread in std::mem::take(&mut facts.pack_spreads) {
+        let Some(Ty::Struct(tuple, arguments)) =
+            fact_at(&facts.expression_types, spread.call).cloned()
+        else {
+            return Err(REFUSAL);
+        };
+        let Some(elements) = arguments
+            .into_iter()
+            .map(|argument| match argument {
+                TyArg::Ty(ty) => Some(ty),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Err(REFUSAL);
+        };
+        let collector = Ty::Tuple(elements.clone());
+        let nodes: Vec<(OccurrenceId, u32, PackElementNode)> = order
+            .iter()
+            .filter(|id| id.copy == spread.call.copy)
+            .filter_map(|id| {
+                PackElementNode::of(id.syntax)
+                    .filter(|(parent, _, _)| *parent == spread.spread.syntax)
+                    .map(|(_, index, node)| (*id, index, node))
+            })
+            .collect();
+        if nodes.len() != elements.len() * 4 {
+            return Err(REFUSAL);
+        }
+        for (id, index, node) in nodes {
+            let Some(element) = usize::try_from(index)
+                .ok()
+                .and_then(|index| elements.get(index))
+            else {
+                return Err(REFUSAL);
+            };
+            if fact_at(&facts.expression_types, id).is_some() {
+                return Err(REFUSAL);
+            }
+            let (ty, place) = match node {
+                PackElementNode::Collector => {
+                    insert_ranked(
+                        &mut facts.expression_bindings,
+                        order,
+                        (
+                            id,
+                            mojito_checked::templates::TemplateOwner::Param(spread.param),
+                        ),
+                    );
+                    (collector.clone(), true)
+                }
+                PackElementNode::Index => (Ty::IntLiteral, false),
+                PackElementNode::Element => (element.clone(), true),
+                PackElementNode::Transfer => {
+                    insert_ranked(&mut facts.transfers, order, id);
+                    (element.clone(), false)
+                }
+            };
+            if place {
+                insert_ranked(&mut facts.expression_place_types, order, (id, ty.clone()));
+            }
+            insert_ranked(&mut facts.expression_types, order, (id, ty));
+        }
+        insert_ranked(&mut facts.overload_targets, order, (spread.call, tuple));
+    }
+    Ok(())
 }
 
 /// The operators an instance folds where its template computed a value from

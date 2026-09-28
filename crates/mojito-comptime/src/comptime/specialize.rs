@@ -140,25 +140,12 @@ impl Elab<'_> {
         // consumed by `mono_expr`'s rewrite of the `t"…"` node into that
         // specialization's construction.
         for request in tstring_requests {
-            // A concrete TString owns every textual snapshot it stores.
             // StringLiteral remains a borrowed, drop-inert descriptor
             // everywhere else; specialize textual fields to nominal String
             // so the ordinary struct lifecycle owns their runtime buffers.
-            let storage_elements = request
-                .elements()
-                .iter()
-                .map(|element| {
-                    if matches!(element, Ty::StringLiteral) {
-                        Ty::Struct(
-                            mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                            Vec::new(),
-                        )
-                    } else {
-                        element.clone()
-                    }
-                })
-                .collect::<Vec<_>>();
-            let vals = tuple_specialization_values(&storage_elements);
+            let vals = tuple_specialization_values(
+                &mojito_symbol::symbol::tstring_storage_elements(request.elements()),
+            );
             let output_name = tstring_specialization_symbol(request.elements());
             let target = TStringTarget {
                 symbol: output_name.clone(),
@@ -764,6 +751,7 @@ impl Elab<'_> {
                 ))
             })?;
             let template = self.selected_declaration(&job.orig, job.decl);
+            let traced = self.method_traces.borrow().len();
             let mut spec = match &template.kind {
                 StmtKind::Struct { type_params, .. }
                     if !classify_ct_params(type_params, &job.orig)
@@ -780,10 +768,16 @@ impl Elab<'_> {
             // TString's public specialization identity describes its source
             // segments, while its concrete storage pack upgrades textual
             // elements to owning nominal String. Preserve the checker-picked
-            // public symbol instead of remangling from that private ABI pack.
+            // public symbol instead of remangling from that private ABI pack,
+            // in the specialization and in the traces of its members.
             if job.orig == "TString"
                 && let StmtKind::Struct { name, .. } = &mut spec.kind
             {
+                for trace in self.method_traces.borrow_mut().iter_mut().skip(traced) {
+                    if trace.owner == *name {
+                        trace.owner.clone_from(&job.output_name);
+                    }
+                }
                 name.clone_from(&job.output_name);
             }
             // A specialization of a bundled template is walked as bundled

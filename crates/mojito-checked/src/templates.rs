@@ -1043,6 +1043,59 @@ pub struct PackRelocation {
     pub param: usize,
 }
 
+/// One node of a spread pack's element in an instance.
+///
+/// The elaborator expands a `Tuple(*args^)` in an instance into `args[k]^`
+/// per element. Each node's identity derives from the spread's, so the
+/// instance names element `k` the same way every time and the checker
+/// traces it to the template's spread ([`PackSpread`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackElementNode {
+    /// The collector `args`.
+    Collector,
+    /// The literal index `k`.
+    Index,
+    /// The element read `args[k]`.
+    Element,
+    /// The element moved, `args[k]^`.
+    Transfer,
+}
+
+impl PackElementNode {
+    const ALL: [Self; 4] = [Self::Collector, Self::Index, Self::Element, Self::Transfer];
+
+    /// The identity of element `index`'s node spread from `spread`.
+    #[must_use]
+    pub fn identity(self, spread: SyntaxId, index: u32) -> SyntaxId {
+        SyntaxId::derived(spread, index * 4 + self as u32)
+    }
+
+    /// The spread, element index, and node an identity [`Self::identity`]
+    /// made names.
+    #[must_use]
+    pub fn of(id: SyntaxId) -> Option<(SyntaxId, u32, Self)> {
+        let (spread, ordinal) = id.derivation()?;
+        Some((spread, ordinal / 4, Self::ALL[(ordinal % 4) as usize]))
+    }
+}
+
+/// A pack struct's storage built through the public tuple from its
+/// initializer's own pack collector, `Tuple(*args^)`.
+///
+/// The elaborator expands the spread in every instance into one moved
+/// element per pack element (`Tuple(args[0]^, args[1]^)`, each node
+/// identified by [`PackElementNode`]); the call keeps its identity and its
+/// facts, and the spread and its transfer are gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackSpread {
+    pub call: OccurrenceId,
+    pub spread: OccurrenceId,
+    pub transfer: OccurrenceId,
+    pub pack: OccurrenceId,
+    /// The collector's index among the declaration's runtime parameters.
+    pub param: usize,
+}
+
 /// A compile-time value an instance holds as a literal where its template
 /// read a value parameter or a `comptime for` variable by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1748,6 +1801,10 @@ pub struct CheckedBodyFacts {
     /// The pack storages the grammar admitted ([`PackRelocation`]), which
     /// an instance reads as its own relocation.
     pub pack_relocations: Vec<PackRelocation>,
+    /// The pack storages built through the public tuple the grammar
+    /// admitted ([`PackSpread`]), whose elements an instance moves one by
+    /// one.
+    pub pack_spreads: Vec<PackSpread>,
     /// The implicit conversion selected at each occurrence that records one.
     /// An instance selects it again from its own types, so a clone whose
     /// source type changed names a different constructor.
@@ -1903,6 +1960,7 @@ impl CheckedBodyFacts {
             repr_calls,
             print_calls,
             pack_relocations,
+            pack_spreads,
             conversions,
             typed_origins,
             call_result_origins,
@@ -2114,6 +2172,7 @@ impl CheckedBodyFacts {
             repr_calls: flagged(&self.repr_calls),
             print_calls: flagged(&self.print_calls),
             pack_relocations: self.pack_relocations.clone(),
+            pack_spreads: self.pack_spreads.clone(),
             conversions: at(&self.conversions, occurrences, folded),
             // Table by table, as the capture keeps them.
             typed_origins: [

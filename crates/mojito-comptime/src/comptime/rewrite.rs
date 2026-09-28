@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{FnParam, ImportNames, Method};
+use mojito_checked::templates::PackElementNode;
 
 // --- Substitution / materialization -----------------------------------------
 //
@@ -1505,41 +1506,51 @@ impl PackRewriter {
                     continue;
                 }
             };
-            let Some(length) = self.runtime_pack_length(pack) else {
+            let Some(length) = self
+                .runtime_pack_length(pack)
+                .and_then(|length| u32::try_from(length).ok())
+            else {
                 expanded.push(argument);
                 continue;
             };
             let source = argument.source.clone();
             let span = argument.span;
+            // Each element's nodes derive their identities from the spread,
+            // so every instance and every discovery round names element `k`
+            // the same way, and the checker traces it back to the spread
+            // its template checked ([`PackElementNode`]).
+            let parent = argument.syntax_id;
+            let node = |kind, index, node: PackElementNode| Expr {
+                kind,
+                span,
+                source: source.clone(),
+                syntax_id: node.identity(parent, index),
+            };
             for index in 0..length {
-                let base = Expr {
-                    kind: ExprKind::Identifier(pack.to_string()),
-                    span,
-                    source: source.clone(),
-                    syntax_id: mojito_common::token::SyntaxId::fresh(),
-                };
-                let index = Expr {
-                    kind: ExprKind::Int((index as i64).into()),
-                    span,
-                    source: source.clone(),
-                    syntax_id: mojito_common::token::SyntaxId::fresh(),
-                };
-                let indexed = Expr {
-                    kind: ExprKind::Index {
+                let base = node(
+                    ExprKind::Identifier(pack.to_string()),
+                    index,
+                    PackElementNode::Collector,
+                );
+                let position = node(
+                    ExprKind::Int(i64::from(index).into()),
+                    index,
+                    PackElementNode::Index,
+                );
+                let indexed = node(
+                    ExprKind::Index {
                         object: Box::new(base),
-                        index: Box::new(index),
+                        index: Box::new(position),
                     },
-                    span,
-                    source: source.clone(),
-                    syntax_id: mojito_common::token::SyntaxId::fresh(),
-                };
+                    index,
+                    PackElementNode::Element,
+                );
                 expanded.push(if transferring {
-                    Expr {
-                        kind: ExprKind::Transfer(Box::new(indexed)),
-                        span,
-                        source: source.clone(),
-                        syntax_id: mojito_common::token::SyntaxId::fresh(),
-                    }
+                    node(
+                        ExprKind::Transfer(Box::new(indexed)),
+                        index,
+                        PackElementNode::Transfer,
+                    )
                 } else {
                     indexed
                 });

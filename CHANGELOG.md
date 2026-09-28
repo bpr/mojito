@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic struct's initializer building its storage with
+  `Tuple(*args^)`, a user struct's and the bundled `TString`'s, now reuses
+  the template's checked facts: each instance's per-element expansion takes
+  identities derived from the spread (`spread_pack_initializer_derives`).
+  Such bodies used to be checked again per specialization, and every
+  `TString` member's trace was recorded under its storage pack's name
+  rather than the specialization's, so none reached the checker.
 - A generic `def` or method converting a parameter, a local, or a field
   through its bound (`Int(mode)` on `mode: intable` with `intable:
   Intable`, `Float64` on `Floatable`, `Bool` on `Boolable`) now reuses the

@@ -508,7 +508,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   or pack `TypeList` use keeps (`rewrite.rs:rewrite_expr`). A pack struct's
   `__RuntimeTuple(*args^)` initializer, which each instance writes as
   `args^`, is laid over the instance by `template_facts.rs:relocate_packs`
-  from the template's `PackRelocation`. `mojito-comptime`'s
+  from the template's `PackRelocation`; a user struct's or `TString`'s
+  `Tuple(*args^)`, which each instance expands per element with
+  `mojito-checked` `templates.rs:PackElementNode` identities, by
+  `template_facts.rs:spread_packs` from its `PackSpread`. `mojito-comptime`'s
   `comptime.rs:instance_traces` carries one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.

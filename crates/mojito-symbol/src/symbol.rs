@@ -1974,6 +1974,23 @@ pub fn tstring_specialization_symbol(elements: &[Ty]) -> String {
     .unwrap_or_else(|_| mojito_types::types::TSTRING_TYPE_NAME.to_string())
 }
 
+/// The storage pack of a `TString` specialization of the public `elements`.
+///
+/// A concrete `TString` owns every textual snapshot it stores, so a
+/// `StringLiteral` segment is stored as the nominal owning `String`.
+pub fn tstring_storage_elements(elements: &[Ty]) -> Vec<Ty> {
+    elements
+        .iter()
+        .map(|element| {
+            if matches!(element, Ty::StringLiteral) {
+                Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new())
+            } else {
+                element.clone()
+            }
+        })
+        .collect()
+}
+
 pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
     vec![CtValue::Tuple(
         elements
