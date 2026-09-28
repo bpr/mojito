@@ -391,7 +391,8 @@ impl Checker {
         }
         let result = self
             .infer_impl(expr)
-            .and_then(|ty| self.apply_rebind_target(expr, ty));
+            .and_then(|ty| self.apply_rebind_target(expr, ty))
+            .map(|ty| self.read_through_call_reference(expr, ty));
         if let Ok(ty) = &result {
             if (matches!(ty, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(ty))
                 && let Some(value) = self.exact_literal_value(expr)
@@ -2754,6 +2755,40 @@ impl Checker {
                 "a collection display element",
             ),
         }
+    }
+
+    /// A free call returning `ref T` read as a value, as a reference-returning
+    /// method call is: its type is the referent, and the call is marked a
+    /// `ReferenceResult` (`infer` then records the copyable read), so
+    /// lowering copies the referent out of the handle, the deferred read
+    /// check demands `ImplicitlyCopyable`, and a context that keeps the
+    /// handle (`ref r = f(x)`, a forwarded `return`) still finds it through
+    /// `infer_reference_value`. Any other expression keeps `found`.
+    fn read_through_call_reference(&self, value: &Expr, found: Ty) -> Ty {
+        let Ty::Ref(reference) = found else {
+            return found;
+        };
+        let span = value.source_span();
+        if !matches!(value.kind, ExprKind::Call { .. })
+            || self
+                .operation_adjustments
+                .borrow()
+                .get(&span)
+                .is_some_and(|adjustment| {
+                    !matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                    )
+                })
+        {
+            return Ty::Ref(reference);
+        }
+        let referent = (*reference.referent).clone();
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
+        );
+        referent
     }
 }
 

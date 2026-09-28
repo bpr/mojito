@@ -81,6 +81,24 @@ impl Flatten<'_> {
         }) {
             return self.reference_handle(e);
         }
+        // A free call's reference result is read out of a hidden handle slot
+        // that loans the storage its origin names, so the arguments it
+        // borrows from stay alive until the referent is copied.
+        if matches!(e.kind, ExprKind::Call { .. })
+            && self.reference_result(e).is_some()
+            && let Some(place) = self.materialize_reference_result_place(e)
+        {
+            let value_ty = place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(e))
+                .unwrap_or(Ty::Error);
+            let read = self.fresh_typed(span(e), Some(place.root), value_ty.clone());
+            self.emit(MirInstr::LoadPlace { dest: read, place });
+            let dest = self.fresh_typed(span(e), None, value_ty);
+            self.emit(MirInstr::CopyValue { dest, value: read });
+            return dest;
+        }
         if let Some(reference) = self.reference_result(e) {
             let handle = self.reference_handle(e);
             let value_ty = match self.f.reg_types.get(&handle.0) {

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method reading a value through a module `def`'s reference result
+  (`var r = pick(a, b, first)` then `self.value = r^`, or
+  `pick(a, b, first).copy()`, with `pick` returning
+  `ref[origin_of(a, b)] T`) now derives its instances from the checked
+  template instead of checking each again. The call's reference is kept by
+  template owner as a method's is, and its `ref` arguments as kept places.
 - A variadic struct specialized whole (`Bag$t2[Bool, Int]`) now derives a
   member's `self.copy()` call with the specialization as its result type,
   where the derived contract kept the template's `Bag[*Ts]`: a derived
@@ -634,6 +640,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A module `def` returning `ref T` is read through wherever a value is
+  wanted, as upstream reads it and as a method's reference result already
+  was: `var r = pick(a, b)` owns a copy (and demands `ImplicitlyCopyable`,
+  as the pin does), `print(pick(w))`, `pick(x, y) + 1`, `r = pick(a, b)`,
+  and `pick(a, b).copy()` run. The local used to hold the reference
+  itself, so `self.value = r^` stored the handle (`<ref 3:1>`, or a stale
+  frame), and the read is taken from a slot that loans the arguments, so
+  one read at an argument's last use no longer prints `None`.
 - A value rebound only after a `try` in a loop body, and read past the
   loop, now survives a handler's `break` or `continue`: drop elaboration
   counted it dead at the loop body's entry, missing the escape edge, and the

@@ -7615,7 +7615,9 @@ fn dispatched_conformer(targets: &[&str], callee: &str) -> bool {
 /// the callee's own binder (`hash(e)`) is declared in the callee's binder
 /// scope, which no substitution reaches: the argument binds it exactly, and
 /// only the application's argument changes per instance
-/// ([`BodyShape::generic_call_place`]).
+/// ([`BodyShape::generic_call_place`]). A call returning a reference may
+/// also bind a `ref` parameter to a named place it keeps
+/// ([`BodyShape::module_reference_call`]).
 fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
     facts
         .call_parameters
@@ -7625,7 +7627,9 @@ fn method_direct_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
             !facts.selected_calls.iter().any(|(call, _)| call == id)
                 && application.is_none_or(|application| application.variadic.is_none())
                 && parameters.iter().all(|parameter| {
-                    parameter.convention.is_none()
+                    (parameter.convention.is_none()
+                        || (parameter.convention == Some(mojito_ast::ast::ArgConvention::Ref)
+                            && fact_at(&facts.reference_results, *id).is_some()))
                         && (!mojito_types::types::is_symbolic(&parameter.ty)
                             || (application.is_some() && matches!(parameter.ty, Ty::Param { .. })))
                 })
@@ -9256,10 +9260,73 @@ impl BodyShape<'_> {
     /// there, and its clone check would refuse the read.
     fn reference_read(&self, expr: &Expr) -> bool {
         let id = self.occurrence(expr);
-        self.reference_call(expr)
+        (self.reference_call(expr) || self.module_reference_call(expr))
             && self
                 .facts
                 .is_none_or(|facts| facts.copyable_reference_result_reads.contains(&id))
+    }
+
+    /// A module function's reference result read by value or borrowed as a
+    /// receiver (`pick(a, b, first)` returning `ref[origin_of(a, b)] T`): an
+    /// admitted call whose recorded reference, with its origin naming the
+    /// body's own places, is kept by template owner as a reference call's is.
+    ///
+    /// An argument the call keeps as a caller place is a named place bound
+    /// to a `ref` parameter, which the call's conventions and the argument's
+    /// syntax decide alone.
+    fn module_reference_call(&self, expr: &Expr) -> bool {
+        let ExprKind::Call {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = &expr.kind
+        else {
+            return false;
+        };
+        let id = self.occurrence(expr);
+        let kept_place = |index: usize, argument: &Expr| {
+            let named = match &argument.kind {
+                ExprKind::Identifier(name) => {
+                    self.declared(name) || self.params.contains(&name.as_str())
+                }
+                _ => self.receiver_field(argument),
+            };
+            let argument_id = self.occurrence(argument);
+            self.facts.is_none_or(|facts| {
+                if !facts.call_place_uses.contains(&argument_id) {
+                    return true;
+                }
+                let kept = named
+                    && fact_at(&facts.call_parameters, id)
+                        .and_then(|params| params.get(index))
+                        .is_some_and(|parameter| {
+                            parameter.convention == Some(mojito_ast::ast::ArgConvention::Ref)
+                        });
+                if kept {
+                    let mut places = self.places.borrow_mut();
+                    if !places.contains(&argument_id) {
+                        places.push(argument_id);
+                    }
+                }
+                kept && self.holds(MethodFeatures::PLACE_ARGUMENTS)
+            })
+        };
+        let admitted = !self.keyed
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && self.expression(expr)
+            && args
+                .iter()
+                .enumerate()
+                .all(|(index, argument)| kept_place(index, argument))
+            && self
+                .facts
+                .is_none_or(|facts| fact_at(&facts.reference_results, id).is_some());
+        if admitted {
+            self.references.borrow_mut().push(id);
+        }
+        admitted && self.holds(MethodFeatures::REFERENCE_CALLS)
     }
 
     /// `slice.indices(n)` on a slice parameter or local: the built-in
@@ -9480,7 +9547,7 @@ impl BodyShape<'_> {
     /// type. `named_contract` then demands a nominal struct there, so a
     /// method of a bare parameter, which a clone selects again, stays out.
     fn reference_receiver(&self, object: &Expr) -> bool {
-        let admitted = self.through(object);
+        let admitted = self.through(object) || self.module_reference_call(object);
         if admitted {
             let id = self.occurrence(object);
             let mut receivers = self.receivers.borrow_mut();
@@ -12658,6 +12725,7 @@ impl BodyShape<'_> {
             }
             ExprKind::Member { .. } => self.receiver_field(object) || self.reference_member(object),
             ExprKind::Index { .. } => self.slot(object) || self.reference_receiver(object),
+            ExprKind::Call { .. } => self.reference_receiver(object),
             _ => transferred,
         };
         // The receiver itself names a place too, as a `mut self` hasher

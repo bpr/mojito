@@ -1928,6 +1928,35 @@ fn tuple_over_erased_views_derives() {
 }
 
 #[test]
+fn reference_result_read_in_method_derives() {
+    // A method reads a value through a free call returning
+    // `ref[origin_of(a, b)] T` and stores it into `self`: the call reads
+    // through the reference as upstream does, so the local owns a copy, the
+    // store's frame effect has a union source, and every instance derives.
+    let source = "def pick[T: Copyable](ref a: T, ref b: T, first: Bool) -> ref[origin_of(a, b)] T:\n    if first:\n        return a\n    return b\n\nstruct Holder[T: ImplicitlyCopyable & Deinitable](Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def choose(mut self, a: Self.T, b: Self.T, first: Bool):\n        var r = pick(a, b, first)\n        self.value = r^\n\n    def copied(mut self, a: Self.T, b: Self.T, first: Bool):\n        self.value = pick(a, b, first).copy()\n\ndef main():\n    var h = Holder(0)\n    h.choose(1, 2, True)\n    print(h.value)\n    h.copied(3, 4, False)\n    var s = Holder(String(\"x\"))\n    s.choose(String(\"a\"), String(\"b\"), False)\n    print(h.value, s.value)\n    s.copied(String(\"c\"), String(\"d\"), True)\n    print(s.value)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "1\n4 b\nc\n"
+        );
+    }
+    let stats = derived.template_stats();
+    for instance in ["y3:Int", "y6:String"] {
+        for member in ["choose", "copied"] {
+            let name = format!("Holder.{member}${instance}");
+            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+            assert!(
+                !stats.inferred_clones.contains(&name),
+                "{name} is never inferred: {stats:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn template_vector_keyed_members_derive() {
     // A struct keyed on a closed vector value, specialized whole as the
     // bundled `AHasher` is, reads `Self.key`, constructs through the vector

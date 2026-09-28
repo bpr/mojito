@@ -163,7 +163,12 @@ impl Checker {
                     return Err("the instance's type is not copyable");
                 }
                 drop_call(facts, id);
-                if !facts.copy_place_value_uses.contains(&receiver) {
+                // Only a place is marked a copied read: a call's reference
+                // result (`pick(a, b).copy()`) is read as the call yields it.
+                let call_result = occurrences
+                    .iter()
+                    .any(|occurrence| occurrence.id == receiver && occurrence.callee.is_some());
+                if !call_result && !facts.copy_place_value_uses.contains(&receiver) {
                     facts.copy_place_value_uses.push(receiver);
                     let order =
                         |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
