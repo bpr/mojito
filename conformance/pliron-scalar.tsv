@@ -545,6 +545,7 @@ assets/ok/string_span_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_view_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_def_bound_conversion.mojo	-	ineligible	no-scalar-entry-shape

@@ -243,7 +243,10 @@ impl Checker {
                         self.infer_stringify(args)?;
                         return self.retarget_string_result(span, name);
                     }
-                    return self.infer_construction(&span, name, param_args, args, kwargs);
+                    let constructed =
+                        self.infer_construction(&span, name, param_args, args, kwargs)?;
+                    self.type_runtime_param_args(param_args)?;
+                    return Ok(constructed);
                 }
                 // Tuple specializations are predeclared as one closed set before
                 // their members are checked.  A generated transform may therefore

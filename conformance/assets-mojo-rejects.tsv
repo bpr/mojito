@@ -25,7 +25,7 @@
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	747
+# swept-count	748
 fixture	family	first-error
 assets/ok/bundled_def_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
 assets/ok/bundled_instance_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call

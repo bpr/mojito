@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct constructed over arithmetic on a compile-time parameter,
+  `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
+  generic `def`, now runs on the VM and natively, as the pin does. The
+  bracket argument used to reach MIR untyped and fail verification with
+  "place rooted at slot 0 lacks complete checked type metadata" or
+  "untyped register".
 - `Int()`, `UInt()`, `Float64()`, and `Bool()` now construct their zeros,
   at run time, in a compile-time constant, and through a `Defaultable` type
   parameter, as upstream. They used to fail with "'Int' expects 1

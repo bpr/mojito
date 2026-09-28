@@ -1232,36 +1232,8 @@ impl Checker {
         };
         let mut types = Vec::with_capacity(1 + param_args.len() + args.len() + kwargs.len());
         types.push(callable.clone());
-        for argument in param_args {
-            let expression = match argument {
-                mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                    mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                    mojito_ast::ast::ParamArg::Type(_)
-                    | mojito_ast::ast::ParamArg::Named { .. } => None,
-                },
-                mojito_ast::ast::ParamArg::Type(_) => None,
-            };
-            if let Some(expression) = expression {
-                // A bare type argument (`hash[MyHasher](x)`) is a value
-                // expression syntactically; binding already resolved it as a
-                // type and erased it, so it carries no runtime effect.
-                let erased = self
-                    .operation_adjustments
-                    .borrow()
-                    .get(&expression.source_span())
-                    .is_some_and(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                                | mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument { .. }
-                        )
-                    });
-                if erased {
-                    continue;
-                }
-                types.push(checked_argument_type(expression)?);
-            }
+        for expression in self.runtime_param_arg_expressions(param_args) {
+            types.push(checked_argument_type(expression)?);
         }
         for argument in args {
             types.push(checked_argument_type(argument)?);
@@ -1271,6 +1243,60 @@ impl Checker {
         }
         self.record_call_capture_effects(span, &types);
         Ok(())
+    }
+
+    /// Type every bracket argument a call still evaluates at run time
+    /// (`Counter[1 + Self.n](i)` in an erased body), so its lowering reads
+    /// checked facts. One the call already typed keeps its contextual type.
+    fn type_runtime_param_args(
+        &self,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(), TypeError> {
+        for expression in self.runtime_param_arg_expressions(param_args) {
+            if !self
+                .expression_types
+                .borrow()
+                .contains_key(&expression.source_span())
+            {
+                self.infer(expression)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The value expressions among `param_args` that binding left as runtime
+    /// values. A bare type argument (`hash[MyHasher](x)`) is a value
+    /// expression syntactically; binding already resolved it as a type and
+    /// erased it, so it is not one of them.
+    fn runtime_param_arg_expressions<'a>(
+        &self,
+        param_args: &'a [mojito_ast::ast::ParamArg],
+    ) -> Vec<&'a Expr> {
+        let adjustments = self.operation_adjustments.borrow();
+        param_args
+            .iter()
+            .filter_map(|argument| match argument {
+                mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
+                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                    mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
+                    mojito_ast::ast::ParamArg::Type(_) | mojito_ast::ast::ParamArg::Named { .. } => {
+                        None
+                    }
+                },
+                mojito_ast::ast::ParamArg::Type(_) => None,
+            })
+            .filter(|expression| {
+                !adjustments
+                    .get(&expression.source_span())
+                    .is_some_and(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
+                                | mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument { .. }
+                        )
+                    })
+            })
+            .collect()
     }
 
     fn declared_error(
