@@ -25,7 +25,7 @@
 #
 # The error is the pin's FIRST complaint, so it can mask a later one: lifting
 # a mask moves a row to another family rather than deleting it.
-# swept-count	735
+# swept-count	736
 fixture	family	first-error
 assets/ok/bundled_def_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
 assets/ok/bundled_instance_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
@@ -35,5 +35,6 @@ assets/ok/hasher_user_conformer.mojo	hasher-protocol	error: 'SumHasher' does not
 assets/ok/layout_allocation.mojo	layout-alignment	error: no matching function in initialization
 assets/ok/template_method_simd_leaf.mojo	hasher-protocol	error: 'FoldHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_method_simd_leaf_default_bits.mojo	hasher-protocol	error: 'BitsHasher' does not implement all requirements for 'Hasher'
+assets/ok/template_method_simd_leaf_default_bits_lanes.mojo	hasher-protocol	error: 'LaneBitsHasher' does not implement all requirements for 'Hasher'
 assets/ok/template_view_over_loan_carrying_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'push' call
 assets/ok/unspelled_loan_carrying_type_argument.mojo	divergence	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call

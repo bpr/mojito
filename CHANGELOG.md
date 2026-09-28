@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A hasher leaf that holds the defaulted `value.to_bits()` in a local and
+  casts each lane before using it (`bits[i].cast[DType.uint64]()`) now
+  reuses the template's checked facts: a lane over the open dtype is
+  admitted as a cast's source alone, and each instance records the cast
+  over its own lane
+  (`assets/ok/template_method_simd_leaf_default_bits_lanes.mojo`). Such
+  leaves used to be checked again per instance.
 - A `print` of a whole value in a trait-bound `def` or a generic struct's
   method (`print(x, s)`, `print("item", self.item)`) now reuses the
   template's checked facts: `print` reads the argument where it lies, and
