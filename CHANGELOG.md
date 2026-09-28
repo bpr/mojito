@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's overloaded static whose members differ in a parameter
+  of the struct's parameter type (`Pair[Self.T].pick(v)` beside
+  `pick(v: Self.T)` and `pick(v: Float64)`) now reuses the template's
+  checked facts on a spelled receiver: each instance ranks the family again
+  at its own argument types and keeps the template's member where it ranks
+  best (`assets/ok/template_method_overloaded_parameter_typed_static.mojo`).
+  Such bodies used to be checked again per instance.
 - A struct method declaring a nested `def` with a string-literal or `None`
   default, a typed `raises`, or an `out` parameter (`def join(x: Int, sep:
   String = "-")`, `def check(x: Int) raises Low`, `def make(x: Int, out r:

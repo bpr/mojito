@@ -507,6 +507,65 @@ impl Checker {
         Ok(())
     }
 
+    /// The member of a generic struct's overloaded static `family` the clone
+    /// check ranks at the instance's argument types, the receiver being the
+    /// instance's application of the struct (`Pair[Int].pick(v)`): the lone
+    /// member of the arguments' arity, or the one the ranking leaves best
+    /// ([`Self::best_members`]). A tie is the clone check's to judge.
+    pub(super) fn ranked_static_member<'a>(
+        &self,
+        family: &'a [MethodSig],
+        receiver: &Ty,
+        substitution: &TySubst,
+        facts: &CheckedBodyFacts,
+        occurrence: &Occurrence,
+        occurrences: &[Occurrence],
+    ) -> Result<&'a MethodSig, &'static str> {
+        let arguments = occurrence
+            .arguments
+            .iter()
+            .enumerate()
+            .map(|(index, syntax)| {
+                let value = OccurrenceId {
+                    syntax: *syntax,
+                    copy: occurrence.id.copy,
+                };
+                let ty = fact_at(&facts.expression_types, value)
+                    .cloned()
+                    .ok_or("a static's argument has no retained type")?;
+                let ranking = occurrences
+                    .iter()
+                    .find(|found| found.id == value)
+                    .map(|found| found.ranking)
+                    .unwrap_or_default();
+                Ok(DispatchedArgument {
+                    source: CheckedCallArgumentSource::Positional(index),
+                    value: Some(value),
+                    parameter_ty: ty.clone(),
+                    ty,
+                    convention: None,
+                    requires_place: false,
+                    ranked: ranking.context_free,
+                    owned: ranking.owned,
+                })
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        let taking: Vec<&MethodSig> = family
+            .iter()
+            .filter(|member| !member.has_self && takes_arity(member, arguments.len()))
+            .collect();
+        if let [member] = taking.as_slice() {
+            return Ok(member);
+        }
+        match self
+            .best_members(taking, receiver, substitution, &arguments)?
+            .as_slice()
+        {
+            [member] => Ok(member),
+            _ => Err("the clone check's ranking leaves the instance's overloaded static tied"),
+        }
+    }
+
     /// The witness the instance's type selects for `method`, from the types
     /// alone.
     ///
@@ -855,8 +914,35 @@ impl Checker {
         if let [member] = taking.as_slice() {
             return Ok(member);
         }
+        let ranked = self.best_members(taking, receiver, substitution, arguments)?;
+        if let [member] = ranked.as_slice() {
+            return Ok(member);
+        }
+        let mut consuming = ranked.iter().filter(|member| {
+            matches!(
+                member.self_convention,
+                Some(ArgConvention::Var | ArgConvention::Deinit)
+            ) == receiver_transferred
+        });
+        match (consuming.next(), consuming.next()) {
+            (Some(member), None) => Ok(member),
+            _ => Err("the clone check's ranking leaves the instance's overloaded witness tied"),
+        }
+    }
+
+    /// The members of `taking` the clone check's ranking leaves best on the
+    /// recorded argument types: the fewest-ranked ([`Self::member_rank`]),
+    /// then the fewest `SIMD`-pattern erasures. An argument whose type an
+    /// expected type may change is the clone check's to rank.
+    fn best_members<'a>(
+        &self,
+        taking: Vec<&'a MethodSig>,
+        receiver: &Ty,
+        substitution: &TySubst,
+        arguments: &[DispatchedArgument],
+    ) -> Result<Vec<&'a MethodSig>, &'static str> {
         if !arguments.iter().all(|argument| argument.ranked) {
-            return Err("an argument's type may come from the witness parameter it is handed to");
+            return Err("an argument's type may come from the member parameter it is handed to");
         }
         let mut ranked = Vec::new();
         for member in taking {
@@ -868,27 +954,18 @@ impl Checker {
             .iter()
             .map(|(_, (rank, _))| *rank)
             .min()
-            .ok_or("no member of the instance's overloaded witness takes the arguments")?;
+            .ok_or("no member of the instance's overload set takes the arguments")?;
         ranked.retain(|(_, (rank, _))| *rank == best);
         let fewest_erasures = ranked
             .iter()
             .map(|(_, (_, erasures))| *erasures)
             .min()
             .unwrap_or(0);
-        ranked.retain(|(_, (_, erasures))| *erasures == fewest_erasures);
-        if let [(member, _)] = ranked.as_slice() {
-            return Ok(member);
-        }
-        let mut consuming = ranked.iter().filter(|(member, _)| {
-            matches!(
-                member.self_convention,
-                Some(ArgConvention::Var | ArgConvention::Deinit)
-            ) == receiver_transferred
-        });
-        match (consuming.next(), consuming.next()) {
-            (Some((member, _)), None) => Ok(member),
-            _ => Err("the clone check's ranking leaves the instance's overloaded witness tied"),
-        }
+        Ok(ranked
+            .into_iter()
+            .filter(|(_, (_, erasures))| *erasures == fewest_erasures)
+            .map(|(member, _)| member)
+            .collect())
     }
 
     /// A member's rank and `SIMD`-pattern erasures on the recorded argument

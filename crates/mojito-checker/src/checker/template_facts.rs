@@ -2883,11 +2883,14 @@ impl Checker {
     /// instance's clone of the static where the receiver's arguments,
     /// resolved in the instance, have one.
     ///
-    /// The clone check re-ranks the clone family there, and its members
-    /// differ only in closed parameter types, so it selects the clone of the
-    /// template's member (`method_clone_target`). A receiver with no clone
-    /// keeps the erased member, as does a static on an inferred or
-    /// contextual receiver, which no instance retargets.
+    /// The clone check re-ranks the clone family there. Where its members
+    /// differ only in closed parameter types it selects the clone of the
+    /// template's member (`method_clone_target`); where one is typed by the
+    /// struct's parameters, the instance ranks the family at its own
+    /// argument types (`ranked_static_member`) and must rank the template's
+    /// member best, since the call's contract is that member's. A receiver
+    /// with no clone keeps the erased member, as does a static on an
+    /// inferred or contextual receiver, which no instance retargets.
     fn realize_static_overloads(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -2923,6 +2926,13 @@ impl Checker {
                 .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
                 .1;
             let Some(clone) = self.instance_method_clone(owner, method, &arguments) else {
+                if info
+                    .methods
+                    .get(method)
+                    .is_some_and(|family| !closed_differences(family))
+                {
+                    return Err("an instance has no clone of a static it must rank again");
+                }
                 continue;
             };
             // A lone clone is no overload set, and its call records no member.
@@ -2948,6 +2958,27 @@ impl Checker {
                     })
                 })
                 .ok_or("a static's selected overload is not declared")?;
+            // Members typed by the struct's parameters may rank apart at the
+            // instance's types: the instance must rank the template's member
+            // best, whose contract the template recorded.
+            if let Some(family) = info
+                .methods
+                .get(method)
+                .filter(|family| !closed_differences(family))
+            {
+                let receiver = Ty::Struct(owner.clone(), arguments.clone());
+                let ranked = self.ranked_static_member(
+                    family,
+                    &receiver,
+                    substitution,
+                    facts,
+                    occurrence,
+                    occurrences,
+                )?;
+                if !std::ptr::eq(ranked, declared) {
+                    return Err("an instance ranks another member of a static's overload family");
+                }
+            }
             let target = self
                 .method_clone_target(owner, method, &arguments, declared, substitution)
                 .ok_or("a static's clone family has no overloaded member for the selection")?;
@@ -8009,6 +8040,26 @@ fn context_free(expr: &Expr) -> bool {
     }
 }
 
+/// Whether an overload family's members differ only in closed parameter
+/// types, so that they rank alike under every instance: a parameter of the
+/// struct's parameter type is the same one in each of them.
+fn closed_differences(signatures: &[super::MethodSig]) -> bool {
+    let arity = signatures.iter().map(|sig| sig.params.len()).max();
+    (0..arity.unwrap_or(0)).all(|position| {
+        let declared: Vec<Option<&Ty>> = signatures
+            .iter()
+            .map(|sig| sig.params.get(position))
+            .collect();
+        declared
+            .iter()
+            .flatten()
+            .all(|ty| !mojito_types::types::is_symbolic(ty))
+            || declared
+                .windows(2)
+                .all(|pair| pair[0].is_some() && pair[0] == pair[1])
+    })
+}
+
 /// Set the entry a table holds at `id`, or add one.
 fn upsert<T>(table: &mut Vec<(OccurrenceId, T)>, id: OccurrenceId, value: T) {
     match table.iter_mut().find(|(site, _)| *site == id) {
@@ -11129,10 +11180,12 @@ impl BodyShape<'_> {
     /// leading-dot form outright.
     ///
     /// Each member of a generic struct's static has no binders of its own,
-    /// no availability condition, and no reference or variadic parameter,
-    /// and the members differ only in closed parameter types, so the call
-    /// ranks the same member whatever solves the struct's parameters. Those
-    /// are solved from the receiver's `[...]` type arguments, or from the
+    /// no availability condition, and no reference or variadic parameter.
+    /// On an inferred or contextual receiver the members differ only in
+    /// closed parameter types, so the call ranks the same member whatever
+    /// solves the struct's parameters; on a spelled receiver the instance
+    /// ranks them again at its own types (`realize_static_overloads`). The
+    /// struct's parameters are solved from the receiver's `[...]` type arguments, or from the
     /// arguments' types, and an instance solves them at the substituted
     /// types, as its struct application is substituted. Where the instance's
     /// struct has a clone of the static the call retargets to it by the
@@ -11183,25 +11236,6 @@ impl BodyShape<'_> {
                     .iter()
                     .all(|convention| matches!(convention, None | Some(ArgConvention::Var)))
         };
-        // Members that differ only in closed parameter types rank alike
-        // under every instance: a parameter of the struct's parameter type
-        // is the same one in each of them.
-        let closed_differences = |signatures: &[super::MethodSig]| {
-            let arity = signatures.iter().map(|sig| sig.params.len()).max();
-            (0..arity.unwrap_or(0)).all(|position| {
-                let declared: Vec<Option<&Ty>> = signatures
-                    .iter()
-                    .map(|sig| sig.params.get(position))
-                    .collect();
-                declared
-                    .iter()
-                    .flatten()
-                    .all(|ty| !mojito_types::types::is_symbolic(ty))
-                    || declared
-                        .windows(2)
-                        .all(|pair| pair[0].is_some() && pair[0] == pair[1])
-            })
-        };
         let static_member = info
             .and_then(|info| {
                 let receiver = if generic {
@@ -11214,8 +11248,13 @@ impl BodyShape<'_> {
                 receiver.then(|| info.methods.get(method)).flatten()
             })
             .is_some_and(|signatures| {
+                // A spelled receiver's instance ranks the family again at
+                // its own types (`realize_static_overloads`); any other
+                // ranks alike under every instance only where the members
+                // differ in closed parameter types.
                 if generic {
-                    signatures.iter().all(plain_static) && closed_differences(signatures)
+                    signatures.iter().all(plain_static)
+                        && (!applied.is_empty() || closed_differences(signatures))
                 } else {
                     signatures.iter().all(|sig| !sig.has_self)
                 }

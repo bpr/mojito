@@ -4370,19 +4370,46 @@ fn template_overloaded_generic_static_call_derives() {
 }
 
 #[test]
-fn template_overloaded_static_on_a_parameter_type_keeps_the_clone_check() {
-    // Members differing in a parameter of the struct's parameter type may
-    // rank apart at an instance's types, so the body stays outside the class.
-    let source = "@fieldwise_init\nstruct Pair[T: Copyable & Deinitable](Copyable, Movable):\n    var a: Self.T\n\n    @staticmethod\n    def pick(v: Self.T) -> Int:\n        return 1\n\n    @staticmethod\n    def pick(v: Float64) -> Int:\n        return 2\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def picked(self) -> Int:\n        return Pair[Self.T].pick(self.item)\n\n\ndef main():\n    print(Shelf[Int](3).picked(), Shelf[String](\"x\").picked())\n";
+fn template_overloaded_static_on_a_parameter_type_derives() {
+    // Members differing in a parameter of the struct's parameter type are
+    // ranked again at each instance's argument types; an instance that ranks
+    // the template's member best calls its own clone of it.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_overloaded_parameter_typed_static.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "1 1\n1 1\n2 2\n",
+        &[
+            ("Shelf.picked", 2),
+            ("Shelf.given", 2),
+            ("Shelf.literal", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_overloaded_static_tied_at_an_instance_keeps_the_clone_check() {
+    // At `T = Float64` both members take a `Float64`: the family collapses,
+    // so that instance is the clone check's to judge.
+    let source = "@fieldwise_init\nstruct Pair[T: Copyable & Deinitable](Copyable, Movable):\n    var a: Self.T\n\n    @staticmethod\n    def pick(v: Self.T) -> Int:\n        return 1\n\n    @staticmethod\n    def pick(v: Float64) -> Int:\n        return 2\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def picked(self) -> Int:\n        return Pair[Self.T].pick(self.item)\n\n\ndef main():\n    print(Shelf[Int](3).picked(), Shelf[Float64](2.5).picked())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "1 1\n");
     assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Shelf.picked$") && reason == "its template is not certified"
-        }),
-        "a member typed by the struct's parameter leaves the body outside the class: {:?}",
+        stats
+            .derived
+            .iter()
+            .any(|name| name.starts_with("Shelf.picked$") && name.contains("Int")),
+        "the `Int` instance derives: {:?}",
+        stats.refused
+    );
+    assert!(
+        stats
+            .refused
+            .iter()
+            .any(|(name, _)| name.starts_with("Shelf.picked$") && name.contains("Float64")),
+        "the tied instance keeps the clone check: {:?}",
         stats.refused
     );
 }

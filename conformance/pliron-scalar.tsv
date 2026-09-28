@@ -596,6 +596,7 @@ assets/ok/template_method_operator_dispatch.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/template_method_operator_operands.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_origin_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_overloaded_generic_static_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_overloaded_parameter_typed_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_own_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_pack_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_parameter_built_store.mojo	-	ineligible	no-scalar-entry-shape
