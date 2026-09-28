@@ -716,7 +716,7 @@ pub struct MethodInstanceTrace {
     /// the source element types written in its signature.
     pub pack_bindings: Vec<(String, Vec<Type>)>,
     /// Whether the clone copies a body the elaborator shaped itself — the
-    /// trap stub of an unavailable template method, or a `Tuple`
+    /// trap stub of an unavailable or a SIMD-keyed template method, or a `Tuple`
     /// specialization's synthesized default constructor: `body` is then that
     /// body's own first statement, and the clone binds nothing.
     pub first_copy_template: bool,

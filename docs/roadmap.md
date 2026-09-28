@@ -55,24 +55,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 A generic hasher's wildcard `_update_with_simd` stub keeps the
-  clone check**
-
-  Problem: in each specialization of `AHasher[key]`, the member standing for
-  `_update_with_simd(mut self, new_data: SIMD[_, _])` is a trap stub that is
-  inferred in every checker pass and never traced.
-  - Hello World infers 3 such bodies; every other `AHasher` member and each
-    per-call leaf derives.
-  - `desugar_simd_keyed_methods` gives the wildcard binder a `$simd` binder,
-    and the elaborated program holds one `_mojito_abort("…")` call in its
-    place, whose clone carries no `MethodInstanceTrace`.
-  - Its facts name nothing the specialization binds. An unavailable
-    member's stub is already shaped once per template method and inherited
-    (`InstanceTrace::first_copy_template`), and this stub could take the same path.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.3 A `Tuple` over loan-carrying elements keeps the clone check**
+- [ ] **1.2 A `Tuple` over loan-carrying elements keeps the clone check**
 
   Problem: every member of `Tuple[StringSpan, StringSpan]` is inferred again
   in each pass, because its elements carry a loan and a derivation admits
@@ -89,7 +72,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 The A1 shadow core has never been run over the decision
+- [ ] **1.3 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -106,12 +89,12 @@ to section 3, however small.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.28 to 1.32 are the ones in this section that do not
+  - This entry and 1.27 to 1.31 are the ones in this section that do not
     move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.5 A reference-typed call result in a method keeps the clone
+- [ ] **1.4 A reference-typed call result in a method keeps the clone
   check**
 
   Problem: a method storing a value it read through a reference-returning
@@ -130,7 +113,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 Two overloads of one trait requirement share their binders**
+- [ ] **1.5 Two overloads of one trait requirement share their binders**
 
   Problem: a trait requirement's binders are owned by `Trait.method`, so two
   overloaded requirements whose slots agree give their binders one id.
@@ -142,7 +125,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 Two overloads of one struct method share their elaborator
+- [ ] **1.6 Two overloads of one struct method share their elaborator
   binders**
 
   Problem: the elaborator owns a method's own binders by `Struct.method`
@@ -157,7 +140,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 An overloaded witness beside a rival the recorded types cannot
+- [ ] **1.7 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
 
   Problem: a call through a bound whose witness overloads the requirement
@@ -176,7 +159,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A hasher call over a multi-lane vector keeps the clone check
+- [ ] **1.8 A hasher call over a multi-lane vector keeps the clone check
   when the instance binds the hasher to a struct**
 
   Problem: `hasher._update_with_simd(SIMD[DType.int32, 4](...))` in a
@@ -192,7 +175,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A `print` of a whole value keeps the clone check**
+- [ ] **1.9 A `print` of a whole value keeps the clone check**
 
   Problem: `print(x, s)` in `def echo[T: Writable & ...](x: T, s: String)`
   refuses the template, because `print_call` admits only closed scalars,
@@ -206,7 +189,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A lane read of a defaulted `to_bits()` result keeps the clone
+- [ ] **1.10 A lane read of a defaulted `to_bits()` result keeps the clone
   check**
 
   Problem: a hasher leaf that reads lanes of `value.to_bits()` before
@@ -224,7 +207,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A value-shaped lane read copied into a local keeps the clone
+- [ ] **1.11 A value-shaped lane read copied into a local keeps the clone
   check**
 
   Problem: `var first = lanes[0]` in a keyed `def` refuses the template when
@@ -237,7 +220,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A call through a bound leaving a defaulted parameter to its
+- [ ] **1.12 A call through a bound leaving a defaulted parameter to its
   default keeps the clone check**
 
   Problem: `BodyShape`'s bound-dispatch rule matches every contract
@@ -251,7 +234,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A nested `def` with a whole-value default or a typed `raises`
+- [ ] **1.13 A nested `def` with a whole-value default or a typed `raises`
   keeps the clone check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar default, an
@@ -265,7 +248,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A generic struct's overloaded static whose members differ in a
+- [ ] **1.14 A generic struct's overloaded static whose members differ in a
   parameter-typed parameter keeps the clone check**
 
   Problem: `Pair[Self.T].pick(v)` beside `pick(v: Self.T)` and
@@ -282,7 +265,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A generic struct's static with binders of its own, an
+- [ ] **1.15 A generic struct's static with binders of its own, an
   availability condition, or a reference or variadic parameter keeps the
   clone check**
 
@@ -298,7 +281,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A type alias spelled in a template body keeps the clone check**
+- [ ] **1.16 A type alias spelled in a template body keeps the clone check**
 
   Problem: `external_call["close", c_int](…)` in a user `def` template is
   refused per instance: the clone's occurrences are not the template's.
@@ -312,7 +295,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A module `def` with a defaulted parameter keeps the clone
+- [ ] **1.17 A module `def` with a defaulted parameter keeps the clone
   check**
 
   Problem: `os.mkdir(path, mode: Int = 0o777)` and `os.makedirs` are
@@ -326,7 +309,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 `path.isdir`, `isfile`, and `islink` keep the clone check**
+- [ ] **1.18 `path.isdir`, `isfile`, and `islink` keep the clone check**
 
   Problem: their templates certify, but each instance is refused: a
   retargeted call has no retained application.
@@ -336,7 +319,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 A variadic struct's initializer building its storage with
+- [ ] **1.19 A variadic struct's initializer building its storage with
   `Tuple(*args^)` keeps the clone check**
 
   Problem: a user variadic struct's `__init__` (`self.storage =
@@ -348,7 +331,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 A variadic struct's index-keyed accessor keeps the clone
+- [ ] **1.20 A variadic struct's index-keyed accessor keeps the clone
   check**
 
   Problem: a user variadic struct's `def __getitem__[i: Int](self) ->
@@ -361,7 +344,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.22 `TString.write_to` keeps the clone check**
+- [ ] **1.21 `TString.write_to` keeps the clone check**
 
   Problem: `TString.write_to` binds each element with a `ref` local over a
   `Tuple` accessor inside a `comptime for`, which the method grammar
@@ -372,7 +355,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.23 A float range's initializer and `__next__` keep the clone
+- [ ] **1.22 A float range's initializer and `__next__` keep the clone
   check**
 
   Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
@@ -387,7 +370,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.24 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.23 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -402,7 +385,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.25 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.24 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -420,7 +403,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.26 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.25 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -432,7 +415,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.27 A `Pointer` type argument over an interior-projected place is
+- [ ] **1.26 A `Pointer` type argument over an interior-projected place is
   baked into its clone with its place**
 
   Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
@@ -446,7 +429,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.28 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.27 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -460,7 +443,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.29 A1 core text is about three times the v1 text**
+- [ ] **1.28 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -475,7 +458,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.30 A parameter expression cannot be rebuilt unfolded through the
+- [ ] **1.29 A parameter expression cannot be rebuilt unfolded through the
   front end's public constructors**
 
   Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
@@ -490,7 +473,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.31 The Pliron pivot's overhead has never been measured**
+- [ ] **1.30 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -509,10 +492,10 @@ to section 3, however small.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.4, 1.28, and 1.29.
+  - Depends on 1.3, 1.27, and 1.28.
   - Model: Fable, Planned.
 
-- [ ] **1.32 Specialized MIR does not run on the VM as the original does**
+- [ ] **1.31 Specialized MIR does not run on the VM as the original does**
 
   Problem: for three compile benchmarks the program that native
   monomorphization produces fails on the VM, where the unspecialized program
@@ -527,7 +510,7 @@ to section 3, however small.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.33 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.32 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that

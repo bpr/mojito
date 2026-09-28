@@ -2287,8 +2287,9 @@ pub struct InstanceTrace {
     /// The parameters the clone still declares.
     pub residual: Vec<String>,
     /// Whether the template is a body the elaborator shaped itself and copied
-    /// into every clone the trace names with its syntax identities: an
-    /// unavailable member's trap stub, shared by every specialization, or a
+    /// into every clone the trace names with its syntax identities: the trap
+    /// stub of an unavailable or a SIMD-keyed member, shared by every
+    /// specialization, or a
     /// `Tuple` specialization's synthesized default constructor, its own in
     /// every discovery round. No check validates it, so the first clone
     /// checked is its template, and the others inherit that check.

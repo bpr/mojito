@@ -1787,6 +1787,41 @@ fn unavailable_member_stub_derives() {
 }
 
 #[test]
+fn simd_keyed_method_stub_derives() {
+    // `AHasher[key]._update_with_simd(mut self, new_data: SIMD[_, _])`
+    // checks only as per-leaf clones; each specialization holds one trap stub
+    // in its place, shared under the same identities: the first copy checked
+    // is its template, and the other keys' copies derive from it.
+    let source = "from std.hashlib._ahash import AHasher, U256\n\ndef main():\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    a.update(Int(7))\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    b.update(Int(7))\n    print(a^.finish() == b^.finish())\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "False\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let stubs = |names: &[String]| {
+        names
+            .iter()
+            .filter(|name| name.contains("AHasher$") && name.ends_with("._update_with_simd"))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        stubs(&stats.inferred_clones).len(),
+        1,
+        "only the stub's first copy is inferred: {stats:?}"
+    );
+    assert!(
+        stubs(&stats.derived).len() >= 2,
+        "the other keys' stubs derive: {stats:?}"
+    );
+}
+
+#[test]
 fn tuple_default_constructor_derives() {
     // A Defaultable `Tuple` specialization's synthesized `__init__(out self)`
     // builds its storage element by element (`__RuntimeTuple(Int(0),

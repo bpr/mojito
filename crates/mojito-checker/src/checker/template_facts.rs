@@ -1360,35 +1360,38 @@ impl Checker {
                 && trace.residual.iter().all(|name| {
                     method.type_params.iter().any(|binder| binder.name == *name)
                 }));
-        let baked = ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
-            && match class {
-                // A value-keyed struct specialized whole folds its own
-                // values, and a per-call clone its method's own, which
-                // `instance_substitution` binds and the occurrences read as
-                // the literals they folded to (`folded_literals`).
-                TemplateClass::MethodBody(features)
-                    if features.contains(MethodFeatures::VALUE_BINDERS) =>
-                {
-                    true
-                }
-                TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
-                    trace.value_bindings.is_empty()
-                        || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
-                            && matches!(site.declaration, BodyDeclaration::Method(method)
-                            if trace.value_bindings.iter().all(|(name, _)| {
-                                method.type_params.iter().all(|binder| binder.name != *name)
-                            })))
-                }
-                // The folded values selected the arms, or are read as the
-                // literals each occurrence folded to (`folded_literals`). A
-                // folded loop index is read back from the copy it fixed.
-                TemplateClass::ClosedScalarBody
-                | TemplateClass::FixedCalls
-                | TemplateClass::BoundedOperations
-                | TemplateClass::ScalarBranches
-                | TemplateClass::PackElements
-                | TemplateClass::FunctionBody(_) => true,
-            };
+        // A body the elaborator shaped itself names no binder its clone
+        // keeps: a SIMD-keyed method's stub keeps the wildcard vector binder.
+        let baked = trace.first_copy_template
+            || ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
+                && match class {
+                    // A value-keyed struct specialized whole folds its own
+                    // values, and a per-call clone its method's own, which
+                    // `instance_substitution` binds and the occurrences read as
+                    // the literals they folded to (`folded_literals`).
+                    TemplateClass::MethodBody(features)
+                        if features.contains(MethodFeatures::VALUE_BINDERS) =>
+                    {
+                        true
+                    }
+                    TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
+                        trace.value_bindings.is_empty()
+                            || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
+                                && matches!(site.declaration, BodyDeclaration::Method(method)
+                                if trace.value_bindings.iter().all(|(name, _)| {
+                                    method.type_params.iter().all(|binder| binder.name != *name)
+                                })))
+                    }
+                    // The folded values selected the arms, or are read as the
+                    // literals each occurrence folded to (`folded_literals`). A
+                    // folded loop index is read back from the copy it fixed.
+                    TemplateClass::ClosedScalarBody
+                    | TemplateClass::FixedCalls
+                    | TemplateClass::BoundedOperations
+                    | TemplateClass::ScalarBranches
+                    | TemplateClass::PackElements
+                    | TemplateClass::FunctionBody(_) => true,
+                };
         if !template && !baked {
             return refuse("the clone keeps or folds a compile-time parameter");
         }
@@ -4255,11 +4258,15 @@ impl Checker {
         // binds them, so no fact reads either. The wildcard vector binder is
         // baked by every clone; only source validation sees its body, with
         // the parameter viewed as a lane-shaped vector (`simd_binder_view`),
-        // and the elaborated program holds a trap stub in its place.
+        // and the elaborated program holds a trap stub in its place, which
+        // names nothing the binder stands for.
         // A scalar or `DType` value binder of the method's own (`[n: Int]`,
         // `[dt: DType]`) is folded by every per-call clone, as a value-keyed
         // `def`'s is; a vector over it (`Scalar[dt]`) is value-shaped.
         let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
+        let trap_stub = matches!(method.body.as_slice(), [statement]
+            if matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. })
+                if name == "_mojito_abort"));
         // A compile-time callable binder of the method's own is kept by every
         // clone, which the specializer never folds: it names no callable in
         // generic identity (`CALLABLE_BINDERS`).
@@ -4275,7 +4282,7 @@ impl Checker {
             origin_binder(binder)
                 || bound_binder(binder)
                 || callable_binders.contains(&binder.name.as_str())
-                || (self.source_validation && simd_wildcard_binder(binder))
+                || ((self.source_validation || trap_stub) && simd_wildcard_binder(binder))
         }) || !(method.decorators.is_empty() || is_static)
         {
             return outside(

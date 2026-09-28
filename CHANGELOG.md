@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic hasher's wildcard `_update_with_simd` trap stub
+  (`AHasher[key]`) is no longer inferred in every specialization. The
+  specializer shapes it once, spanned at the struct with identities derived
+  from the method's first statement, and every other copy derives from the
+  first one checked. Hello World's clone inferences drop from 55 to 53.
 - A Defaultable `Tuple` specialization's synthesized default initializer
   is no longer inferred in every discovery round. It is spanned at the
   struct and identified apart from the variadic initializer, builds its

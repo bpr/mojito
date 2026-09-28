@@ -1435,7 +1435,23 @@ impl Elab<'_> {
                     },
                     &env,
                 ));
-                method.body = vec![unspecialized_method_stub(orig, &method)];
+                // Every specialization holds the same stub, spanned at the
+                // struct so its template stays apart from the leaves'.
+                match method.body.first().map(|first| first.syntax_id) {
+                    Some(parent) => {
+                        method.body =
+                            vec![shared_method_stub(orig, &method, template.span, parent)];
+                        members.push(TracedMember {
+                            first_copy: Some(FirstCopy::Shared),
+                            ..TracedMember::whole(
+                                specialized_methods.len(),
+                                &method.name,
+                                template.span,
+                            )
+                        });
+                    }
+                    None => method.body = vec![unspecialized_method_stub(orig, &method)],
+                }
                 specialized_methods.push(method);
                 continue;
             }
@@ -1817,7 +1833,12 @@ impl Elab<'_> {
                 // (upstream's note, spelled from the source clause) rather
                 // than a missing member, and the stub body never runs.
                 method.where_clauses = vec![unavailable_method_clause(&condition)];
-                method.body = vec![unavailable_method_stub(orig, &method, &condition)];
+                method.body = vec![shared_method_stub(
+                    orig,
+                    &method,
+                    condition.span,
+                    condition.syntax_id,
+                )];
                 members.push(TracedMember {
                     first_copy: Some(FirstCopy::Shared),
                     ..TracedMember::whole(elaborated_methods.len(), &method.name, condition.span)
@@ -2936,7 +2957,7 @@ impl Elab<'_> {
 
     /// Record how each member of a struct specialized whole came from its
     /// template: `members` lists each traced member ([`TracedMember`]),
-    /// an unavailable member's shared stub among them. Any other member the
+    /// a shared trap stub among them. Any other member the
     /// specializer stubbed or synthesized is not listed, nor is a per-call
     /// clone minted inside the specialization.
     fn trace_struct_members(
@@ -3591,21 +3612,28 @@ pub(super) fn template_shell(template: &Stmt) -> Stmt {
     shell
 }
 
-/// The trap stub of a member whose availability clause `condition` folded
-/// false: `unspecialized_method_stub` spanned at the clause, each node
-/// identified by an identity derived from the clause's. Every specialization
-/// of the template method thereby holds the same stub, identities and all.
-fn unavailable_method_stub(owner: &str, method: &Method, condition: &Expr) -> Stmt {
+/// The trap stub every specialization of a template method shares:
+/// `unspecialized_method_stub` spanned at `span`, each node identified by an
+/// identity derived from `parent`. An unavailable member's stub is spanned
+/// and derived at the availability clause that folded false; a SIMD-keyed
+/// method's at its struct and its own first statement. Every specialization
+/// thereby holds the same stub, identities and all.
+fn shared_method_stub(
+    owner: &str,
+    method: &Method,
+    span: Span,
+    parent: mojito_common::token::SyntaxId,
+) -> Stmt {
     use mojito_common::token::SyntaxId;
     let mut stub = unspecialized_method_stub(owner, method);
-    stub.span = condition.span;
-    stub.syntax_id = SyntaxId::derived(condition.syntax_id, 0);
+    stub.span = span;
+    stub.syntax_id = SyntaxId::derived(parent, 0);
     if let StmtKind::Expr(call) = &mut stub.kind {
-        call.span = condition.span;
+        call.span = span;
         call.syntax_id = SyntaxId::derived(stub.syntax_id, 0);
         if let ExprKind::Call { args, .. } = &mut call.kind {
             for (ordinal, argument) in (0..).zip(args.iter_mut()) {
-                argument.span = condition.span;
+                argument.span = span;
                 argument.syntax_id = SyntaxId::derived(call.syntax_id, ordinal);
             }
         }
@@ -3658,8 +3686,8 @@ impl TracedMember {
 /// checked copy is their template.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FirstCopy {
-    /// An unavailable member's trap stub, one for its template method across
-    /// every specialization.
+    /// A trap stub, one for its template method across every
+    /// specialization: an unavailable member's, or a SIMD-keyed method's.
     Shared,
     /// A `Tuple` specialization's default constructor, its own in every
     /// discovery round: the element constructions differ per specialization.
