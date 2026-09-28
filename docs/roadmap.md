@@ -88,21 +88,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A nested `def` with a whole-value default or a typed `raises`
-  keeps the clone check**
-
-  Problem: `BodyShape::nested_def` admits only a closed-scalar default, an
-  untyped `raises`, and read, `mut`, `var`, or bare `ref` parameters.
-  - `def join(x: Int, sep: String = "-")` keeps the clone check, as the test
-    `template_nested_def_whole_value_default_keeps_the_clone_check` pins.
-  - A typed `raises`, and an `out`, `deinit`, or origin-bound `ref[...]`
-    parameter, are refused the same way.
-  - Found while nested `def` conventions, defaults, and `raises` joined the
-    method grammar (2026-09-27); no bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.5 A generic struct's overloaded static whose members differ in a
+- [ ] **1.4 A generic struct's overloaded static whose members differ in a
   parameter-typed parameter keeps the clone check**
 
   Problem: `Pair[Self.T].pick(v)` beside `pick(v: Self.T)` and
@@ -119,7 +105,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A generic struct's static with binders of its own, an
+- [ ] **1.5 A generic struct's static with binders of its own, an
   availability condition, or a reference or variadic parameter keeps the
   clone check**
 
@@ -135,7 +121,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A type alias spelled in a template body keeps the clone check**
+- [ ] **1.6 A type alias spelled in a template body keeps the clone check**
 
   Problem: `external_call["close", c_int](…)` in a user `def` template is
   refused per instance: the clone's occurrences are not the template's.
@@ -149,7 +135,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A module `def` with a defaulted parameter keeps the clone
+- [ ] **1.7 A module `def` with a defaulted parameter keeps the clone
   check**
 
   Problem: `os.mkdir(path, mode: Int = 0o777)` and `os.makedirs` are
@@ -163,7 +149,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 `path.isdir`, `isfile`, and `islink` keep the clone check**
+- [ ] **1.8 `path.isdir`, `isfile`, and `islink` keep the clone check**
 
   Problem: their templates certify, but each instance is refused: a
   retargeted call has no retained application.
@@ -173,7 +159,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A variadic struct's initializer building its storage with
+- [ ] **1.9 A variadic struct's initializer building its storage with
   `Tuple(*args^)` keeps the clone check**
 
   Problem: a user variadic struct's `__init__` (`self.storage =
@@ -185,7 +171,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A variadic struct's index-keyed accessor keeps the clone
+- [ ] **1.10 A variadic struct's index-keyed accessor keeps the clone
   check**
 
   Problem: a user variadic struct's `def __getitem__[i: Int](self) ->
@@ -198,7 +184,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 `TString.write_to` keeps the clone check**
+- [ ] **1.11 `TString.write_to` keeps the clone check**
 
   Problem: `TString.write_to` binds each element with a `ref` local over a
   `Tuple` accessor inside a `comptime for`, which the method grammar
@@ -209,7 +195,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A float range's initializer and `__next__` keep the clone
+- [ ] **1.12 A float range's initializer and `__next__` keep the clone
   check**
 
   Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
@@ -224,7 +210,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.13 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -239,7 +225,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.14 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -257,7 +243,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.15 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -269,7 +255,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 A `Pointer` type argument over an interior-projected place is
+- [ ] **1.16 A `Pointer` type argument over an interior-projected place is
   baked into its clone with its place**
 
   Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
@@ -283,7 +269,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 A parameter expression cannot be rebuilt unfolded through the
+- [ ] **1.17 A parameter expression cannot be rebuilt unfolded through the
   front end's public constructors**
 
   Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
@@ -298,7 +284,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.19 Specialized MIR does not run on the VM as the original does**
+- [ ] **1.18 Specialized MIR does not run on the VM as the original does**
 
   Problem: for three compile benchmarks the program that native
   monomorphization produces fails on the VM, where the unspecialized program
@@ -313,7 +299,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.20 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.19 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that
@@ -331,7 +317,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Depends on 3.54: an `Int` element constructs as `Int()`.
   - Model: Opus, Not Planned.
 
-- [ ] **1.21 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.20 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -346,6 +332,23 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - Admitting them needs the function path to realize `repr_calls` and the
     `TypeName` adjustment as the method path does.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.21 A nested `def` with a constructed default keeps the clone
+  check**
+
+  Problem: `BodyShape::nested_def` admits only a closed-scalar,
+  string-literal, or `None` default.
+  - `def join(x: Int, sep: String = String("-"))` keeps the clone check, as
+    the test `template_nested_def_constructed_default_keeps_the_clone_check`
+    pins.
+  - Only a call that passes the argument runs today: the VM cannot run a
+    constructed default at all (3.99).
+  - Found while literal defaults, typed `raises`, and `out` parameters
+    joined nested `def`s in the method grammar (2026-09-28); no bundled body
+    is known to need it.
+  - Depends on 3.99: until a constructed default runs, no fixture can take
+    it.
   - Model: Opus, Not Planned.
 
 - [ ] **1.22 The A1 shadow core has never been run over the decision
@@ -365,7 +368,7 @@ Pliron experiment rather than move the check order sit last, 1.22 to 1.25.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry, 1.18, 1.19, and 1.23 to 1.25 are the ones in this section
+  - This entry, 1.17, 1.18, and 1.23 to 1.25 are the ones in this section
     that do not move the check order. They shadow MIR below
     `CheckedProgram`.
   - Depends on nothing.
@@ -2444,6 +2447,20 @@ last.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
   - Depends on 3.97: a default bound at the call would lift it.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.99 A call leaving out a constructed default fails at run time**
+
+  Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
+  on the VM with "non-constant default for parameter 's'", where the pin
+  prints `a`.
+  - A signature carries a default only as a folded constant or a converting
+    construction of one (`CheckedConst`); anything else is recorded as
+    missing, and the VM refuses the slot when a call takes it.
+  - The refusal is a late one: the checker should reject the call, or the
+    default should lower as code evaluated at the call.
+  - Probe: `conformance/probes/constructed_default_argument.mojo`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*

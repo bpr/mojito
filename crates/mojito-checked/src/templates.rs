@@ -1240,8 +1240,9 @@ pub struct TemplateComprehensionBinding {
 /// deletability, which an instance judges again at its own types. The
 /// callable type keeps its capture environment's places unbound, their
 /// origins beside it by template owner, as a retained struct type keeps its
-/// origin slots. The parameters are locals of the body, declared at the
-/// statement after the name, which the instance mints in the same order.
+/// origin slots. The parameters, an `out` one among them, are locals of the
+/// body, declared at the statement after the name, which the instance mints
+/// in the same order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateNestedDef {
     pub name: String,

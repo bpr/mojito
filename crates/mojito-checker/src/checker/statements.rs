@@ -2724,10 +2724,19 @@ impl Checker {
                     allowed.extend(enclosing.iter().copied());
                 }
                 self.aggregate_escape_contexts.push((base, allowed));
+                // A nested `def`'s bindings, its `out` result among them, in
+                // declaration order.
                 if !module_level && !lambda {
+                    let declared = regular
+                        .iter()
+                        .map(|param| {
+                            self.lookup_owner(&param.name)
+                                .expect("bound function parameter")
+                        })
+                        .collect();
                     self.nested_def_params
                         .borrow_mut()
-                        .insert(stmt.source_span(), owners.clone());
+                        .insert(stmt.source_span(), declared);
                 }
                 self.transfer_frames.borrow_mut().push(TransferFrame {
                     callable: name.clone(),

@@ -4287,19 +4287,40 @@ fn template_nested_def_conventions_derive() {
 }
 
 #[test]
-fn template_nested_def_whole_value_default_keeps_the_clone_check() {
-    // A default that is no closed scalar is no form `BodyShape::nested_def`
-    // names, so the body stays outside the class and still runs.
-    let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = \"-\") -> String:\n            return String(x) + sep\n\n        return join(k)\n\n\ndef main():\n    print(Shelf[Int](1).joined(3))\n";
+fn template_nested_def_defaults_derive() {
+    // A nested `def` with a literal whole-value default, a typed `raises`,
+    // or an `out` parameter keeps its declaration's facts in the recipe.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_nested_def_defaults.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "-+ -+\n6 8\n-3 2\n4 5\n5 6\n1 1\n",
+        &[
+            ("Shelf.joined", 2),
+            ("Shelf.picked", 2),
+            ("Shelf.typed", 2),
+            ("Shelf.made", 2),
+            ("Shelf.leading", 2),
+            ("Shelf.fresh", 2),
+        ],
+    );
+}
+
+#[test]
+fn template_nested_def_constructed_default_keeps_the_clone_check() {
+    // A default that is neither a closed scalar nor a literal is no form
+    // `BodyShape::nested_def` names, so the body stays outside the class.
+    let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = String(\"-\")) -> String:\n            return sep\n\n        return join(k, \"+\")\n\n\ndef main():\n    print(Shelf[Int](1).joined(3))\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "3-\n");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "+\n");
     assert!(
         stats.refused.iter().any(|(name, reason)| {
             name.starts_with("Shelf.joined$") && reason == "its template is not certified"
         }),
-        "the whole-value default leaves the body outside the class: {:?}",
+        "the constructed default leaves the body outside the class: {:?}",
         stats.refused
     );
 }

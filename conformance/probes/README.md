@@ -79,6 +79,7 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `pack_mixed_spread.mojo` | `Tuple[Int, *Self.Ts]`: a spread beside a fixed argument. | reject |
 | `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
+| `constructed_default_argument.mojo` | Does a call leaving out a constructed default (`s: String = String("a")`) run? | **differs**: the pin prints `a`, Mojito checks it but its VM refuses the slot ("non-constant default") — `docs/roadmap.md` §3 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 

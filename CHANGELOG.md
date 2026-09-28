@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method declaring a nested `def` with a string-literal or `None`
+  default, a typed `raises`, or an `out` parameter (`def join(x: Int, sep:
+  String = "-")`, `def check(x: Int) raises Low`, `def make(x: Int, out r:
+  Int)`) now reuses the template's checked facts, and so does a call handing
+  such a `def` a literal
+  (`assets/ok/template_method_nested_def_defaults.mojo`). Such methods used
+  to be checked again per instance.
 - A trait requirement may now declare a literal default, and a call
   through the bound may leave it out; every witness must declare the same
   defaults, since current Mojo runs the requirement's there. Such a call,
