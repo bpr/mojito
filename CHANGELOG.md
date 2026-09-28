@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `def` declaring a literal parameter default
+  (`mode: Int = 0o777` in `os.mkdir` and `os.makedirs`,
+  `label: String = "tag"`, `note: Optional[Int] = None`) now reuses the
+  template's checked facts, whether a call leaves the default out or
+  supplies it (`assets/ok/template_def_defaulted_parameter.mojo`). Such
+  bodies used to be checked again per instance.
 - A generic `def` spelling a type alias in its body
   (`external_call["close", c_int](c_int(fd))`, `var status: c_int`) now
   reuses the template's checked facts: the alias's expansion takes the same

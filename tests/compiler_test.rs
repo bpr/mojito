@@ -3251,6 +3251,36 @@ fn template_def_type_alias_derives() {
 }
 
 #[test]
+fn template_def_defaulted_parameter_derives() {
+    // Literal defaults (`label: String = "tag"`, `offset: Int = -1`,
+    // `note: Optional[Int] = None`) are the callee's to evaluate, left out
+    // or supplied.
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(
+            &compiler,
+            include_str!("../assets/ok/template_def_defaulted_parameter.mojo"),
+        );
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for name in ["tagged$", "scaled$"] {
+            assert!(
+                served.iter().any(|served| served.starts_with(name)),
+                "{name} derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "1 tag 0.5 7 False\ntag\ns x 1.5 3 True\nx\n2\n3\n5\n"
+        );
+    }
+}
+
+#[test]
 fn template_method_explicit_destroy_call_derives() {
     // A consuming call on a `^` transfer: a named `deinit self` destructor on
     // a local or on a field of a consumed `self`, a `var self` method, and a

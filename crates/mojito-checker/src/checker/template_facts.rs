@@ -3898,11 +3898,14 @@ impl Checker {
         let plain_params = params.iter().all(|parameter| {
             (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
                 && (parameter.convention.is_none() || owned_param(parameter))
-                && parameter.default.is_none()
+                && parameter.default.as_ref().is_none_or(literal_default)
                 && parameter.origin.is_none()
         });
         if !plain_params {
-            return outside("a parameter is not an immutable, 'var', or 'mut' regular parameter");
+            return outside(
+                "a parameter is not an immutable, 'var', or 'mut' regular parameter with at most \
+                 a literal default",
+            );
         }
         let owned_params = params.iter().any(owned_param);
         let mut_params: Vec<&str> = params
@@ -7267,6 +7270,26 @@ fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String
     features.sort();
     features.dedup();
     features
+}
+
+/// Whether a parameter default is a literal, or a negated numeric one. The
+/// callee evaluates its own default at the parameter's type in the
+/// instance's signature, so it records nothing in the body and converts
+/// alike under every instance, as a method call's omitted argument does.
+fn literal_default(default: &Expr) -> bool {
+    match &default.kind {
+        ExprKind::Prefix(mojito_ast::ast::PrefixOp::Neg, operand) => {
+            matches!(operand.kind, ExprKind::Int(_) | ExprKind::Float(_))
+        }
+        kind => matches!(
+            kind,
+            ExprKind::Int(_)
+                | ExprKind::Float(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Str(_)
+                | ExprKind::None
+        ),
+    }
 }
 
 /// Whether a compile-time argument of a construction is a type: no origin
