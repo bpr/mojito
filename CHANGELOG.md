@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `def` call whose loan-carrying type argument names an enclosing
+  origin binder (`unsafe_alloc[Span[Int, o]](n)` inside `def slots[o:
+  MutOrigin]`, or inside a clone whose own binder stands for `o`) now
+  calls the same clone as a call over a caller place, supplying the binder
+  by name (`unspelled_loan_carrying_type_argument_clones`). It used to run
+  the erased body.
 - `Array`'s fill and default initializers, its comparison operators,
   `__contains__`, `unsafe_ptr`, and `write_repr_to` are now inferred once
   as templates and reused in every later checker pass, where each used to

@@ -1498,7 +1498,7 @@ impl Elab<'_> {
             return None;
         };
         let mut vals = Vec::new();
-        let mut origin_binders = CloneOriginBinders::default();
+        let mut origin_binders = CloneOriginBinders::over_enclosing();
         // The checker's origin tail has no elaborator slot: origins erase from
         // every clone.
         let mut cursor = arguments
@@ -1536,7 +1536,8 @@ impl Elab<'_> {
                     // (`_ListIter[Int]`) keeps the abstract path. The call
                     // infers the binders from its arguments, or supplies
                     // them explicitly where no runtime parameter spells the
-                    // type parameter (`request_kept_param_args`).
+                    // type parameter (`request_kept_param_args`), a slot
+                    // bound to an enclosing origin parameter by its name.
                     if self.ty_mentions_origin_slotted_struct(ty) {
                         let (bound, _) = self.clone_binding(ty, &mut origin_binders)?;
                         CtValue::Type(Box::new(bound))
@@ -1800,14 +1801,7 @@ impl Elab<'_> {
             if let mojito_types::origin::PointerOrigin::Param { id, .. } = origin
                 && CloneOriginBinders::name(*id).is_some()
             {
-                let expression = match origin_source {
-                    ParamArg::Value(expression) => expression.clone(),
-                    ParamArg::Type(Type::Named(name, arguments)) if arguments.is_empty() => {
-                        Expr::new(ExprKind::Identifier(name.clone()), (0, 0))
-                    }
-                    _ => return None,
-                };
-                out.push((u32::MAX - id.0, expression));
+                out.push((u32::MAX - id.0, origin_argument_expression(origin_source)?));
             }
             return Some(());
         }
@@ -1843,10 +1837,7 @@ impl Elab<'_> {
                 if let mojito_types::origin::Origin::Param(id) = origin
                     && CloneOriginBinders::name(*id).is_some()
                 {
-                    let Some(ParamArg::Value(expression)) = spelled else {
-                        return None;
-                    };
-                    out.push((u32::MAX - id.0, expression.clone()));
+                    out.push((u32::MAX - id.0, origin_argument_expression(spelled?)?));
                 }
             } else if !parameter.is_origin_mutability_binder(declared)
                 && let Some(TyArg::Ty(inner)) = others.next()
@@ -2287,5 +2278,18 @@ fn expr_mentions_any(expression: &Expr, names: &[String]) -> bool {
                     .any(|argument| param_arg_mentions_any(argument, names))
         }
         _ => false,
+    }
+}
+
+/// The origin an application spells in an origin slot, as the expression an
+/// explicit clone binder is supplied with: a value (`origin_of(xs)`, `o`) or
+/// a bare name the parser read as a type (`__clone_origin0` in a clone body).
+fn origin_argument_expression(spelled: &ParamArg) -> Option<Expr> {
+    match spelled {
+        ParamArg::Value(expression) => Some(expression.clone()),
+        ParamArg::Type(Type::Named(name, arguments)) if arguments.is_empty() => {
+            Some(Expr::new(ExprKind::Identifier(name.clone()), (0, 0)))
+        }
+        _ => None,
     }
 }

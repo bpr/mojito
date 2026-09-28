@@ -1221,13 +1221,29 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
 /// unless the slot fixes its mutability. A binder's `OriginParamId` counts
 /// down from `u32::MAX`, far above any checker slot index, and spells as its
 /// own name wherever the bound type is spelled (`source_type_from_ty`).
+///
+/// A slot already bound to an enclosing declaration's origin parameter
+/// rebinds too only for a binder set built by
+/// [`CloneOriginBinders::over_enclosing`]: a `def` call supplies such a
+/// binder explicitly, spelled as the enclosing parameter's name.
 #[derive(Clone, Default)]
 pub(super) struct CloneOriginBinders {
     count: u32,
     params: Vec<TypeParam>,
+    enclosing: bool,
 }
 
 impl CloneOriginBinders {
+    /// Binders that also stand for a slot bound to an enclosing
+    /// declaration's origin parameter (`Span[Int, o]` inside `def
+    /// slots[o: MutOrigin]`).
+    pub(super) fn over_enclosing() -> Self {
+        Self {
+            enclosing: true,
+            ..Self::default()
+        }
+    }
+
     /// The declared binders, in the order a clone lists them first.
     pub(super) fn params(&self) -> &[TypeParam] {
         &self.params
@@ -1865,7 +1881,7 @@ impl Elab<'_> {
                     if elements.iter().any(|element| matches!(element,
                         CtValue::Type(inner) if self.ty_mentions_origin_slotted_struct(inner)))))
                 .then(|| argument.clone()),
-                TyArg::Origin(mojito_types::origin::Origin::Param(_)) => None,
+                TyArg::Origin(mojito_types::origin::Origin::Param(_)) if !binders.enclosing => None,
                 TyArg::Origin(_) => {
                     let slot = slots.next()?;
                     (slot.bounds == ["Origin"])
@@ -3231,9 +3247,10 @@ impl<'a> Elab<'a> {
     /// receiver origin (`l.__iter__()` recorded as `_ListIter[T,
     /// origin_of(self)]`) names some caller place, so it binds as one.
     /// `None` keeps the erased path: a struct applied without its tail
-    /// (`_ListIter[Int]`), an `OriginSet` slot, or a slot already bound to an
-    /// enclosing declaration's origin parameter has no binder to stand for
-    /// it.
+    /// (`_ListIter[Int]`) or an `OriginSet` slot has no binder to stand for
+    /// it, nor has a slot already bound to an enclosing declaration's origin
+    /// parameter unless `binders` admits one
+    /// ([`CloneOriginBinders::over_enclosing`]).
     pub(super) fn clone_binding(
         &self,
         ty: &Ty,

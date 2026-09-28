@@ -4357,7 +4357,9 @@ fn unspelled_loan_carrying_type_argument_clones() {
     // A loan-carrying type argument no runtime parameter spells
     // (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n)`) is
     // cloned with explicit origin binders, which each call supplies from its
-    // own application.
+    // own application. Over an enclosing origin binder (`Span[Int, o]` in
+    // `def slots[o: MutOrigin]`, or the clone binder `make`'s clone spells
+    // for its `T`), the call supplies that binder by name.
     let compiler = Compiler::default();
     let compiled = compile_entry(
         &compiler,
@@ -4382,6 +4384,13 @@ fn unspelled_loan_carrying_type_argument_clones() {
     ] {
         assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
     }
+    let mir = compiled.emit_mir().expect("emit MIR");
+    assert_eq!(
+        mir.matches(r#"func: "__module$std$memory$alloc$unsafe_alloc$y9:Span[Int]""#)
+            .count(),
+        3,
+        "`main`, `slots`, and `make`'s clone each call the clone"
+    );
 }
 
 #[test]
