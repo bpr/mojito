@@ -146,6 +146,45 @@ fn method_and_constructor_overloads_get_qualified_names() {
 }
 
 #[test]
+fn overloaded_trait_requirements_get_qualified_names() {
+    // Each overloaded requirement owns its binders under its qualified name,
+    // so two `pick[T]` requirements bind distinct `T`s.
+    use mojito::ast::StmtKind;
+    use mojito::symbol::{OverloadSets, lowered_method_name};
+    let program = parse(
+        "trait Picker:\n\
+         \x20   def pick[T: Copyable](self, a: T) -> T: ...\n\
+         \x20   def pick[T: Copyable](self, a: T, b: T) -> T: ...\n\
+         \x20   def size(self) -> Int: ...\n",
+    )
+    .expect("parse error");
+    let sets = OverloadSets::scan(&program);
+    let owners: Vec<_> = program
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            StmtKind::Trait { methods, .. } => Some(methods),
+            _ => None,
+        })
+        .flatten()
+        .map(|m| {
+            lowered_method_name(
+                &format!("Picker.{}", m.name),
+                &[],
+                &m.params,
+                m.keyword_only,
+                true,
+                m.self_convention,
+                &sets,
+            )
+        })
+        .collect();
+    assert_eq!(
+        owners,
+        ["Picker.pick$ov$T", "Picker.pick$ov$T$T", "Picker.size"],
+    );
+}
+
+#[test]
 fn mojo_copy_constructor_counts_as_copyinit_not_an_init_overload() {
     // One ordinary `__init__` plus the `out self, *, copy: Self` form: the copy
     // constructor is modeled as `__copyinit__`, so neither is overloaded.

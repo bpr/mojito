@@ -138,7 +138,18 @@ impl Checker {
                         "positional-only/keyword-only markers on trait methods".to_string(),
                     ));
                 }
-                let owner = format!("{}.{}", binder_owner(name), binder_owner(&m.name));
+                // An overloaded requirement owns its binders under the
+                // symbol its signature qualifies it to, so two overloads
+                // whose slots agree still bind distinct parameters.
+                let owner = mojito_symbol::symbol::lowered_method_name(
+                    &format!("{}.{}", binder_owner(name), binder_owner(&m.name)),
+                    &[],
+                    &m.params,
+                    m.keyword_only,
+                    true,
+                    m.self_convention,
+                    &self.overload_sets,
+                );
                 let mut decls = self.classify_params(&owner, &m.type_params)?;
                 for condition in &m.where_clauses {
                     let constraint = self

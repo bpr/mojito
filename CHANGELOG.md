@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Two overloaded trait requirements whose parameter slots agree
+  (`def pick[T](self, a: T)` beside `def pick[T](self, a: T, b: T)`) no
+  longer give their binders one identity. Each is owned by the
+  signature-qualified symbol its requirement lowers to, as an overloaded
+  struct method's already was, and trait requirements now count in the
+  program's overload sets.
 - A method reading a value through a module `def`'s reference result
   (`var r = pick(a, b, first)` then `self.value = r^`, or
   `pick(a, b, first).copy()`, with `pick` returning

@@ -772,6 +772,10 @@ pub fn is_index_normalization_symbol(symbol: &str) -> bool {
 /// free-function names and `Type.method` names have more than one definition
 /// (and at which arities).
 ///
+/// A trait's requirements count under `Trait.method`, so an overloaded
+/// requirement owns its binders under the symbol [`lowered_method_name`]
+/// qualifies it to.
+///
 /// Definitions of non-overloaded names keep their plain source name, so
 /// lowering consults this before qualifying anything. The scan also keeps the
 /// parameter names of each synthesized `@fieldwise_init` constructor.
@@ -820,6 +824,16 @@ impl OverloadSets {
                         let method_name = lifecycle_method_name(method);
                         methods
                             .entry(format!("{name}.{method_name}"))
+                            .or_default()
+                            .push(method.params.len());
+                    }
+                }
+                StmtKind::Trait {
+                    name, methods: ms, ..
+                } => {
+                    for method in ms {
+                        methods
+                            .entry(format!("{name}.{}", method.name))
                             .or_default()
                             .push(method.params.len());
                     }
