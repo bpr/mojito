@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A member of a `DType`-keyed struct calling `__ceil__`, `__floor__`,
+  `__trunc__`, or `__fma__` on values of its symbolic lane, including the
+  bundled float range's initializer and `__next__`, now reuses the
+  template's checked facts at every float lane (`float_lane_methods_derive`).
+  A `Scalar[Self.dtype](x)` construction in such a member, and
+  `AHasher[key]`'s initializer, derive again: since the elaborator began
+  naming a spelled type's expansion by derived identities, their instances
+  had been checked again as if unrelated to the template.
 - `TString.write_to`, which binds each element with `ref element =
   self.storage[i]` inside a `comptime for`, now reuses the template's
   checked facts for every t-string specialization, including one nested in

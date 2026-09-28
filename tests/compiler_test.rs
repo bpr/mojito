@@ -1813,6 +1813,44 @@ fn template_struct_lane_members_derive() {
 }
 
 #[test]
+fn float_lane_methods_derive() {
+    // `__ceil__` and `__fma__` on values of a struct's symbolic lane — the
+    // bundled float range's and a user struct's — derive at a sized float
+    // lane and at the native `Float64`, whose `__fma__` borrows its place
+    // arguments.
+    let source = "struct R[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var start: Scalar[Self.dtype]\n    var step: Scalar[Self.dtype]\n\n    def __init__(out self, start: Scalar[Self.dtype], step: Scalar[Self.dtype]):\n        self.start = start\n        self.step = step\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step, self.start)\n\n    def up(self) -> Scalar[Self.dtype]:\n        return (self.start / self.step).__ceil__()\n\ndef main():\n    var a = R[DType.float32](1.5, 2.0)\n    var b = R[DType.float64](1.5, 2.0)\n    print(a.at(2), a.up(), b.at(2), b.up())\n    for x in range(Float64(0.5), Float64(1.5), Float64(0.5)):\n        print(x)\n    for y in range(Float32(1.0), Float32(0.0), Float32(-0.5)):\n        print(y)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "5.5 1.0 5.5 1.0\n0.5\n1.0\n1.0\n0.5\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let members = [
+        "R$dfloat32;.at",
+        "R$dfloat32;.up",
+        "R$dfloat64;.at",
+        "R$dfloat64;.up",
+    ]
+    .map(str::to_string)
+    .into_iter()
+    .chain(["dfloat32", "dfloat64"].into_iter().flat_map(|lane| {
+        ["__init__", "__next__"]
+            .map(|member| format!("__module$std$range$_FloatStridedRange${lane};.{member}"))
+    }));
+    for name in members {
+        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+        assert!(
+            !stats.inferred_clones.contains(&name),
+            "{name} is never inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn spread_pack_initializer_derives() {
     // `self.storage = Tuple(*args^)` in a variadic struct's initializer, a
     // user struct's and the bundled `TString`'s (named by its public

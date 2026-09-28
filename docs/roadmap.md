@@ -88,22 +88,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A float range's initializer and `__next__` keep the clone
-  check**
-
-  Problem: `_FloatStridedRange.__init__` and `__next__` call `__ceil__` and
-  `__fma__` on values of the symbolic lane, which the method grammar does
-  not admit, so every float range specialization infers them again.
-  - The other members of the `DType`-keyed ranges derive.
-  - At `DType.float64` the lane is the native `Float64`, whose `__fma__`
-    resolves as a method call with its own call facts; at a sized float
-    it is a SIMD intrinsic that records nothing.
-  - A recipe must realize the instance's resolution per lane kind, as
-    `realize_lane_literals` does for a literal beside a lane value.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.5 A comparison between values of a symbolic lane keeps the clone
+- [ ] **1.4 A comparison between values of a symbolic lane keeps the clone
   check**
 
   Problem: `self.pos < Scalar[Self.dtype](limit)` in a member of a
@@ -118,7 +103,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 `Array`'s pointer-writing and comparing members keep the
+- [ ] **1.5 `Array`'s pointer-writing and comparing members keep the
   clone check**
 
   Problem: `Array`'s fill and default initializers, comparisons,
@@ -136,7 +121,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A loan-carrying type argument over an enclosing origin binder
+- [ ] **1.6 A loan-carrying type argument over an enclosing origin binder
   keeps the erased body**
 
   Problem: `unsafe_alloc[Span[Int, o]](n)` inside `def slots[o: MutOrigin]`,
@@ -148,7 +133,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A `Pointer` type argument over an interior-projected place is
+- [ ] **1.7 A `Pointer` type argument over an interior-projected place is
   baked into its clone with its place**
 
   Problem: a type argument such as `Pointer[Int, origin]` whose origin ends
@@ -162,7 +147,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A parameter expression cannot be rebuilt unfolded through the
+- [ ] **1.8 A parameter expression cannot be rebuilt unfolded through the
   front end's public constructors**
 
   Problem: `ParamContext::op` folds the closed atom `8 // 2` to `4` and
@@ -177,7 +162,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 Specialized MIR does not run on the VM as the original does**
+- [ ] **1.9 Specialized MIR does not run on the VM as the original does**
 
   Problem: for three compile benchmarks the program that native
   monomorphization produces fails on the VM, where the unspecialized program
@@ -192,7 +177,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.10 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that
@@ -210,7 +195,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on 3.54: an `Int` element constructs as `Int()`.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.11 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -227,7 +212,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A nested `def` with a constructed default keeps the clone
+- [ ] **1.12 A nested `def` with a constructed default keeps the clone
   check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar,
@@ -247,7 +232,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
     it.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 An explicitly applied or overloaded generic static with
+- [ ] **1.13 An explicitly applied or overloaded generic static with
   binders of its own keeps the clone check**
 
   Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
@@ -265,7 +250,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 A field read of a sibling call's result keeps the clone
+- [ ] **1.14 A field read of a sibling call's result keeps the clone
   check**
 
   Problem: `return self.bumped().count`, a field of a sibling method's
@@ -278,7 +263,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 A nested t-string's `write_to` is checked again in an early
+- [ ] **1.15 A nested t-string's `write_to` is checked again in an early
   discovery round**
 
   Problem: before the outer t-string's storage `Tuple` is declared, the
@@ -288,6 +273,20 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - A plain `Tuple` element read refuses the same way before its `Tuple`
     is declared (`realize_tuple_elements`).
   - Found with `assets/ok/tstring_forms.mojo` (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.16 A float lane's `__fma__` over a temporary argument keeps the
+  clone check**
+
+  Problem: `BodyShape::lane_float_method` admits `k.__fma__(a, b)` on
+  values of a symbolic lane only when each argument is a named place.
+  - At the native `Float64` the call resolves as that scalar's method,
+    which borrows a place argument but records a read temporary for any
+    other.
+  - `realize_lane_float_methods` realizes only the borrows.
+  - Found while the float range's members joined the grammar (2026-09-28);
+    no bundled body passes a temporary.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -308,7 +307,7 @@ Pliron experiment rather than move the check order sit last, 1.17 to 1.20.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry, 1.10, 1.11, and 1.18 to 1.20 are the ones in this section
+  - This entry, 1.9, 1.10, and 1.18 to 1.20 are the ones in this section
     that do not move the check order. They shadow MIR below
     `CheckedProgram`.
   - Depends on nothing.

@@ -1994,6 +1994,7 @@ impl Checker {
         spread_packs(&mut facts, occurrences)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
+        realize_lane_float_methods(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
         let pack_accessors = self.realize_pack_accessors(&mut facts, occurrences)?;
         // A per-call request the template recorded names the caller's own
@@ -5352,14 +5353,15 @@ impl Checker {
                 {
                     self.constant_objects.insert(object.syntax_id);
                     // The constant the elaborator writes for a type-position
-                    // binder (`Scalar[Self.dtype]`) takes a fresh identity:
-                    // the template spelled a type there, not an occurrence.
-                    // A value-position binder (`Scalar[dt]`) folds under the
+                    // binder (`Scalar[Self.dtype]`) takes a fresh identity,
+                    // or one derived from the spelling call: the template
+                    // spelled a type there, not an occurrence. A
+                    // value-position binder (`Scalar[dt]`) folds under the
                     // name's identity, which the template checked: matched
                     // against that template, the constant stands for the
                     // name's occurrence ([`VectorFold::Constant`]).
                     let origin = self.origins.origin(expr.syntax_id);
-                    if origin.is_fresh() {
+                    if origin.is_fresh() || origin.derivation().is_some() {
                         if self
                             .template
                             .is_some_and(|template| template.iter().any(|id| id.syntax == origin))
@@ -8912,6 +8914,51 @@ fn realize_simd_intrinsics(
     Ok(())
 }
 
+/// [`BodyShape::lane_float_method`]'s calls, realized at the instance's
+/// lane: a sized float lane records what the template recorded, and the
+/// native `Float64` resolves the call as its own method, which borrows each
+/// place argument. Any other lane refuses, for the clone check to report.
+fn realize_lane_float_methods(
+    template: &CheckedBodyFacts,
+    facts: &mut CheckedBodyFacts,
+    occurrences: &[Occurrence],
+) -> Result<(), &'static str> {
+    let mut borrowed = Vec::new();
+    for occurrence in occurrences {
+        let lane_method = occurrence.method_call.as_ref().is_some_and(|(_, method)| {
+            matches!(
+                method.as_str(),
+                "__floor__" | "__ceil__" | "__trunc__" | "__fma__"
+            )
+        });
+        let open = fact_at(&template.expression_types, occurrence.id).is_some_and(|ty| {
+            matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
+        });
+        if !lane_method || !open {
+            continue;
+        }
+        match fact_at(&facts.expression_types, occurrence.id) {
+            Some(Ty::Float64) => {
+                borrowed.extend(occurrence.arguments.iter().map(|syntax| OccurrenceId {
+                    syntax: *syntax,
+                    copy: occurrence.id.copy,
+                }));
+            }
+            Some(ty)
+                if mojito_types::types::simd_shape(ty)
+                    .is_some_and(|(dtype, width)| dtype.is_float() && width == 1) => {}
+            _ => return Err("a float lane method's instance lane is not a float scalar"),
+        }
+    }
+    borrowed.retain(|id| !facts.borrowed_read_call_places.contains(id));
+    if !borrowed.is_empty() {
+        facts.borrowed_read_call_places.extend(borrowed);
+        let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+        facts.borrowed_read_call_places.sort_by_key(order);
+    }
+    Ok(())
+}
+
 /// The hidden dtype and width values a clone folds where its template
 /// viewed the wildcard vector binder `decl` as a lane-shaped vector
 /// (`simd_binder_view`): the slots of the closed vector type `ty` the clone
@@ -12446,6 +12493,7 @@ impl BodyShape<'_> {
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)
                     || self.simd_intrinsic(expr)
+                    || self.lane_float_method(expr, object, method, args, kwargs)
             }
             ExprKind::Invoke {
                 callee,
@@ -12821,6 +12869,69 @@ impl BodyShape<'_> {
     /// the receiver's lane width, and a lane count is an `Int`.
     fn simd_intrinsic(&self, expr: &Expr) -> bool {
         self.lane_read(expr, false)
+    }
+
+    /// A float lane's rounding dunder or fused multiply-add on a value of a
+    /// value-shaped scalar (`raw.__ceil__()`, `k.__fma__(step, start)` over
+    /// `Scalar[Self.dtype]`), each argument a value of the receiver's type.
+    ///
+    /// Over the open lane it is a SIMD intrinsic that records only its
+    /// result, the receiver's type. An instance whose lane folds to a sized
+    /// float records the same, but one folding to the native `Float64`
+    /// resolves it as that scalar's method, whose argument conventions each
+    /// instance records itself (`realize_lane_float_methods`).
+    fn lane_float_method(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> bool {
+        let arity = match method {
+            "__floor__" | "__ceil__" | "__trunc__" => 0,
+            "__fma__" => 2,
+            _ => return false,
+        };
+        // Each argument is a place, which the native `Float64`'s method
+        // borrows where an instance resolves to it.
+        let place = |argument: &Expr| match &argument.kind {
+            ExprKind::Identifier(name) => {
+                self.params.contains(&name.as_str()) || self.declared(name)
+            }
+            ExprKind::Member { .. } => self.receiver_field(argument),
+            _ => false,
+        };
+        let id = self.occurrence(expr);
+        let admitted = args.len() == arity
+            && args.iter().all(place)
+            && kwargs.is_empty()
+            && std::iter::once(object)
+                .chain(args)
+                .all(|operand| self.expression(operand) && self.value_shaped(operand))
+            && self.facts.is_none_or(|facts| {
+                let lane = fact_at(&facts.expression_types, id);
+                lane.is_some_and(|ty| {
+                    self.value_shaped_scalar(ty)
+                        && matches!(
+                            ty,
+                            Ty::Simd {
+                                width: mojito_types::types::SimdWidth::Known(1),
+                                ..
+                            }
+                        )
+                }) && std::iter::once(object).chain(args).all(|operand| {
+                    fact_at(&facts.expression_types, self.occurrence(operand)) == lane
+                }) && fact_at(&facts.call_parameters, id).is_none()
+                    && fact_at(&facts.selected_calls, id).is_none()
+                    && fact_at(&facts.overload_targets, id).is_none()
+                    && fact_at(&facts.generic_instantiations, id).is_none()
+                    && fact_at(&facts.conversions, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none()
+                    && fact_at(&facts.parameterized_method_calls, id).is_none()
+                    && fact_at(&facts.method_instantiations, id).is_none()
+            });
+        admitted && self.holds(MethodFeatures::SIMD_INTRINSICS)
     }
 
     /// [`Self::simd_intrinsic`], where a `cast_source` lane read is the

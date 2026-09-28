@@ -368,7 +368,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lane-count shapes. `BodyShape::struct_lane_simd` admits a `DType`-keyed
   struct's symbolic lane (`Scalar[Self.dtype]`) as a scalar, and
   `realize_lane_literals` materializes a literal beside such a lane where an
-  instance folds it to `Int` or `Float64`. `BodyShape::struct_vector` admits a
+  instance folds it to `Int` or `Float64`. `BodyShape::lane_float_method`
+  admits a float lane's rounding dunder or `__fma__` on such values, and
+  `realize_lane_float_methods` records the borrows the native `Float64`'s
+  method takes. `BodyShape::struct_vector` admits a
   closed vector binder read as `Self.key`, whose clone construction
   `fold_vector_values` tells from the template's syntax and
   `construct_folded_vectors` records; `operators.rs:vector_alias` types a
