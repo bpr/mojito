@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic struct's index-keyed method under a name other than
+  `__getitem__` (`def item[i: Int](self) -> Self.Ts[i]`) now runs as the pin
+  does: `b.item[1]()` prints the element instead of stopping with "type
+  'Bag$t2[…]' has no associated type 'element_types'"
+  (`assets/ok/pack_index_named_method.mojo`).
 - A generic struct's static with a binder of its own, called from a
   generic method on the bare struct name (`Pair.both(7, self.item)`) beside
   a spelled call (`Pair[Self.T].both(1, self.item)`), now infers `Pair`'s

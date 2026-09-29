@@ -1754,20 +1754,29 @@ impl Elab<'_> {
         for method in methods {
             let template_body = traced_template_body(method);
             let mut method = method.clone();
-            // An Int-indexed accessor unrolls per element below; a
-            // type-keyed one (`__getitem_param__[T: AnyType]`) is an ordinary
-            // generic method specialized per call like any other.
-            let dependent_index_accessor =
-                matches!(method.name.as_str(), "__getitem__" | "__getitem_param__")
-                    && !method.type_params.is_empty()
-                    && matches!(
-                        classify_ct_params(
-                            &method.type_params,
-                            &self.method_binder_owners.owner(orig, &method),
-                        )
-                        .as_slice(),
-                        [ParamDecl::Value { .. }]
-                    );
+            // An Int-indexed accessor unrolls per element below, as does any
+            // other method whose one Int binder selects its `Ts[i]` result
+            // (`def item[i: Int](self) -> Self.Ts[i]`); a type-keyed one
+            // (`__getitem_param__[T: AnyType]`) is an ordinary generic method
+            // specialized per call like any other.
+            let dependent_index_accessor = match classify_ct_params(
+                &method.type_params,
+                &self.method_binder_owners.owner(orig, &method),
+            )
+            .as_slice()
+            {
+                [ParamDecl::Value { name, ty, .. }] => {
+                    matches!(method.name.as_str(), "__getitem__" | "__getitem_param__")
+                        || (**ty == Ty::Int
+                            && method.has_self
+                            && method.params.is_empty()
+                            && method
+                                .ret
+                                .as_ref()
+                                .is_some_and(|ret| indexes_pack_by(ret, &binding, name)))
+                }
+                _ => false,
+            };
             let mut env = self.top_consts.borrow().clone();
             env.insert(binding.clone(), CtValue::Tuple(types.clone()));
             let mut subs = self.top_consts.borrow().clone();
@@ -3671,6 +3680,29 @@ enum FirstCopy {
 /// template, when a specialization of the whole struct traces the member it
 /// becomes: a synthesized body (no source provenance) and an empty one have
 /// no template.
+/// Whether a result annotation selects an element of the struct's pack
+/// `binding` by the method binder `index` (`Ts[i]`, `Self.Ts[i]`, or either
+/// under `ref`).
+fn indexes_pack_by(ty: &Type, binding: &str, index: &str) -> bool {
+    let by_index =
+        |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if name == index);
+    match ty {
+        Type::Named(name, arguments) => {
+            (name.trim_start_matches('*') == binding
+                && matches!(arguments.as_slice(), [ParamArg::Value(expression)] if by_index(expression)))
+                || arguments.iter().any(|argument| {
+                    matches!(argument, ParamArg::Type(inner) if indexes_pack_by(inner, binding, index))
+                })
+        }
+        Type::IndexedProjection { base, index: expression } => {
+            matches!(base.as_ref(), Type::SelfParam(name) if name.trim_start_matches('*') == binding)
+                && by_index(expression)
+        }
+        Type::Ref { referent, .. } => indexes_pack_by(referent, binding, index),
+        _ => false,
+    }
+}
+
 fn traced_template_body(method: &Method) -> Option<Span> {
     method
         .body

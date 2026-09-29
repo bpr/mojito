@@ -9,8 +9,10 @@ impl Checker {
     /// The unrolled accessor an explicit `p.__getitem__[k]()` /
     /// `p.__getitem_param__[k]()` on a specialized variadic struct selects:
     /// the per-index place accessor, or its value twin for an rvalue
-    /// receiver, exactly as the subscript sugar `p[k]` resolves. `None` when
-    /// the call is not that spelling.
+    /// receiver, exactly as the subscript sugar `p[k]` resolves. Any other
+    /// index-keyed method the specializer unrolled (`p.item[k]()` over
+    /// `def item[i: Int](self) -> Self.Ts[i]`) selects its `item$k`. `None`
+    /// when the call is not that spelling.
     pub(super) fn dependent_index_accessor_method(
         &self,
         object: &Expr,
@@ -19,20 +21,32 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Option<String>, TypeError> {
-        if !matches!(field, "__getitem__" | "__getitem_param__")
-            || !args.is_empty()
-            || !kwargs.is_empty()
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Ok(None);
+        }
+        let accessor_spelling = matches!(field, "__getitem__" | "__getitem_param__");
+        let unrolled = format!("{field}$0");
+        if !accessor_spelling
+            && !self.structs.values().any(|info| {
+                info.methods.contains_key(&unrolled) && !info.methods.contains_key(field)
+            })
         {
             return Ok(None);
         }
         let Ty::Struct(name, _) = self.infer(object)? else {
             return Ok(None);
         };
-        let Some(family) = self
-            .structs
-            .get(&name)
-            .and_then(dependent_index_accessor_family)
-        else {
+        let Some(info) = self.structs.get(&name) else {
+            return Ok(None);
+        };
+        let (place, value) = if accessor_spelling {
+            let Some(family) = dependent_index_accessor_family(info) else {
+                return Ok(None);
+            };
+            (family.place, family.value)
+        } else if !info.methods.contains_key(field) && info.methods.contains_key(&unrolled) {
+            (field, field)
+        } else {
             return Ok(None);
         };
         let [mojito_ast::ast::ParamArg::Value(index)] = param_args else {
@@ -42,7 +56,11 @@ impl Checker {
                 got: param_args.len(),
             });
         };
-        let context = format!("variadic struct '{name}' subscript");
+        let context = if accessor_spelling {
+            format!("variadic struct '{name}' subscript")
+        } else {
+            format!("variadic struct '{name}' method '{field}' index")
+        };
         let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
             expected: "a compile-time Int index".to_string(),
             found: "a runtime value".to_string(),
@@ -52,9 +70,10 @@ impl Checker {
             .to_i64()
             .filter(|k| {
                 *k >= 0
-                    && self.structs.get(&name).is_some_and(|info| {
-                        info.methods.contains_key(&format!("{}${k}", family.place))
-                    })
+                    && self
+                        .structs
+                        .get(&name)
+                        .is_some_and(|info| info.methods.contains_key(&format!("{place}${k}")))
             })
             .ok_or_else(|| TypeError::TypeMismatch {
                 expected: "a pack index within the element count".to_string(),
@@ -62,9 +81,9 @@ impl Checker {
                 context,
             })?;
         let accessor = if is_place_expr(object) {
-            format!("{}${k}", family.place)
+            format!("{place}${k}")
         } else {
-            format!("{}${k}", family.value)
+            format!("{value}${k}")
         };
         Ok(Some(accessor))
     }
