@@ -634,6 +634,13 @@ impl Elab<'_> {
             if self.pending_struct_instances.borrow().contains_key(name) {
                 return Ok(Ty::Struct(name.to_string(), Vec::new()));
             }
+            // A nested t-string's specialization, minted beside the one
+            // whose storage names it (`tstring_storage_elements`).
+            if mojito_symbol::symbol::specialization_template(name)
+                == Some(mojito_types::types::TSTRING_TYPE_NAME)
+            {
+                return Ok(Ty::Struct(name.to_string(), Vec::new()));
+            }
         }
         // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value).
         if name == "SIMD"

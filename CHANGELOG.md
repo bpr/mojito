@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A t-string nested in another (`t"outer={t"inner={x}"}"`) is now stored
+  as its own specialization, so the outer t-string's storage `Tuple` is
+  declared in the same discovery round and its `write_to` derives there
+  (`assets/ok/tstring_forms.mojo`). That early round used to check the
+  outer `write_to` again.
 - A generic struct's method reading a scalar field off a sibling call's
   whole-value result (`return self.bumped().count`) now reuses its
   template's checked facts

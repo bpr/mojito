@@ -1999,24 +1999,18 @@ fn tstring_write_to_derives() {
     // `TString.write_to` binds each element with a `ref` local over its
     // `Tuple` storage inside a `comptime for` and writes it: every
     // t-string specialization's unrolled body derives, each copy's local
-    // typed at its own element. A t-string nested in another is named by
-    // its specialization's symbol; the discovery round before its outer
-    // storage Tuple is declared still checks the outer `write_to` again.
-    for (source, expected, nested) in [
-        (
-            include_str!("../assets/ok/tstring_lazy.mojo"),
-            "x=1\n2\n",
-            false,
-        ),
+    // typed at its own element. A t-string nested in another is stored as
+    // its own specialization, so the outer storage Tuple is declared the
+    // round the outer specialization is, and no round checks a member again.
+    for (source, expected) in [
+        (include_str!("../assets/ok/tstring_lazy.mojo"), "x=1\n2\n"),
         (
             include_str!("../assets/ok/tstring_generic_interpolation.mojo"),
             "big=50 small=1\n",
-            false,
         ),
         (
             include_str!("../assets/ok/tstring_forms.mojo"),
             "answer: 7!\nraw \\n 7\n\nv=7 3\nouter=inner=1|\nwrapped:kept=7;\npoint=Point(2, 5), sum=7\n",
-            true,
         ),
     ] {
         let compiler = Compiler::default();
@@ -2030,11 +2024,6 @@ fn tstring_write_to_derives() {
             name.starts_with("TString$")
                 && (name.ends_with(".write_to") || name.ends_with(".__init__"))
         };
-        let inferred: Vec<&String> = stats
-            .inferred_clones
-            .iter()
-            .filter(|name| member(name))
-            .collect();
         assert!(
             stats
                 .derived
@@ -2043,15 +2032,15 @@ fn tstring_write_to_derives() {
             "TString.write_to derives; refused: {:?}",
             stats.refused
         );
+        let inferred: Vec<&String> = stats
+            .inferred_clones
+            .iter()
+            .filter(|name| member(name))
+            .collect();
         assert!(
-            inferred.iter().all(|name| stats.derived.contains(name)),
-            "every TString member derives; refused: {:?}",
-            stats.refused
-        );
-        assert_eq!(
             inferred.is_empty(),
-            !nested,
-            "only a nested t-string's early round is inferred: {inferred:?}"
+            "no round checks a TString member again: {inferred:?}; refused: {:?}",
+            stats.refused
         );
     }
 }

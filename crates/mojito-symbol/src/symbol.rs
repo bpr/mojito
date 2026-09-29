@@ -2044,16 +2044,23 @@ pub fn tstring_specialization_symbol(elements: &[Ty]) -> String {
 /// The storage pack of a `TString` specialization of the public `elements`.
 ///
 /// A concrete `TString` owns every textual snapshot it stores, so a
-/// `StringLiteral` segment is stored as the nominal owning `String`.
+/// `StringLiteral` segment is stored as the nominal owning `String`. A nested
+/// t-string is stored as its own specialization, so the storage `Tuple` is
+/// closed the round the enclosing specialization is minted.
 pub fn tstring_storage_elements(elements: &[Ty]) -> Vec<Ty> {
     elements
         .iter()
-        .map(|element| {
-            if matches!(element, Ty::StringLiteral) {
-                Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new())
-            } else {
-                element.clone()
+        .map(|element| match element {
+            Ty::StringLiteral => Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()),
+            Ty::Struct(name, _) if name == mojito_types::types::TSTRING_TYPE_NAME => {
+                let nested = mojito_types::types::tstring_elements(element)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                Ty::Struct(tstring_specialization_symbol(&nested), Vec::new())
             }
+            _ => element.clone(),
         })
         .collect()
 }
