@@ -4364,6 +4364,28 @@ fn template_method_requirement_witness_beside_reference_rival_derives() {
 }
 
 #[test]
+fn template_method_builtin_requirement_witness_beside_generic_rival_derives() {
+    // A built-in trait registers no declaration, yet `Hashable`'s
+    // requirement still names its witness: the `[H: Hasher]` member, never
+    // the rival whose own binder sits inside `List[U]`, which the recorded
+    // types cannot rank. The calls reaching `Twin`'s overload sets are never
+    // run: an overloaded method with a binder of its own stops the VM
+    // (roadmap 3.91).
+    assert_methods_derive(
+        "from std.hashlib import Hasher\n\n\n@fieldwise_init\nstruct Twin(Copyable, Deinitable, Hashable, Movable):\n    var x: Int\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    var n = 0\n    if n > 0:\n        print(hash(Holder[Twin](Twin(3))))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
+        "True\n",
+        &[("Holder.__hash__", 2)],
+    );
+    // `Writable`'s `write_to` likewise, whether the template calls it
+    // through the bound or writes into a `String`.
+    assert_methods_derive(
+        "@fieldwise_init\nstruct Twin(Copyable, Deinitable, Movable, Writable):\n    var x: Int\n\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"T\", self.x)\n\n    def write_to[U: Copyable](self, mut writer: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Writable](Movable, Writable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def write_to(self, mut writer: Some[Writer]):\n        self.item.write_to(writer)\n\n    def show(self) -> String:\n        var text = String()\n        self.item.write_to(text)\n        return text\n\n\ndef main():\n    var n = 0\n    if n > 0:\n        print(Holder[Twin](Twin(3)), Holder[Twin](Twin(5)).show())\n    print(Holder[Int](4), Holder[Int](6).show())\n",
+        "4 6\n",
+        &[("Holder.write_to", 2), ("Holder.show", 2)],
+    );
+}
+
+#[test]
 fn template_method_origin_bearing_constructions_derive() {
     // A view over the receiver, constructed from a `ref` local into a
     // fieldwise struct's reference field: the constructed type names the

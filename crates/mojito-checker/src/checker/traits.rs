@@ -1378,7 +1378,67 @@ impl Checker {
                 }
             }
         }
+        // A built-in trait registers no declaration: its requirement is the
+        // signature a bound on it resolves ([`Self::builtin_requirements`]).
+        let builtin = BUILTIN_TRAITS.iter().filter(|tr| {
+            !self.traits.contains_key(**tr)
+                && info
+                    .conforms
+                    .iter()
+                    .any(|declared| declared == *tr || self.trait_refines(declared, tr))
+        });
+        for tr in builtin {
+            let Ok(assumption) = info
+                .conformance_conditions
+                .get(*tr)
+                .map(|condition| self.compile_condition(&info.decls, condition))
+                .transpose()
+            else {
+                continue;
+            };
+            for member in members {
+                if !witnesses.iter().any(|found| std::ptr::eq(*found, member))
+                    && self
+                        .builtin_requirements(tr, method, member.params.len())
+                        .iter()
+                        .any(|required| {
+                            builtin_requirement_witnessed(
+                                member,
+                                required,
+                                &self_ty,
+                                assumption.as_ref(),
+                            )
+                        })
+                {
+                    witnesses.push(member);
+                }
+            }
+        }
         witnesses
+    }
+
+    /// The signatures built-in trait `tr` requires of a method named
+    /// `method` taking `argc` arguments: those a bound on it resolves
+    /// (`lookup_trait_methods`), and `Writable`'s `write_to` and
+    /// `write_repr_to`, each `(self, mut writer: Some[Writer]) -> None`,
+    /// which the checker spells as an inverted write instead.
+    fn builtin_requirements(&self, tr: &str, method: &str, argc: usize) -> Vec<MethodSig> {
+        if tr == "Writable" {
+            if !matches!(method, "write_to" | "write_repr_to") || argc != 1 {
+                return Vec::new();
+            }
+            let mut signature = MethodSig::intrinsic(
+                vec![Ty::Param {
+                    binder: synthetic_binder("Some[Writer]"),
+                    bounds: vec!["Writer".to_string()],
+                    callable_bound: None,
+                }],
+                Ty::None,
+            );
+            signature.conventions[0] = Some(ArgConvention::Mut);
+            return vec![signature];
+        }
+        self.lookup_trait_methods(&[tr.to_string()], method, argc)
     }
 
     pub(super) fn method_satisfies_requirement_under(
@@ -3212,4 +3272,55 @@ fn names_only_module_constants(
         }
         _ => true,
     }
+}
+
+/// Whether struct method `member` witnesses a built-in trait's `required`
+/// signature at the struct's type `self_ty`: the same receiver convention,
+/// parameters, and result, no variadic, reference result, or raise, and an
+/// availability condition only where the struct's conformance condition
+/// (`assumption`) implies it. A requirement parameter a bound
+/// types (`mut hasher: Some[Hasher]`) is witnessed by a parameter of the
+/// member's own binder, spelled either way, carrying exactly that bound;
+/// a binder of the struct's is no witness's.
+fn builtin_requirement_witnessed(
+    member: &MethodSig,
+    required: &MethodSig,
+    self_ty: &Ty,
+    assumption: Option<&GenericConstraint>,
+) -> bool {
+    let own = |binder: &ParamRef| {
+        existential_binder(binder) || member.decls.iter().any(|decl| *decl.id() == binder.id)
+    };
+    let fits = |got: &Ty, want: &Ty| match (got, want) {
+        (
+            Ty::Param {
+                binder,
+                bounds: got,
+                ..
+            },
+            Ty::Param { bounds: want, .. },
+        ) => {
+            own(binder)
+                && got.iter().all(|bound| want.contains(bound))
+                && want.iter().all(|bound| got.contains(bound))
+        }
+        _ => got == want || *got == substitute_self(want, self_ty),
+    };
+    member.has_self
+        && member.self_convention == required.self_convention
+        && member.conventions == required.conventions
+        && member.params.len() == required.params.len()
+        && member.variadic.is_none()
+        && member.kw_variadic.is_none()
+        && member.ref_return.is_none()
+        && !member.raises
+        && member.availability.iter().all(|constraint| {
+            assumption.is_some_and(|premise| generic_constraint_implies(premise, constraint))
+        })
+        && member
+            .params
+            .iter()
+            .zip(&required.params)
+            .all(|(got, want)| fits(got, want))
+        && fits(&member.ret, &required.ret)
 }

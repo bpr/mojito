@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a built-in trait's bound (`self.item.__hash__(hasher)`,
+  `self.item.write_to(writer)`) over an instance whose struct overloads
+  the method now selects the member witnessing `Hashable`'s, `Writable`'s,
+  or `Hasher`'s requirement, as it already did for a declared trait, so a
+  rival such as `__hash__[U](self, mut hasher: List[U])` no longer refuses
+  the derivation (`template_method_builtin_requirement_witness_beside_generic_rival_derives`).
+  Such instances used to be checked again, since the ranking fallback could
+  not infer the rival's own binder.
 - A call through a bound with keyword arguments out of parameter order
   (`self.s.shift(1, extra=a, by=b)`) now derives a clone's call boundary
   in source order, as the clone's own check records it. The derived
