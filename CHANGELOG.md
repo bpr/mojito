@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A list, set, or dict display handed to a method's parameter or built
+  into a typed local (`self.item.total([1, 2, 3])` over `T: Totaler`,
+  `var items: List[Self.T] = [...]`) now reuses the template's checked
+  facts, a string literal element's conversion selected again per instance
+  (`assets/ok/template_method_bound_display_argument.mojo`). Such methods
+  used to be checked again per instance.
 - A call through a built-in trait's bound (`self.item.__hash__(hasher)`,
   `self.item.write_to(writer)`) over an instance whose struct overloads
   the method now selects the member witnessing `Hashable`'s, `Writable`'s,

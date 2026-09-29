@@ -580,6 +580,7 @@ assets/ok/template_method_borrowed_parameter.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/template_method_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_defaulted_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_dispatch.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_bound_display_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_bound_witness_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_built_over_local.mojo	-	ineligible	no-scalar-entry-shape

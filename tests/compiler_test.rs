@@ -5188,6 +5188,33 @@ fn template_bound_value_argument_derives() {
 }
 
 #[test]
+fn template_bound_display_argument_derives() {
+    // A collection or tuple display, a leading-dot or spelled static call,
+    // or a construction handed by value through a bound to a closed
+    // parameter type builds the same temporary whatever the witness.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_bound_display_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "13 13 22 10\n2 6 6 0\n13 13 17 12\n4 6 4 2\n13 14 18\n6 8 20\n",
+        &[
+            ("Holder.leading_dot", 2),
+            ("Holder.spelled_static", 2),
+            ("Holder.constructed", 2),
+            ("Holder.tuple_display", 2),
+            ("Holder.applied", 2),
+            ("Holder.mixed_display", 2),
+            ("Holder.empty_display", 2),
+            ("Holder.word_display", 2),
+            ("Holder.set_display", 2),
+            ("Holder.dict_display", 2),
+            ("Holder.item_display", 2),
+        ],
+    );
+}
+
+#[test]
 fn witness_default_differing_from_requirement_runs_the_requirements() {
     // A call through a bound runs the requirement's default where a witness
     // declares another or none, spelled at the call, and every instance

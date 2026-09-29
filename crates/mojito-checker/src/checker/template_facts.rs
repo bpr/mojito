@@ -11155,6 +11155,7 @@ impl BodyShape<'_> {
                 || self.operator_value(expr)
                 || self.comprehension(expr)
                 || self.tuple_display(expr)
+                || self.collection_display(expr)
                 || self.stringify(expr)
                 || self.closed_operator(expr) =>
             {
@@ -11648,6 +11649,53 @@ impl BodyShape<'_> {
                             ..
                         }
                     )
+                )
+            })
+    }
+
+    /// A list, set, or dict display the expected type makes a collection
+    /// (`[1, 2, 3]` handed to a `List[Int]` parameter): a temporary built
+    /// through the collection's insert method, from elements each a closed
+    /// scalar, a whole value the display takes as it stands, or a string
+    /// literal converted into a nominal element type.
+    ///
+    /// The display records its collection type as a construction, which an
+    /// instance substitutes, and a literal's conversion beside it, which an
+    /// instance selects again at its own element type
+    /// ([`Checker::realize_conversion`]). A display with no expected
+    /// collection type is a fixed-size `Array`, which records its variadic
+    /// constructor instead and stays outside.
+    fn collection_display(&self, expr: &Expr) -> bool {
+        let elements: Vec<&Expr> = match &expr.kind {
+            ExprKind::ListLit(elements) => elements.iter().collect(),
+            ExprKind::BraceLit(entries) => entries
+                .iter()
+                .flat_map(|(key, value)| std::iter::once(key).chain(value))
+                .collect(),
+            _ => return false,
+        };
+        let id = self.occurrence(expr);
+        !self.keyed
+            && elements.iter().all(|element| {
+                let converted = self.facts.is_some_and(|facts| {
+                    fact_at(&facts.conversions, self.occurrence(element)).is_some()
+                });
+                if converted {
+                    return matches!(element.kind, ExprKind::Str(_));
+                }
+                (self.expression(element) && self.scalar(element))
+                    || matches!(element.kind, ExprKind::Str(_))
+                    || self.whole_value(element)
+            })
+            && self.facts.is_none_or(|facts| {
+                matches!(
+                    fact_at(&facts.operation_adjustments, id),
+                    Some(
+                        mojito_checked::checked::SemanticAdjustment::ConstructCollection {
+                            insert: Some(_),
+                            target,
+                        }
+                    ) if fact_at(&facts.expression_types, id) == Some(target)
                 )
             })
     }
