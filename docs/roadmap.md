@@ -38,25 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
 
-- [ ] **1.1 `Array`'s copy and move initializers, `deinit_with`, and
-  owned `__iter__` keep the clone check**
-
-  Problem: these four `Array` members are still inferred again in every
-  checker pass, while the rest of `Array` reuses its templates.
-  - The copy and move initializers are lifecycle initializers, whose
-    `copy:` and `deinit move:` receivers the method class refuses outright
-    (`method_certificate`).
-  - `deinit_with` hands each taken pointee to its callable parameter, and
-    reuse refuses it: "a substituted value may carry a loan where the body
-    keeps a residue".
-  - The owned `__iter__` constructs `_ArrayOwnedIter[Self.T]`, and reuse
-    refuses it: "a constructed struct has a parameter that is not a plain
-    type".
-  - Found while landing the rest of `Array` (2026-09-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 Keyword arguments out of parameter order through a bound
+- [ ] **1.1 Keyword arguments out of parameter order through a bound
   derive facts the clone check does not match**
 
   Problem: `self.s.shift(1, extra=a, by=b)` through `S: Scaler` fails
@@ -72,7 +54,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 An overloaded witness no single member of which witnesses the
+- [ ] **1.2 An overloaded witness no single member of which witnesses the
   requirement still ranks on the recorded types**
 
   Problem: a call through a bound selects the one member that witnesses the
@@ -92,7 +74,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A display, leading-dot member, or explicit application handed
+- [ ] **1.3 A display, leading-dot member, or explicit application handed
   to a call through a bound keeps the clone check**
 
   Problem: `self.item.total([1, 2, 3])` or `self.item.total(.origin(), 3)`
@@ -110,7 +92,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A value handed by value to a parameter typed by `Self` or
+- [ ] **1.4 A value handed by value to a parameter typed by `Self` or
   a requirement binder through a bound keeps the clone check**
 
   Problem: `self.s.merge(self.t)` over `S: Merger`, whose `merge(self,
@@ -128,7 +110,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A pack element's default construction outside a storage
+- [ ] **1.5 A pack element's default construction outside a storage
   store keeps the clone check**
 
   Problem: `print(Self.Ts[i]())` in a method and `var value = Ts[i]()` in a
@@ -148,7 +130,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.7 A field read of a nested `def`'s struct parameter keeps the
+- [ ] **1.6 A field read of a nested `def`'s struct parameter keeps the
   clone check**
 
   Problem: `def f(x: Int, p: Pair) -> Int: return x + p.a` inside a generic
@@ -162,7 +144,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 `String(x)` of a closed-scalar parameter keeps the clone
+- [ ] **1.7 `String(x)` of a closed-scalar parameter keeps the clone
   check**
 
   Problem: `return String(k)` for `k: Int` in a generic struct's method
@@ -176,7 +158,7 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A string literal handed to a generic static's own binder
+- [ ] **1.8 A string literal handed to a generic static's own binder
   keeps the clone check**
 
   Problem: `Pair[Self.T].pick("s")`, or `Pair[Self.T].pick[String]("s")`,
@@ -190,6 +172,19 @@ Pliron experiment rather than move the check order sit last, 1.11 to 1.14.
     (`assets/ok/template_method_applied_overloaded_static.mojo`).
   - Found while explicit applications of generic statics joined the method
     grammar (2026-09-29); no bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.9 `_ArrayIter.__next__` keeps the clone check**
+
+  Problem: the borrowed `Array` iterator's `__next__` is inferred again in
+  every checker pass, while the rest of `Array` and its iterators reuse
+  their templates.
+  - It returns `ref[Self.iterable_origin._get_owned_interior["element"]]`
+    into the iterated `Array`, and the method class refuses it: "a
+    reference is yielded or kept outside the method grammar".
+  - Found while `Array`'s lifecycle initializers, `deinit_with`, and
+    `__iter__` joined the reused templates (2026-09-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -3425,12 +3425,13 @@ fn template_method_value_parameter_templates_reuse() {
 
 #[test]
 fn array_members_reuse_templates() {
-    // `Array`'s pointer-writing initializers, its comparisons over pointer
-    // slots and over whole values, `__contains__`, `unsafe_ptr`, and
-    // `write_repr_to` are certified templates whose facts every later pass
-    // reuses, verified against their own check.
-    let source = "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n";
-    let expected = "False True True True False False\nTrue False 1\n";
+    // `Array`'s initializers, the copy and move ones among them, its
+    // comparisons over pointer slots and over whole values, `__contains__`,
+    // `unsafe_ptr`, `write_repr_to`, `deinit_with`, and both `__iter__`
+    // overloads are certified templates whose facts every later pass reuses,
+    // verified against their own check.
+    let source = "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n    var d = a.copy()\n    var e = d^\n    def show(var element: Int):\n        print(element)\n\n    e^.deinit_with(show)\n    for x in b:\n        print(x)\n    for x in a^:\n        print(x)\n";
+    let expected = "False True True True False False\nTrue False 1\n1\n5\n2\n4\n4\n4\n1\n5\n2\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler.clone().with_template_verification(false), source);
     let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
@@ -3438,10 +3439,11 @@ fn array_members_reuse_templates() {
         assert_eq!(compiler.execute(program).expect("execute").output, expected);
     }
     let stats = program.template_stats();
-    // The literal, default, and fill initializers; the copy and move
-    // initializers take `existing`-shaped receivers the class refuses.
+    // The literal, default, fill, copy, and move initializers.
     for (name, bodies) in [
-        ("Array.__init__", 3),
+        ("Array.__init__", 5),
+        ("Array.__iter__", 2),
+        ("Array.deinit_with", 1),
         ("Array.__eq__", 1),
         ("Array.__ne__", 1),
         ("Array.__lt__", 1),

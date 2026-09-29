@@ -2312,7 +2312,9 @@ impl Checker {
             .iter()
             .zip(&template.expression_types)
             .chain(facts.binding_types.iter().zip(&template.binding_types))
-            .filter(|(_, (_, declared))| mojito_types::types::is_symbolic(declared))
+            .filter(|((_, ty), (_, declared))| {
+                mojito_types::types::is_symbolic(declared) && ty != declared
+            })
             .all(|((_, ty), _)| self.residue_plain(ty));
         if residue && !substituted_plain {
             return Err("a substituted value may carry a loan where the body keeps a residue");
@@ -4501,6 +4503,7 @@ impl Checker {
             runtime_loops: std::cell::Cell::new(0),
             borrowed_params: mut_params.clone(),
             mut_params,
+            deinit_params: Vec::new(),
             keyed,
             receiver: false,
             self_convention: None,
@@ -4708,10 +4711,12 @@ impl Checker {
     ///
     /// [`TemplateClass::MethodBody`] widens that along eight independent
     /// [`MethodFeatures`]. The receiver may be `mut`, `var`, `deinit`, a bare
-    /// `ref`, the `out` of an `__init__`, or absent (`@staticmethod`), and
+    /// `ref`, the `out` of an initializer (the copy and move ones too), or
+    /// absent (`@staticmethod`), and
     /// the method may carry a `where` clause: the elaborator mints a clone
     /// only where the clause holds, and a clone's signature no longer states
-    /// it. A parameter may be `var`, `mut`, or a bare `ref`: it is bound from
+    /// it. A parameter may be `var`, `deinit`, `mut`, or a bare `ref`: it is
+    /// bound from
     /// its declared convention and rooted at its own binding under every
     /// instance, its loan state is decided by a property
     /// [`TemplateObligation::PlainDataArguments`] rules out, and what its
@@ -4720,8 +4725,9 @@ impl Checker {
     /// mutability, and a write through it is refused below. A `var *values`
     /// collector is such a parameter too: its type is a pack of a
     /// substituted type, and the body owns its binding. A `None` default is
-    /// the same value under every instance. The copy and move initializers,
-    /// a receiver or parameter origin, and binders stay outside.
+    /// the same value under every instance. A `deinit` parameter (a move
+    /// initializer's source) is torn down by the body, which may move its
+    /// fields out. A receiver or parameter origin and binders stay outside.
     ///
     /// - `STATEMENTS`: a runtime statement is checked once whatever runs it,
     ///   so `if`, `while`, `break`, `continue`, and a bare `return` neither
@@ -4906,12 +4912,12 @@ impl Checker {
         };
         // `__init__(out self, …)` is an ordinary owned receiver here: which
         // fields a body initializes is its syntax, and definite initialization
-        // is judged outside the body check. The copy and move initializers
-        // take `existing`, whose conventions this class does not admit.
+        // is judged outside the body check. The copy and move initializers are
+        // such initializers too: their `copy:` and `deinit move:` source is an
+        // ordinary parameter of the struct's own type.
         let lifecycle = mojito_symbol::symbol::lifecycle_method_name(method);
-        let initializer = matches!(lifecycle, "__copyinit__" | "__moveinit__");
-        let constructs =
-            lifecycle == "__init__" && method.self_convention == Some(ArgConvention::Out);
+        let constructs = matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__")
+            && method.self_convention == Some(ArgConvention::Out);
         let is_static = !method.has_self
             && matches!(method.decorators.as_slice(), [decorator]
                 if decorator.path == ["staticmethod"]
@@ -4942,14 +4948,8 @@ impl Checker {
                     binder.name == *name && origin_binder(binder)
                 })))
         });
-        if !(plain_read || owned_receiver || is_static || constructs)
-            || !receiver_origin_kept
-            || initializer
-        {
-            return outside(
-                "the receiver carries an origin that is not the method's own binder, or is a copy \
-                 or move initializer's",
-            );
+        if !(plain_read || owned_receiver || is_static || constructs) || !receiver_origin_kept {
+            return outside("the receiver carries an origin that is not the method's own binder");
         }
         // A `where` clause is the declaration's constraint: the elaborator
         // mints a clone only where it evaluates true, and a trace exists only
@@ -5047,7 +5047,12 @@ impl Checker {
                     && parameter.convention == Some(ArgConvention::Var)))
                 && matches!(
                     parameter.convention,
-                    None | Some(ArgConvention::Var | ArgConvention::Mut | ArgConvention::Ref)
+                    None | Some(
+                        ArgConvention::Var
+                            | ArgConvention::Deinit
+                            | ArgConvention::Mut
+                            | ArgConvention::Ref
+                    )
                 )
                 && parameter
                     .default
@@ -5058,8 +5063,7 @@ impl Checker {
         if !plain_params {
             return outside(
                 "a parameter has a default other than 'None', an origin on a convention other \
-                 than 'ref', a keyword pack, a variadic not taken 'var', or an 'out' or 'deinit' \
-                 convention",
+                 than 'ref', a keyword pack, a variadic not taken 'var', or an 'out' convention",
             );
         }
         let origin_parameter = method.type_params.iter().any(origin_binder)
@@ -5126,6 +5130,7 @@ impl Checker {
             runtime_loops: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
+            deinit_params: params_passed(&[ArgConvention::Deinit]),
             keyed: false,
             receiver: method.has_self,
             self_convention: method.self_convention,
@@ -9869,6 +9874,9 @@ struct BodyShape<'a> {
     borrowed_params: Vec<&'a str>,
     /// The `mut` parameters, which the body may store to.
     mut_params: Vec<&'a str>,
+    /// The `deinit` parameters (a move initializer's `deinit move: Self`),
+    /// which the body tears down: a field of one is moved out with `^`.
+    deinit_params: Vec<&'a str>,
     /// Whether source validation produced the facts. A body it checks may
     /// hold compile-time control flow over scalar locals, assignments, and
     /// runtime `if`s and `while`s, under that check's own rules; any other
@@ -11126,7 +11134,11 @@ impl BodyShape<'_> {
                     || self.reference_local(name)
                     || (self.receiver_itself(place) && !self.self_owned())
             }
-            ExprKind::Member { .. } => !self.receiver_field(place),
+            ExprKind::Member { object, .. } => {
+                let torn_down = matches!(&object.kind, ExprKind::Identifier(name)
+                    if self.deinit_params.contains(&name.as_str()));
+                !(self.receiver_field(place) || (torn_down && self.parameter_field(place)))
+            }
             _ => false,
         };
         let admitted = match &expr.kind {

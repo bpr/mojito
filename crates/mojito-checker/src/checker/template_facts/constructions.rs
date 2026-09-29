@@ -10,10 +10,11 @@
 //! obligation 18 of `realize_instance_facts`).
 
 use super::{Occurrence, fact_at};
+use crate::checker::generics::substitute_at;
 use crate::checker::{Checker, MethodSig, StructInfo};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::templates::{CheckedBodyFacts, OccurrenceId};
-use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst, substitute};
+use mojito_types::types::{Ty, TySubst};
 
 impl Checker {
     /// Realize one construction for an instance, as `infer_construction`
@@ -22,7 +23,8 @@ impl Checker {
     /// A `copy:` construction and a fieldwise one select nothing and record no
     /// target. A hand-written constructor family keeps the template's
     /// member, whose parameters the arguments' types still match exactly
-    /// under the struct's own substitution, and takes the instance's clone of
+    /// under the struct's own type and value arguments (`substitute_at`),
+    /// and takes the instance's clone of
     /// that member as its target (`constructor_clone_target`), the template's
     /// spelling where the instance mints none. A family the instance
     /// collapses, a constructor with binders of its own, and an argument
@@ -55,7 +57,9 @@ impl Checker {
         if copied {
             return Ok(());
         }
-        let struct_substitution = struct_substitution(info, &arguments)?;
+        let struct_substitution =
+            mojito_types::types::struct_argument_substitution(&info.decls, &arguments);
+        let declared_at = |ty: &Ty| substitute_at(ty, info, &arguments);
         let at = |syntax| OccurrenceId {
             syntax,
             copy: id.copy,
@@ -76,7 +80,7 @@ impl Checker {
             .map(|(keyword, syntax)| argument_ty(*syntax).map(|ty| (keyword.as_str(), ty)))
             .collect::<Result<Vec<_>, _>>()?;
         let Some(family) = info.methods.get("__init__") else {
-            return realize_fieldwise(info, &struct_substitution, &positional, &keywords);
+            return realize_fieldwise(info, &declared_at, &positional, &keywords);
         };
         let recorded = fact_at(&facts.overload_targets, id).cloned();
         let self_ty = self.self_instance_ty(&name);
@@ -117,8 +121,7 @@ impl Checker {
                 .chain(member.variadic.as_deref())
                 .all(|ty| !mojito_types::types::is_symbolic(ty))
         });
-        if !closed_family && !exact_binding(declared, &struct_substitution, &positional, &keywords)?
-        {
+        if !closed_family && !exact_binding(declared, &declared_at, &positional, &keywords)? {
             return Err("a constructor overload declares a parameter of a parameter type");
         }
         let target =
@@ -153,26 +156,13 @@ impl Checker {
     }
 }
 
-/// The struct's own type binders bound to the constructed type's arguments,
-/// the scope its constructor's parameter types are declared in.
-fn struct_substitution(info: &StructInfo, arguments: &[TyArg]) -> Result<TySubst, &'static str> {
-    info.decls
-        .iter()
-        .zip(arguments)
-        .map(|(decl, argument)| match (decl, argument) {
-            (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Ok((id.clone(), ty.clone())),
-            _ => Err("a constructed struct has a parameter that is not a plain type"),
-        })
-        .collect()
-}
-
 /// A fieldwise construction: each argument initializes the field at its
 /// position or the field its keyword names, whose declared type it must still
 /// equal under the instance. A reference field takes a handle, whose recorded
 /// type is the referent.
 fn realize_fieldwise(
     info: &StructInfo,
-    struct_substitution: &TySubst,
+    declared_at: &dyn Fn(&Ty) -> Ty,
     positional: &[Ty],
     keywords: &[(&str, Ty)],
 ) -> Result<(), &'static str> {
@@ -191,7 +181,7 @@ fn realize_fieldwise(
             ArgSlot::Keyword(index) => &keywords[*index].1,
             ArgSlot::Default => return false,
         };
-        match substitute(field, struct_substitution) {
+        match declared_at(field) {
             Ty::Ref(reference) => *argument == *reference.referent,
             field => binds(argument, &field),
         }
@@ -208,7 +198,7 @@ fn realize_fieldwise(
 /// is evaluated in the callee's scope, once, whatever the instance.
 fn exact_binding(
     declared: &MethodSig,
-    struct_substitution: &TySubst,
+    declared_at: &dyn Fn(&Ty) -> Ty,
     positional: &[Ty],
     keywords: &[(&str, Ty)],
 ) -> Result<bool, &'static str> {
@@ -234,7 +224,7 @@ fn exact_binding(
         .iter()
         .zip(&declared.params)
         .all(|(slot, parameter)| {
-            let parameter = substitute(parameter, struct_substitution);
+            let parameter = declared_at(parameter);
             match slot {
                 ArgSlot::Positional(position) => binds(&positional[*position], &parameter),
                 ArgSlot::Keyword(position) => binds(&keywords[*position].1, &parameter),

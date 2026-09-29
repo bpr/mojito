@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Array`'s copy and move initializers, `deinit_with`, and both `__iter__`
+  overloads now reuse their checked templates in every later checker pass
+  (`array_members_reuse_templates`). They used to be inferred again: the
+  method class refused lifecycle initializers and `deinit` parameters, a
+  construction of a struct with a value parameter, and a call-through
+  residue over types the reuse left symbolic.
 - A runtime `while` in a compile-time-keyed `def` — at the top level of
   the body, inside a `comptime for` with `break` and `continue`, or under a
   `comptime if` arm — now derives the instance's facts from the checked
