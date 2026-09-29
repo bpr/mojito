@@ -1956,6 +1956,45 @@ fn spread_pack_initializer_derives() {
 }
 
 #[test]
+fn sibling_call_result_field_derives() {
+    // `self.bumped().count`, a field read of a sibling method's whole-value
+    // result, derives for every specialization of a variadic struct.
+    let source = include_str!("../assets/ok/template_method_variadic_struct.mojo");
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "3 2 4\n6\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let twice = |name: &&String| {
+        name.starts_with("Bag$")
+            && name
+                .rsplit_once('.')
+                .is_some_and(|(_, member)| member == "twice")
+    };
+    assert_eq!(
+        stats
+            .derived
+            .iter()
+            .filter(twice)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        2,
+        "both twice specializations derive; refused: {:?}",
+        stats.refused
+    );
+    assert!(
+        !stats.inferred_clones.iter().any(|name| twice(&name)),
+        "no twice is inferred: {:?}",
+        stats.inferred_clones
+    );
+}
+
+#[test]
 fn tstring_write_to_derives() {
     // `TString.write_to` binds each element with a `ref` local over its
     // `Tuple` storage inside a `comptime for` and writes it: every

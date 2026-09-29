@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's method reading a scalar field off a sibling call's
+  whole-value result (`return self.bumped().count`) now reuses its
+  template's checked facts
+  (`assets/ok/template_method_variadic_struct.mojo`). Such methods used to
+  be checked again per instance.
 - A generic struct's method calling one of its statics with binders of
   its own through an explicit application (`Pair[Self.T].scaled[3](2)`),
   or calling a static overload family one of whose members declares

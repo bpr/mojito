@@ -13037,6 +13037,17 @@ impl BodyShape<'_> {
                 if self.parameter_receiver(object))
     }
 
+    /// Whether `expr` is a field of a call's whole-value result holding a
+    /// struct, such as `self.bumped().count`: the call's result is a
+    /// temporary of the contract's substituted type, and the field has its
+    /// declared type under that type's arguments in a template and a clone
+    /// alike.
+    fn result_field(&self, expr: &Expr) -> bool {
+        !self.keyed
+            && matches!(&expr.kind, ExprKind::Member { object, .. }
+                if self.call_result(object) && self.nominal(object))
+    }
+
     /// Whether `name` is a `ref` local.
     fn reference_local(&self, name: &str) -> bool {
         self.local_kind(name) == Some(LocalKind::Reference)
@@ -13072,6 +13083,7 @@ impl BodyShape<'_> {
                     || (self.receiver_field(expr)
                         || self.local_field(expr)
                         || self.parameter_field(expr)
+                        || self.result_field(expr)
                         || self.reference_member(expr)
                         || self.struct_value(expr)
                         || self.struct_vector(expr)

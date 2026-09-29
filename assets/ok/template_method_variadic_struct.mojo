@@ -1,8 +1,8 @@
 # A user variadic struct specialized whole (`Bag$t2[Int, String]`) binds
 # its pack to the element types its trace names, and its template's `Self`
 # names the specialization, so `__len__`, `bump` (a sibling call and an
-# augmented store), and the synthesized `copy` derive from their checked
-# templates.
+# augmented store), `twice` (a field of a sibling call's result), and the
+# synthesized `copy` derive from their checked templates.
 struct Bag[*Ts: Copyable & Movable & Deinitable](Copyable, Movable, Sized):
     var storage: Tuple[*Self.Ts]
     var count: Int
