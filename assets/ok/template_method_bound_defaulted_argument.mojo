@@ -3,8 +3,8 @@
 # defaulted parameter of the requirement to its default
 # (`docs/notes/instantiation-from-template.md`, class MethodBody, feature
 # `bound_dispatch`). Current Mojo runs the requirement's default; every
-# witness declares that default alike, so the one an instance runs is the
-# same, and the call records only the omitted slot.
+# witness here declares that default alike, so the one an instance runs is
+# the same, and the call records only the omitted slot.
 trait Scaler:
     def scale(
         self, value: Int, factor: Int = 2, offset: Int = 0, label: String = "x"

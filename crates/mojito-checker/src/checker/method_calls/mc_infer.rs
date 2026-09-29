@@ -1292,6 +1292,7 @@ impl Checker {
                 }
                 let single_candidate = signatures.len() == 1;
                 let mut matches = Vec::new();
+                let mut requirements = Vec::new();
                 for sig in signatures {
                     let receiver_params: Vec<_> = sig
                         .params
@@ -1408,12 +1409,28 @@ impl Checker {
                         declared_params: Vec::new(),
                         nested_origins: NestedOrigins::AsDeclared,
                     });
+                    requirements.push(sig);
                 }
                 select_method_overload(
                     method,
                     matches,
                     Some(matches!(object.kind, ExprKind::Transfer(_))),
                 )
+                .inspect(|selected| {
+                    if let Some(requirement) = requirements.iter().find(|sig| {
+                        selected.lowered_name.as_deref()
+                            == Some(&method_lowered_name("__trait_dispatch", method, sig, None))
+                    }) {
+                        self.record_bound_default_arguments(
+                            &span,
+                            &effective_bounds,
+                            method,
+                            requirement,
+                            &selected.slots,
+                            args.len(),
+                        );
+                    }
+                })
                 .map(Some)
             }
             // `x.copy()` on a built-in copyable value (a scalar, literal,

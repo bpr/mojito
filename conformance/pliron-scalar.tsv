@@ -738,6 +738,7 @@ assets/ok/with_exit_error_swallow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_multiple_dependent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_statement.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/witness_default_differs_from_requirement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_extra_write_to_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/container_owning_family_apis.mojo	-	ineligible	no-scalar-entry-shape

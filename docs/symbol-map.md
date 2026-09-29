@@ -106,6 +106,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
   `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
   `lower_stmt.rs` lowers to `KeepAlive`.
+- `checker/bound_defaults.rs` owns the requirement defaults bound at a call
+  through a trait bound: `record_bound_default_arguments` (called from the
+  bound branch of `method_calls/mc_infer.rs`) records, by the call's
+  origin, each omitted requirement default some conformer's witness
+  declares otherwise (`witnesses_default_alike`), the catalog keeps them
+  across discovery rounds (`TemplateCatalog::bound_default_arguments`,
+  `BoundDefaultArguments`), and `bind_bound_default_arguments` spells them
+  as keyword arguments of the call and of every clone of it, before a pass
+  and again, with another pass, when a pass found new ones
+  (`check_program_carrying`).
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
   element list and its snapshot capture policy). `infer_variant_storage_method`

@@ -132,8 +132,9 @@ impl Checker {
             .arguments
             .iter()
             .map(|parameter| {
-                // A default the requirement declares binds by value at its
-                // declared type, which every witness declares alike.
+                // A default the call leaves out binds by value at its
+                // declared type: every witness declares the requirement's,
+                // or the check spells it at the call (`bound_defaults.rs`).
                 if parameter.source == CheckedCallArgumentSource::Default {
                     return Ok(DispatchedArgument {
                         source: parameter.source,
@@ -869,8 +870,9 @@ impl Checker {
         }
         for (index, argument) in arguments.iter().enumerate() {
             // A slot the call supplies binds any witness parameter; one it
-            // leaves out binds the witness's default, which conformance
-            // proved the requirement's.
+            // leaves out binds the witness's default, which is the
+            // requirement's, or the check spells that at the call
+            // (`bound_defaults.rs`).
             if declared.required[index] && argument.value.is_none() {
                 return Err("the instance's witness declares no default the call leaves out");
             }

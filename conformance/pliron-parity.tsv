@@ -738,6 +738,7 @@ assets/ok/with_exit_error_swallow.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple.mojo	main	exe-differential	sanitized
 assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
+assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized

@@ -1399,22 +1399,19 @@ fn trait_method_conformance_may_narrow_but_not_widen_effects() {
 }
 
 #[test]
-fn trait_requirement_defaults_bind_every_witness_alike() {
+fn a_witness_defaults_apart_from_its_requirement() {
     // A call through the bound runs the requirement's default in current
-    // Mojo and the witness's own in an instance, so the two must agree.
+    // Mojo, which the checker spells at the call, so a witness may default
+    // differently, or not at all, and still conform.
     let requirement = "trait Scaler:\n    def scale(self, value: Int, factor: Int = -2) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n";
-    ok(&format!(
-        "{requirement}    def scale(self, value: Int, factor: Int = -2) -> Int:\n        return value * factor\n"
-    ));
-    for witness in ["factor: Int = 7", "factor: Int"] {
-        let error = err(&format!(
+    for witness in ["factor: Int = -2", "factor: Int = 7", "factor: Int"] {
+        ok(&format!(
             "{requirement}    def scale(self, value: Int, {witness}) -> Int:\n        return value * factor\n"
         ));
-        assert!(
-            matches!(error, TypeError::TraitMethodMismatch { .. }),
-            "{witness}"
-        );
     }
+    ok(
+        "trait Scaler:\n    def scale(self, value: Int, factor: Int) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n    def scale(self, value: Int, factor: Int = 3) -> Int:\n        return value * factor\n",
+    );
 
     let error = err(
         "comptime TWO = 2\n\ntrait Scaler:\n    def scale(self, value: Int, factor: Int = TWO) -> Int: ...\n",

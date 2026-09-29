@@ -2367,6 +2367,23 @@ pub struct InstanceTrace {
     pub first_copy_template: bool,
 }
 
+/// The arguments a method call through a trait bound binds from its
+/// requirement's defaults, for the slots it leaves out.
+///
+/// Through a bound, current Mojo runs the requirement's default, not the
+/// witness's; binding it at the call carries that into every instance clone,
+/// which reaches the witness nominally.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoundDefaultArguments {
+    /// The positional arguments the call was checked with; a call node with
+    /// any other count is not the one these arguments complete.
+    pub positional: usize,
+    pub keywords: Vec<mojito_ast::ast::KwArg>,
+    /// The requirement's parameter names, in declaration order: each
+    /// keyword goes before the call's first keyword for a later parameter.
+    pub parameters: Vec<String>,
+}
+
 /// The per-compilation store of checked templates and clone traces.
 ///
 /// It lives for one `Compiler::compile_linked`. Entries are bucketed by
@@ -2392,6 +2409,11 @@ pub struct TemplateCatalog {
     /// so the context travels with it: one per compilation, shared by each
     /// checker run. A defaulted catalog holds a detached context.
     param_context: mojito_types::param_expr::ParamContext,
+    /// Per call through a bound, by the syntax identity every clone of the
+    /// call keeps, the requirement defaults it binds. Discovery rounds
+    /// re-elaborate the same prepared program, so a later round binds them
+    /// before its first pass.
+    bound_default_arguments: std::collections::HashMap<SyntaxId, BoundDefaultArguments>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2532,6 +2554,27 @@ impl TemplateCatalog {
 
     pub const fn validation_aborted(&self) -> bool {
         self.validation_aborted
+    }
+
+    pub const fn bound_default_arguments(
+        &self,
+    ) -> &std::collections::HashMap<SyntaxId, BoundDefaultArguments> {
+        &self.bound_default_arguments
+    }
+
+    /// Keep the requirement defaults a pass found calls through a bound
+    /// leaving out; whether any call was new.
+    pub fn record_bound_default_arguments(
+        &mut self,
+        found: std::collections::HashMap<SyntaxId, BoundDefaultArguments>,
+    ) -> bool {
+        let before = self.bound_default_arguments.len();
+        for (call, arguments) in found {
+            self.bound_default_arguments
+                .entry(call)
+                .or_insert(arguments);
+        }
+        self.bound_default_arguments.len() != before
     }
 
     /// Record that a validation run ended without a verdict, and withdraw

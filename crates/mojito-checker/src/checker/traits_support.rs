@@ -225,11 +225,17 @@ pub(super) fn competing_setitem_value_shapes(a: &MethodSig, b: &MethodSig) -> bo
 /// Bare `raises` denotes `Error`; it is not a wildcard for a distinct typed
 /// error. `raises Never` is already normalized to a non-raising signature when
 /// `MethodSig` is built.
+///
+/// Defaults are the witness's own: a call through the bound binds each slot
+/// it leaves out from the requirement's default (`bound_default_arguments`),
+/// so a witness may default differently, or not at all.
 pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
     let mut got_shape = canonical_method_shape(got);
     got_shape.raises = false;
     got_shape.error = None;
     got_shape.overload = None;
+    got_shape.required.clone_from(&required.required);
+    got_shape.defaults.clone_from(&required.defaults);
     let mut required_shape = canonical_method_shape(required);
     required_shape.raises = false;
     required_shape.error = None;

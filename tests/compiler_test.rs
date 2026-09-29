@@ -4896,8 +4896,8 @@ fn template_defaulted_argument_derives() {
 #[test]
 fn template_bound_defaulted_argument_derives() {
     // A call through a bound leaving a defaulted parameter of the requirement
-    // to its default records only the omitted slot: every witness declares
-    // the requirement's default alike.
+    // to its default records only the omitted slot when every witness
+    // declares the requirement's default alike.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_defaulted_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
@@ -4908,6 +4908,26 @@ fn template_bound_defaulted_argument_derives() {
             ("Holder.both_default", 2),
             ("Holder.one_default", 2),
             ("Holder.keyword_offset", 2),
+        ],
+    );
+}
+
+#[test]
+fn witness_default_differing_from_requirement_runs_the_requirements() {
+    // A call through a bound runs the requirement's default where a witness
+    // declares another or none, spelled at the call, and every instance
+    // still derives from its template.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/witness_default_differs_from_requirement.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "11\n11\n51\n108\n10\n-104\n110\n-93\n36\n11\n1003\n",
+        &[
+            ("Holder.run", 2),
+            ("Holder.run_keyword", 2),
+            ("Holder.run_explicit", 2),
+            ("Holder.run_shift", 2),
         ],
     );
 }

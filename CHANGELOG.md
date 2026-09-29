@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A witness may now default a parameter differently from its trait
+  requirement, or not at all, as the pin allows. A call through the bound
+  leaving the parameter out runs the requirement's default, so
+  `self.s.scale(5)` beside `factor: Int = 2` in the trait and `factor: Int
+  = 7` in the witness prints `11` as the pin does. Such a witness used to
+  be rejected as a signature mismatch. A call on a nominal receiver still
+  runs the witness's own default.
 - Two same-arity generic overloads of one method that a call specializes
   alike no longer collide: `First(0).pick(2, 3)`, beside `pick[T](self, a:
   T, b: T)` and `pick[T](self, a: T, b: Int)`, prints `2` as the pin does,
@@ -21,7 +28,7 @@ to evolve under the `0.x` compatibility rules.
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.106).
+  reference result is still rejected (roadmap 3.105).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -45,7 +52,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.100).
+  (roadmap 3.99).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The

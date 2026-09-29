@@ -3877,6 +3877,17 @@ ordinary local destroyed at its last use, as the pinned Mojo does. The unbound
 result of a non-consuming `__enter__` is not anchored: it is a discarded
 temporary destroyed before the body runs.
 
+A call through a trait bound that leaves out a requirement's default runs
+the requirement's default, as in current Mojo, even though an instance clone
+reaches the witness nominally. The check records each such call's omitted
+defaults that some witness declares otherwise (`checker/bound_defaults.rs`),
+keyed by the call's origin, and spells them as literal keyword arguments of
+the call and of every clone of it; a pass that finds a new one is followed by
+another over the spelled tree, and the template catalog carries them to later
+discovery rounds so those bind them before their first pass. The spelled
+nodes' identities are derived from the call's, so a clone's traces to the
+template's.
+
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR
 plus runtime primitives, not a second checker.

@@ -36,7 +36,7 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
+Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
 
 - [ ] **1.1 An overloaded witness beside a rival the recorded types cannot
   rank keeps the clone check**
@@ -83,6 +83,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     `kept_argument` asks a by-value argument to be a scalar.
   - A default left out, and a keyword argument, derive
     (`assets/ok/template_method_bound_defaulted_argument.mojo`).
+  - A string requirement default a witness declares otherwise is spelled
+    at the call (`checker/bound_defaults.rs`), so it keeps the clone check
+    too.
   - Found while defaults through a bound joined the method grammar
     (2026-09-28); no bundled body is known to need it.
   - Depends on nothing.
@@ -110,9 +113,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.97), and a `String`
-    element needs `String` to be `Defaultable` (3.98).
-  - Depends on 3.97.
+  - A SIMD element needs its nullary construction (3.96), and a `String`
+    element needs `String` to be `Defaultable` (3.97).
+  - Depends on 3.96.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +144,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.92).
+    constructed default at all (3.91).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.92: until a constructed default runs, no fixture can take
+  - Depends on 3.91: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -259,7 +262,23 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 The A1 shadow core has never been run over the decision
+- [ ] **1.14 Keyword arguments out of parameter order through a bound
+  derive facts the clone check does not match**
+
+  Problem: `self.s.shift(1, extra=a, by=b)` through `S: Scaler` fails
+  template-fact verification (`MOJITO_VERIFY_TEMPLATE_FACTS=1`).
+  - The derived call boundary lists the arguments in parameter order; the
+    clone's own check lists them in source order.
+  - The program runs the same either way: the arguments still evaluate in
+    source order.
+  - A requirement default spelled at the call goes before the first
+    keyword for a later parameter, so it does not trip this
+    (`checker/bound_defaults.rs`).
+  - Found while binding requirement defaults at the call (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.15 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -276,12 +295,12 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.15 to 1.17 are the ones in this section that do
+  - This entry and 1.16 to 1.18 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.15 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.16 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -295,7 +314,7 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.16 A1 core text is about three times the v1 text**
+- [ ] **1.17 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -310,7 +329,7 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.17 The Pliron pivot's overhead has never been measured**
+- [ ] **1.18 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -329,7 +348,7 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.14, 1.15, and 1.16.
+  - Depends on 1.15, 1.16, and 1.17.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -2271,35 +2290,20 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A witness whose defaults differ from its requirement's is
-  rejected**
-
-  Problem: a witness declaring `factor: Int = 7`, or no default, for a
-  requirement's `factor: Int = 2` is rejected as a signature mismatch;
-  the pin accepts it.
-  - The pin runs the requirement's default through the bound and the
-    witness's own on a nominal receiver.
-  - An instance runs the witness's default, so Mojito demands the two
-    spelled alike (`MethodSig::defaults`).
-  - A witness adding a default its requirement lacks is rejected the same
-    way.
-  - A lever: bind an omitted slot at the call through the bound, from the
-    requirement's declaration.
-  - Probe: `conformance/probes/witness_default_differs_from_requirement.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 A trait requirement's default other than a literal is
+- [ ] **3.90 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
-  - A literal means the same in the trait's scope as in every witness's; a
-    name may not.
-  - Depends on 3.90: a default bound at the call would lift it.
+  - A call through a bound spells an omitted requirement default at the
+    call when some witness declares it otherwise
+    (`checker/bound_defaults.rs`).
+  - A literal means the same at the call as in the trait's scope; a name
+    may not, so a name would have to be folded or qualified first.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 A call leaving out a constructed default fails at run time**
+- [ ] **3.91 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2313,7 +2317,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 An instance ranks a generic struct's overload family again
+- [ ] **3.92 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2330,7 +2334,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A generic static's per-call clone takes a call to its
+- [ ] **3.93 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2342,7 +2346,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A generic static with its own binder cannot infer its struct's
+- [ ] **3.94 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2353,7 +2357,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A variadic struct's index-keyed method not named
+- [ ] **3.95 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2369,7 +2373,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A SIMD value has no nullary construction**
+- [ ] **3.96 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2384,7 +2388,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 `String` is not `Defaultable`**
+- [ ] **3.97 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2394,7 +2398,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A `def` does not infer a value parameter from an argument's
+- [ ] **3.98 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2409,7 +2413,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.100 A generic nested `def` that captures does not compile
+- [ ] **3.99 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2427,7 +2431,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.101 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.100 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2446,7 +2450,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.101 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2464,7 +2468,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.102 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2481,7 +2485,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.104 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.103 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2497,7 +2501,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.105 A write through a reference skips the overwritten value's
+- [ ] **3.104 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2515,7 +2519,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.106 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.105 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2536,7 +2540,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.107 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.106 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a

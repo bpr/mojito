@@ -264,6 +264,11 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
         let _rekey = timing::span("syntax_rekey");
         mojito_ast::ast::rekey_syntax(&mut expanded)
     };
+    bound_defaults::bind_bound_default_arguments(
+        &mut expanded,
+        &syntax_origins,
+        catalog.bound_default_arguments(),
+    );
     let rebind_targets = erase_rebinds(&mut expanded);
     // The previous pass: the round's carry for the first pass, then each
     // stale pass for the next. Its committed maps seed the pass and its
@@ -293,6 +298,18 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
             checker.check_program(&expanded)
         };
         *catalog = checker.template_catalog.take();
+        // A call through a bound leaving out a requirement default binds it
+        // (`bound_defaults.rs`); a pass that found a new one checks again
+        // with it spelled, whatever its verdict on the clones without it.
+        if catalog.record_bound_default_arguments(checker.bound_default_arguments.take())
+            && bound_defaults::bind_bound_default_arguments(
+                &mut expanded,
+                &syntax_origins,
+                catalog.bound_default_arguments(),
+            )
+        {
+            continue;
+        }
         body_check?;
         // The previous pass has served every site it could.
         checker.previous = None;
@@ -908,6 +925,11 @@ pub struct Checker {
     /// The identity each occurrence had before the final re-key: the
     /// occurrence-level expansion trace from a template to its clones.
     syntax_origins: mojito_ast::ast::SyntaxOrigins,
+    /// The requirement defaults each call through a bound leaves out, by the
+    /// call's origin (`bound_defaults.rs`).
+    bound_default_arguments: RefCell<
+        HashMap<mojito_common::token::SyntaxId, mojito_checked::templates::BoundDefaultArguments>,
+    >,
     /// Each erased `rebind` this check judged, at its operand (or, for a
     /// rebound assignment, its statement): the operand's own type, the
     /// target, and whether the rebind is by value. A checked template keeps
@@ -1093,6 +1115,7 @@ impl Checker {
             uninitialized: RefCell::new(HashSet::new()),
             template_catalog: RefCell::new(mojito_checked::templates::TemplateCatalog::default()),
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
+            bound_default_arguments: RefCell::new(HashMap::new()),
             rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,
             effect_query_frames: RefCell::new(Vec::new()),
@@ -2153,10 +2176,10 @@ struct MethodSig {
     params: Vec<Ty>,
     names: Vec<String>,
     required: Vec<bool>,
-    /// Per regular parameter, its declared default. A conforming method must
-    /// declare its requirement's defaults alike: a call through the bound
-    /// leaving one out runs the requirement's default in current Mojo, and
-    /// the witness's own in an instance.
+    /// Per regular parameter, its declared default. A conforming method may
+    /// declare its own: a call through the bound leaving one out runs the
+    /// requirement's, which the check spells at the call where some witness
+    /// differs (`bound_defaults.rs`).
     defaults: Vec<Option<mojito_ast::ast::Expr>>,
     variadic: Option<Box<Ty>>,
     variadic_index: Option<usize>,
@@ -3047,6 +3070,7 @@ mod method_calls;
 mod call_inference;
 mod ffi_calls;
 
+mod bound_defaults;
 mod statements;
 mod template_facts;
 mod with_stmt;
