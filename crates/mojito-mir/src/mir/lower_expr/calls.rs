@@ -235,8 +235,11 @@ impl Flatten<'_> {
                 _ => None,
             })?;
         // `SIMD[DType.bool, N](fill=b)` is the one-lane splat, by keyword.
-        let elems = match kwargs {
-            [fill] => vec![self.expr(&fill.value)],
+        // A nullary construction splats a zero lane.
+        let elems = match (kwargs, args) {
+            ([fill], _) => vec![self.expr(&fill.value)],
+            ([], []) if dtype == Dtype::Bool => vec![self.constant(e, Const::Bool(false))],
+            ([], []) => vec![self.constant(e, Const::IntLiteral(0.into()))],
             _ => self.args(args),
         };
         let d = self.fresh(span(e), None);

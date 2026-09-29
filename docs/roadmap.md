@@ -113,8 +113,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.90), and a `String`
-    element needs `String` to be `Defaultable` (3.91).
+  - A `String` element needs `String` to be `Defaultable` (3.90).
   - Depends on 3.90.
   - Model: Fable, Planned.
 
@@ -2308,22 +2307,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A SIMD value has no nullary construction**
-
-  Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
-  `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
-  element(s) or 1 to splat, got 0"; the pin prints zeros.
-  - `SIMD` conforms to `Defaultable` in the checker already, so a
-    `Defaultable` parameter bound to `Float32` passes the bound and then
-    fails at `T()`.
-  - `check_simd_args` demands one lane or one splat, and `try_simd_call`
-    has no zero to splat.
-  - The scalar built-ins (`Int()`, `UInt()`, `Float64()`, `Bool()`) are
-    supported.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 `String` is not `Defaultable`**
+- [ ] **3.90 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2333,7 +2317,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 A `def` does not infer a value parameter from an argument's
+- [ ] **3.91 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2348,7 +2332,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.93 A generic nested `def` that captures does not compile
+- [ ] **3.92 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2366,7 +2350,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.94 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.93 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2385,7 +2369,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.94 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2403,7 +2387,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.95 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2420,7 +2404,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.97 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.96 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2436,7 +2420,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.98 A write through a reference skips the overwritten value's
+- [ ] **3.97 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2454,7 +2438,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.98 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2475,7 +2459,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.100 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.99 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2495,7 +2479,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A generic `def` reads a module constant where a local shadows
+- [ ] **3.100 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2509,7 +2493,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A trait requirement's default reading more than module
+- [ ] **3.101 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2524,7 +2508,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 A default naming a binder in scope fails at run time**
+- [ ] **3.102 A default naming a binder in scope fails at run time**
 
   Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]`, checks but stops on the VM with "non-constant default
@@ -2543,7 +2527,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 A list literal default for a `List` parameter is an `Array`**
+- [ ] **3.103 A list literal default for a `List` parameter is an `Array`**
 
   Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
   mismatch for default value of 'xs': expected List[Int], found Array[Int,
@@ -2659,9 +2643,6 @@ last.
        `Deinitable` (`make[T: Defaultable & Deinitable]()` over
        `Tuple[Int, Bool]` reports the bound failure), while the inferred
        shape runs.
-     - A standalone nullary vector construction `SIMD[d, w]()` rejects
-       (`SIMD construction expects w element(s) or 1 to splat, got 0`).
-       Only a Tuple element defaults to zero lanes.
      - `Tuple.reverse` and `Tuple.concat` are typed in Rust from the element
        list (`checker/method_calls/builtin_types.rs`), not declared in
        `std/builtin/tuple.mojo`. The nominal declaration answers a Tuple

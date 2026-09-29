@@ -775,8 +775,9 @@ impl Checker {
         })
     }
 
-    /// Check the element arguments of a SIMD construction: either `width` of them
-    /// (one per lane) or exactly one (splatted), each fitting `dtype`. A
+    /// Check the element arguments of a SIMD construction: none (all lanes
+    /// zero), `width` of them (one per lane), or exactly one (splatted), each
+    /// fitting `dtype`. A
     /// symbolic width fixes no count and a symbolic dtype gates nothing: both
     /// are the instantiation's to check.
     pub(super) fn check_simd_args(
@@ -787,7 +788,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         if let Some(width) = width.known()
             && args.len() != width as usize
-            && args.len() != 1
+            && args.len() > 1
         {
             return Err(TypeError::SimdArity {
                 width,

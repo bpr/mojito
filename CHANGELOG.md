@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A SIMD value now constructs with no arguments, as the pin's
+  `SIMD.__init__()` does: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`,
+  and `SIMD[DType.int32, 2]()` zero every lane, and `T()` under a
+  `T: Defaultable` bound to one runs, where each used to stop with "SIMD
+  construction expects 1 element(s) or 1 to splat, got 0"
+  (`assets/ok/simd_nullary_construction.mojo`).
 - A variadic struct's index-keyed method under a name other than
   `__getitem__` (`def item[i: Int](self) -> Self.Ts[i]`) now runs as the pin
   does: `b.item[1]()` prints the element instead of stopping with "type
