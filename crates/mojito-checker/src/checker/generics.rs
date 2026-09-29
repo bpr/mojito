@@ -903,6 +903,11 @@ impl Checker {
     /// declaration order; callable-bounded parameters stay symbolic on the
     /// clone and contribute nothing; packs and symbolic placeholders make the
     /// call unspecializable.
+    ///
+    /// A generic struct's per-instance clone of the same method can share
+    /// the name (`both$y3:Int` bakes `Pair`'s `T = Int`, not `both`'s
+    /// `U = Int`); it still declares the method's own parameters, which a
+    /// per-call clone has baked, so it is not this call's clone.
     pub(super) fn specialized_method_clone(
         &self,
         owner: &str,
@@ -917,9 +922,27 @@ impl Checker {
             return None;
         }
         let name = mojito_symbol::symbol::mangle(method, &values).ok()?;
+        let baked: Vec<&str> = decls
+            .iter()
+            .filter(|decl| {
+                !matches!(
+                    decl,
+                    ParamDecl::Type {
+                        callable_bound: Some(_),
+                        ..
+                    }
+                )
+            })
+            .map(ParamDecl::name)
+            .collect();
         self.structs
             .get(owner)
-            .is_some_and(|info| info.methods.contains_key(&name))
+            .and_then(|info| info.methods.get(&name))
+            .is_some_and(|members| {
+                members
+                    .iter()
+                    .all(|member| !member.decls.iter().any(|decl| baked.contains(&decl.name())))
+            })
             .then_some(name)
     }
 
