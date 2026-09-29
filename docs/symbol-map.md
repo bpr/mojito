@@ -594,6 +594,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::method_binder_owner` over `symbol::MethodBinderOwners`, which
   the elaborator's `elaborated_binder` shares,
   `value_parameter`, `params_as_args`).
+  The same table's `call_qualifier`/`declares_qualifier` name the overload
+  a per-call method clone request selects: the elaborator mints only that
+  overload's clone (`MethodSpecializationRequest::selects`), and the checker
+  retargets a call only to a clone family holding it
+  (`Checker::clone_serves_overload`).
   `constraint_verdict`/`constraint_proposition` are the three-valued
   evaluator, `assume_declared_propositions`/`assumptions_prove` the evidence
   an enclosing `where` supplies, and `eval_generic_constraint` its

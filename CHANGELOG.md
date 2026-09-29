@@ -8,13 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Two same-arity generic overloads of one method that a call specializes
+  alike no longer collide: `First(0).pick(2, 3)`, beside `pick[T](self, a:
+  T, b: T)` and `pick[T](self, a: T, b: Int)`, prints `2` as the pin does,
+  where it used to reject with "'pick$y3:Int' is already declared in this
+  scope". Each call now mints a per-call clone of only the overload it
+  selects, on a plain struct, a generic struct's instance, and through a
+  trait bound.
 - A call returning a mutable reference is now an assignment target, as the
   pin allows: `bump(k) = 9` and `bump(k) += 1` for `def bump(ref a: Int) ->
   ref[origin_of(a)] Int` print `9` then `10`, and a method's reference
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.107).
+  reference result is still rejected (roadmap 3.106).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -38,7 +45,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.101).
+  (roadmap 3.100).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The

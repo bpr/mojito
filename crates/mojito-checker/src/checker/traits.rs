@@ -264,6 +264,7 @@ impl Checker {
                     synthesized_default: false,
                     nested_origins: NestedOrigins::AsDeclared,
                     template_ret: None,
+                    overload: None,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -830,6 +831,10 @@ impl Checker {
                     parametric_origin_writes_in_body(&m.body, &info.fields);
             }
             sig.template_ret = self.clone_template_return(declaration, m);
+            sig.overload = self
+                .method_binder_owners
+                .call_qualifier(name, m)
+                .map(str::to_string);
             for (param, ty) in all_types.iter().enumerate() {
                 self.declaration_types.borrow_mut().insert(
                     mojito_checked::checked::AnnotationSite::MethodParam {
@@ -1223,6 +1228,7 @@ impl Checker {
                         synthesized_default: false,
                         nested_origins: req_sig.nested_origins,
                         template_ret: None,
+                        overload: None,
                     };
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(

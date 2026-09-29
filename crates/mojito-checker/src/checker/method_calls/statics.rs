@@ -395,6 +395,11 @@ impl Checker {
                 .instance_arguments(sname, &receiver_targs)
                 .unwrap_or_default();
             let source_method = method.split('$').next().unwrap_or(method);
+            let overload = selected
+                .lowered_name
+                .as_deref()
+                .and_then(mojito_symbol::symbol::overload_qualifier)
+                .map(str::to_string);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
@@ -402,6 +407,7 @@ impl Checker {
                     owner_arguments: owner_arguments.clone(),
                     method: source_method.to_string(),
                     parameter_names: selected.parameter_names.clone(),
+                    overload: overload.clone(),
                     arguments: arguments.clone(),
                 },
             );
@@ -415,7 +421,10 @@ impl Checker {
                     &selected.param_decls,
                     arguments,
                 )
-            };
+            }
+            .filter(|clone| {
+                self.clone_serves_overload(sname, source_method, clone, overload.as_deref())
+            });
             if let Some(clone) = clone {
                 let ty = self.infer_struct_static_method(
                     span.clone(),

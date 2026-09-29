@@ -229,9 +229,11 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     let mut got_shape = canonical_method_shape(got);
     got_shape.raises = false;
     got_shape.error = None;
+    got_shape.overload = None;
     let mut required_shape = canonical_method_shape(required);
     required_shape.raises = false;
     required_shape.error = None;
+    required_shape.overload = None;
     if got_shape != required_shape {
         return false;
     }

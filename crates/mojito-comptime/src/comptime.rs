@@ -243,6 +243,9 @@ pub struct MethodSpecializationRequest {
     /// order: same-named overloads (`set[T](value)` and `set(*, init_with)`)
     /// mint separate clones.
     parameter_names: Vec<String>,
+    /// The selected overload's signature qualifier (`$ov$T$Int`), telling
+    /// apart same-arity overloads that share their parameter names.
+    overload: Option<String>,
     /// The checker's declaration-order argument list from `resolve_use_params`.
     arguments: Vec<TyArg>,
 }
@@ -260,12 +263,46 @@ impl MethodSpecializationRequest {
             owner,
             method,
             parameter_names,
+            overload: None,
             arguments,
         }
     }
 
+    /// Name the selected overload's signature qualifier as well.
+    #[must_use]
+    pub fn with_overload(mut self, overload: Option<String>) -> Self {
+        self.overload = overload;
+        self
+    }
+
     pub fn parameter_names(&self) -> &[String] {
         &self.parameter_names
+    }
+
+    /// Whether this request selects `method`, declared on the struct
+    /// `owner` names: the same source name and regular parameter names, and,
+    /// when the request names one of the method's overloads by its signature
+    /// qualifier, that overload.
+    pub fn selects(
+        &self,
+        method: &mojito_ast::ast::Method,
+        owner: &str,
+        owners: &mojito_symbol::symbol::MethodBinderOwners,
+    ) -> bool {
+        let regular: Vec<&str> = method
+            .params
+            .iter()
+            .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+            .map(|parameter| parameter.name.as_str())
+            .collect();
+        let same_overload = self
+            .overload
+            .as_deref()
+            .filter(|selected| owners.declares_qualifier(owner, &method.name, selected))
+            .is_none_or(|selected| owners.call_qualifier(owner, method) == Some(selected));
+        self.method == method.name
+            && self.parameter_names.iter().map(String::as_str).eq(regular)
+            && same_overload
     }
 
     pub const fn occurrence(&self) -> &SourceSpan {

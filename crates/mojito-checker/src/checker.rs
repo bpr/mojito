@@ -2217,6 +2217,11 @@ struct MethodSig {
     /// A clone's template's declared result type, whose type parameters the
     /// clone's own `ret` has substituted. `None` for every other method.
     template_ret: Option<Ty>,
+    /// The signature qualifier of the overload this method is, or is a
+    /// per-call clone of (`$ov$T$Copyable$Int`), when its template is one of
+    /// several same-named overloads: what a call selecting that overload
+    /// records. `None` for every other method.
+    overload: Option<String>,
 }
 
 impl MethodSig {
@@ -2255,6 +2260,7 @@ impl MethodSig {
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
             template_ret: None,
+            overload: None,
         }
     }
 }

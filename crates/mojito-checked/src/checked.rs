@@ -319,6 +319,10 @@ pub struct MethodInstantiation {
     pub method: String,
     /// The selected overload's runtime parameter names, in declaration order.
     pub parameter_names: Vec<String>,
+    /// The selected overload's signature qualifier (`$ov$T$Int`) when the
+    /// method is overloaded: two same-arity overloads that share their
+    /// parameter names mint only the selected one's clone.
+    pub overload: Option<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 

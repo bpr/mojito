@@ -2081,31 +2081,17 @@ impl Elab<'_> {
             if specializable_method {
                 let owner = mangle(orig, vals)?;
                 let mut minted = HashSet::new();
-                // The request names the selected overload's regular
-                // parameters (a `*args` collector is not among them).
-                let regular: Vec<&FnParam> = method
-                    .params
-                    .iter()
-                    .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
-                    .collect();
+                let binder_owner = self.method_binder_owners.owner(orig, &method);
                 for request in self
                     .method_requests
                     .get(&owner)
                     .map_or(&[][..], Vec::as_slice)
                     .iter()
-                    .filter(|request| {
-                        request.method() == method.name
-                            && request.parameter_names().len() == regular.len()
-                            && request
-                                .parameter_names()
-                                .iter()
-                                .zip(&regular)
-                                .all(|(name, parameter)| *name == parameter.name)
-                    })
+                    .filter(|request| request.selects(&method, orig, &self.method_binder_owners))
                 {
                     let mut origin_binders = CloneOriginBinders::default();
                     let Some((values, bindings)) = self.method_request_values(
-                        &self.method_binder_owners.owner(orig, &method),
+                        &binder_owner,
                         &method.type_params,
                         request.arguments(),
                         &mut origin_binders,
@@ -2799,28 +2785,17 @@ impl Elab<'_> {
         }
         let mut clones = Vec::new();
         let mut minted = HashSet::new();
-        // The request names the selected overload's regular parameters (a
-        // `*args` collector is not among them).
-        let regular: Vec<&FnParam> = method
-            .params
+        let binder_owner = self.method_binder_owners.owner(template, method);
+        for request in requests
             .iter()
-            .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
-            .collect();
-        for request in requests.iter().filter(|request| {
-            request.method() == method.name
-                && request.parameter_names().len() == regular.len()
-                && request
-                    .parameter_names()
-                    .iter()
-                    .zip(&regular)
-                    .all(|(name, parameter)| *name == parameter.name)
-        }) {
+            .filter(|request| request.selects(method, template, &self.method_binder_owners))
+        {
             // The call's own loan-carrying arguments bind their origin slots
             // to binders numbered after the instance's: both land on the
             // clone, which declares the instance's first.
             let mut binders = base_binders.cloned().unwrap_or_default();
             let Some((call_values, call_bindings)) = self.method_request_values(
-                &self.method_binder_owners.owner(template, method),
+                &binder_owner,
                 &method.type_params,
                 request.arguments(),
                 &mut binders,

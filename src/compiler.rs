@@ -928,7 +928,8 @@ fn method_specialization_requests(
             instantiation.method.clone(),
             instantiation.parameter_names.clone(),
             instantiation.arguments.clone(),
-        );
+        )
+        .with_overload(instantiation.overload.clone());
         let key = request.occurrence().clone();
         if conflicted.contains(&key) {
             continue;

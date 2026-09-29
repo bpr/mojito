@@ -476,6 +476,7 @@ assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/same_arity_generic_method_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/same_spelled_type_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_dtype_construction.mojo	-	ineligible	no-scalar-entry-shape

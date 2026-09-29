@@ -110,9 +110,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.98), and a `String`
-    element needs `String` to be `Defaultable` (3.99).
-  - Depends on 3.98.
+  - A SIMD element needs its nullary construction (3.97), and a `String`
+    element needs `String` to be `Defaultable` (3.98).
+  - Depends on 3.97.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.93).
+    constructed default at all (3.92).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.93: until a constructed default runs, no fixture can take
+  - Depends on 3.92: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -2271,22 +2271,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 Two same-arity generic overloads of one method collide when a
-  call specializes them alike**
-
-  Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
-  `pick[T](self, a: T, b: Int)`, is rejected with "'pick$y3:Int' is already
-  declared in this scope", where the pin ranks the `b: Int` overload first
-  and prints `2`.
-  - Both overloads specialize to one clone symbol: the per-call clone name
-    carries the type arguments but not the overload's signature.
-  - The same collision stops a trait-bound call `p.pick(4, 5)` over a
-    conforming struct.
-  - Probe: `conformance/probes/same_arity_generic_method_overloads.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 A witness whose defaults differ from its requirement's is
+- [ ] **3.90 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2304,17 +2289,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 A trait requirement's default other than a literal is
+- [ ] **3.91 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.91: a default bound at the call would lift it.
+  - Depends on 3.90: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 A call leaving out a constructed default fails at run time**
+- [ ] **3.92 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2328,7 +2313,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 An instance ranks a generic struct's overload family again
+- [ ] **3.93 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2345,7 +2330,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A generic static's per-call clone takes a call to its
+- [ ] **3.94 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2357,7 +2342,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A generic static with its own binder cannot infer its struct's
+- [ ] **3.95 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2368,7 +2353,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A variadic struct's index-keyed method not named
+- [ ] **3.96 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2384,7 +2369,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A SIMD value has no nullary construction**
+- [ ] **3.97 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2399,7 +2384,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 `String` is not `Defaultable`**
+- [ ] **3.98 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2409,7 +2394,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A `def` does not infer a value parameter from an argument's
+- [ ] **3.99 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2424,7 +2409,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.101 A generic nested `def` that captures does not compile
+- [ ] **3.100 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2442,7 +2427,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.102 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.101 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2461,7 +2446,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.102 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2479,7 +2464,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.103 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2496,7 +2481,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.105 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.104 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2512,7 +2497,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.106 A write through a reference skips the overwritten value's
+- [ ] **3.105 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2530,7 +2515,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.107 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.106 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2550,6 +2535,26 @@ last.
     (2026-09-28).
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **3.107 An overloaded method's symbol is spelled one way where it is
+  declared and another where it is called**
+
+  Problem: for an overloaded method with a callable-typed parameter or a
+  bounded binder of its own, the checker's call target names a symbol MIR
+  never declares.
+  - The checker keys `pick[T: Copyable](self, a: T, b: Int)` as
+    `First.pick$ov$T$Copyable$Int`; MIR declares `First.pick$ov$T$Int`,
+    since `lowered_method_name` sees only the struct's binders.
+  - A callable-typed parameter keys as `F$Callable$def…` at the call and
+    `F$$u3C$function$u20$type$u3E$` at the declaration (`Variant.set`).
+  - Only per-call clones reach these methods today; a call left on the
+    template path stops with "vm: unknown method".
+  - The per-call clone filter matches the call side's spelling against
+    `MethodBinderOwners::call_qualifier`, and a callable-typed overload
+    falls back to minting every same-named member for the request.
+  - Found while keying per-call clones by overload (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

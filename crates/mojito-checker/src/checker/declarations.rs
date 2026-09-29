@@ -445,6 +445,7 @@ impl Checker {
             synthesized_default: method.synthesized,
             nested_origins: NestedOrigins::of(&method.decorators),
             template_ret: None,
+            overload: None,
         })
     }
 
@@ -1857,6 +1858,7 @@ impl Checker {
                 owner_arguments: Vec::new(),
                 method: "__init__".to_string(),
                 parameter_names: sig.names.clone(),
+                overload: None,
                 arguments: arguments.clone(),
             },
         );
@@ -2061,6 +2063,11 @@ impl Checker {
                             owner_arguments: Vec::new(),
                             method: "__init__".to_string(),
                             parameter_names: selected.parameter_names.clone(),
+                            overload: selected
+                                .lowered_name
+                                .as_deref()
+                                .and_then(mojito_symbol::symbol::overload_qualifier)
+                                .map(str::to_string),
                             arguments: arguments.clone(),
                         },
                     );

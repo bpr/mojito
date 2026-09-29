@@ -312,6 +312,11 @@ impl Checker {
                 // does: a compile-time-keyed body only folds bound.
                 if let Some(arguments) = &selected.instantiation {
                     let source_method = method.split('$').next().unwrap_or(method);
+                    let overload = selected
+                        .lowered_name
+                        .as_deref()
+                        .and_then(mojito_symbol::symbol::overload_qualifier)
+                        .map(str::to_string);
                     self.method_instantiations.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::MethodInstantiation {
@@ -319,15 +324,21 @@ impl Checker {
                             owner_arguments: Vec::new(),
                             method: source_method.to_string(),
                             parameter_names: selected.parameter_names.clone(),
+                            overload: overload.clone(),
                             arguments: arguments.clone(),
                         },
                     );
-                    if let Some(clone) = self.specialized_method_clone(
-                        sname,
-                        method,
-                        &selected.param_decls,
-                        arguments,
-                    ) {
+                    if let Some(clone) = self
+                        .specialized_method_clone(sname, method, &selected.param_decls, arguments)
+                        .filter(|clone| {
+                            self.clone_serves_overload(
+                                sname,
+                                source_method,
+                                clone,
+                                overload.as_deref(),
+                            )
+                        })
+                    {
                         let ty = self.infer_method_call(
                             span.clone(),
                             object,
@@ -1678,6 +1689,11 @@ impl Checker {
             // (`name$y3:Int`) requests the clone of the source method: the
             // elaborator selects by source name and mints from the template.
             let source_method = method.split('$').next().unwrap_or(method);
+            let overload = resolved
+                .lowered_name
+                .as_deref()
+                .and_then(mojito_symbol::symbol::overload_qualifier)
+                .map(str::to_string);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
@@ -1685,6 +1701,7 @@ impl Checker {
                     owner_arguments: owner_arguments.clone(),
                     method: source_method.to_string(),
                     parameter_names: resolved.parameter_names.clone(),
+                    overload: overload.clone(),
                     arguments: arguments.clone(),
                 },
             );
@@ -1698,7 +1715,10 @@ impl Checker {
                     &resolved.param_decls,
                     arguments,
                 )
-            };
+            }
+            .filter(|clone| {
+                self.clone_serves_overload(sname, source_method, clone, overload.as_deref())
+            });
             if let Some(clone) = clone {
                 return self.infer_method_call(
                     span,

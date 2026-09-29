@@ -984,8 +984,13 @@ pub struct MethodBinderOwners {
     /// The lowered symbol of every overloaded template method, keyed by its
     /// template struct and the byte range of its first body statement: a
     /// clone keeps its template's body spans but not its signature, so the
-    /// owner is computed once, from the template.
-    overloaded: HashMap<(String, mojito_common::token::Span), String>,
+    /// owner is computed once, from the template. Beside it, the signature
+    /// qualifier a call selecting that overload records, which spells the
+    /// method's own binders with their bounds as the checker does.
+    overloaded: HashMap<(String, mojito_common::token::Span), (String, String)>,
+    /// Every such call qualifier, keyed by its template struct and source
+    /// method name.
+    qualifiers: HashSet<(String, String, String)>,
 }
 
 impl MethodBinderOwners {
@@ -1017,11 +1022,43 @@ impl MethodBinderOwners {
                             sets,
                         );
                         let first = m.body.first()?;
-                        (lowered != source).then(|| ((name.clone(), first.span), lowered))
+                        (lowered != source).then(|| {
+                            let scope: Vec<TypeParam> =
+                                type_params.iter().chain(&m.type_params).cloned().collect();
+                            let selected = lowered_method_name(
+                                &source,
+                                &scope,
+                                &m.params,
+                                m.keyword_only,
+                                m.has_self,
+                                m.self_convention,
+                                sets,
+                            );
+                            let qualifier = overload_qualifier(&selected)
+                                .unwrap_or_default()
+                                .to_string();
+                            (
+                                (name.clone(), first.span),
+                                (lowered, qualifier, m.name.clone()),
+                            )
+                        })
                     })
             })
+            .collect::<Vec<_>>();
+        let qualifiers = overloaded
+            .iter()
+            .map(|((template, _), (_, qualifier, method))| {
+                (template.clone(), method.clone(), qualifier.clone())
+            })
             .collect();
-        Self { overloaded }
+        let overloaded = overloaded
+            .into_iter()
+            .map(|(key, (lowered, qualifier, _))| (key, (lowered, qualifier)))
+            .collect();
+        Self {
+            overloaded,
+            qualifiers,
+        }
     }
 
     /// The owner of `m`'s own binders on the struct `owner` names, a
@@ -1031,13 +1068,40 @@ impl MethodBinderOwners {
         m.body
             .first()
             .and_then(|first| self.overloaded.get(&(template.to_string(), first.span)))
-            .cloned()
-            .unwrap_or_else(|| {
-                format!(
-                    "{template}.{}",
-                    specialization_template(&m.name).unwrap_or(&m.name)
-                )
-            })
+            .map_or_else(
+                || {
+                    format!(
+                        "{template}.{}",
+                        specialization_template(&m.name).unwrap_or(&m.name)
+                    )
+                },
+                |(owner, _)| owner.clone(),
+            )
+    }
+}
+
+impl MethodBinderOwners {
+    /// The signature qualifier a call selecting `m` records
+    /// (`$ov$T$Copyable$Int`), when `m` is one of several overloads on the
+    /// struct `owner` names.
+    pub fn call_qualifier(&self, owner: &str, m: &Method) -> Option<&str> {
+        let template = specialization_template(owner).unwrap_or(owner);
+        let first = m.body.first()?;
+        self.overloaded
+            .get(&(template.to_string(), first.span))
+            .map(|(_, qualifier)| qualifier.as_str())
+    }
+
+    /// Whether `qualifier` is the call qualifier of one of `method`'s
+    /// overloads on the struct `owner` names. A qualifier the call side
+    /// spells differently from every declaration names none of them.
+    pub fn declares_qualifier(&self, owner: &str, method: &str, qualifier: &str) -> bool {
+        let template = specialization_template(owner).unwrap_or(owner);
+        self.qualifiers.contains(&(
+            template.to_string(),
+            method.to_string(),
+            qualifier.to_string(),
+        ))
     }
 }
 
@@ -1074,6 +1138,16 @@ pub fn is_overload_of(symbol: &str, base: &str) -> bool {
     symbol
         .strip_prefix(base)
         .is_some_and(|rest| rest.starts_with(OV_SEP))
+}
+
+/// The signature qualifier of an overload symbol (`$ov$T$Int` in
+/// `First.pick$ov$T$Int`), or `None` when `symbol` names no overload.
+///
+/// It names one declaration of an overloaded method whatever receiver
+/// spelling the symbol carries, so a per-call clone request and the
+/// template it selects compare on it.
+pub fn overload_qualifier(symbol: &str) -> Option<&str> {
+    symbol.find(OV_SEP).map(|start| &symbol[start..])
 }
 
 /// Whether an overload symbol's signature qualifier is exactly the `NoneType`

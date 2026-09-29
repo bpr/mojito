@@ -650,6 +650,18 @@ impl Checker {
                     .unwrap_or_default(),
                 method: method.to_string(),
                 parameter_names: declared.names.clone(),
+                overload: overloaded
+                    .then(|| {
+                        crate::checker::overload_support::method_lowered_name(
+                            owner,
+                            method,
+                            declared,
+                            self.self_instance_ty(owner).as_ref(),
+                        )
+                    })
+                    .as_deref()
+                    .and_then(mojito_symbol::symbol::overload_qualifier)
+                    .map(str::to_string),
                 arguments: declared
                     .decls
                     .iter()
