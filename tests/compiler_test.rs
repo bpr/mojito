@@ -5188,6 +5188,31 @@ fn template_bound_value_argument_derives() {
 }
 
 #[test]
+fn template_bound_self_argument_derives() {
+    // A value of a struct parameter's type handed by value to a
+    // requirement parameter typed `Self` or by the requirement's own binder:
+    // a borrowed place read where it lies, an owned temporary, a transferred
+    // local, or an implicit copy the template recorded, whatever the witness.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_bound_self_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "7 3 7 10 10 2.w 2.q\n5 3 5 10 10 ab-7 ab-9\n12 18\n",
+        &[
+            ("Holder.merged_field", 2),
+            ("Holder.merged_parameter", 2),
+            ("Holder.merged_local", 2),
+            ("Holder.absorbed_copy", 2),
+            ("Holder.absorbed_transfer", 2),
+            ("Holder.paired_field", 2),
+            ("Implicit.absorbed_field", 1),
+            ("Implicit.absorbed_parameter", 1),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

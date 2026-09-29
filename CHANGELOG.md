@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value of a struct parameter's type handed through a bound to a
+  requirement parameter typed `Self` or by the requirement's own binder
+  (`self.s.merge(self.t)` over `merge(self, other: Self)`,
+  `self.s.pair(self.w)` over `pair[T: Writable](self, other: T)`) now
+  reuses the template's checked facts
+  (`assets/ok/template_method_bound_self_argument.mojo`). Such methods used
+  to be checked again per instance.
 - A list, set, or dict display handed to a method's parameter or built
   into a typed local (`self.item.total([1, 2, 3])` over `T: Totaler`,
   `var items: List[Self.T] = [...]`) now reuses the template's checked

@@ -38,25 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
 
-- [ ] **1.1 A value handed by value to a parameter typed by `Self` or
-  a requirement binder through a bound keeps the clone check**
-
-  Problem: `self.s.merge(self.t)` over `S: Merger`, whose `merge(self,
-  other: Self)` takes a whole value, leaves the method outside the method
-  grammar, so every instance is checked again.
-  - `BodyShape::bound_dispatch`'s `kept_argument` binds a by-value
-    argument as a direct call's only at a closed parameter type, which
-    every witness declares alike.
-  - A symbolic parameter type becomes each witness's own under the
-    instance, so the argument's copy or move must be re-proved there.
-  - A string literal, a named `String`, and a field of `self` at a closed
-    parameter derive (`assets/ok/template_method_bound_value_argument.mojo`).
-  - Found while closed non-scalar arguments joined the method grammar
-    (2026-09-29); no bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 A pack element's default construction outside a storage
+- [ ] **1.1 A pack element's default construction outside a storage
   store keeps the clone check**
 
   Problem: `print(Self.Ts[i]())` in a method and `var value = Ts[i]()` in a
@@ -76,7 +58,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 A field read of a nested `def`'s struct parameter keeps the
+- [ ] **1.2 A field read of a nested `def`'s struct parameter keeps the
   clone check**
 
   Problem: `def f(x: Int, p: Pair) -> Int: return x + p.a` inside a generic
@@ -90,7 +72,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 `String(x)` of a closed-scalar parameter keeps the clone
+- [ ] **1.3 `String(x)` of a closed-scalar parameter keeps the clone
   check**
 
   Problem: `return String(k)` for `k: Int` in a generic struct's method
@@ -104,7 +86,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A string literal handed to a generic static's own binder
+- [ ] **1.4 A string literal handed to a generic static's own binder
   keeps the clone check**
 
   Problem: `Pair[Self.T].pick("s")`, or `Pair[Self.T].pick[String]("s")`,
@@ -121,7 +103,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 `_ArrayIter.__next__` keeps the clone check**
+- [ ] **1.5 `_ArrayIter.__next__` keeps the clone check**
 
   Problem: the borrowed `Array` iterator's `__next__` is inferred again in
   every checker pass, while the rest of `Array` and its iterators reuse
@@ -134,7 +116,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A float literal beside a symbolic lane's value keeps the
+- [ ] **1.6 A float literal beside a symbolic lane's value keeps the
   clone check**
 
   Problem: `self.pos * 0.5` or `self.pos < 0.5` over `Scalar[Self.dtype]`
@@ -149,7 +131,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 An overloaded witness with binders of its own keeps the
+- [ ] **1.7 An overloaded witness with binders of its own keeps the
   clone check over a generic struct's instance**
 
   Problem: `self.item.__hash__(hasher)` over `Pair[Int]`, whose
@@ -166,7 +148,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A call through a bound whose requirement names no single
+- [ ] **1.8 A call through a bound whose requirement names no single
   witness still ranks the overload set on the recorded types**
 
   Problem: where no one member witnesses the requirement, `bound_witness`
@@ -184,6 +166,24 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
     nowhere.
   - Found while built-in traits' requirements joined witness selection
     (2026-09-29); no bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.9 A call through a bound whose result is typed by the
+  requirement's own binder keeps the clone check**
+
+  Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
+  Copyable](self, other: T) -> T` returns its binder, leaves the method
+  outside the method grammar, so every instance is checked again.
+  - `BodyShape::bound_dispatch` admits a result that is the receiver's own
+    type, a view of a pack element, or a closed type. The binder's
+    template result is the argument's symbolic type, none of those.
+  - The witness's result under the instance is the argument's type there,
+    so the result's copy, move, or drop must be re-proved at that type.
+  - An argument of the binder's type, with a closed result, derives
+    (`assets/ok/template_method_bound_self_argument.mojo`).
+  - Found while `Self`-typed and binder-typed arguments joined the method
+    grammar (2026-09-29); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
