@@ -646,6 +646,7 @@ struct String(
     Boolable,
     Comparable,
     Copyable,
+    Defaultable,
     Equatable,
     Hashable,
     ImplicitlyCopyable,

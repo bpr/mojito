@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `String` now conforms to `Defaultable`, as the pin's does: `make[String]()`
+  over a `T: Defaultable` bound and `Tuple[String, Int]()` run, where they
+  used to fail the bound or stop with "no constructor overload matches the
+  supplied arguments" (`assets/ok/string_default_construction.mojo`).
 - A SIMD value now constructs with no arguments, as the pin's
   `SIMD.__init__()` does: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`,
   and `SIMD[DType.int32, 2]()` zero every lane, and `T()` under a
@@ -72,7 +76,7 @@ to evolve under the `0.x` compatibility rules.
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.100).
+  reference result is still rejected (roadmap 3.99).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -96,7 +100,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.94).
+  (roadmap 3.93).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The
