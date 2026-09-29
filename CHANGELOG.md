@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's method calling one of its statics with binders of
+  its own through an explicit application (`Pair[Self.T].scaled[3](2)`),
+  or calling a static overload family one of whose members declares
+  binders on a spelled receiver (`Pair[Self.T].pick(5)`), now reuses its
+  template's checked facts
+  (`assets/ok/template_method_applied_overloaded_static.mojo`). Such
+  methods used to be checked again per instance.
 - A nested `def` in a generic struct's method, or a generic module `def`,
   whose parameter default constructs a declared struct
   (`sep: String = String("-")`) now reuses its template's checked facts,

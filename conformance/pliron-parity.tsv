@@ -573,6 +573,7 @@ assets/ok/template_folded_value.mojo	main	exe-differential	sanitized
 assets/ok/template_inner_request.mojo	main	exe-differential	sanitized
 assets/ok/template_keyed_runtime_if.mojo	main	exe-differential	sanitized
 assets/ok/template_loop_local.mojo	main	exe-differential	sanitized
+assets/ok/template_method_applied_overloaded_static.mojo	main	exe-differential	sanitized
 assets/ok/template_method_binder_construction.mojo	main	exe-differential	sanitized
 assets/ok/template_method_borrowed_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_bound_copy.mojo	main	exe-differential	sanitized

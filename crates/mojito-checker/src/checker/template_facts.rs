@@ -3337,9 +3337,8 @@ impl Checker {
     /// family ([`collapses`]) and keeps the erased member, as does a
     /// receiver with no clone of a family differing only in closed parameter
     /// types, or a static on an inferred or contextual receiver, which no
-    /// instance retargets. A lone
-    /// static with binders of its own names its per-call clone
-    /// (`realize_static_instantiations`).
+    /// instance retargets. A member with binders of its own names its
+    /// per-call clone (`realize_static_instantiations`).
     fn realize_static_overloads(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -3348,7 +3347,9 @@ impl Checker {
     ) -> Result<(), &'static str> {
         for index in 0..facts.overload_targets.len() {
             let (id, selected) = &facts.overload_targets[index];
-            if facts.selected_calls.iter().any(|(call, _)| call == id) {
+            if facts.selected_calls.iter().any(|(call, _)| call == id)
+                || fact_at(&facts.method_instantiations, *id).is_some()
+            {
                 continue;
             }
             let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
@@ -3415,8 +3416,11 @@ impl Checker {
 
     /// Realize each static with binders of its own a body calls on a
     /// generic struct's type application (`Pair[Self.T].show(n)`,
-    /// [`BodyShape::static_call`]): the per-call clone its request names,
-    /// keyed by the instance as well, once the elaborator has minted it.
+    /// `Pair[Self.T].scaled[3](2)`, [`BodyShape::static_call`]): the
+    /// per-call clone its request names, keyed by the instance as well, once
+    /// the elaborator has minted it. In an overload family that is the clone
+    /// of the member the template ranked, and an explicit application records
+    /// the clone's own compile-time parameters at the call, all baked.
     ///
     /// The request's own arguments are closed, or substitution would have
     /// changed them (`realize_instance_facts`), so the instance requests the
@@ -3448,13 +3452,17 @@ impl Checker {
             else {
                 continue;
             };
-            let [declared] = info
+            let declared = match info
                 .methods
                 .get(method)
                 .map(Vec::as_slice)
                 .ok_or("a static with binders of its own is not declared")?
-            else {
-                return Err("a static with binders of its own is overloaded");
+            {
+                [declared] => declared,
+                family => family
+                    .iter()
+                    .find(|member| member.overload == request.overload)
+                    .ok_or("a static's requested overload is not declared")?,
             };
             let arguments = self
                 .partition_struct_origin_args(owner, &info.source_params, applied)
@@ -3463,15 +3471,40 @@ impl Checker {
                 })
                 .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
                 .1;
-            let clone = self.instance_call_method_clone(
-                owner,
-                &arguments,
-                method,
-                &declared.decls,
-                &request.arguments,
-            );
+            let clone = self
+                .instance_call_method_clone(
+                    owner,
+                    &arguments,
+                    method,
+                    &declared.decls,
+                    &request.arguments,
+                )
+                .filter(|clone| {
+                    self.clone_serves_overload(owner, method, clone, request.overload.as_deref())
+                });
             let target = match clone {
-                Some(clone) => format!("{owner}.{clone}"),
+                Some(clone) => {
+                    // An explicit application calls the clone, whose binders
+                    // are baked, as the clone check records.
+                    if let Some(entry) = facts
+                        .parameterized_method_calls
+                        .iter_mut()
+                        .find(|(site, _)| site == id)
+                    {
+                        entry.1 = info
+                            .methods
+                            .get(&clone)
+                            .and_then(|family| match family.as_slice() {
+                                [member] => Some(member),
+                                family => family
+                                    .iter()
+                                    .find(|member| member.overload == request.overload),
+                            })
+                            .map(|member| member.decls.clone())
+                            .ok_or("a static's per-call clone declares no requested member")?;
+                    }
+                    format!("{owner}.{clone}")
+                }
                 None if self
                     .instance_method_clone(owner, method, &arguments)
                     .is_some() =>
@@ -4837,7 +4870,9 @@ impl Checker {
     ///   most its overload member and, behind a leading-dot root, the
     ///   expected type's head. An instance inherits the head, and the member
     ///   too, except that a generic struct's spelled receiver names the
-    ///   instance's clone of it (`realize_static_overloads`).
+    ///   instance's clone of it (`realize_static_overloads`), or the
+    ///   per-call clone of a member with binders of its own
+    ///   (`realize_static_instantiations`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
     /// reference, or copyable read in the body refuses it
@@ -5704,14 +5739,17 @@ impl Checker {
                         _ => None,
                     },
                     type_receiver: match &expr.kind {
-                        ExprKind::MethodCall { object, .. } => match &object.kind {
-                            ExprKind::TypeApply { name, args } => {
-                                Some((name.clone(), args.clone()))
-                            }
+                        ExprKind::MethodCall { object, .. } => Some(object.as_ref()),
+                        ExprKind::Invoke { callee, .. } => match &callee.kind {
+                            ExprKind::Member { object, .. } => Some(object.as_ref()),
                             _ => None,
                         },
                         _ => None,
-                    },
+                    }
+                    .and_then(|object| match &object.kind {
+                        ExprKind::TypeApply { name, args } => Some((name.clone(), args.clone())),
+                        _ => None,
+                    }),
                     operator: match &expr.kind {
                         ExprKind::Infix(op, left, right) if operator_dispatch(*op) => Some((
                             *op,
@@ -12303,7 +12341,9 @@ impl BodyShape<'_> {
     }
 
     /// A method call spelled with explicit compile-time arguments,
-    /// `receiver.method[3](x)`, on a receiver [`Self::method_call`] admits.
+    /// `receiver.method[3](x)`, on a receiver [`Self::method_call`] admits,
+    /// or a generic struct's static on its spelled type application
+    /// (`Pair[Self.T].scaled[3](2)`, [`Self::static_call`]).
     ///
     /// The receiver's recorded type is a struct, so the method and the
     /// compile-time parameters it declares (`ParameterizedMethodCalls`) are
@@ -12343,7 +12383,8 @@ impl BodyShape<'_> {
                 fact_at(&facts.parameterized_method_calls, id).is_some()
                     && fact_at(&facts.method_instantiations, id).is_some()
             })
-            && self.method_call(expr, object, field, args, kwargs);
+            && (self.method_call(expr, object, field, args, kwargs)
+                || self.static_call(expr, object, field, args, kwargs, true));
         admitted && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
     }
 
@@ -12366,8 +12407,11 @@ impl BodyShape<'_> {
     /// symbolic, so every instance meets it. A `mut` or `ref` argument is a
     /// named place kept as the caller's (`CallPlaceUses`); a lone static's
     /// read-only pack reads a named place where it lies. A lone static may
-    /// declare binders of its own: an instance calls the per-call clone
-    /// keyed by its own receiver (`realize_static_instantiations`).
+    /// declare binders of its own, as may a member of a family called on a
+    /// spelled receiver, and the call may spell its compile-time arguments
+    /// (`parameterized`, from [`Self::parameterized_call`]) on a spelled
+    /// receiver: an instance calls the per-call clone keyed by its own
+    /// receiver (`realize_static_instantiations`).
     /// On an inferred or contextual receiver the members differ only in
     /// closed parameter types, so the call ranks the same member whatever
     /// solves the struct's parameters; on a spelled receiver every instance
@@ -12388,6 +12432,7 @@ impl BodyShape<'_> {
         method: &str,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
+        parameterized: bool,
     ) -> bool {
         use mojito_ast::ast::{ArgConvention, ParamArg};
         let (spelled, applied) = match &object.kind {
@@ -12445,10 +12490,12 @@ impl BodyShape<'_> {
                 if generic {
                     signatures.iter().all(derivable)
                         && (signatures.len() == 1
+                            || !applied.is_empty()
                             || signatures.iter().all(|sig| sig.decls.is_empty()))
-                        && (!applied.is_empty() || closed_differences(signatures))
+                        && (!applied.is_empty()
+                            || (!parameterized && closed_differences(signatures)))
                 } else {
-                    signatures.iter().all(|sig| !sig.has_self)
+                    !parameterized && signatures.iter().all(|sig| !sig.has_self)
                 }
             });
         // A lone static's read-only pack reads each named place it is
@@ -12486,7 +12533,7 @@ impl BodyShape<'_> {
                     && fact_at(&facts.selected_calls, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
                     && (generic || fact_at(&facts.method_instantiations, id).is_none())
-                    && fact_at(&facts.parameterized_method_calls, id).is_none()
+                    && fact_at(&facts.parameterized_method_calls, id).is_some() == parameterized
                     && args.iter().all(|argument| {
                         fact_at(&facts.conversions, self.occurrence(argument)).is_none()
                     })
@@ -13047,7 +13094,7 @@ impl BodyShape<'_> {
             } => {
                 self.method_call(expr, object, method, args, kwargs)
                     || self.slice_indices(expr, object, method, args, kwargs)
-                    || self.static_call(expr, object, method, args, kwargs)
+                    || self.static_call(expr, object, method, args, kwargs, false)
                     || self.consuming_call(expr, object, method, args, kwargs)
                     || self.bound_dispatch(expr, object, args, kwargs)
                     || self.bound_builtin(expr, object, method, args, kwargs)

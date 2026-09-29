@@ -38,25 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
 
-- [ ] **1.1 An explicitly applied or overloaded generic static with
-  binders of its own keeps the clone check**
-
-  Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
-  call to an overloaded static one of whose members declares binders.
-  - The explicit application is an `Invoke` that `BodyShape::
-    parameterized_call` admits only on a value receiver, not a type.
-  - An overloaded family with binders would need the per-call clone of
-    the member the template ranked; `realize_static_instantiations` handles
-    a lone static only.
-  - Before the per-call clone exists (round 0), the instance calls its own
-    clone of the static, which no recipe repeats, so such a call derives
-    only from round 1.
-  - Found while own binders joined generic statics in the method grammar
-    (2026-09-28); no bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 A field read of a sibling call's result keeps the clone
+- [ ] **1.1 A field read of a sibling call's result keeps the clone
   check**
 
   Problem: `return self.bumped().count`, a field of a sibling method's
@@ -69,7 +51,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A nested t-string's `write_to` is checked again in an early
+- [ ] **1.2 A nested t-string's `write_to` is checked again in an early
   discovery round**
 
   Problem: before the outer t-string's storage `Tuple` is declared, the
@@ -82,7 +64,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A float lane's `__fma__` over a temporary argument keeps the
+- [ ] **1.3 A float lane's `__fma__` over a temporary argument keeps the
   clone check**
 
   Problem: `BodyShape::lane_float_method` admits `k.__fma__(a, b)` on
@@ -96,7 +78,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A lane comparison's mask used as a value keeps the clone
+- [ ] **1.4 A lane comparison's mask used as a value keeps the clone
   check**
 
   Problem: `var m = self.pos == other`, or a comparison of a symbolic lane's
@@ -115,7 +97,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A `while` loop in a compile-time-keyed `def` keeps the clone
+- [ ] **1.5 A `while` loop in a compile-time-keyed `def` keeps the clone
   check**
 
   Problem: a keyed `def` holding any `while` loop, even `while n < 3:` over
@@ -127,7 +109,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 `Array`'s copy and move initializers, `deinit_with`, and
+- [ ] **1.6 `Array`'s copy and move initializers, `deinit_with`, and
   owned `__iter__` keep the clone check**
 
   Problem: these four `Array` members are still inferred again in every
@@ -145,7 +127,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 Keyword arguments out of parameter order through a bound
+- [ ] **1.7 Keyword arguments out of parameter order through a bound
   derive facts the clone check does not match**
 
   Problem: `self.s.shift(1, extra=a, by=b)` through `S: Scaler` fails
@@ -161,7 +143,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 An overloaded witness no single member of which witnesses the
+- [ ] **1.8 An overloaded witness no single member of which witnesses the
   requirement still ranks on the recorded types**
 
   Problem: a call through a bound selects the one member that witnesses the
@@ -181,7 +163,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A display, leading-dot member, or explicit application handed
+- [ ] **1.9 A display, leading-dot member, or explicit application handed
   to a call through a bound keeps the clone check**
 
   Problem: `self.item.total([1, 2, 3])` or `self.item.total(.origin(), 3)`
@@ -199,7 +181,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A value handed by value to a parameter typed by `Self` or
+- [ ] **1.10 A value handed by value to a parameter typed by `Self` or
   a requirement binder through a bound keeps the clone check**
 
   Problem: `self.s.merge(self.t)` over `S: Merger`, whose `merge(self,
@@ -217,7 +199,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A pack element's default construction outside a storage
+- [ ] **1.11 A pack element's default construction outside a storage
   store keeps the clone check**
 
   Problem: `print(Self.Ts[i]())` in a method and `var value = Ts[i]()` in a
@@ -237,7 +219,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.13 A field read of a nested `def`'s struct parameter keeps the
+- [ ] **1.12 A field read of a nested `def`'s struct parameter keeps the
   clone check**
 
   Problem: `def f(x: Int, p: Pair) -> Int: return x + p.a` inside a generic
@@ -251,7 +233,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 `String(x)` of a closed-scalar parameter keeps the clone
+- [ ] **1.13 `String(x)` of a closed-scalar parameter keeps the clone
   check**
 
   Problem: `return String(k)` for `k: Int` in a generic struct's method
@@ -262,6 +244,23 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
     selects a `String` constructor for a closed scalar instead.
   - Found while constructed defaults joined nested `def`s in the method
     grammar (2026-09-29). No bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.14 A string literal handed to a generic static's own binder
+  keeps the clone check**
+
+  Problem: `Pair[Self.T].pick("s")`, or `Pair[Self.T].pick[String]("s")`,
+  where `pick[U: Writable](u: U)`, leaves the method outside the method
+  grammar, so every instance is checked again.
+  - `BodyShape::static_argument` admits a named place or a whole value,
+    and a closed scalar besides; a string literal bound to a binder of the
+    static is none of those.
+  - The same call with an `Int` literal, a named place, or a field of
+    `self` derives
+    (`assets/ok/template_method_applied_overloaded_static.mojo`).
+  - Found while explicit applications of generic statics joined the method
+    grammar (2026-09-29); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

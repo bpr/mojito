@@ -4928,6 +4928,38 @@ fn template_generic_static_shapes_derive() {
 }
 
 #[test]
+fn template_applied_overloaded_static_derives() {
+    // A generic struct's static with binders of its own, spelled with
+    // explicit compile-time arguments or ranked from an overload family one
+    // of whose members declares binders, derives: the per-call clone keyed by
+    // the instance's receiver exists from the round that mints it, and a
+    // member without binders retargets to the instance's clone of it.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_applied_overloaded_static.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "6 6\n6 6\n5\n5\n1 1\n7\n7\n1 1\n11 11\n6 6\n",
+        &[("Shelf.summed", 2), ("Shelf.valued", 2)],
+    );
+    let compiler = Compiler::default().with_template_verification(false);
+    let program = compile_entry(&compiler, &source);
+    for method in ["scaled", "twice", "picked", "applied"] {
+        let derived: std::collections::HashSet<&String> = program
+            .template_stats()
+            .derived
+            .iter()
+            .filter(|name| name.starts_with(&format!("Shelf.{method}$")))
+            .collect();
+        assert_eq!(
+            derived.len(),
+            2,
+            "Shelf.{method} derives for every instance"
+        );
+    }
+}
+
+#[test]
 fn template_overloaded_generic_static_call_derives() {
     // An overloaded static of a generic struct whose members differ only in
     // closed parameter types ranks the template's member at every instance:
