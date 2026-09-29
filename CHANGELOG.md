@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A loan-carrying value stored through a dereferenced pointer keeps its
+  borrowed owner alive while the pointer is used, as the pin does: `q[] =
+  Span(xs)` into an `unsafe_alloc[Span[Int, origin_of(xs)]](1)` followed by
+  `print(q[][1])` prints the element on both backends instead of failing on
+  the VM with "use after Pointer deallocation"
+  (`assets/ok/pointer_deref_store_loan_carrying_pointee.mojo`).
 - Each element a `*args` pack collects, and each element of a tuple
   literal, is now judged by argument exclusivity as an argument of its own,
   as the pin judges it: `show(Span(xs), Span(xs))` over `def show[*Ts:

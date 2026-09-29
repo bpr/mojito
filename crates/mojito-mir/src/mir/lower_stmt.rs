@@ -493,6 +493,24 @@ impl Flatten<'_> {
         self.establish_copied_loans(binding, loans);
     }
 
+    /// A loan-carrying value stored through a pointer (`q[] = Span(xs)`)
+    /// lives in the pointee storage, which the pointer variable stands for:
+    /// its loans join the pointer's own, so the borrowed owners outlive every
+    /// later read through the pointer.
+    fn retain_pointee_loans(&mut self, pointer: VarId, value: &Expr) {
+        let stored = self.aggregate_borrows(value);
+        if stored.is_empty() {
+            return;
+        }
+        let mut loans = self
+            .aggregate_loans
+            .get(&pointer)
+            .cloned()
+            .unwrap_or_default();
+        loans.extend(stored);
+        self.establish_copied_loans(pointer, loans);
+    }
+
     fn establish_copied_loans(&mut self, reference: VarId, loans: Vec<MirLoan>) {
         if let Some(first) = loans.first() {
             let marker = self.fresh_typed(
@@ -2280,7 +2298,12 @@ impl Flatten<'_> {
                     } else {
                         src
                     };
+                    let pointee_root =
+                        (!p.proj.is_empty() && self.pointer_valued_slot(p.root)).then_some(p.root);
                     self.emit(MirInstr::Store { place: p, src });
+                    if let Some(pointer) = pointee_root {
+                        self.retain_pointee_loans(pointer, value);
+                    }
                 }
             }
             StmtKind::AugAssign { place, op, value } => {

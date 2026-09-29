@@ -3,7 +3,7 @@
 # **Differs.** The pin prints "ok". Mojito rejects the call with "'Span[_]'
 # is not concrete; use '[]' to bind missing parameters", though the same
 # pack on a module `def` takes the span. Filed in `docs/roadmap.md` §3
-# (3.102). When it runs, promote it to `assets/ok`; the pin also rejects
+# (3.101). When it runs, promote it to `assets/ok`; the pin also rejects
 # `S().show(Span(xs), Span(xs))` over this `var xs`, which Mojito must then
 # judge too.
 #
