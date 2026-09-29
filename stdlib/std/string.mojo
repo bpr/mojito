@@ -950,6 +950,7 @@ struct String(
 
     # Byte access: a borrowed `Span[Byte]` over the buffer and the raw
     # interior pointer (current Mojo's `as_bytes`/`unsafe_ptr`).
+    @__unsafe_nested_origins_read_only
     def as_bytes(ref self) -> Span[Byte, origin_of(self)]:
         return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.size)
 
@@ -1101,6 +1102,7 @@ struct String(
     def __hash__[H: Hasher](self, mut hasher: H):
         hasher.update(StringSpan(self))
 
+    @__unsafe_nested_origins_read_only
     def __getitem__(self, *, byte: Int) raises -> Byte:
         if byte < 0:
             raise Error("String byte index out of range")
@@ -1110,6 +1112,7 @@ struct String(
 
     # Codepoint and grapheme indexing and counting live on the view;
     # counting never raises (upstream), indexing raises on a bad index.
+    @__unsafe_nested_origins_read_only
     def __getitem__(self, *, codepoint: Int) raises -> Codepoint:
         var view = StringSpan(self)
         return view[codepoint=codepoint]
@@ -1117,6 +1120,7 @@ struct String(
     def count_codepoints(self) -> Int:
         return StringSpan(self).count_codepoints()
 
+    @__unsafe_nested_origins_read_only
     def __getitem__(self, *, grapheme: Int) raises -> Self:
         var view = StringSpan(self)
         return view[grapheme=grapheme]
@@ -1157,6 +1161,7 @@ struct String(
     # explicitly and violations abort. Byte endpoints must fall on UTF-8
     # codepoint boundaries; the result is a borrowed `StringSpan` view of
     # this String's buffer.
+    @__unsafe_nested_origins_read_only
     def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var start = byte.start.or_else(0)
         var end = byte.end.or_else(self.size)
@@ -1170,6 +1175,7 @@ struct String(
         view._size = end - start
         return view^
 
+    @__unsafe_nested_origins_read_only
     def __getitem__(ref self, *, codepoint: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var view = StringSpan(self)
         var total = view.count_codepoints()

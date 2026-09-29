@@ -232,6 +232,7 @@ assets/ok/nested_def_reads_enclosing_parameter.mojo	main	exe-differential	saniti
 assets/ok/nested_def_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized
 assets/ok/nested_origin_binder_not_captured.mojo	main	exe-differential	sanitized
+assets/ok/nested_origins_read_only_decorator.mojo	main	exe-differential	sanitized
 assets/ok/nested_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_affix.mojo	main	exe-differential	sanitized
 assets/ok/nominal_string_atof_rounding.mojo	main	exe-differential	sanitized

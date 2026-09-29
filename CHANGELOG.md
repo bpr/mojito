@@ -8,11 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Argument exclusivity now counts an origin an argument's type carries
+  through a type argument, as the pin does. `l.insert(0, Span(xs))` on a
+  `List[Span[Int, origin_of(xs)]]`, `pick(l, Span(xs))` over a generic
+  `def`, and `p.unsafe_write(Span(xs))` through a pointer to such spans are
+  rejected when `xs` is mutable ("aliasing values passed mutably to 'self'
+  argument and passed mutably to 'value' argument in 'insert' call"). They
+  used to compile. The same calls over an immutable origin still run.
+- `@__unsafe_nested_origins_read_only` is now acted on: a callee so
+  decorated reaches the origins its argument types carry immutably, so
+  `l.append(Span(xs))` stays accepted. The bundled library declares the
+  members upstream declares.
+- Five `assets/ok` fixtures that relied on the missing check are respelled
+  over a read parameter's origin, which the pin accepts, and their
+  `divergence` rows leave `conformance/assets-mojo-rejects.tsv`.
 - A nested `def` now reads its enclosing function's or method's value
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.104).
+  (roadmap 3.103).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The

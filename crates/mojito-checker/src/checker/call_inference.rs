@@ -1388,11 +1388,9 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
         self.check_free_call_aliasing(
-            name,
-            &names,
+            &self.free_callee(name, &names, &declared, &params),
             &effective_conventions,
             &copied_reads,
-            &declared,
             &slots,
             args,
             kwargs,
@@ -1659,12 +1657,14 @@ impl Checker {
                 Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
+        let bound: Vec<Ty> = params
+            .iter()
+            .map(|parameter| resolve(parameter).unwrap_or_else(|_| parameter.clone()))
+            .collect();
         self.check_free_call_aliasing(
-            name,
-            names,
+            &self.free_callee(name, names, params, &bound),
             &effective_conventions,
             &copied_reads,
-            params,
             &slots,
             args,
             kwargs,

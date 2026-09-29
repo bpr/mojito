@@ -216,6 +216,35 @@ impl Checker {
                         context: "value written through 'Pointer.unsafe_write'".to_string(),
                     });
                 }
+                let receiver = Ty::Pointer {
+                    element: Box::new(elem.clone()),
+                    origin: origin.clone(),
+                };
+                let (name, slot, convention) = if copy {
+                    ("copy", ArgSlot::Keyword(0), None)
+                } else {
+                    ("value", ArgSlot::Positional(0), Some(ArgConvention::Var))
+                };
+                let bound = [elem.clone()];
+                self.check_argument_origin_exclusivity(
+                    &ExclusivityCallee {
+                        name: method,
+                        parameter_names: &[name.to_string()],
+                        declared: &bound,
+                        bound: &bound,
+                        nested_origins: NestedOrigins::AsDeclared,
+                    },
+                    Some(&ExclusivityReceiver {
+                        object,
+                        convention: None,
+                        declared: &receiver,
+                        bound: &receiver,
+                    }),
+                    &[convention],
+                    &[slot],
+                    args,
+                    kwargs,
+                )?;
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),
                     mojito_checked::checked::SemanticAdjustment::PointerWrite {

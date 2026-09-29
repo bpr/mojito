@@ -18,6 +18,13 @@ impl Checker {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
                 _ => None,
             }));
+        self.nested_origins_read_only_functions
+            .extend(stmts.iter().filter_map(|statement| match &statement.kind {
+                StmtKind::Def {
+                    name, decorators, ..
+                } if mojito_ast::ast::is_nested_origins_read_only(decorators) => Some(name.clone()),
+                _ => None,
+            }));
         // Phase one for generated public Tuples: recover every concrete pack
         // identity from its materialized `element_types` member before any
         // declaration body is checked. Reverse transforms can be requested in

@@ -217,7 +217,7 @@ artifacts and imports from stdin remain unsupported.
 ```
 function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block   # a `@__parameter`/`@parameter` def takes no capture_list
 decorators: decorator*
-decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name (only `@fieldwise_init` is acted on)
+decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name; the checker acts on a few (see Decorators below)
 dotted_name: NAME ('.' NAME)*
 params: ','.param_item+ [',']
 param_item:
@@ -522,10 +522,13 @@ least one member; fields and methods may interleave.
   include lifecycle `out self` and `deinit self` plus `var`/`ref self`.
 - **Decorators** use a **general grammar** — any dotted name with optional call
   arguments, one or more, stacked before a `def` or `struct` (or a struct method).
-  They are parsed into the AST but **only `@fieldwise_init` is acted on**: it generates
+  They are parsed into the AST, and the parser acts on `@fieldwise_init` only: it generates
   a constructor taking the fields in declaration order, so `NAME(v1, v2, ...)` builds an
   instance (an ordinary call — see `primary`). A struct without it has no constructor (a
-  checker error to construct). Every other decorator is recorded and ignored.
+  checker error to construct). The checker acts on `@implicit`, `@staticmethod`,
+  `@explicit_destroy`, `@__parameter`/`@parameter`, and
+  `@__unsafe_nested_origins_read_only` (argument exclusivity, `docs/features.md`); every
+  other decorator is recorded and ignored.
 - **Dunder methods** (`__init__`, `__eq__`, `__add__`, …) are ordinary methods by name and
   parse as such. **Receiver conventions** `imm`/`mut`/`var`/`out`/`ref self` participate
   in checking and lowering, including lifecycle `out self` and origin-bearing reference

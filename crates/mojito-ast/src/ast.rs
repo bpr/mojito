@@ -36,6 +36,24 @@ pub fn is_parameter_closure(decorators: &[Decorator]) -> bool {
     })
 }
 
+/// Whether a declaration carries `@__unsafe_nested_origins_read_only`: the
+/// callee promises to only read the origins its argument types carry, so a
+/// call's exclusivity check counts them as immutable paths.
+pub fn is_nested_origins_read_only(decorators: &[Decorator]) -> bool {
+    decorators.iter().any(|decorator| {
+        decorator.path.len() == 1 && decorator.path[0] == "__unsafe_nested_origins_read_only"
+    })
+}
+
+/// Whether a declaration carries a decorator that bears on its body or its
+/// identity. `@__unsafe_nested_origins_read_only` does not: it states a
+/// contract to the declaration's callers only.
+pub fn has_body_decorator(decorators: &[Decorator]) -> bool {
+    decorators
+        .iter()
+        .any(|decorator| !is_nested_origins_read_only(std::slice::from_ref(decorator)))
+}
+
 pub fn canonical_trait_name(name: &str) -> &str {
     match name {
         "ImplicitlyDeletable" => "Deinitable",

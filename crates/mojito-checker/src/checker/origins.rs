@@ -44,5 +44,6 @@ mod subst;
 mod transfer;
 
 pub(in crate::checker) use construct::{ConstructorOriginBindings, names_origin_binder};
+pub(in crate::checker) use exclusivity::{ExclusivityCallee, ExclusivityReceiver, NestedOrigins};
 pub(in crate::checker) use sig::*;
 pub(in crate::checker) use subst::*;

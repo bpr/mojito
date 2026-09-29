@@ -443,6 +443,7 @@ impl Checker {
                     .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
             }),
             synthesized_default: method.synthesized,
+            nested_origins: NestedOrigins::of(&method.decorators),
             template_ret: None,
         })
     }
@@ -2019,6 +2020,7 @@ impl Checker {
                             view_return: Vec::new(),
                             declared_return: None,
                             declared_params: sig.params.clone(),
+                            nested_origins: sig.nested_origins,
                         });
                     }
                 }

@@ -287,6 +287,7 @@ impl Checker {
                         view_return: Vec::new(),
                         declared_return: None,
                         declared_params: Vec::new(),
+                        nested_origins: NestedOrigins::AsDeclared,
                     });
                 }
             }
@@ -1228,6 +1229,7 @@ impl Checker {
                                         sig.template_ret.clone().unwrap_or_else(|| sig.ret.clone()),
                                     ),
                                     declared_params: clone_origins.substitute_all(&sig.params),
+                                    nested_origins: sig.nested_origins,
                                     param_types: params,
                                     param_decls: sig.decls.clone(),
                                 });
@@ -1393,6 +1395,7 @@ impl Checker {
                         view_return: Vec::new(),
                         declared_return: None,
                         declared_params: Vec::new(),
+                        nested_origins: NestedOrigins::AsDeclared,
                     });
                 }
                 select_method_overload(
@@ -1447,6 +1450,7 @@ impl Checker {
                     view_return: Vec::new(),
                     declared_return: None,
                     declared_params: Vec::new(),
+                    nested_origins: NestedOrigins::AsDeclared,
                 }))
             }
             // Hashable scalar leaves contribute themselves to the
@@ -1499,6 +1503,7 @@ impl Checker {
                     view_return: Vec::new(),
                     declared_return: None,
                     declared_params: Vec::new(),
+                    nested_origins: NestedOrigins::AsDeclared,
                 }))
             }
             // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
@@ -1549,6 +1554,7 @@ impl Checker {
                     view_return: Vec::new(),
                     declared_return: None,
                     declared_params: Vec::new(),
+                    nested_origins: NestedOrigins::AsDeclared,
                 }))
             }
             // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
@@ -1605,6 +1611,7 @@ impl Checker {
                     view_return: Vec::new(),
                     declared_return: None,
                     declared_params: Vec::new(),
+                    nested_origins: NestedOrigins::AsDeclared,
                 }))
             }
             _ => Ok(None),
@@ -2057,9 +2064,8 @@ impl Checker {
             kwargs,
         )?;
         // The receiver's origin tail binds the struct's own binders in the
-        // declared signature (`Self`, `RefBox[Self.o]`); type parameters stay
-        // abstract, so an origin reaching the callee only through a type
-        // argument does not count, as at the pin.
+        // declared signature (`Self`, `RefBox[Self.o]`), whose slots fix
+        // their own mutability; type parameters stay abstract there.
         let (tail_bindings, self_declared) = match &obj_ty {
             Ty::Struct(sname, targs) => match self.structs.get(sname) {
                 Some(info) => (
@@ -2077,11 +2083,20 @@ impl Checker {
             .map(|parameter| substitute_struct_origin_tails(parameter, &tail_bindings))
             .collect();
         self.check_argument_origin_exclusivity(
-            method,
-            Some((object, resolved.self_convention, &self_declared)),
-            &resolved.parameter_names,
+            &ExclusivityCallee {
+                name: method,
+                parameter_names: &resolved.parameter_names,
+                declared: &declared,
+                bound: &resolved.param_types,
+                nested_origins: resolved.nested_origins,
+            },
+            Some(&ExclusivityReceiver {
+                object,
+                convention: resolved.self_convention,
+                declared: &self_declared,
+                bound: &obj_ty,
+            }),
             &effective_conventions,
-            &declared,
             &resolved.slots,
             args,
             kwargs,

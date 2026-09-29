@@ -352,6 +352,7 @@ impl Checker {
                     view_return: sig.view_return.clone(),
                     declared_return: None,
                     declared_params: clone_origins.substitute_all(&sig.params),
+                    nested_origins: sig.nested_origins,
                 });
             }
         }
@@ -558,11 +559,15 @@ impl Checker {
             kwargs,
         )?;
         self.check_argument_origin_exclusivity(
-            method,
+            &ExclusivityCallee {
+                name: method,
+                parameter_names: &selected.parameter_names,
+                declared: &declared,
+                bound: &selected.param_types,
+                nested_origins: selected.nested_origins,
+            },
             None,
-            &selected.parameter_names,
             &effective_conventions,
-            &declared,
             &selected.slots,
             args,
             kwargs,

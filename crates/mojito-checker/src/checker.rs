@@ -635,6 +635,9 @@ pub struct Checker {
     /// overload set. Interior mutability keeps expression inference usable from
     /// read-only helper methods while still recording resolution facts.
     overload_targets: RefCell<FactMap<SourceSpan, String>>,
+    /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
+    /// [`MethodSig::nested_origins`].
+    nested_origins_read_only_functions: HashSet<String>,
     /// Checker-resolved base type name per `$contextual` leading-dot sentinel
     /// (keyed by the sentinel identifier's span); HIR substitutes the name.
     contextual_bases: RefCell<FactMap<SourceSpan, String>>,
@@ -1013,6 +1016,7 @@ impl Checker {
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
             overload_targets: RefCell::new(FactMap::default()),
+            nested_origins_read_only_functions: HashSet::new(),
             contextual_bases: RefCell::new(FactMap::default()),
             generic_instantiations: RefCell::new(FactMap::default()),
             method_instantiations: RefCell::new(FactMap::default()),
@@ -2201,6 +2205,9 @@ struct MethodSig {
     /// A synthesized trait default ([`mojito_ast::ast::Method::is_synthesized_default`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,
+    /// How a call's exclusivity check counts the origins the argument
+    /// types carry.
+    nested_origins: NestedOrigins,
     /// A clone's template's declared result type, whose type parameters the
     /// clone's own `ret` has substituted. `None` for every other method.
     template_ret: Option<Ty>,
@@ -2240,6 +2247,7 @@ impl MethodSig {
             receiver: None,
             clone_origins: false,
             synthesized_default: false,
+            nested_origins: NestedOrigins::AsDeclared,
             template_ret: None,
         }
     }
@@ -2685,9 +2693,11 @@ struct MethodCallResolution {
     /// argument (`List[RefBox[o]].pop()`) are not a view of the receiver.
     declared_return: Option<Ty>,
     /// The selected signature's declared parameter types, with type
-    /// parameters abstract: the origins a parameter *names* (as opposed to
-    /// receives through a type argument) drive the argument exclusivity rule.
+    /// parameters abstract: the origins a parameter *names*, whose slots fix
+    /// their own mutability for the argument exclusivity rule.
     declared_params: Vec<Ty>,
+    /// See [`MethodSig::nested_origins`].
+    nested_origins: NestedOrigins,
 }
 
 /// One origin slot of a struct-typed view return (`-> P[origin_of(xs)]`):

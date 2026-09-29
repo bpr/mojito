@@ -110,9 +110,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.101), and a `String`
-    element needs `String` to be `Defaultable` (3.102).
-  - Depends on 3.101.
+  - A SIMD element needs its nullary construction (3.100), and a `String`
+    element needs `String` to be `Defaultable` (3.101).
+  - Depends on 3.100.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.96).
+    constructed default at all (3.95).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.96: until a constructed default runs, no fixture can take
+  - Depends on 3.95: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -2271,25 +2271,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A mutable loan carried by a pointee type's origin does not
-  conflict with another argument's mutable borrow**
-
-  Problem: Mojito compiles `p.unsafe_write(Span(xs))` where `p` has type
-  `Pointer[Span[Int, origin_of(xs)], MutUntrackedOrigin]`; the pin rejects it
-  with "aliasing values passed mutably to 'self' argument and passed mutably
-  to 'value' argument in 'unsafe_write' call".
-  - The loan a pointee type's origin carries is not counted against the
-    call's other mutable arguments, so one place is borrowed mutably twice.
-  - Five `assets/ok` fixtures rely on it and are ledgered `divergence` in
-    [`conformance/assets-mojo-rejects.tsv`](../conformance/assets-mojo-rejects.tsv).
-  - The mutability is what each fixture pins, so none of them respells:
-    tightening the check is what withdraws all five rows at once.
-  - Arrived with 6b322977's loan-carrying type arguments and found by the
-    2026-09-28 gate, which is the first sweep that saw them.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **3.91 A `Tuple` of SIMD scalars has no comparisons**
+- [ ] **3.90 A `Tuple` of SIMD scalars has no comparisons**
 
   Problem: `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` rejects with
   "operator '<' is not defined for Tuple$t2[...]", where the pin prints
@@ -2305,7 +2287,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.92 A reference-returning call cannot be assigned through**
+- [ ] **3.91 A reference-returning call cannot be assigned through**
 
   Problem: `bump(k) = 9` and `bump(k) += 1`, for `def bump(ref a: Int) ->
   ref[origin_of(a)] Int`, stop at parse with "invalid assignment target",
@@ -2319,7 +2301,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 Two same-arity generic overloads of one method collide when a
+- [ ] **3.92 Two same-arity generic overloads of one method collide when a
   call specializes them alike**
 
   Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
@@ -2334,7 +2316,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A witness whose defaults differ from its requirement's is
+- [ ] **3.93 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2352,17 +2334,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A trait requirement's default other than a literal is
+- [ ] **3.94 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.94: a default bound at the call would lift it.
+  - Depends on 3.93: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A call leaving out a constructed default fails at run time**
+- [ ] **3.95 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2376,7 +2358,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 An instance ranks a generic struct's overload family again
+- [ ] **3.96 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2393,7 +2375,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A generic static's per-call clone takes a call to its
+- [ ] **3.97 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2405,7 +2387,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A generic static with its own binder cannot infer its struct's
+- [ ] **3.98 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2416,7 +2398,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A variadic struct's index-keyed method not named
+- [ ] **3.99 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2432,7 +2414,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A SIMD value has no nullary construction**
+- [ ] **3.100 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2447,7 +2429,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 `String` is not `Defaultable`**
+- [ ] **3.101 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2457,7 +2439,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 A `def` does not infer a value parameter from an argument's
+- [ ] **3.102 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2472,7 +2454,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.104 A generic nested `def` that captures does not compile
+- [ ] **3.103 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2490,7 +2472,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.105 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.104 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2508,6 +2490,57 @@ last.
     (2026-09-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **3.105 Variadic and tuple-literal elements carrying one mutable
+  origin do not conflict**
+
+  Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
+  Copyable](*args: *Ts)` and the literal `(Span(xs), Span(xs))` where `xs` is
+  a `var`; the pin rejects both with "aliasing values passed mutably to
+  'args' argument and passed mutably to 'args' argument".
+  - The argument exclusivity rule judges the regular parameter slots and the
+    receiver only (`check_argument_origin_exclusivity` in
+    `checker/origins/exclusivity.rs`).
+  - The pin judges each element collected by `*args` or a pack as an
+    argument of its own, and a tuple literal as its initializer's call.
+  - `conformance/probes/variadic_elements_share_mutable_origin.mojo` pins it.
+  - Found while counting type-argument origins in argument exclusivity
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.106 A store through a dereferenced pointer to a loan-carrying
+  pointee fails at run time**
+
+  Problem: `q[] = Span(xs)` where `q` is an
+  `unsafe_alloc[Span[Int, origin_of(xs)]](1)` fails on the VM with "use
+  after Pointer deallocation", and beside other allocations fails MIR
+  verification with "place rooted at slot 5 lacks complete checked type
+  metadata"; the pin prints the element.
+  - It is the one spelling the pin accepts for writing a span over a mutable
+    list through such a pointer, since `q.unsafe_write(Span(xs))` aliases.
+  - `conformance/probes/pointer_deref_store_loan_carrying_pointee.mojo` pins
+    it.
+  - Found while counting type-argument origins in argument exclusivity
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.107 A homogeneous `*args` over a loan-carrying element type is
+  rejected**
+
+  Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
+  with `xs` a read parameter is rejected ("type mismatch for variadic
+  argument to 'two$y9:Span[Int]': expected Span[Int], found Span[Int]"); the
+  pin runs it.
+  - The cause is not diagnosed: the two types print alike, so they differ
+    in an origin slot the message does not show.
+  - `conformance/probes/homogeneous_variadic_loan_carrying_element.mojo`
+    pins it.
+  - Found while counting type-argument origins in argument exclusivity
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

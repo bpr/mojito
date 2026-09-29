@@ -3,7 +3,9 @@
 # origin_of(xs)]]`) derives from its checked template. The view's own origin
 # slot is kept by template owner and bound to the instance's receiver; the
 # slot the element type brings in names the clone's origin binder and is
-# kept as it stands (`bind_struct_origins`).
+# kept as it stands (`bind_struct_origins`). The list is a read parameter,
+# so its origin is immutable and the bag and the span pushed into it do not
+# alias.
 struct Bag[T: Copyable & Deinitable](Movable):
     var items: List[Self.T]
 
@@ -17,8 +19,7 @@ struct Bag[T: Copyable & Deinitable](Movable):
         return Span(self.items)
 
 
-def main():
-    var xs: List[Int] = [1, 2, 3]
+def run(xs: List[Int]):
     var b = Bag[Span[Int, origin_of(xs)]]()
     b.push(Span(xs))
     b.push(Span(xs))
@@ -26,3 +27,7 @@ def main():
     var second = v[1]
     print(len(v), len(second), second[2])
     print(xs[0])
+
+
+def main():
+    run([1, 2, 3])

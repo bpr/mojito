@@ -218,7 +218,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   callee's own binders), the argument exclusivity rule
   (`origins/exclusivity.rs`: `check_argument_origin_exclusivity` judges every
   pair of arguments — receiver included — by their own places and the origins
-  their declared parameter types carry, reporting upstream's
+  their types carry, both the declared parameter type's and the bound one's,
+  which alone shows an origin received through a type argument; an
+  `ExclusivityCallee` names the callee and whether it is
+  `@__unsafe_nested_origins_read_only`
+  (`MethodSig::nested_origins_read_only`, or
+  `Checker::nested_origins_read_only_functions` for a free function), an
+  `ExclusivityReceiver` the receiver; `infer_pointer_method` runs the rule
+  for `Pointer.unsafe_write`; reporting upstream's
   `AliasingArguments`), the return-tail check
   (`origins/solve.rs`: `reconcile_return_origin_tails` judges a returned
   struct's origin tail against the body's `return_annotations` entry resolved

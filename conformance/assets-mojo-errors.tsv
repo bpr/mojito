@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	443
+# swept-count	446
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -446,6 +446,9 @@ assets/type_error/tuple_consume_elements_len.mojo	compile-reject	agree	error: no
 assets/type_error/tuple_consume_elements_print.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Array[Int, Int(3)], Array[Int, Int(3)][SIMDLength(index)]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	agree	error: 'element' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/tuple_unhashable_element_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Tuple[Int, Opaque]]'
+assets/type_error/type_argument_origin_function_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'items' argument and passed mutably to 'default' argument in 'pick' call
+assets/type_error/type_argument_origin_method_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
+assets/type_error/type_argument_origin_pointer_write_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
 assets/type_error/typelist_bad_predicate.mojo	compile-reject	agree	error: invalid call to 'all': 'all' parameter 'predicate' has '__generator_type[Type: AnyStruct[Int]] Bool' type, but value has type '__generator_type[T: Copyable] AnyType'
 assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;Mojito rejects: out of range
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'

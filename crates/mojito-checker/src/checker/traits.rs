@@ -262,6 +262,7 @@ impl Checker {
                     receiver: None,
                     clone_origins: false,
                     synthesized_default: false,
+                    nested_origins: NestedOrigins::AsDeclared,
                     template_ret: None,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
@@ -1220,6 +1221,7 @@ impl Checker {
                         receiver: None,
                         clone_origins: false,
                         synthesized_default: false,
+                        nested_origins: req_sig.nested_origins,
                         template_ret: None,
                     };
                 if !got_sigs.iter().any(|got| {

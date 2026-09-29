@@ -214,6 +214,7 @@ struct List[T: AnyType](
             return
         self._realloc(capacity)
 
+    @__unsafe_nested_origins_read_only
     def append(mut self, var value: Self.T) where conforms_to(Self.T, Movable):
         if self.size == self.cap:
             self.grow()
@@ -301,6 +302,7 @@ struct List[T: AnyType](
     # with an `Assert Error` at every optimization level, and the VM's arena
     # catches the raw read, but the native backend has no arena: unchecked,
     # `xs[10]` on a three-element list read out of bounds and returned a value.
+    @__unsafe_nested_origins_read_only
     def __getitem__(
         ref self, index: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:
@@ -352,6 +354,10 @@ struct List[T: AnyType](
             i += 1
         return result^
 
+    # Upstream's `List` has no `__setitem__`: `xs[i] = v` stores through the
+    # reference `__getitem__` returns, which is declared read-only over nested
+    # origins, so this store is declared alike.
+    @__unsafe_nested_origins_read_only
     def __setitem__(mut self, index: Int, var value: Self.T) where conforms_to(
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
@@ -360,6 +366,7 @@ struct List[T: AnyType](
 
     # Unchecked element access: out-of-range indices are undefined behavior
     # (the VM still diagnoses them deterministically).
+    @__unsafe_nested_origins_read_only
     def unsafe_get(
         ref self, idx: Int
     ) -> ref[origin_of(self)._get_owned_interior["element"]] Self.T:

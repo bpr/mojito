@@ -3,7 +3,9 @@
 # Pointer[T, MutUntrackedOrigin]`) is cloned: each origin slot of the argument
 # becomes an explicit origin binder of the clone, which the call supplies
 # from its own application. An explicit origin argument binds the origin
-# slots of the callee's result type too (`slots[origin_of(xs)](n)`).
+# slots of the callee's result type too (`slots[origin_of(xs)](n)`). The
+# list is a read parameter, so its origin is immutable and a pointer and the
+# span written through it do not alias.
 from std.memory.alloc import unsafe_alloc
 
 
@@ -11,12 +13,11 @@ def make[T: AnyType](n: Int) -> Pointer[T, MutUntrackedOrigin]:
     return unsafe_alloc[T](n)
 
 
-def slots[o: MutOrigin](n: Int) -> Pointer[Span[Int, o], MutUntrackedOrigin]:
+def slots[o: ImmOrigin](n: Int) -> Pointer[Span[Int, o], MutUntrackedOrigin]:
     return unsafe_alloc[Span[Int, o]](n)
 
 
-def main():
-    var xs: List[Int] = [4, 5, 6]
+def run(xs: List[Int]):
     var p = unsafe_alloc[Span[Int, origin_of(xs)]](2)
     p.unsafe_offset(0).unsafe_write(Span(xs))
     p.unsafe_offset(1).unsafe_write(Span(xs))
@@ -33,3 +34,7 @@ def main():
     print(r[0][0])
     r.free()
     print(xs[2])
+
+
+def main():
+    run([4, 5, 6])

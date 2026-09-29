@@ -35,6 +35,7 @@ struct Variant[*Ts: AnyType](
             pass
         self._storage = __VariantStorage[*Self.Ts](init_with=init_with)
 
+    @__unsafe_nested_origins_read_only
     def __getitem_param__[T: AnyType](ref self) -> ref[origin_of(self)] T:
         comptime if Self.Ts.contains[T]():
             pass

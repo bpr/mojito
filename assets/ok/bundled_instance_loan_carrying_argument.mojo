@@ -7,9 +7,10 @@
 # concrete argument. A store of the element parameter, which the template
 # records as a latent transfer (`List.append`'s `value^`), is published by
 # the instance, so the list keeps the loan it was given
-# (`docs/notes/instantiation-from-template.md`, obligation 14).
-def main() raises:
-    var xs: List[Int] = [1, 2, 3]
+# (`docs/notes/instantiation-from-template.md`, obligation 14). The list is
+# a read parameter, so its origin is immutable and a container and the span
+# stored into it do not alias.
+def run(xs: List[Int]) raises:
     var l = List[Span[Int, origin_of(xs)]]()
     l.append(Span(xs))
     l.insert(0, Span(xs))
@@ -30,3 +31,7 @@ def main() raises:
         sum += e.key + e.value[2]
     print(len(d), 1 in d, sum)
     print(xs[0])
+
+
+def main() raises:
+    run([1, 2, 3])

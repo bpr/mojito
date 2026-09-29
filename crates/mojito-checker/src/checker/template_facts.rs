@@ -4179,7 +4179,7 @@ impl Checker {
             .filter(|parameter| parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut))
             .map(|parameter| parameter.name.as_str())
             .collect();
-        if captures.is_some() || !decorators.is_empty() {
+        if captures.is_some() || mojito_ast::ast::has_body_decorator(decorators) {
             return outside("the declaration captures or is decorated");
         }
         if keyed && (*raises || raises_type.is_some()) {
@@ -4697,7 +4697,7 @@ impl Checker {
                 || bound_binder(binder)
                 || callable_binders.contains(&binder.name.as_str())
                 || ((self.source_validation || trap_stub) && simd_wildcard_binder(binder))
-        }) || !(method.decorators.is_empty() || is_static)
+        }) || (mojito_ast::ast::has_body_decorator(&method.decorators) && !is_static)
         {
             return outside(
                 "the method has binders other than origins, bounded types, and scalar values, \
@@ -7513,7 +7513,10 @@ fn grammar_features(method: &mojito_ast::ast::Method, ret_ty: &Ty) -> Vec<String
         (!method.where_clauses.is_empty(), "where"),
         (method.raises || method.raises_type.is_some(), "raises"),
         (!method.type_params.is_empty(), "binders"),
-        (!method.decorators.is_empty(), "decorated"),
+        (
+            mojito_ast::ast::has_body_decorator(&method.decorators),
+            "decorated",
+        ),
     ];
     features.extend(
         declared
@@ -10408,7 +10411,7 @@ impl BodyShape<'_> {
         else {
             return false;
         };
-        let declaration = decorators.is_empty()
+        let declaration = !mojito_ast::ast::has_body_decorator(decorators)
             && type_params.is_empty()
             && positional_only.is_none()
             && keyword_only.is_none()

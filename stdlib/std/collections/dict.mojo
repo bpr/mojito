@@ -284,6 +284,7 @@ struct Dict[
     def __contains__(self, key: Self.K) -> Bool:
         return self.find_index(key) >= 0
 
+    @__unsafe_nested_origins_read_only
     def __getitem__(
         ref self, key: Self.K
     ) raises -> ref[origin_of(self)._get_owned_interior["value"]] Self.V:
