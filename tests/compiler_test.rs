@@ -2110,6 +2110,38 @@ fn struct_hasher_simd_update_derives() {
 }
 
 #[test]
+fn struct_hasher_field_update_derives() {
+    // A method whose own `H: Hasher` an instance binds to `AHasher` hands it
+    // a field of `self` and a field of a field: each is borrowed where it
+    // lies, apart from the hasher, so both instances derive.
+    let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\n\n@fieldwise_init\nstruct Inner(Copyable, Movable):\n    var lanes: SIMD[DType.uint8, 4]\n\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n    var inner: Inner\n\n    def __init__(out self, value: Int):\n        self.value = value\n        self.inner = Inner(SIMD[DType.uint8, 4](1, 2, 3, 4))\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.value)\n        hasher._update_with_simd(self.inner.lanes)\n\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "True False\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let instances = stats
+        .derived
+        .iter()
+        .filter(|name| name.starts_with("Tag.__hash__$") && name.contains("AHasher"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    assert_eq!(instances, 2, "both hasher instances derive: {stats:?}");
+    assert!(
+        !stats
+            .refused
+            .iter()
+            .any(|(name, _)| name.starts_with("Tag.__hash__$")),
+        "no hasher instance is refused: {stats:?}"
+    );
+}
+
+#[test]
 fn tuple_default_constructor_derives() {
     // A Defaultable `Tuple` specialization's synthesized `__init__(out self)`
     // builds its storage element by element (`__RuntimeTuple(Int(0),

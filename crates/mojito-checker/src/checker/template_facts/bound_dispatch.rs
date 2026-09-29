@@ -20,7 +20,7 @@ use mojito_checked::checked::{
 };
 use mojito_checked::templates::{
     BoundBuiltin, CallParameterFact, CheckedBodyFacts, OccurrenceId, TemplateArgumentBoundary,
-    TemplateCallContract, TemplateInvalidation,
+    TemplateCallContract, TemplateInvalidation, TemplateOwner,
 };
 use mojito_types::types::{ParamDecl, Ty, TyArg, TySubst};
 use std::collections::HashMap;
@@ -1144,9 +1144,10 @@ impl Checker {
     /// the bound proved. The call records what a method call on a `mut`
     /// receiver records — the witness's contract, the receiver's generation
     /// refreshed at the call — and each read argument is borrowed where it
-    /// lies, or, a temporary, borrowed and destroyed after the call. A
-    /// transferred argument, or a place that overlaps the receiver, is the
-    /// clone check's to judge.
+    /// lies (a named place, or a field read through one), or, a temporary,
+    /// borrowed and destroyed after the call. A transferred argument, or a
+    /// place rooted at the receiver's own binding, is the clone check's to
+    /// judge.
     fn realize_nominal_hasher_call(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -1194,7 +1195,7 @@ impl Checker {
         for argument in arguments.iter().filter(|argument| !argument.owned) {
             if argument
                 .value
-                .and_then(|value| fact_at(&facts.expression_bindings, value))
+                .and_then(|value| place_binding(facts, value, occurrences))
                 .is_none_or(|bound| *bound == root)
             {
                 return Err("a hasher argument's place is unbound or overlaps the receiver");
@@ -1533,4 +1534,27 @@ fn drop_call(facts: &mut CheckedBodyFacts, id: OccurrenceId) {
     facts.selected_calls.retain(|(site, _)| *site != id);
     facts.overload_targets.retain(|(site, _)| *site != id);
     facts.call_parameters.retain(|(site, _)| *site != id);
+}
+
+/// The binding whose place `value` names: its own, or, a field read (`self.a.b`),
+/// its base's.
+fn place_binding<'a>(
+    facts: &'a CheckedBodyFacts,
+    value: OccurrenceId,
+    occurrences: &[Occurrence],
+) -> Option<&'a TemplateOwner> {
+    fact_at(&facts.expression_bindings, value).or_else(|| {
+        let base = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == value)?
+            .member_base?;
+        place_binding(
+            facts,
+            OccurrenceId {
+                syntax: base,
+                copy: value.copy,
+            },
+            occurrences,
+        )
+    })
 }

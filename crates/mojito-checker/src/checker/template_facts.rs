@@ -215,6 +215,8 @@ struct Occurrence {
     keywords: Vec<(String, SyntaxId)>,
     /// Whether this is a bare identifier.
     identifier: bool,
+    /// A field read's base occurrence (`self` of `self.value`).
+    member_base: Option<SyntaxId>,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
     /// The struct and `[...]` arguments a method call's receiver applies,
@@ -5350,6 +5352,7 @@ impl Checker {
                     arguments: Vec::new(),
                     keywords: Vec::new(),
                     identifier: false,
+                    member_base: None,
                     method_call: None,
                     type_receiver: None,
                     operator: None,
@@ -5429,6 +5432,12 @@ impl Checker {
                         _ => Vec::new(),
                     },
                     identifier: matches!(expr.kind, ExprKind::Identifier(_)),
+                    member_base: match &expr.kind {
+                        ExprKind::Member { object, .. } => {
+                            Some(self.origins.origin(object.syntax_id))
+                        }
+                        _ => None,
+                    },
                     method_call: match &expr.kind {
                         ExprKind::MethodCall { object, method, .. } => {
                             Some((self.origins.origin(object.syntax_id), method.clone()))

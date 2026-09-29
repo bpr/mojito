@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `hasher.update(self.value)` or `hasher._update_with_simd(self.inner.lanes)`
+  call in a generic method whose own `H: Hasher` an instance binds to
+  `AHasher` now derives from the checked template: a field argument is
+  borrowed where it lies, told apart from the hasher by its base binding,
+  instead of being refused as a place overlapping the receiver.
 - A call through a bound whose witness is overloaded now runs the member
   that witnesses the requirement, as the pin binds it while it checks the
   generic body: `self.entry.total(3)` over `T: Tally` with `total(self,
