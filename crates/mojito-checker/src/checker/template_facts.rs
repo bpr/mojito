@@ -9292,13 +9292,15 @@ fn realize_simd_intrinsics(
 /// [`BodyShape::lane_float_method`]'s calls, realized at the instance's
 /// lane: a sized float lane records what the template recorded, and the
 /// native `Float64` resolves the call as its own method, which borrows each
-/// place argument. Any other lane refuses, for the clone check to report.
+/// place argument and reads each temporary one, which the caller destroys.
+/// Any other lane refuses, for the clone check to report.
 fn realize_lane_float_methods(
     template: &CheckedBodyFacts,
     facts: &mut CheckedBodyFacts,
     occurrences: &[Occurrence],
 ) -> Result<(), &'static str> {
     let mut borrowed = Vec::new();
+    let mut temporaries = Vec::new();
     for occurrence in occurrences {
         let lane_method = occurrence.method_call.as_ref().is_some_and(|(_, method)| {
             matches!(
@@ -9314,10 +9316,21 @@ fn realize_lane_float_methods(
         }
         match fact_at(&facts.expression_types, occurrence.id) {
             Some(Ty::Float64) => {
-                borrowed.extend(occurrence.arguments.iter().map(|syntax| OccurrenceId {
-                    syntax: *syntax,
-                    copy: occurrence.id.copy,
-                }));
+                for syntax in &occurrence.arguments {
+                    let id = OccurrenceId {
+                        syntax: *syntax,
+                        copy: occurrence.id.copy,
+                    };
+                    let place = occurrences
+                        .iter()
+                        .find(|found| found.id == id)
+                        .is_some_and(|found| found.identifier || found.member_base.is_some());
+                    if place {
+                        borrowed.push(id);
+                    } else {
+                        temporaries.push(id);
+                    }
+                }
             }
             Some(ty)
                 if mojito_types::types::simd_shape(ty)
@@ -9325,11 +9338,21 @@ fn realize_lane_float_methods(
             _ => return Err("a float lane method's instance lane is not a float scalar"),
         }
     }
-    borrowed.retain(|id| !facts.borrowed_read_call_places.contains(id));
-    if !borrowed.is_empty() {
-        facts.borrowed_read_call_places.extend(borrowed);
-        let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
-        facts.borrowed_read_call_places.sort_by_key(order);
+    let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
+    for (table, realized) in [
+        (&mut facts.borrowed_read_call_places, &borrowed),
+        (&mut facts.read_temporary_arguments, &temporaries),
+        (&mut facts.unconsumed_temporaries, &temporaries),
+    ] {
+        let fresh: Vec<OccurrenceId> = realized
+            .iter()
+            .filter(|id| !table.contains(id))
+            .copied()
+            .collect();
+        if !fresh.is_empty() {
+            table.extend(fresh);
+            table.sort_by_key(order);
+        }
     }
     Ok(())
 }
@@ -13543,18 +13566,20 @@ impl BodyShape<'_> {
             "__fma__" => 2,
             _ => return false,
         };
-        // Each argument is a place, which the native `Float64`'s method
-        // borrows where an instance resolves to it.
-        let place = |argument: &Expr| match &argument.kind {
+        // Each argument is a named place, which the native `Float64`'s
+        // method borrows where an instance resolves to it, or a temporary,
+        // which it reads and the caller destroys.
+        let argument = |argument: &Expr| match &argument.kind {
             ExprKind::Identifier(name) => {
                 self.params.contains(&name.as_str()) || self.declared(name)
             }
             ExprKind::Member { .. } => self.receiver_field(argument),
-            _ => false,
+            ExprKind::Transfer(_) => false,
+            _ => !super::places::is_place_expr(argument),
         };
         let id = self.occurrence(expr);
         let admitted = args.len() == arity
-            && args.iter().all(place)
+            && args.iter().all(argument)
             && kwargs.is_empty()
             && std::iter::once(object)
                 .chain(args)

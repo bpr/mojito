@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's method calling a float lane's `__fma__` with a
+  temporary argument (`k.__fma__(self.step * self.step, self.start)` over
+  `Scalar[Self.dtype]`) now reuses its template's checked facts, recording
+  the temporary as a read one at the native `Float64`
+  (`float_lane_methods_derive`). Such methods used to be checked again per
+  instance.
 - A t-string nested in another (`t"outer={t"inner={x}"}"`) is now stored
   as its own specialization, so the outer t-string's storage `Tuple` is
   declared in the same discovery round and its `write_to` derives there
