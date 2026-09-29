@@ -341,7 +341,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bounded `Ty::Param` view and `restore_pack_elements` the way back,
   `infer_pack_element_construction` types an element's `Ts[i]()` (each
   instance's construction is `comptime/rewrite.rs:pack_element_construction`,
-  reached for a `def` through `fold_pack_element_constructions`),
+  reached for a `def` through `fold_pack_element_constructions`; stored to
+  the element's own storage, as `Tuple.__init__(out self)` stores it, the
+  place is `indexing.rs:check_place_impl`'s compile-time index of the
+  private storage, counted by
+  `declarations.rs:initializes_storage_elements`, and an instance derives
+  the store through `template_facts.rs:element_construction_facts`),
   `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
   call argument (its placement through `call.rs:spread_position` and
   `bind_spread`) and `bind_forwarded_pack` binds it whole to a callee's pack

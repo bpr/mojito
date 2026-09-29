@@ -193,6 +193,125 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     }
 }
 
+/// Why a construction selected no constructor: the availability clause of a
+/// candidate the arguments would have selected, a candidate's failed
+/// binding, or a bare miss.
+fn constructor_miss(
+    name: &str,
+    kind: OverloadSelect,
+    binding_failure: Option<&TypeError>,
+    unavailable: Option<TypeError>,
+) -> TypeError {
+    const NO_MATCH: &str = "no constructor overload matches the supplied arguments";
+    match (kind, binding_failure, unavailable) {
+        (OverloadSelect::Ambiguous, ..) => TypeError::BadCall {
+            func: name.to_string(),
+            reason: "ambiguous overloaded constructor call".to_string(),
+        },
+        (OverloadSelect::NoMatch, None, Some(unavailable)) => unavailable,
+        (OverloadSelect::NoMatch, Some(error), _) => TypeError::BadCall {
+            func: name.to_string(),
+            reason: format!("{NO_MATCH} ({error})"),
+        },
+        (OverloadSelect::NoMatch, None, None) => TypeError::BadCall {
+            func: name.to_string(),
+            reason: NO_MATCH.to_string(),
+        },
+    }
+}
+
+/// Whether `body` builds the compiler-private element storage `self.<field>`
+/// one element at a time in straight-line code: a store to every index of a
+/// bound pack, or, while the pack is still a parameter, a `comptime for` over
+/// `range(len(<pack>))` storing the element at its loop variable.
+fn initializes_storage_elements(body: &[Stmt], field: &str, field_ty: &Ty) -> bool {
+    let Ty::Tuple(elements) = field_ty else {
+        return false;
+    };
+    if let [Ty::Param { binder, .. }] = elements.as_slice()
+        && let Some(pack) = binder.name.strip_prefix('*')
+    {
+        return body.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StmtKind::ComptimeFor { var, iter, body }
+                    if ranges_over_pack(iter, pack)
+                        && body.iter().any(|stmt| {
+                            stored_storage_element(stmt, field).is_some_and(|index| {
+                                matches!(&index.kind, ExprKind::Identifier(name) if name == var)
+                            })
+                        })
+            )
+        });
+    }
+    let mut stored = vec![false; elements.len()];
+    mark_stored_elements(body, field, &mut stored);
+    stored.into_iter().all(|stored| stored)
+}
+
+fn mark_stored_elements(body: &[Stmt], field: &str, stored: &mut [bool]) {
+    for stmt in body {
+        if let StmtKind::Scope(body) = &stmt.kind {
+            mark_stored_elements(body, field, stored);
+        } else if let Some(Expr {
+            kind: ExprKind::Int(index),
+            ..
+        }) = stored_storage_element(stmt, field)
+            && let Some(slot) = index
+                .to_i64()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| stored.get_mut(index))
+        {
+            *slot = true;
+        }
+    }
+}
+
+/// The index of the `self.<field>[index] = value` store `stmt` is, if it is one.
+fn stored_storage_element<'a>(stmt: &'a Stmt, field: &str) -> Option<&'a Expr> {
+    let StmtKind::SetPlace { place, .. } = &stmt.kind else {
+        return None;
+    };
+    let ExprKind::Index { object, index } = &place.kind else {
+        return None;
+    };
+    matches!(
+        &object.kind,
+        ExprKind::Member { object, field: stored }
+            if stored == field
+                && matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
+    )
+    .then_some(&**index)
+}
+
+/// Whether `iter` is `range(len(Self.<pack>))` or `range(len(<pack>))`.
+fn ranges_over_pack(iter: &Expr, pack: &str) -> bool {
+    let ExprKind::Call { name, args, .. } = &iter.kind else {
+        return false;
+    };
+    let [
+        Expr {
+            kind:
+                ExprKind::Call {
+                    name: length,
+                    args: measured,
+                    ..
+                },
+            ..
+        },
+    ] = args.as_slice()
+    else {
+        return false;
+    };
+    name == "range"
+        && length == "len"
+        && matches!(
+            measured.as_slice(),
+            [Expr { kind: ExprKind::Member { field, .. } | ExprKind::Identifier(field), .. }]
+                if field == pack
+        )
+}
+
 #[derive(Clone, Copy)]
 struct InitFieldFlow {
     /// Initialization state on normal fallthrough, or `None` when no path falls
@@ -1299,8 +1418,10 @@ impl Checker {
         }) {
             return Ok(());
         }
-        for (field, _) in &info.fields {
-            if !definitely_initializes_self_field(body, field) {
+        for (field, field_ty) in &info.fields {
+            if !definitely_initializes_self_field(body, field)
+                && !initializes_storage_elements(body, field, field_ty)
+            {
                 return Err(TypeError::UninitializedField {
                     struct_name: sname.to_string(),
                     method: method.to_string(),
@@ -1891,6 +2012,29 @@ impl Checker {
         }
     }
 
+    /// The call diagnostic of a constructor candidate whose availability
+    /// clause fails for the constructed type, which is then no candidate.
+    /// `method_arguments` bind the constructor's own parameters, which a
+    /// struct still solving its own leaves to the per-call clone.
+    fn unavailable_constructor(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        method_arguments: &[TyArg],
+        struct_decls: &[ParamDecl],
+        struct_arguments: &[TyArg],
+    ) -> Option<TypeError> {
+        if !struct_decls.is_empty() && !sig.decls.is_empty() {
+            return None;
+        }
+        self.method_constraint_result(sig, method_arguments, struct_decls, struct_arguments)
+            .err()
+            .map(|failure| TypeError::BadCall {
+                func: name.to_string(),
+                reason: failure.reason(),
+            })
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_construction(
         &self,
@@ -1940,6 +2084,9 @@ impl Checker {
                 // miss caused by an explicit-origin or pointer-permission
                 // mismatch reports that, not a bare miss.
                 let mut origin_failure: Option<TypeError> = None;
+                // The availability clause of the first candidate the
+                // arguments would have selected, which the miss reports.
+                let mut availability_failure: Option<TypeError> = None;
                 for sig in sigs {
                     // A constructor with its own compile-time parameters
                     // (`__init__[T: Movable](out self, var value: T)`)
@@ -1986,6 +2133,12 @@ impl Checker {
                         args,
                         kwargs,
                     ) {
+                        if let Some(unavailable) =
+                            self.unavailable_constructor(name, sig, &method_arguments, &[], &[])
+                        {
+                            availability_failure.get_or_insert(unavailable);
+                            continue;
+                        }
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
                             simd_erasures: scored.simd_erasures,
@@ -2038,22 +2191,10 @@ impl Checker {
                 {
                     matches.retain(|m| decls_are_concrete(&m.param_decls));
                 }
-                let selected = select_method_overload("__init__", matches, None).map_err(
-                    |kind| TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: match (kind, &origin_failure) {
-                            (OverloadSelect::NoMatch, Some(error)) => format!(
-                                "no constructor overload matches the supplied arguments ({error})"
-                            ),
-                            (OverloadSelect::NoMatch, None) => {
-                                "no constructor overload matches the supplied arguments".to_string()
-                            }
-                            (OverloadSelect::Ambiguous, _) => {
-                                "ambiguous overloaded constructor call".to_string()
-                            }
-                        },
-                    },
-                )?;
+                let selected =
+                    select_method_overload("__init__", matches, None).map_err(|kind| {
+                        constructor_miss(name, kind, origin_failure.as_ref(), availability_failure)
+                    })?;
                 if let Some(target) = &selected.lowered_name {
                     self.overload_targets
                         .borrow_mut()
@@ -2154,6 +2295,11 @@ impl Checker {
                     return specialized;
                 }
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
+                if let Some(unavailable) =
+                    self.unavailable_constructor(name, sig, &[], &decls, &tyargs)
+                {
+                    return Err(unavailable);
+                }
                 let bound_slots: Vec<(usize, &Expr, &Ty)> = args
                     .iter()
                     .zip(&params)
@@ -2243,6 +2389,9 @@ impl Checker {
             // violate (`Dict[Key, Int]` over a non-`Hashable` key), so the
             // miss names the bound instead of a bare "no overload".
             let mut bound_failure: Option<TypeError> = None;
+            // The availability clause of the first candidate the arguments
+            // would have selected.
+            let mut availability_failure: Option<TypeError> = None;
             for sig in sigs {
                 let Ok(matched) = mojito_ast::call::match_call_slots(
                     &sig.names,
@@ -2383,6 +2532,13 @@ impl Checker {
                             ok = false;
                             break;
                         }
+                    }
+                    if ok
+                        && let Some(unavailable) =
+                            self.unavailable_constructor(name, sig, &[], &decls, &tyargs)
+                    {
+                        availability_failure.get_or_insert(unavailable);
+                        continue;
                     }
                     if ok {
                         // Rank matches the non-generic path: a variadic candidate
@@ -2535,15 +2691,12 @@ impl Checker {
                     &pointer_origins,
                 ));
             }
-            return Err(TypeError::BadCall {
-                func: name.to_string(),
-                reason: match bound_failure.or(origin_failure) {
-                    Some(error) => {
-                        format!("no constructor overload matches the supplied arguments ({error})")
-                    }
-                    None => "no constructor overload matches the supplied arguments".to_string(),
-                },
-            });
+            return Err(constructor_miss(
+                name,
+                OverloadSelect::NoMatch,
+                bound_failure.or(origin_failure).as_ref(),
+                availability_failure,
+            ));
         }
         if info.methods.contains_key("__init__") {
             return Err(TypeError::ArityMismatch {

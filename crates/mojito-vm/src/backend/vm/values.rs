@@ -315,7 +315,7 @@ impl VmBackend {
         let fields = def
             .fields
             .iter()
-            .map(|(f, _)| (f.clone(), Value::None))
+            .map(|(f, ty)| (f.clone(), uninitialized_field(ty)))
             .collect();
         let mut value_params = reify_value_parameters(&def.param_decls, param_vals);
         // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
@@ -917,5 +917,15 @@ impl VmBackend {
             );
         }
         Ok(allocation)
+    }
+}
+
+/// The placeholder an `out self` skeleton holds for a field of type `ty`
+/// until the initializer assigns it. Compiler-private Tuple storage is built
+/// one element at a time, so it starts as one placeholder per element.
+fn uninitialized_field(ty: &Ty) -> Value {
+    match ty {
+        Ty::Tuple(elements) => Value::Tuple(vec![Value::None; elements.len()]),
+        _ => Value::None,
     }
 }

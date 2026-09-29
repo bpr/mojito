@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Tuple`'s default initializer is now spelled in the bundled source over
+  the symbolic pack and checked once (`comptime for i in
+  range(len(Self.Ts)): self.storage[i] = Self.Ts[i]()`), where the
+  specializer used to write one per specialization. Every Defaultable
+  specialization derives it from that template, each element's concrete
+  construction recording its own facts
+  (`assets/ok/template_tuple_default_initializer.mojo`). Hello World checks
+  no such body again where it checked 4.
+- A store to a compile-time index of the compiler-private tuple storage is
+  now a place of its own, and an `out self` initializer that stores every
+  element initializes the field, on the VM and natively.
+
 - A call through a bound handing a string literal, a named `String`, or a
   field of `self` by value to a closed parameter of the requirement
   (`self.s.scale(2, label="y")` over `S: Scaler`) now reuses the template's
@@ -964,6 +976,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A constructor whose `where` clause fails for the constructed type is no
+  longer selected. `Box[Plain]()` over `def __init__(out self) where
+  conforms_to(Self.T, Defaultable)` used to run the initializer, and now
+  reports the violated clause, as the pin does
+  (`assets/type_error/unavailable_initializer.mojo`,
+  `assets/type_error/tuple_default_element_not_defaultable.mojo`).
 - A module `def` returning `ref T` is read through wherever a value is
   wanted, as upstream reads it and as a method's reference result already
   was: `var r = pick(a, b)` owns a copy (and demands `ImplicitlyCopyable`,

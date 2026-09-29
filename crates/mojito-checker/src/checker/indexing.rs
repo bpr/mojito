@@ -356,6 +356,13 @@ impl Checker {
                         value => value,
                     });
                 }
+                // Compiler-private heterogeneous storage is built or replaced
+                // one element at a time: each compile-time index is a place
+                // of its own inside the writable storage.
+                if matches!(obj_ty, Ty::Tuple(_)) {
+                    self.check_place(object)?;
+                    return self.infer(place);
+                }
                 let elem = match &obj_ty {
                     // A pointer store `ptr[i] = e`: the target is the pointee type.
                     // An origin-bearing pointer designates one value and its

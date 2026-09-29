@@ -344,6 +344,7 @@ struct GrammarNotes {
     simd_lengths: Vec<(OccurrenceId, OccurrenceId)>,
     pack_relocations: Vec<mojito_checked::templates::PackRelocation>,
     pack_spreads: Vec<mojito_checked::templates::PackSpread>,
+    element_constructions: Vec<OccurrenceId>,
 }
 
 impl Checker {
@@ -1334,7 +1335,22 @@ impl Checker {
             }
             None
         };
-        let derived = self.derive(site, param_owners, &trace, template, &refuse);
+        let elements = if template {
+            Ok(None)
+        } else {
+            self.element_construction_facts(site, &trace)
+        };
+        let derived = match elements {
+            Ok(elements) => self.derive(
+                site,
+                param_owners,
+                &trace,
+                template,
+                elements.as_ref(),
+                &refuse,
+            ),
+            Err(reason) => refuse(reason),
+        };
         self.template_catalog
             .borrow_mut()
             .stats_mut()
@@ -1350,6 +1366,7 @@ impl Checker {
         param_owners: &BodyParams,
         trace: &InstanceTrace,
         template: bool,
+        elements: Option<&CheckedBodyFacts>,
         refuse: &dyn Fn(&'static str) -> Option<DerivedBody>,
     ) -> Option<DerivedBody> {
         let name = &site.display;
@@ -1459,7 +1476,16 @@ impl Checker {
         };
         let mut occurrences =
             self.occurrences_over(body, &desugars, Some(&checked.facts.occurrences));
-        fold_vector_values(&mut occurrences, &checked.facts.occurrences);
+        // An element's concrete construction keeps the identity of the
+        // `Ts[i]()` it elaborates, and its other nodes derive from it.
+        let element_part = |occurrence: &Occurrence| {
+            element_construction_part(&checked.facts.element_constructions, occurrence)
+        };
+        fold_vector_values(
+            &mut occurrences,
+            &checked.facts.occurrences,
+            &checked.facts.element_constructions,
+        );
         // Every occurrence of the body is one the template checked. A class
         // without compile-time control flow keeps them all, once each; a
         // keyed one keeps the arms the elaborator selected, once per loop
@@ -1525,6 +1551,7 @@ impl Checker {
                 occurrence.vector_fold,
                 Some(VectorFold::Lane(_) | VectorFold::Dimension)
             ) || spread_element(occurrence)
+                || element_part(occurrence)
         };
         let lanes = occurrences
             .iter()
@@ -1618,7 +1645,20 @@ impl Checker {
                 .collect();
             read_returns_by_value(&mut selected, &returned);
         }
-        match self.realize_instance_facts(&selected, &substitution, &indices, &occurrences) {
+        let realized = self
+            .realize_instance_facts(&selected, &substitution, &indices, &occurrences)
+            .and_then(|mut facts| {
+                let constructed = std::mem::take(&mut facts.element_constructions);
+                match elements {
+                    Some(elements) => {
+                        merge_element_constructions(&mut facts, elements, &constructed, &ids)?;
+                    }
+                    None if constructed.is_empty() => {}
+                    None => return Err("an element construction was not checked"),
+                }
+                Ok(facts)
+            });
+        match realized {
             Ok(facts) => Some(DerivedBody {
                 facts,
                 spans: occurrences
@@ -1629,6 +1669,188 @@ impl Checker {
             }),
             Err(reason) => refuse(reason),
         }
+    }
+
+    /// What an instance's own check records at each pack element's default
+    /// construction ([`BodyShape::element_initialization`]), `None` for a
+    /// template that admitted none.
+    ///
+    /// The elaborator wrote the element type's concrete construction where
+    /// the template spelled `Self.Ts[i]()`: closed syntax over literals and
+    /// type names, which names nothing the body binds. It is checked here as
+    /// the store checks its value, alone, and what that check recorded at
+    /// the construction's own occurrences is the instance's. A construction
+    /// recording a fact outside the tables carried here refuses.
+    fn element_construction_facts(
+        &self,
+        site: &BodySite<'_>,
+        trace: &InstanceTrace,
+    ) -> Result<Option<CheckedBodyFacts>, &'static str> {
+        struct Stores<'a> {
+            origins: &'a mojito_ast::ast::SyntaxOrigins,
+            constructed: &'a [OccurrenceId],
+            found: Vec<(&'a Expr, &'a Expr)>,
+        }
+
+        impl<'a> Stores<'a> {
+            fn collect(&mut self, body: &'a [Stmt]) {
+                for statement in body {
+                    match &statement.kind {
+                        StmtKind::SetPlace { place, value }
+                            if self.constructed.iter().any(|element| {
+                                element.syntax == self.origins.origin(value.syntax_id)
+                            }) =>
+                        {
+                            self.found.push((place, value));
+                        }
+                        StmtKind::Scope(body) => self.collect(body),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        const UNCHECKED: &str = "an element's default construction does not check for the instance";
+        let (constructed, template_occurrences) = {
+            let catalog = self.template_catalog.borrow();
+            match catalog.template(&trace.template) {
+                Some(checked) if !checked.facts.element_constructions.is_empty() => (
+                    checked.facts.element_constructions.clone(),
+                    checked.facts.occurrences.clone(),
+                ),
+                _ => return Ok(None),
+            }
+        };
+        let mut stores = Stores {
+            origins: &self.syntax_origins,
+            constructed: &constructed,
+            found: Vec::new(),
+        };
+        stores.collect(site.body);
+        self.effect_query_frames.borrow_mut().push(Some(Vec::new()));
+        self.struct_application_frames
+            .borrow_mut()
+            .push(Some(Vec::new()));
+        let checked = stores.found.iter().try_for_each(|(place, value)| {
+            let target = self.place_storage_ty(place).ok_or(UNCHECKED)?;
+            let found = self
+                .infer_with_expected(value, &target, true)
+                .map_err(|_| UNCHECKED)?;
+            let converted = self
+                .record_implicit_conversion(value, &found, &target)
+                .map_err(|_| UNCHECKED)?;
+            if !converted || found != target {
+                return Err("an element's default construction is not of its element's type");
+            }
+            if self.is_copyable(&found) {
+                self.check_consuming(value, &found, "assignment target")
+                    .map_err(|_| UNCHECKED)?;
+            }
+            Ok(())
+        });
+        let reads = BodyReads {
+            effect_queries: self
+                .effect_query_frames
+                .borrow_mut()
+                .pop()
+                .flatten()
+                .unwrap_or_default(),
+            struct_applications: self
+                .struct_application_frames
+                .borrow_mut()
+                .pop()
+                .flatten()
+                .unwrap_or_default(),
+        };
+        if let Some(Some(outer)) = self.effect_query_frames.borrow_mut().last_mut() {
+            outer.extend(reads.effect_queries.iter().cloned());
+        }
+        if let Some(Some(outer)) = self.struct_application_frames.borrow_mut().last_mut() {
+            outer.extend(reads.struct_applications.iter().cloned());
+        }
+        let (occurrences, others): (Vec<_>, Vec<_>) = self
+            .occurrences_over(site.body, &HashMap::new(), Some(&template_occurrences))
+            .into_iter()
+            .partition(|occurrence| {
+                constructed
+                    .iter()
+                    .any(|element| element.syntax == occurrence.id.syntax)
+                    || element_construction_part(&constructed, occurrence)
+            });
+        let facts =
+            checked.and_then(|()| self.captured_element_constructions(site, &occurrences, &reads));
+        // The body's own check, or the installation of its derived facts,
+        // starts from tables that hold nothing of it.
+        for occurrence in occurrences.iter().chain(&others) {
+            self.remove_occurrence_facts(&occurrence.span);
+        }
+        facts.map(Some)
+    }
+
+    /// What the check of an instance's element constructions recorded at
+    /// their `occurrences` ([`Self::element_construction_facts`]).
+    fn captured_element_constructions(
+        &self,
+        site: &BodySite<'_>,
+        occurrences: &[Occurrence],
+        reads: &BodyReads,
+    ) -> Result<CheckedBodyFacts, &'static str> {
+        for table in FactTable::ALL {
+            let entries = self.span_table(table);
+            let recorded = occurrences
+                .iter()
+                .any(|occurrence| entries.has(&occurrence.span));
+            if recorded && !element_construction_table(table) {
+                timing::note("template_derivations.element_table", || {
+                    format!("{}: {table:?}", site.display)
+                });
+                return Err("an element's default construction records a fact no recipe carries");
+            }
+        }
+        let mut typed_origins = Vec::new();
+        let expression_types = unbound_typed(
+            TypedTable::Expression,
+            values(occurrences, &self.expression_types.borrow()),
+            &|_| Err(IncompleteReason::ExternalBinding),
+            &mut typed_origins,
+        )
+        .map_err(|_| "an element's default construction names a place")?;
+        if !typed_origins.is_empty() || self.transfer_residue(reads) {
+            return Err("an element's default construction carries an origin or a transfer");
+        }
+        let (effect_free_callees, value_callees, call_through_reads) = callee_reads(reads);
+        if !call_through_reads.is_empty() {
+            return Err("an element's default construction reads a call-through residue");
+        }
+        Ok(CheckedBodyFacts {
+            expression_types,
+            operation_adjustments: values(occurrences, &self.operation_adjustments.borrow()),
+            overload_targets: values(occurrences, &self.overload_targets.borrow()),
+            construction_immutable_binders: self.captured_immutable_binders(occurrences),
+            simd_constructions: values(occurrences, &self.simd_constructions.borrow()),
+            unconsumed_temporaries: occurrences
+                .iter()
+                .filter(|occurrence| {
+                    self.unconsumed_temporaries
+                        .borrow()
+                        .contains(&occurrence.span)
+                })
+                .map(|occurrence| occurrence.id)
+                .collect(),
+            struct_applications: reads
+                .struct_applications
+                .iter()
+                .map(|(name, arguments)| {
+                    match without_struct_origins(&Ty::Struct(name.clone(), arguments.clone())) {
+                        Ty::Struct(name, arguments) => (name, arguments),
+                        _ => (name.clone(), arguments.clone()),
+                    }
+                })
+                .collect(),
+            effect_free_callees,
+            value_callees,
+            ..CheckedBodyFacts::default()
+        })
     }
 
     /// [`TemplateObligation::PlainDataArguments`] for one instance argument.
@@ -3918,6 +4140,7 @@ impl Checker {
                         facts.simd_lengths = notes.simd_lengths;
                         facts.pack_relocations = notes.pack_relocations;
                         facts.pack_spreads = notes.pack_spreads;
+                        facts.element_constructions = notes.element_constructions;
                         (facts, coverage)
                     }
                     Err(reason) => (
@@ -4278,6 +4501,7 @@ impl Checker {
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
             pack_spreads: RefCell::new(Vec::new()),
+            element_constructions: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
             copied_writes: RefCell::new(Vec::new()),
         };
@@ -4918,6 +5142,7 @@ impl Checker {
             simd_lengths: RefCell::new(Vec::new()),
             pack_relocations: RefCell::new(Vec::new()),
             pack_spreads: RefCell::new(Vec::new()),
+            element_constructions: RefCell::new(Vec::new()),
             stringified: RefCell::new(Vec::new()),
             copied_writes: RefCell::new(Vec::new()),
         };
@@ -9619,6 +9844,10 @@ struct BodyShape<'a> {
     /// The pack storages built through the public tuple
     /// ([`Self::pack_storage`]), whose elements an instance moves one by one.
     pack_spreads: RefCell<Vec<mojito_checked::templates::PackSpread>>,
+    /// The pack element default constructions admitted
+    /// ([`Self::element_initialization`]), each the element's own concrete
+    /// construction in an instance.
+    element_constructions: RefCell<Vec<OccurrenceId>>,
     /// The stringify calls admitted ([`Self::stringify`]), each routed to
     /// the builtin by an overload target no instance changes.
     stringified: RefCell<Vec<OccurrenceId>>,
@@ -9858,6 +10087,10 @@ impl BodyShape<'_> {
                 orelse: None,
             } if !self.keyed => {
                 self.condition(cond) && self.block(body) && self.holds(MethodFeatures::STATEMENTS)
+            }
+            StmtKind::SetPlace { place, value } if self.element_initialization(place, value) => {
+                self.holds(MethodFeatures::STATEMENTS)
+                    && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS)
             }
             // A scalar field of a writable `self`: the store is a plain
             // scalar write, never an in-place operator of the field's type.
@@ -10256,6 +10489,7 @@ impl BodyShape<'_> {
             simd_lengths: self.simd_lengths.borrow().clone(),
             pack_relocations: self.pack_relocations.borrow().clone(),
             pack_spreads: self.pack_spreads.borrow().clone(),
+            element_constructions: self.element_constructions.borrow().clone(),
         }
     }
 
@@ -10730,7 +10964,6 @@ impl BodyShape<'_> {
             }
             _ if self.call_result(expr)
                 || self.pack_storage(expr)
-                || self.element_storage(expr)
                 || self.fieldwise_copy(expr)
                 || self.construction(expr)
                 || self.binder_construction(expr)
@@ -10855,19 +11088,67 @@ impl BodyShape<'_> {
         true
     }
 
-    /// `__RuntimeTuple(String(), 0)`: a pack struct's storage built element
-    /// by element, as a specialization's synthesized default constructor
-    /// builds it, each element a value the grammar admits on its own.
-    fn element_storage(&self, expr: &Expr) -> bool {
-        matches!(&expr.kind, ExprKind::Call { name, param_args, args, kwargs }
-        if name == "__RuntimeTuple"
-            && param_args.is_empty()
-            && kwargs.is_empty()
-            && !args.is_empty()
-            && args.iter().all(|element| {
-                (self.expression(element) && self.scalar(element))
-                    || self.whole_value(element)
+    /// `self.storage[i] = Self.Ts[i]()`: one element of a pack struct's
+    /// storage on a writable `self`, built at the innermost `comptime for`
+    /// variable from the pack element's own default construction.
+    ///
+    /// The template typed the place and the construction as the same
+    /// dependent element `Ts[i]`, which the availability clause proves
+    /// `Defaultable`, and recorded nothing else at the construction. The
+    /// elaborator writes the element's concrete construction there, closed
+    /// syntax naming nothing the body binds, whose facts an instance
+    /// records from its own check of that construction alone
+    /// ([`Checker::element_construction_facts`]).
+    fn element_initialization(&self, place: &Expr, value: &Expr) -> bool {
+        let ExprKind::Index { object, index } = &place.kind else {
+            return false;
+        };
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &value.kind
+        else {
+            return false;
+        };
+        let at_loop = |expr: &Expr| {
+            matches!(&expr.kind, ExprKind::Identifier(name)
+                if self.loop_vars.borrow().last() == Some(name))
+        };
+        let element = matches!(&callee.kind, ExprKind::Member { object, field }
+            if self.pack_struct == Some(field.as_str())
+                && matches!(&object.kind, ExprKind::Identifier(base) if base == "Self"))
+            && matches!(param_args.as_slice(),
+                [mojito_ast::ast::ParamArg::Value(index)] if at_loop(index))
+            && args.is_empty()
+            && kwargs.is_empty();
+        let dependent_element = |ty: &Ty| {
+            matches!(ty, Ty::Dependent(dependent)
+            if dependent.pack_element().is_some_and(|(_, index)| {
+                matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
             }))
+        };
+        let admitted = element
+            && self.self_writable()
+            && self.receiver_field(object)
+            && at_loop(index)
+            && self.facts.is_none_or(|facts| {
+                let built = self.occurrence(value);
+                let stored = fact_at(&facts.expression_place_types, self.occurrence(place));
+                stored.is_some_and(dependent_element)
+                    && stored == fact_at(&facts.expression_types, built)
+                    && fact_at(&facts.operation_adjustments, built).is_none()
+                    && fact_at(&facts.conversions, built).is_none()
+                    && fact_at(&facts.overload_targets, built).is_none()
+            });
+        if admitted {
+            push_unique(
+                &mut self.element_constructions.borrow_mut(),
+                self.occurrence(value),
+            );
+        }
+        admitted
     }
 
     /// The iterable of a runtime `for`: a place the loop borrows (`self`, a
@@ -14535,16 +14816,128 @@ fn transferred_element_indices(
     indices
 }
 
+/// Whether `occurrence` is a node the elaborator wrote under a pack
+/// element's default construction, its identity derived from the
+/// construction's.
+fn element_construction_part(constructed: &[OccurrenceId], occurrence: &Occurrence) -> bool {
+    occurrence
+        .id
+        .syntax
+        .derivation()
+        .is_some_and(|(parent, _)| constructed.iter().any(|element| element.syntax == parent))
+}
+
+/// The tables an element's default construction may record in, each carried
+/// into the instance as its own check wrote it
+/// ([`Checker::element_construction_facts`]).
+const fn element_construction_table(table: FactTable) -> bool {
+    matches!(
+        table,
+        FactTable::ExpressionTypes
+            | FactTable::OperationAdjustments
+            | FactTable::OverloadTargets
+            | FactTable::ConstructionImmutableBinders
+            | FactTable::SimdConstructions
+            | FactTable::UnconsumedTemporaries
+    )
+}
+
+/// Lay the facts an instance's element constructions recorded over its
+/// realized facts, each table kept in the occurrences' pre-order `order`.
+/// The template typed each construction as its element, which the instance's
+/// check must have typed it as too.
+fn merge_element_constructions(
+    facts: &mut CheckedBodyFacts,
+    elements: &CheckedBodyFacts,
+    constructed: &[OccurrenceId],
+    order: &[OccurrenceId],
+) -> Result<(), &'static str> {
+    fn merge<V: Clone>(
+        table: &mut Vec<(OccurrenceId, V)>,
+        entries: &[(OccurrenceId, V)],
+        order: &[OccurrenceId],
+    ) {
+        for (id, entry) in entries {
+            upsert(table, *id, entry.clone());
+        }
+        table.sort_by_key(|(id, _)| order.iter().position(|entry| entry == id));
+    }
+    let typed = constructed.iter().all(|id| {
+        fact_at(&facts.expression_types, *id) == fact_at(&elements.expression_types, *id)
+    });
+    if !typed {
+        return Err("an element's default construction is not of its element's type");
+    }
+    merge(
+        &mut facts.expression_types,
+        &elements.expression_types,
+        order,
+    );
+    merge(
+        &mut facts.operation_adjustments,
+        &elements.operation_adjustments,
+        order,
+    );
+    merge(
+        &mut facts.overload_targets,
+        &elements.overload_targets,
+        order,
+    );
+    merge(
+        &mut facts.construction_immutable_binders,
+        &elements.construction_immutable_binders,
+        order,
+    );
+    merge(
+        &mut facts.simd_constructions,
+        &elements.simd_constructions,
+        order,
+    );
+    for id in &elements.unconsumed_temporaries {
+        push_unique(&mut facts.unconsumed_temporaries, *id);
+    }
+    facts
+        .unconsumed_temporaries
+        .sort_by_key(|id| order.iter().position(|entry| entry == id));
+    facts.struct_applications = sorted_applications(
+        facts
+            .struct_applications
+            .iter()
+            .chain(&elements.struct_applications)
+            .cloned()
+            .collect(),
+    );
+    for callee in &elements.effect_free_callees {
+        push_unique(&mut facts.effect_free_callees, callee.clone());
+    }
+    facts.effect_free_callees.sort();
+    for callee in &elements.value_callees {
+        push_unique(&mut facts.value_callees, callee.clone());
+    }
+    Ok(())
+}
+
 /// Tell the syntax the elaborator wrote for a vector apart from the
 /// template's: the dimensions it spelled for a vector alias's construction
 /// (`U256(…)` as `SIMD[DType.uint64, 4](…)`) are part of the type, which no
 /// check records anything at; and a struct's vector value binder it folded
 /// (`Self.key`) is a construction under the name's identity whose lanes are
 /// all its own.
-fn fold_vector_values(occurrences: &mut [Occurrence], template: &[OccurrenceId]) {
-    let checked = |syntax: &SyntaxId| template.iter().any(|id| id.syntax == *syntax);
+fn fold_vector_values(
+    occurrences: &mut [Occurrence],
+    template: &[OccurrenceId],
+    element_constructions: &[OccurrenceId],
+) {
+    let constructed = |syntax: &SyntaxId| {
+        element_constructions
+            .iter()
+            .any(|element| element.syntax == *syntax)
+    };
+    let checked =
+        |syntax: &SyntaxId| !constructed(syntax) && template.iter().any(|id| id.syntax == *syntax);
     let written: HashSet<SyntaxId> = occurrences
         .iter()
+        .filter(|occurrence| !element_construction_part(element_constructions, occurrence))
         .flat_map(|occurrence| occurrence.dimensions.iter().copied())
         .filter(|dimension| !checked(dimension))
         .collect();

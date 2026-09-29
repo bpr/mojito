@@ -369,54 +369,6 @@ pub(super) fn tuple_transform_method(
     }
 }
 
-/// Build the concrete nullary constructor for a Defaultable Tuple
-/// specialization. A heterogeneous pack cannot retain `Ts[i]()` as runtime
-/// syntax, so specialization expands it into one ordinary concrete constructor
-/// call per element before semantic checking.
-///
-/// The constructor's statement is spanned at `span` (the struct's), which
-/// tells it apart from the variadic initializer it is copied from, and each
-/// element construction is identified by identities derived from that
-/// statement's, so every discovery round builds the same body: its first
-/// checked copy is the template the others derive from.
-pub(super) fn tuple_default_constructor(
-    variadic_constructor: &mojito_ast::ast::Method,
-    types: &[Type],
-    semantic_types: &[Ty],
-    span: Span,
-) -> Option<mojito_ast::ast::Method> {
-    let arguments = types
-        .iter()
-        .zip(semantic_types)
-        .map(|(ty, semantic)| default_constructor_call(ty, semantic, span))
-        .collect::<Option<Vec<_>>>()?;
-    let mut constructor = variadic_constructor.clone();
-    constructor.params.clear();
-    let [statement] = constructor.body.as_mut_slice() else {
-        return None;
-    };
-    statement.span = span;
-    let parent = statement.syntax_id;
-    let StmtKind::SetPlace { value, .. } = &mut statement.kind else {
-        return None;
-    };
-    let ExprKind::Call { name, .. } = &value.kind else {
-        return None;
-    };
-    if name != "__RuntimeTuple" {
-        return None;
-    }
-    let ExprKind::Call { args, .. } = &mut value.kind else {
-        unreachable!("validated runtime Tuple constructor call")
-    };
-    *args = arguments;
-    let mut identities = DerivedIdentities { parent, next: 0 };
-    for argument in args {
-        mojito_ast::visit::walk_expr_mut(&mut identities, argument);
-    }
-    Some(constructor)
-}
-
 /// The concrete default construction a bound pack element's `Ts[i]()`
 /// elaborates to, its nodes identified by identities derived from the
 /// construction's own (`parent`), so every copy builds the same syntax.

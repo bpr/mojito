@@ -64,7 +64,9 @@ only from their authoritative `std` modules.
   current `__getitem_param__` indexing and element-conditional lifecycle,
   comparison, formatting, concatenation, reversal, and consuming APIs. Its
   `__RuntimeTuple[*Ts]` field is compiler-private heterogeneous pack storage;
-  public Tuple is nominal and is not a method-free runtime iterable.
+  public Tuple is nominal and is not a method-free runtime iterable. Its
+  default initializer stores each element's default construction to that
+  storage, available where every element is `Defaultable`.
 - `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
 - `std/iter.mojo` — minimal self-hosted `Iterator`, `Iterable`, and

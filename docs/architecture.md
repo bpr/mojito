@@ -2298,7 +2298,11 @@ Dynamic `Index(Reg)` projections conservatively overlap every index. A
 `ConstIndex` is emitted only for an exact nonnegative literal selecting an
 element of compiler-private heterogeneous `Ty::Tuple` storage. This gives each
 pack element a distinct ownership path without changing nominal collection
-subscript dispatch.
+subscript dispatch. A store to such an element is a store to that path: an
+`out self` initializer builds the storage one element at a time
+(`self.storage[i] = Self.Ts[i]()`), the checker counts the field
+initialized once every element is stored, and the VM's uninitialized `self`
+holds one placeholder per element for the stores to fill.
 
 When an accessor returns a reference used immediately as another receiver or
 place — including the target of a field store or augmented assignment

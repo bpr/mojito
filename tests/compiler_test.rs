@@ -2142,36 +2142,55 @@ fn struct_hasher_field_update_derives() {
 }
 
 #[test]
-fn tuple_default_constructor_derives() {
-    // A Defaultable `Tuple` specialization's synthesized `__init__(out self)`
-    // builds its storage element by element (`__RuntimeTuple(Int(0),
-    // Optional[Int]())`) under identities of its own, so it is not the
-    // variadic initializer's copy: its first checked copy is its template,
-    // and every later discovery round derives from it.
-    let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    print(t[0], t[1] is None, u[0], u[1], u[2])\n";
+fn tuple_default_initializer_derives() {
+    // `Tuple`'s `__init__(out self)` builds its storage one element at a
+    // time from the pack element's own default construction, checked once
+    // with the pack symbolic: every Defaultable specialization derives it,
+    // each element's concrete construction (`Int(0)`, `Optional[Int]()`, a
+    // nested `Tuple`'s) recording its own facts.
+    let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    var n = Tuple[String, Tuple[Int, Bool]]()\n    print(t[0], t[1] is None, u[0], u[1], u[2], n[0], n[1][0], n[1][1])\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
     let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
     for program in [&derived, &verified] {
         assert_eq!(
             compiler.execute(program).expect("execute").output,
-            "0 True 0 False 0.0\n"
+            "0 True 0 False 0.0  0 False\n"
         );
     }
     let stats = derived.template_stats();
     for instance in [
         "Tuple$t2[y3:Inty13:Optional[Int]]",
         "Tuple$t3[y6:UInt64y4:Booly7:Float64]",
+        "Tuple$t2[y3:Inty4:Bool]",
+        "Tuple$t2[y6:Stringy16:Tuple[Int, Bool]]",
     ] {
         let name = format!("{instance}.__init__");
-        let inferred = stats
-            .inferred_clones
-            .iter()
-            .filter(|clone| **clone == name)
-            .count();
-        assert_eq!(
-            inferred, 1,
-            "{name}: only the default constructor's first copy is inferred: {stats:?}"
+        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+        assert!(
+            !stats.inferred_clones.contains(&name),
+            "{name} is never inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
+fn unavailable_initializer_is_rejected() {
+    // A constructor whose availability clause fails for the constructed
+    // type is no candidate: the call reports the clause, on a plain generic
+    // struct and on a `Tuple` over an element that is not `Defaultable`.
+    for source in [
+        "struct Plain(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n\nstruct Box[T: Movable](Movable):\n    var n: Int\n\n    def __init__(out self) where conforms_to(Self.T, Defaultable):\n        self.n = 1\n\n    def __init__(out self, n: Int):\n        self.n = n\n\n\ndef main():\n    var b = Box[Plain]()\n    print(b.n)\n",
+        "struct Plain(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n\ndef main():\n    var t = Tuple[Plain, Int]()\n    print(len(t))\n",
+    ] {
+        let error = Compiler::default()
+            .compile_source(source, std::path::Path::new("unavailable_initializer.mojo"))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(
+            error.contains("Defaultable"),
+            "the call reports the failed clause: {error}"
         );
     }
 }

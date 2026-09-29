@@ -38,33 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
 
-- [ ] **1.1 `Tuple`'s default initializer has no symbolic template**
-
-  Problem: each Defaultable `Tuple` specialization still infers its
-  synthesized `__init__(out self)` once, because nothing checks that
-  initializer with the pack symbolic.
-  - Hello World infers 4 such bodies, one per specialization; every later
-    discovery round derives from that first copy
-    (`FirstCopy::OwnSpecialization`).
-  - The bundled `Tuple` declares no default initializer: the specializer
-    writes one per specialization (`tuple_default_constructor`).
-  - Upstream spells it in source over the symbolic pack:
-    `comptime for i in range(Self.__len__()):
-    Pointer(to=self[i]).unsafe_write({})`.
-  - A pack element's construction now checks symbolically: `Self.Ts[i]()`
-    and a `def`'s `Ts[i]()` are the dependent element, and each instance
-    elaborates the element's own construction
-    (`infer_pack_element_construction`, `pack_element_construction`).
-  - Mojito has no spelling that builds `__RuntimeTuple` storage element by
-    element, as upstream's `mark_initialized` and `unsafe_write` do.
-  - No recipe derives an elaborated element construction. Its facts differ
-    by element kind: `Int()`, a SIMD scalar such as `UInt64`, `String()`, a
-    struct such as `Optional[Int]` with its overload target, a nested
-    `Tuple` instance.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.1 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -81,7 +55,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A nested `def` with a constructed default keeps the clone
+- [ ] **1.2 A nested `def` with a constructed default keeps the clone
   check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar,
@@ -100,7 +74,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 An explicitly applied or overloaded generic static with
+- [ ] **1.3 An explicitly applied or overloaded generic static with
   binders of its own keeps the clone check**
 
   Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
@@ -118,7 +92,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A field read of a sibling call's result keeps the clone
+- [ ] **1.4 A field read of a sibling call's result keeps the clone
   check**
 
   Problem: `return self.bumped().count`, a field of a sibling method's
@@ -131,7 +105,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A nested t-string's `write_to` is checked again in an early
+- [ ] **1.5 A nested t-string's `write_to` is checked again in an early
   discovery round**
 
   Problem: before the outer t-string's storage `Tuple` is declared, the
@@ -144,7 +118,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A float lane's `__fma__` over a temporary argument keeps the
+- [ ] **1.6 A float lane's `__fma__` over a temporary argument keeps the
   clone check**
 
   Problem: `BodyShape::lane_float_method` admits `k.__fma__(a, b)` on
@@ -158,7 +132,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A lane comparison's mask used as a value keeps the clone
+- [ ] **1.7 A lane comparison's mask used as a value keeps the clone
   check**
 
   Problem: `var m = self.pos == other`, or a comparison of a symbolic lane's
@@ -177,7 +151,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A `while` loop in a compile-time-keyed `def` keeps the clone
+- [ ] **1.8 A `while` loop in a compile-time-keyed `def` keeps the clone
   check**
 
   Problem: a keyed `def` holding any `while` loop, even `while n < 3:` over
@@ -189,7 +163,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 `Array`'s copy and move initializers, `deinit_with`, and
+- [ ] **1.9 `Array`'s copy and move initializers, `deinit_with`, and
   owned `__iter__` keep the clone check**
 
   Problem: these four `Array` members are still inferred again in every
@@ -207,7 +181,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 Keyword arguments out of parameter order through a bound
+- [ ] **1.10 Keyword arguments out of parameter order through a bound
   derive facts the clone check does not match**
 
   Problem: `self.s.shift(1, extra=a, by=b)` through `S: Scaler` fails
@@ -223,7 +197,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 An overloaded witness no single member of which witnesses the
+- [ ] **1.11 An overloaded witness no single member of which witnesses the
   requirement still ranks on the recorded types**
 
   Problem: a call through a bound selects the one member that witnesses the
@@ -243,7 +217,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 A display, leading-dot member, or explicit application handed
+- [ ] **1.12 A display, leading-dot member, or explicit application handed
   to a call through a bound keeps the clone check**
 
   Problem: `self.item.total([1, 2, 3])` or `self.item.total(.origin(), 3)`
@@ -261,7 +235,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 A value handed by value to a parameter typed by `Self` or
+- [ ] **1.13 A value handed by value to a parameter typed by `Self` or
   a requirement binder through a bound keeps the clone check**
 
   Problem: `self.s.merge(self.t)` over `S: Merger`, whose `merge(self,
@@ -278,6 +252,26 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
     (2026-09-29); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **1.14 A pack element's default construction outside a storage
+  store keeps the clone check**
+
+  Problem: `print(Self.Ts[i]())` in a method and `var value = Ts[i]()` in a
+  `def` refuse the template, so each instance is checked again.
+  - The method grammar admits the construction only as the value stored to
+    the element's own storage (`BodyShape::element_initialization`).
+  - `Row.defaults` and `build` in
+    `assets/ok/pack_element_default_construction.mojo` are the two bodies
+    known to pay.
+  - An instance checks the elaborated construction alone and carries what it
+    recorded (`element_construction_facts`). A construction that is an
+    argument or a local's value also owes the facts of the call or binding
+    around it, which depend on the element's type.
+  - A pack-keyed `def` is outside the method grammar altogether.
+  - Found while `Tuple`'s default initializer moved into source
+    (2026-09-29). No bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **1.15 The A1 shadow core has never been run over the decision
   corpus**
@@ -1830,6 +1824,14 @@ last.
       replace the builtin.
     - Model: Fable, Planned.
 
+  - `Tuple`'s default initializer stores each element to the private
+    storage (`self.storage[i] = Self.Ts[i]()`). Upstream marks `self`
+    initialized and writes each element through a pointer
+    (`Pointer(to=self[i]).unsafe_write({})`).
+    - Mojito has no `mark_initialized`, no pointer to an uninitialized
+      element, and no contextual `{}` construction.
+    - Model: Fable, Planned.
+
   Four runtime services are deliberately not on that list; they are in
   [`docs/non-goals.md`](non-goals.md).
 
@@ -2548,6 +2550,46 @@ last.
     which must mark the collector on the declaration side and at every call
     side that builds a key (`method_lowered_name`, `callable_lowered_name`,
     `callable_contract_target`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.103 A variadic struct's pack bound is not enforced at an explicit
+  application**
+
+  Problem: `Row[Plain, Int]()` over `struct Row[*Ts: Movable & Defaultable]`
+  compiles and runs though `Plain` is not `Defaultable`.
+  - The pin rejects it: "'Row' parameter 'Ts' has 'Defaultable & Movable'
+    type, but value has type 'AnyStruct[Plain]'".
+  - A body that relies on the bound then runs a member no element supports:
+    `self.storage[i] = Self.Ts[i]()` constructs a `List[Int]` element, which
+    the bundled `List` does not declare `Defaultable`.
+  - A plain generic struct's bound is enforced (`Box[T: Defaultable]`).
+  - Found while `Tuple`'s default initializer moved into source
+    (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.104 User code may spell the compiler-private `__RuntimeTuple`**
+
+  Problem: `var storage: __RuntimeTuple[*Self.Ts]` in a user struct, and
+  `__RuntimeTuple(*args^)` in its initializer, compile and run.
+  - The pin has no such name, so the acceptance is Mojito's own.
+  - A subscript of `__UninitStorage` is already refused outside the bundled
+    library ("is compiler-private storage; use MaybeUninit from
+    std.memory").
+  - The lever is the same test on the declaring module, at the annotation
+    and at the construction.
+  - No fixture pins the acceptance.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.105 The bundled `List` is not `Defaultable`**
+
+  Problem: `Tuple[List[Int], Int]()` is rejected ("constraint declared here
+  evaluated to False"), where the pin prints the empty list's length.
+  - Upstream's `List` declares `Defaultable`. The bundled one declares an
+    empty initializer and not the conformance.
+  - `Dict` and `Set` are to be checked against the pin with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

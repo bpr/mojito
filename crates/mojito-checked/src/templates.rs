@@ -994,6 +994,14 @@ impl MethodFeatures {
     /// residue the call publishes names the binder, which no instance
     /// renames ([`TemplateObligation::CallThroughResidue`]).
     pub const CALLABLE_BINDERS: Self = Self(1 << 45);
+    /// A pack struct's initializer building its storage one element at a
+    /// time, each the pack element's own default construction at a folded
+    /// loop index (`self.storage[i] = Self.Ts[i]()`): the template typed
+    /// the construction as the dependent element, which its clause proves
+    /// `Defaultable`, and the elaborator writes each element's concrete
+    /// construction, closed syntax whose facts the instance records itself
+    /// ([`CheckedBodyFacts::element_constructions`]).
+    pub const ELEMENT_CONSTRUCTIONS: Self = Self(1 << 46);
 
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
@@ -1813,6 +1821,11 @@ pub struct CheckedBodyFacts {
     /// admitted ([`PackSpread`]), whose elements an instance moves one by
     /// one.
     pub pack_spreads: Vec<PackSpread>,
+    /// The pack element default constructions the grammar admitted
+    /// (`Self.Ts[i]()` stored to the element's own storage). An instance
+    /// holds the element's concrete construction there, under the same
+    /// identity, its nodes derived from it.
+    pub element_constructions: Vec<OccurrenceId>,
     /// The implicit conversion selected at each occurrence that records one.
     /// An instance selects it again from its own types, so a clone whose
     /// source type changed names a different constructor.
@@ -1969,6 +1982,7 @@ impl CheckedBodyFacts {
             print_calls,
             pack_relocations,
             pack_spreads,
+            element_constructions,
             conversions,
             typed_origins,
             call_result_origins,
@@ -2181,6 +2195,7 @@ impl CheckedBodyFacts {
             print_calls: flagged(&self.print_calls),
             pack_relocations: self.pack_relocations.clone(),
             pack_spreads: self.pack_spreads.clone(),
+            element_constructions: flagged(&self.element_constructions),
             conversions: at(&self.conversions, occurrences, folded),
             // Table by table, as the capture keeps them.
             typed_origins: [

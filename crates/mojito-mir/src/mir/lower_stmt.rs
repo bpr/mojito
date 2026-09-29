@@ -608,6 +608,18 @@ impl Flatten<'_> {
                     p.project(Proj::UninitPayload, element.clone());
                     return p;
                 }
+                // A literal index into compiler-private heterogeneous Tuple
+                // storage is the element's static place, as in `try_place`.
+                if let (Some(Ty::Tuple(_)), Some(index)) =
+                    (&object_ty, exact_nonnegative_index(index))
+                {
+                    let element = self
+                        .checked_place_ty(e)
+                        .or_else(|| self.checked_ty(e))
+                        .expect("checked Tuple storage element has a type");
+                    p.project(Proj::ConstIndex(index), element);
+                    return p;
+                }
                 let idx = self.expr(index); // evaluated once, before the store
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
                     p.project(Proj::Index(idx), ty);

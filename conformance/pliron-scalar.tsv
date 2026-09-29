@@ -676,6 +676,7 @@ assets/ok/template_print_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_print_whole_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_tuple_default_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
