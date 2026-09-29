@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound handing a string literal, a named `String`, or a
+  field of `self` by value to a closed parameter of the requirement
+  (`self.s.scale(2, label="y")` over `S: Scaler`) now reuses the template's
+  checked facts, as does one leaving a string default the check spells at
+  the call (`assets/ok/template_method_bound_value_argument.mojo`). Such
+  methods used to be checked again per instance.
 - A `hasher.update(self.value)` or `hasher._update_with_simd(self.inner.lanes)`
   call in a generic method whose own `H: Hasher` an instance binds to
   `AHasher` now derives from the checked template: a field argument is

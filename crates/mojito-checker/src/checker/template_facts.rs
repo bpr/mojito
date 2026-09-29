@@ -13850,11 +13850,14 @@ impl BodyShape<'_> {
     /// The receiver is a place, so the template recorded at the call either
     /// the abstract contract (`__trait_dispatch.…`) or, for `write_to`, the
     /// inverted write, and nothing that depends on the receiver's type. Each
-    /// argument, positional or keyword, is a closed scalar or a named place
-    /// of a bare parameter type handed to a bounded `mut`/`ref` parameter of
-    /// the requirement, whose facts (a kept place, its generation refresh)
-    /// the convention decides. A parameter the call leaves out takes the
-    /// requirement's default, which every witness declares alike.
+    /// argument, positional or keyword, is a closed scalar; a value handed
+    /// by value to a closed parameter type, which every witness declares
+    /// alike, bound as a direct call's is ([`Self::argument`]); or a named
+    /// place of a bare parameter type handed to a bounded `mut`/`ref`
+    /// parameter of the requirement, whose facts (a kept place, its
+    /// generation refresh) the convention decides. A parameter the call
+    /// leaves out takes the requirement's default, which every witness
+    /// declares alike or the check spells at the call.
     /// An instance's own check reads a built-in receiver's place, feeds a
     /// leaf to the hasher, or selects the struct's own method, each from the
     /// type alone.
@@ -13903,7 +13906,9 @@ impl BodyShape<'_> {
         let shape = !self.keyed
             && place
             && supplied().all(|argument| {
-                (self.expression(argument) && self.scalar(argument)) || named(argument)
+                (self.expression(argument) && self.scalar(argument))
+                    || named(argument)
+                    || self.argument(expr, argument)
             });
         let admitted = shape
             && self.facts.is_none_or(|facts| {
@@ -13984,8 +13989,13 @@ impl BodyShape<'_> {
                     else {
                         return false;
                     };
+                    // A by-value argument of a closed parameter type every
+                    // witness declares alike binds as a direct call's does
+                    // ([`Self::argument`]).
                     if !parameter.requires_place {
-                        return self.expression(argument) && self.scalar(argument);
+                        return (self.expression(argument) && self.scalar(argument))
+                            || (!mojito_types::types::is_symbolic(&parameter.parameter_ty)
+                                && self.argument(expr, argument));
                     }
                     let kept = named(argument)
                         && bounded(argument, &parameter.parameter_ty)
@@ -13998,10 +14008,12 @@ impl BodyShape<'_> {
                     }
                     kept
                 };
+                // A by-value parameter of a type other than a closed scalar
+                // is judged at its argument (`kept_argument`).
                 let contract = if consumed {
-                    mojito_checked::templates::consuming_method_contract(call)
+                    mojito_checked::templates::consuming_nominal_contract(call)
                 } else {
-                    mojito_checked::templates::closed_method_contract(call)
+                    mojito_checked::templates::value_method_contract(call)
                 };
                 mojito_symbol::symbol::is_trait_dispatch_symbol(&call.contract.target)
                     && contract

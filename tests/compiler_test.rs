@@ -4974,6 +4974,29 @@ fn template_bound_defaulted_argument_derives() {
 }
 
 #[test]
+fn template_bound_value_argument_derives() {
+    // A string literal or a named value of a closed non-scalar type handed
+    // by value through a bound is a temporary or a place read where it
+    // lies, whatever the witness; so is a string requirement default the
+    // check spells at the call for a witness declaring another.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_bound_value_argument.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "y5 z4 w3 p2 t3 x3\nyabababab zababab wabab pab tabab xabab\n",
+        &[
+            ("Holder.keyword_literal", 2),
+            ("Holder.positional_literal", 2),
+            ("Holder.named_local", 2),
+            ("Holder.named_parameter", 2),
+            ("Holder.field_argument", 2),
+            ("Holder.spelled_default", 2),
+        ],
+    );
+}
+
+#[test]
 fn witness_default_differing_from_requirement_runs_the_requirements() {
     // A call through a bound runs the requirement's default where a witness
     // declares another or none, spelled at the call, and every instance
