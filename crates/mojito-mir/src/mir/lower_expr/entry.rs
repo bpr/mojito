@@ -198,7 +198,7 @@ impl Flatten<'_> {
                     _ => None,
                 });
             let dest = match (recorded, target.split(".__init__").next()) {
-                (Some(ty @ Ty::Struct(..)), _) => self.fresh_typed(span(e), provenance, ty),
+                (Some(ty), _) => self.fresh_typed(span(e), provenance, ty),
                 (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
                     span(e),
                     provenance,

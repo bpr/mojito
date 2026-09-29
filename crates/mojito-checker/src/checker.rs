@@ -1888,6 +1888,12 @@ impl Checker {
             self.record_literal_materializations(expression, from, to)?;
             return Ok(true);
         }
+        // Upstream's `@implicit Bool.__init__(value: Scalar[DType.bool])`:
+        // a scalar comparison stands where a `Bool` is wanted.
+        if *to == Ty::Bool && scalar_simd_dtype(from) == Some(Dtype::Bool) {
+            self.record_selected_conversion(expression, "Bool".to_string(), to, None, None)?;
+            return Ok(true);
+        }
         let Some(SelectedConversion {
             target,
             source_borrow,

@@ -694,6 +694,7 @@ assets/ok/tstring_lazy.mojo	main	exe-differential	sanitized
 assets/ok/tuple_array_defaultable.mojo	main	exe-differential	sanitized
 assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_nested_type_arguments.mojo	main	exe-differential	sanitized
+assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized
 assets/ok/tuple_one_element.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized

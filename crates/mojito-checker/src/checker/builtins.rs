@@ -70,7 +70,7 @@ pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool
         // A conditional conformance (`Equatable where conforms_to(T,
         // Equatable)`) is judged against the struct's arguments.
         Ty::Struct(name, args) => checker.struct_conformance_applies(name, args, "Equatable"),
-        _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty),
+        _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty) || is_scalar_simd(ty),
     }
 }
 
@@ -1017,7 +1017,7 @@ fn tuple_element_comparable(ty: &Ty) -> bool {
     match ty {
         Ty::Tuple(nested) => tuple_elements_comparable(nested),
         Ty::StringLiteral => true,
-        other => is_numeric(other) || has_order_bound(other),
+        other => is_numeric(other) || has_order_bound(other) || is_scalar_simd(other),
     }
 }
 
@@ -1028,6 +1028,6 @@ fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
     match (left, right) {
         (Ty::StringLiteral, Ty::StringLiteral) => true,
         (Ty::Tuple(left), Ty::Tuple(right)) => tuple_order_compatible(left, right),
-        _ => left == right && has_order_bound(left),
+        _ => left == right && (has_order_bound(left) || is_scalar_simd(left)),
     }
 }

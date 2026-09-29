@@ -2668,7 +2668,7 @@ impl Checker {
         match ty {
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Comparable"),
-            _ => is_numeric_like(ty),
+            _ => is_numeric_like(ty) || is_scalar_simd(ty),
         }
     }
 

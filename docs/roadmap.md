@@ -110,9 +110,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.100), and a `String`
-    element needs `String` to be `Defaultable` (3.101).
-  - Depends on 3.100.
+  - A SIMD element needs its nullary construction (3.99), and a `String`
+    element needs `String` to be `Defaultable` (3.100).
+  - Depends on 3.99.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.95).
+    constructed default at all (3.94).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.95: until a constructed default runs, no fixture can take
+  - Depends on 3.94: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -1289,9 +1289,6 @@ last.
   - `len(v)` on a vector (`len_result_for_type` has no `Ty::Simd` arm),
     `abs`/`max`/`min` over a scalar alias (`is_numeric` excludes it),
     `Scalar[dt].MAX`/`.MIN`, and `**` on a lane.
-  - A scalar comparison types as `SIMD[DType.bool, 1]`, which does not
-    coerce to a `Bool` return (`-> Bool: return a == b`); `if a == b:`
-    works through truthiness.
   - `Float64.cast[...]()`: the canonical width-one `float64` is `Ty::Float64`
     and has no SIMD methods.
   - Natively only, `String(v)` of a multi-lane vector is an unsupported
@@ -2071,6 +2068,9 @@ last.
     onto the methods.
     - Withdrawing the infix spelling is a leniency to remove, with fallout
       across the stdlib's SIMD bodies.
+    - Until then only a width-one SIMD conforms to `Equatable` and
+      `Comparable`; the pin's vectors conform too, with `==` reducing the
+      lanes.
     - Depends on section 4's scalar comparison methods: once the infix
       spelling goes, `x.ne(y)` is the only ordered comparison left on a
       scalar, and it does not resolve there yet.
@@ -2271,23 +2271,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A `Tuple` of SIMD scalars has no comparisons**
-
-  Problem: `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` rejects with
-  "operator '<' is not defined for Tuple$t2[...]", where the pin prints
-  `True`.
-  - Mojito's SIMD scalar conforms to neither `Equatable` nor `Comparable`
-    (`def f[T: Equatable](x: T)` rejects `f(UInt64(1))`).
-  - `Tuple`'s comparisons carry `where conforms_to(Self.Ts.values,
-    Comparable)`, so each folds false and becomes an unavailable trap stub.
-  - Hello World mints these stubs for every tuple of `UInt64`s it reaches.
-  - Probe: `conformance/probes/tuple_of_scalars_comparison.mojo`.
-  - Related to 4.1's `and`/`or` over `UInt64` comparisons, which also
-    stems from a scalar comparison not being a `Bool`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **3.91 A reference-returning call cannot be assigned through**
+- [ ] **3.90 A reference-returning call cannot be assigned through**
 
   Problem: `bump(k) = 9` and `bump(k) += 1`, for `def bump(ref a: Int) ->
   ref[origin_of(a)] Int`, stop at parse with "invalid assignment target",
@@ -2301,7 +2285,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 Two same-arity generic overloads of one method collide when a
+- [ ] **3.91 Two same-arity generic overloads of one method collide when a
   call specializes them alike**
 
   Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
@@ -2316,7 +2300,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 A witness whose defaults differ from its requirement's is
+- [ ] **3.92 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2334,17 +2318,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A trait requirement's default other than a literal is
+- [ ] **3.93 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.93: a default bound at the call would lift it.
+  - Depends on 3.92: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A call leaving out a constructed default fails at run time**
+- [ ] **3.94 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2358,7 +2342,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 An instance ranks a generic struct's overload family again
+- [ ] **3.95 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2375,7 +2359,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A generic static's per-call clone takes a call to its
+- [ ] **3.96 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2387,7 +2371,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A generic static with its own binder cannot infer its struct's
+- [ ] **3.97 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2398,7 +2382,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A variadic struct's index-keyed method not named
+- [ ] **3.98 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2414,7 +2398,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A SIMD value has no nullary construction**
+- [ ] **3.99 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2429,7 +2413,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 `String` is not `Defaultable`**
+- [ ] **3.100 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2439,7 +2423,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A `def` does not infer a value parameter from an argument's
+- [ ] **3.101 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2454,7 +2438,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.103 A generic nested `def` that captures does not compile
+- [ ] **3.102 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2472,7 +2456,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.104 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.103 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2491,7 +2475,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.105 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.104 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2509,7 +2493,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.106 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.105 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2526,7 +2510,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.107 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.106 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`

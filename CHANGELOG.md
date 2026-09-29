@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A SIMD scalar now conforms to `Equatable` and `Comparable`, so
+  `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
+  pin does, where it used to reject with "operator '<' is not defined".
+  A scalar comparison now converts implicitly to `Bool`, so `-> Bool:
+  return a == b` and `not (a == b)` over `UInt64`s run.
 - Argument exclusivity now counts an origin an argument's type carries
   through a type argument, as the pin does. `l.insert(0, Span(xs))` on a
   `List[Span[Int, origin_of(xs)]]`, `pick(l, Span(xs))` over a generic
@@ -26,7 +31,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.103).
+  (roadmap 3.102).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The

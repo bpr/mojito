@@ -18,6 +18,10 @@ impl Checker {
                 return Ok(t);
             }
             (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
+            // A scalar mask is `Boolable`: `not (a == b)` over `UInt64`s.
+            (PrefixOp::Not, _) if scalar_simd_dtype(&t) == Some(Dtype::Bool) => {
+                return Ok(Ty::Bool);
+            }
             // Bitwise inversion keeps an integer (or `Bool`) type; float
             // operands and masks have no inversion.
             (PrefixOp::Invert, Ty::Int | Ty::UInt | Ty::IntLiteral | Ty::Bool) => {
