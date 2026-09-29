@@ -1690,6 +1690,39 @@ fn template_print_whole_value_derives() {
 }
 
 #[test]
+fn template_def_string_builtins_derive() {
+    // `repr` and `_unqualified_type_name[T]()` in a runtime `def` select no
+    // callee; each instance proves the argument `Writable` again and
+    // re-renders the type name from its own substituted type.
+    let source = "from std.reflection.type_info import _unqualified_type_name\n\ndef shown[T: Writable & ImplicitlyCopyable & Deinitable](x: T) -> Int:\n    var kept = x\n    var r = repr(kept)\n    print(r, _unqualified_type_name[T]())\n    return 1\n\ndef main():\n    print(shown[Int](7), shown[String](\"s\"))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler
+            .compile_source(
+                source,
+                std::path::Path::new("/tmp/mojito_template_def_string_builtins.mojo"),
+            )
+            .expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("shown$"))
+            .collect();
+        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "Int(7) SIMD[DType.int, 1]\n's' String\n1 1\n"
+        );
+    }
+}
+
+#[test]
 fn template_value_shaped_construction_derives() {
     // A keyed `def` constructing a `SIMD` whose dtype or width names its own
     // value binder records no dimensions in its template; each instance's

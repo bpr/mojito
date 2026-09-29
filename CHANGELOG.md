@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime `def` calling `repr` or `_unqualified_type_name[T]()`
+  (`def shown[T: Writable & ...](x: T)`) now reuses its template's checked
+  facts, as a generic struct's method already did
+  (`assets/ok/template_def_string_builtins.mojo`). Such bodies used to be
+  checked again per instance.
 - `Tuple`'s default initializer is now spelled in the bundled source over
   the symbolic pack and checked once (`comptime for i in
   range(len(Self.Ts)): self.storage[i] = Self.Ts[i]()`), where the

@@ -1518,7 +1518,10 @@ impl Checker {
         // A folded struct value (`Self.key`, `Self.n`) drops the `Self` its
         // name was read on, the template occurrence right after the name's
         // in pre-order, which the instance no longer holds; a vector adds
-        // its lanes, which no template occurrence has.
+        // its lanes, which no template occurrence has. A type name's lone
+        // binder argument (`_unqualified_type_name[T]()` in a `def`) is a
+        // spelling the template records nothing at, which the elaborator
+        // writes as the substituted type.
         let instance_syntax: HashSet<SyntaxId> = occurrences
             .iter()
             .map(|occurrence| occurrence.id.syntax)
@@ -1533,7 +1536,10 @@ impl Checker {
                 let next = order.get(at + 1)?.syntax;
                 match occurrence.vector_fold {
                     Some(VectorFold::Construction) => Some(next),
-                    None if occurrence.literal.is_some() && !instance_syntax.contains(&next) => {
+                    None if (occurrence.literal.is_some()
+                        || occurrence.callee.as_deref() == Some("_unqualified_type_name"))
+                        && !instance_syntax.contains(&next) =>
+                    {
                         Some(next)
                     }
                     _ => None,
@@ -4508,7 +4514,6 @@ impl Checker {
         if !shape.block(body)
             || !shape.operators.borrow().is_empty()
             || !shape.bound_builtins.borrow().is_empty()
-            || !shape.repr_calls.borrow().is_empty()
         {
             return outside("the body is not scalar returns over direct calls and 'len'");
         }
@@ -4528,6 +4533,7 @@ impl Checker {
             (
                 TemplateCoverage::Certified(class),
                 GrammarNotes {
+                    repr_calls: shape.repr_calls.borrow().clone(),
                     print_calls: shape.print_calls.borrow().clone(),
                     constructions: shape.constructions.borrow().clone(),
                     simd_to_bits: shape.simd_to_bits.borrow().clone(),

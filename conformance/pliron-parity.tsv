@@ -562,6 +562,7 @@ assets/ok/template_def_bound_conversion.mojo	main	exe-differential	sanitized
 assets/ok/template_def_converting_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_def_defaulted_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_def_slice_stringify.mojo	main	exe-differential	sanitized
+assets/ok/template_def_string_builtins.mojo	main	exe-differential	sanitized
 assets/ok/template_def_try_unpack.mojo	main	exe-differential	sanitized
 assets/ok/template_def_type_alias.mojo	main	exe-differential	sanitized
 assets/ok/template_def_value_local.mojo	main	exe-differential	sanitized
