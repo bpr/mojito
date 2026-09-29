@@ -4398,13 +4398,15 @@ impl Checker {
         let plain_params = params.iter().all(|parameter| {
             (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
                 && (parameter.convention.is_none() || owned_param(parameter))
-                && parameter.default.as_ref().is_none_or(literal_default)
+                && parameter.default.as_ref().is_none_or(|default| {
+                    literal_default(default) || self.literal_construction(default)
+                })
                 && parameter.origin.is_none()
         });
         if !plain_params {
             return outside(
                 "a parameter is not an immutable, 'var', or 'mut' regular parameter with at most \
-                 a literal default",
+                 a literal default or a construction from literals",
             );
         }
         let owned_params = params.iter().any(owned_param);
@@ -4633,6 +4635,18 @@ impl Checker {
         } else {
             TemplateClass::ClosedScalarBody
         })
+    }
+
+    /// Whether a parameter default constructs a declared struct from literal
+    /// arguments (`String("-")`). It names no binding and no binder, so the
+    /// callee evaluates it at a call leaving the slot out as the same
+    /// construction under every instance, as it does a literal default.
+    fn literal_construction(&self, default: &Expr) -> bool {
+        matches!(&default.kind, ExprKind::Call { name, param_args, args, kwargs }
+            if param_args.is_empty()
+                && self.structs.contains_key(name)
+                && args.iter().all(literal_default)
+                && kwargs.iter().all(|keyword| literal_default(&keyword.value)))
     }
 
     /// The certificate a freshly captured method of a generic struct earns.
@@ -10692,7 +10706,9 @@ impl BodyShape<'_> {
     /// It declares no compile-time parameters, decorators, or `where`
     /// clause, and takes regular parameters, each read, `mut`, `var`, `out`,
     /// or a bare `ref`, with at most a closed-scalar, string-literal, or
-    /// `None` default. A raising one, bare or typed, keeps its effect in the
+    /// `None` default, or one constructing a declared struct
+    /// ([`Self::construction`]), which its lowered default function runs.
+    /// A raising one, bare or typed, keeps its effect in the
     /// recipe, and an `out` one is a local of its result type. Its recorded parameter
     /// and result types substitute in the recipe, where they may mention the
     /// struct's parameters, and each parameter's deletability is judged at
@@ -10742,6 +10758,7 @@ impl BodyShape<'_> {
                     && parameter.default.as_ref().is_none_or(|default| {
                         (self.expression(default) && self.scalar(default))
                             || matches!(default.kind, ExprKind::Str(_) | ExprKind::None)
+                            || self.construction(default)
                     })
             });
         let captured = captures.as_ref().is_none_or(|list| {

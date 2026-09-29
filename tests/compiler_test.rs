@@ -3663,6 +3663,34 @@ fn template_def_defaulted_parameter_derives() {
 }
 
 #[test]
+fn template_def_constructed_default_derives() {
+    // A default constructing a declared struct from literals
+    // (`sep: String = String("-")`) is the callee's to evaluate, as a
+    // literal default is, left out or supplied.
+    let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n\ndef join[T: Copyable & Deinitable](x: T, sep: String = String(\"-\")) -> String:\n    return sep\n\n\ndef span[T: Copyable & Deinitable](x: T, p: Pair = Pair(1, b=2)) -> Int:\n    return p.a + p.b\n\n\ndef main():\n    print(join(1), join(\"a\"), join(2, \"+\"))\n    print(span(1), span(\"a\"), span(2, Pair(10, 20)))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compile_entry(&compiler, source);
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        for name in ["join$", "span$"] {
+            assert!(
+                served.iter().any(|served| served.starts_with(name)),
+                "{name} derives: {stats:?}"
+            );
+        }
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "- - +\n3 3 30\n"
+        );
+    }
+}
+
+#[test]
 fn template_method_explicit_destroy_call_derives() {
     // A consuming call on a `^` transfer: a named `deinit self` destructor on
     // a local or on a field of a consumed `self`, a `var self` method, and a
@@ -4830,20 +4858,15 @@ fn template_nested_def_defaults_derive() {
 }
 
 #[test]
-fn template_nested_def_constructed_default_keeps_the_clone_check() {
-    // A default that is neither a closed scalar nor a literal is no form
-    // `BodyShape::nested_def` names, so the body stays outside the class.
-    let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = String(\"-\")) -> String:\n            return sep\n\n        return join(k, \"+\")\n\n\ndef main():\n    print(Shelf[Int](1).joined(3))\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert_eq!(compiler.execute(&program).expect("execute").output, "+\n");
-    assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Shelf.joined$") && reason == "its template is not certified"
-        }),
-        "the constructed default leaves the body outside the class: {:?}",
-        stats.refused
+fn template_nested_def_constructed_default_derives() {
+    // A nested `def` whose default constructs a declared struct keeps the
+    // construction's facts in the recipe; a call leaving the argument out
+    // runs the lowered default function.
+    let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = String(\"-\")) -> String:\n            return sep\n\n        return join(k, \"+\") + join(k)\n\n    def spanned(self, k: Int) -> Int:\n        def span(x: Int, p: Pair = Pair(1, 2)) -> Int:\n            return x\n\n        return span(k) + span(k, Pair(10, 20))\n\n\ndef main():\n    print(Shelf[Int](1).joined(3), Shelf[String](1).joined(4))\n    print(Shelf[Int](1).spanned(3), Shelf[String](1).spanned(4))\n";
+    assert_methods_derive(
+        source,
+        "+- +-\n6 8\n",
+        &[("Shelf.joined", 2), ("Shelf.spanned", 2)],
     );
 }
 

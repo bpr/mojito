@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested `def` in a generic struct's method, or a generic module `def`,
+  whose parameter default constructs a declared struct
+  (`sep: String = String("-")`) now reuses its template's checked facts,
+  as a literal default already did. Such bodies used to be checked again
+  per instance.
 - A runtime `def` calling `repr` or `_unqualified_type_name[T]()`
   (`def shown[T: Writable & ...](x: T)`) now reuses its template's checked
   facts, as a generic struct's method already did
