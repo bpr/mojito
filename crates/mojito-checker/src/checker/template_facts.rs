@@ -7177,9 +7177,11 @@ fn comparable(facts: &CheckedBodyFacts) -> CheckedBodyFacts {
 ///
 /// That is the single difference verification expects, and it is confined to
 /// the selection facts of calls the derived bundle resolves through an
-/// overload target, and the adjustments at those calls' `arguments`, which
-/// convert to the selected member's parameters. Every other table, and
-/// every other occurrence, must still agree.
+/// overload target — a method call's contract among them, and the callee
+/// each bundle names there as effect-free — and what those calls'
+/// `arguments` owe the selected member: the adjustments that convert them
+/// to its parameters, and the temporaries its parameters read. Every other
+/// table, and every other occurrence, must still agree.
 fn overload_rebinding_only(
     derived: &CheckedBodyFacts,
     inferred: &CheckedBodyFacts,
@@ -7191,6 +7193,18 @@ fn overload_rebinding_only(
     }
     let without_selection = |facts: &CheckedBodyFacts| {
         let mut facts = facts.clone();
+        let callees: Vec<String> = facts
+            .overload_targets
+            .iter()
+            .filter(|(id, _)| selected.contains(id))
+            .map(|(_, target)| target.clone())
+            .collect();
+        facts
+            .effect_free_callees
+            .retain(|callee| !callees.contains(callee));
+        facts
+            .selected_calls
+            .retain(|(id, _)| !selected.contains(id));
         facts
             .overload_targets
             .retain(|(id, _)| !selected.contains(id));
@@ -7203,6 +7217,12 @@ fn overload_rebinding_only(
         facts
             .operation_adjustments
             .retain(|(id, _)| !arguments.contains(id));
+        facts
+            .read_temporary_arguments
+            .retain(|id| !arguments.contains(id));
+        facts
+            .unconsumed_temporaries
+            .retain(|id| !arguments.contains(id));
         facts
     };
     without_selection(derived) == without_selection(inferred)

@@ -1181,55 +1181,8 @@ impl Checker {
                         trait_name: tr.to_string(),
                         method: mname.clone(),
                     })?;
-            // The requirement's `Self` becomes this struct's type. Receiver
-            // conventions are part of the trait method contract.
             for req_sig in req_sigs {
-                let want =
-                    MethodSig {
-                        decls: req_sig.decls.clone(),
-                        availability: req_sig.availability.clone(),
-                        has_self: true,
-                        params: req_sig
-                            .params
-                            .iter()
-                            .map(|t| self.resolve_assoc_ty(&substitute_self(t, self_ty)))
-                            .collect(),
-                        names: req_sig.names.clone(),
-                        required: req_sig.required.clone(),
-                        defaults: req_sig.defaults.clone(),
-                        variadic: req_sig.variadic.as_ref().map(|ty| {
-                            Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))
-                        }),
-                        variadic_index: req_sig.variadic_index,
-                        variadic_convention: req_sig.variadic_convention,
-                        kw_variadic: req_sig.kw_variadic.as_ref().map(|ty| {
-                            Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))
-                        }),
-                        kw_variadic_index: req_sig.kw_variadic_index,
-                        positional_only: req_sig.positional_only,
-                        keyword_only: req_sig.keyword_only,
-                        conventions: req_sig.conventions.clone(),
-                        ret: self.resolve_assoc_ty(&substitute_self(&req_sig.ret, self_ty)),
-                        ret_mlir_index: req_sig.ret_mlir_index,
-                        raises: req_sig.raises,
-                        error: req_sig.error.as_ref().map(|error| {
-                            Box::new(self.resolve_assoc_ty(&substitute_self(error, self_ty)))
-                        }),
-                        self_convention: req_sig.self_convention,
-                        ref_params: req_sig.ref_params.clone(),
-                        ref_return: req_sig.ref_return.clone(),
-                        view_return_interior: req_sig.view_return_interior.clone(),
-                        view_return: req_sig.view_return.clone(),
-                        implicit: req_sig.implicit,
-                        parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
-                        origin_binders: req_sig.origin_binders.clone(),
-                        receiver: None,
-                        clone_origins: false,
-                        synthesized_default: false,
-                        nested_origins: req_sig.nested_origins,
-                        template_ret: None,
-                        overload: None,
-                    };
+                let want = self.requirement_at(req_sig, self_ty);
                 if !got_sigs.iter().any(|got| {
                     self.method_satisfies_requirement_under(
                         got,
@@ -1374,6 +1327,60 @@ impl Checker {
         Ok(())
     }
 
+    /// The members of struct `name`'s `method` overload set that witness a
+    /// requirement of that name in a trait the struct declares, each as
+    /// [`Self::verify_conformance`] matched it; empty when a conformance
+    /// condition does not compile.
+    pub(super) fn requirement_witnesses(&self, name: &str, method: &str) -> Vec<&MethodSig> {
+        let Some((info, members)) = self
+            .structs
+            .get(name)
+            .and_then(|info| Some((info, info.methods.get(method)?)))
+        else {
+            return Vec::new();
+        };
+        let self_ty = Ty::Struct(
+            name.to_string(),
+            info.fixed_arguments
+                .clone()
+                .unwrap_or_else(|| info.self_arguments()),
+        );
+        let mut witnesses: Vec<&MethodSig> = Vec::new();
+        for tr in &info.conforms {
+            let Some(requirements) = self
+                .traits
+                .get(tr)
+                .and_then(|trait_info| trait_info.methods.get(method))
+            else {
+                continue;
+            };
+            let Ok(assumption) = info
+                .conformance_conditions
+                .get(tr)
+                .map(|condition| self.compile_condition(&info.decls, condition))
+                .transpose()
+            else {
+                return Vec::new();
+            };
+            for requirement in requirements {
+                let want = self.requirement_at(requirement, &self_ty);
+                for member in members {
+                    if !witnesses.iter().any(|found| std::ptr::eq(*found, member))
+                        && self.method_satisfies_requirement_under(
+                            member,
+                            &want,
+                            assumption.as_ref(),
+                            method == "__next__",
+                        )
+                    {
+                        witnesses.push(member);
+                    }
+                }
+            }
+        }
+        witnesses
+    }
+
     pub(super) fn method_satisfies_requirement_under(
         &self,
         got: &MethodSig,
@@ -1416,6 +1423,60 @@ impl Checker {
             normalized.ref_return = None;
         }
         method_satisfies_requirement(&normalized, required)
+    }
+
+    /// A trait requirement as struct `Self` type `self_ty` must satisfy it:
+    /// the requirement's `Self` becomes the struct's type, and receiver
+    /// conventions are part of the contract.
+    fn requirement_at(&self, req_sig: &MethodSig, self_ty: &Ty) -> MethodSig {
+        MethodSig {
+            decls: req_sig.decls.clone(),
+            availability: req_sig.availability.clone(),
+            has_self: true,
+            params: req_sig
+                .params
+                .iter()
+                .map(|t| self.resolve_assoc_ty(&substitute_self(t, self_ty)))
+                .collect(),
+            names: req_sig.names.clone(),
+            required: req_sig.required.clone(),
+            defaults: req_sig.defaults.clone(),
+            variadic: req_sig
+                .variadic
+                .as_ref()
+                .map(|ty| Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))),
+            variadic_index: req_sig.variadic_index,
+            variadic_convention: req_sig.variadic_convention,
+            kw_variadic: req_sig
+                .kw_variadic
+                .as_ref()
+                .map(|ty| Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))),
+            kw_variadic_index: req_sig.kw_variadic_index,
+            positional_only: req_sig.positional_only,
+            keyword_only: req_sig.keyword_only,
+            conventions: req_sig.conventions.clone(),
+            ret: self.resolve_assoc_ty(&substitute_self(&req_sig.ret, self_ty)),
+            ret_mlir_index: req_sig.ret_mlir_index,
+            raises: req_sig.raises,
+            error: req_sig
+                .error
+                .as_ref()
+                .map(|error| Box::new(self.resolve_assoc_ty(&substitute_self(error, self_ty)))),
+            self_convention: req_sig.self_convention,
+            ref_params: req_sig.ref_params.clone(),
+            ref_return: req_sig.ref_return.clone(),
+            view_return_interior: req_sig.view_return_interior.clone(),
+            view_return: req_sig.view_return.clone(),
+            implicit: req_sig.implicit,
+            parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
+            origin_binders: req_sig.origin_binders.clone(),
+            receiver: None,
+            clone_origins: false,
+            synthesized_default: false,
+            nested_origins: req_sig.nested_origins,
+            template_ret: None,
+            overload: None,
+        }
     }
 
     /// Prove Copyable without treating a conditional marker declaration as

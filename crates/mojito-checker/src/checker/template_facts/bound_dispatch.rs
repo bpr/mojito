@@ -512,9 +512,13 @@ impl Checker {
     /// alone.
     ///
     /// A nominal struct's witness is the declaration of that name that binds
-    /// the recorded arguments ([`Self::witness_binders`]); of an overload
-    /// set, the member that does which the clone check's ranking selects
-    /// ([`Self::ranked_member`]), named by its overload symbol.
+    /// the recorded arguments ([`Self::witness_binders`]). Of an overload
+    /// set, it is the one member that witnesses the requirement in the
+    /// struct's conformance and binds them, as the pin binds a call through
+    /// a bound to the requirement and never ranks the set again: a rival
+    /// the recorded types could not rank does not compete. Where no one
+    /// member does, it is the member the clone check's ranking selects
+    /// ([`Self::ranked_member`]). Either is named by its overload symbol.
     fn bound_witness<'a>(
         &'a self,
         receiver: &'a Ty,
@@ -562,15 +566,36 @@ impl Checker {
                 )?,
             )
         } else {
-            // The member the clone check's ranking selects on the recorded
-            // types must fit the recorded arguments.
-            let selected = self.ranked_member(
-                candidates,
-                receiver,
-                receiver_transferred,
-                &substitution,
-                arguments,
-            )?;
+            // The call is bound to the requirement, so the member that
+            // witnesses it is selected whatever its rivals are. Where no one
+            // member does, the member the clone check's ranking selects on
+            // the recorded types must fit the recorded arguments.
+            let fits = |member: &&MethodSig| {
+                self.witness_binders(
+                    member,
+                    receiver,
+                    receiver_convention,
+                    raising,
+                    &substitution,
+                    arguments,
+                )
+                .is_ok()
+            };
+            let witnesses: Vec<&MethodSig> = self
+                .requirement_witnesses(owner, method)
+                .into_iter()
+                .filter(fits)
+                .collect();
+            let selected = match witnesses.as_slice() {
+                [witness] => witness,
+                _ => self.ranked_member(
+                    candidates,
+                    receiver,
+                    receiver_transferred,
+                    &substitution,
+                    arguments,
+                )?,
+            };
             let binders = self
                 .witness_binders(
                     selected,

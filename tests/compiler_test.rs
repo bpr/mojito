@@ -4155,6 +4155,43 @@ fn template_method_generic_witness_rivals_derive() {
 }
 
 #[test]
+fn template_method_requirement_witness_beside_variadic_rivals_derives() {
+    // The call is bound to the requirement, so the member witnessing it is
+    // selected at every instance, and a variadic rival the recorded types
+    // cannot rank does not compete.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: Int, *more: Int) -> Int:\n        return -1\n\n    def total(self, *by: Float64) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
+        "4 7\n",
+        &[("Ledger.plain", 1), ("Ledger.literal", 1)],
+    );
+}
+
+#[test]
+fn template_method_requirement_witness_outranks_a_better_rival() {
+    // The pinned Mojo binds `total(3)` to the requirement while it checks
+    // the generic body, so the `Float64` witness runs even where an exact
+    // `Int` rival, or a variadic one, would outrank it on the argument; a
+    // clone check ranking the set again used to print `-1 -2`.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Float64) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 1\n\n    def total(self, by: Int) -> Int:\n        return -1\n\n\nstruct Tallies(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 2\n\n    def total(self, *by: Int) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def literal(self) -> Int:\n        return self.entry.total(3)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).literal(), Ledger[Tallies](Tallies(2)).literal())\n",
+        "3 4\n",
+        &[("Ledger.literal", 2)],
+    );
+}
+
+#[test]
+fn template_method_requirement_witness_beside_reference_rival_derives() {
+    // A rival with a reference parameter (the `ref` type extension) would
+    // rank by the argument's place and origin, which no recorded type
+    // holds; beside the requirement's witness it does not compete.
+    assert_methods_derive(
+        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[o: Origin[mut=False]](self, by: ref[o] Int) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
+        "4\n",
+        &[("Ledger.plain", 1)],
+    );
+}
+
+#[test]
 fn template_method_origin_bearing_constructions_derive() {
     // A view over the receiver, constructed from a `ref` local into a
     // fieldwise struct's reference field: the constructed type names the

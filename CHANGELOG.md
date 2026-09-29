@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound whose witness is overloaded now runs the member
+  that witnesses the requirement, as the pin binds it while it checks the
+  generic body: `self.entry.total(3)` over `T: Tally` with `total(self,
+  by: Float64)` required prints the `Float64` witness's result beside an
+  exact `total(self, by: Int)` or a variadic `total(self, *by: Int)`,
+  where it used to rank the set again and run the rival. Instances beside
+  a variadic rival, or a rival with a reference parameter, now derive from
+  the checked template instead of being checked again
+  (`tests/compiler_test.rs:template_method_requirement_witness_*`).
 - A write through a reference over a value the body cannot implicitly
   destroy is now rejected, as the pin rejects it: in a `def` over `T:
   Copyable`, `ref r = x; r = v.copy()` and `same(x) = v.copy()` through a

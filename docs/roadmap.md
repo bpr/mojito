@@ -36,29 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
+Pliron experiment rather than move the check order sit last, 1.16 to 1.19.
 
-- [ ] **1.1 An overloaded witness beside a rival the recorded types cannot
-  rank keeps the clone check**
-
-  Problem: a call through a bound whose witness overloads the requirement
-  derives only when every member of the arity can be ranked on the
-  recorded argument types (`template_facts/bound_dispatch.rs:member_rank`).
-  - A rival with a reference-typed parameter is ranked by the argument's
-    place and origin (`infer_storage_value`), which no recorded type holds.
-  - A variadic rival ranks each collected argument's literal-ness and
-    by-value binding, which the recorded type does not tell.
-  - A collection or tuple display, a leading-dot member, or an explicit
-    application as the argument takes its type from each rival's
-    parameter, so only the argument expression ranks it.
-  - A rival's binder beyond a bare parameter type (`List[U]`, `Scalar[dt]`)
-    is inferred only over closed argument types; over a caller binder the
-    instance keeps, it still refuses (`member_parameters`).
-  - No bundled type overloads a requirement, so `stdlib_heavy` is unmoved.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 A field handed to a hasher the instance binds to a struct
+- [ ] **1.1 A field handed to a hasher the instance binds to a struct
   keeps the clone check**
 
   Problem: `hasher.update(self.value)` in a method whose own `H: Hasher`
@@ -73,7 +53,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A string literal or other non-scalar value handed through a
+- [ ] **1.2 A string literal or other non-scalar value handed through a
   bound keeps the clone check**
 
   Problem: `self.s.scale(2, label="y")` through `S: Scaler` refuses the
@@ -91,7 +71,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 `Tuple`'s default initializer has no symbolic template**
+- [ ] **1.3 `Tuple`'s default initializer has no symbolic template**
 
   Problem: each Defaultable `Tuple` specialization still infers its
   synthesized `__init__(out self)` once, because nothing checks that
@@ -117,7 +97,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
+- [ ] **1.4 `repr` in a runtime `def` keeps the clone check**
 
   Problem: `var r = repr(kept)` in `def shown[T: Writable & ...](x: T)`
   refuses the template, though the same call in a generic struct's method
@@ -134,7 +114,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A nested `def` with a constructed default keeps the clone
+- [ ] **1.5 A nested `def` with a constructed default keeps the clone
   check**
 
   Problem: `BodyShape::nested_def` admits only a closed-scalar,
@@ -153,7 +133,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 An explicitly applied or overloaded generic static with
+- [ ] **1.6 An explicitly applied or overloaded generic static with
   binders of its own keeps the clone check**
 
   Problem: `Pair[Self.T].scaled[3](2)` refuses the template, and so does a
@@ -171,7 +151,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A field read of a sibling call's result keeps the clone
+- [ ] **1.7 A field read of a sibling call's result keeps the clone
   check**
 
   Problem: `return self.bumped().count`, a field of a sibling method's
@@ -184,7 +164,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A nested t-string's `write_to` is checked again in an early
+- [ ] **1.8 A nested t-string's `write_to` is checked again in an early
   discovery round**
 
   Problem: before the outer t-string's storage `Tuple` is declared, the
@@ -197,7 +177,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 A float lane's `__fma__` over a temporary argument keeps the
+- [ ] **1.9 A float lane's `__fma__` over a temporary argument keeps the
   clone check**
 
   Problem: `BodyShape::lane_float_method` admits `k.__fma__(a, b)` on
@@ -211,7 +191,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.11 A lane comparison's mask used as a value keeps the clone
+- [ ] **1.10 A lane comparison's mask used as a value keeps the clone
   check**
 
   Problem: `var m = self.pos == other`, or a comparison of a symbolic lane's
@@ -230,7 +210,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.12 A `while` loop in a compile-time-keyed `def` keeps the clone
+- [ ] **1.11 A `while` loop in a compile-time-keyed `def` keeps the clone
   check**
 
   Problem: a keyed `def` holding any `while` loop, even `while n < 3:` over
@@ -242,7 +222,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.13 `Array`'s copy and move initializers, `deinit_with`, and
+- [ ] **1.12 `Array`'s copy and move initializers, `deinit_with`, and
   owned `__iter__` keep the clone check**
 
   Problem: these four `Array` members are still inferred again in every
@@ -260,7 +240,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.14 Keyword arguments out of parameter order through a bound
+- [ ] **1.13 Keyword arguments out of parameter order through a bound
   derive facts the clone check does not match**
 
   Problem: `self.s.shift(1, extra=a, by=b)` through `S: Scaler` fails
@@ -276,7 +256,45 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.15 The A1 shadow core has never been run over the decision
+- [ ] **1.14 An overloaded witness no single member of which witnesses the
+  requirement still ranks on the recorded types**
+
+  Problem: a call through a bound selects the one member that witnesses the
+  requirement in the struct's conformance
+  (`traits.rs:requirement_witnesses`); where none or several do, it falls
+  back to the clone check's ranking on the recorded argument types
+  (`template_facts/bound_dispatch.rs:ranked_member`), which refuses rivals
+  it cannot rank.
+  - A built-in trait's requirement has no registered trait to match
+    against: `Hashable.__hash__[H: Hasher]` beside a rival
+    `__hash__[U](self, mut hasher: List[U])` refuses with "a member's own
+    binder is not inferred from one argument's type".
+  - The fallback cannot rank a rival with a reference parameter, a variadic
+    rival, a binder nested in a parameter type over a caller binder the
+    instance keeps, or an argument whose type comes from the parameter.
+  - The runtime half of the `Hashable` case is 3.91.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.15 A display, leading-dot member, or explicit application handed
+  to a call through a bound keeps the clone check**
+
+  Problem: `self.item.total([1, 2, 3])` or `self.item.total(.origin(), 3)`
+  leaves the method outside the method grammar, even beside a lone witness,
+  so every instance is checked again.
+  - `BodyShape::argument` (`template_facts.rs`) admits a named place, a
+    closed scalar, a string literal, and a whole value of exactly the
+    parameter's type; a display, a static call, and a leading-dot member are
+    none of those.
+  - The argument's type comes from the parameter it is handed to, so an
+    instance must realize the display's construction and element
+    conversions at the witness's parameter.
+  - Probes: `total(self, by: List[Int])` handed `[1, 2, 3]`, and
+    `total(self, at: Point, by: Int)` handed `.origin()` and `3`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.16 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -293,12 +311,12 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.16 to 1.18 are the ones in this section that do
+  - This entry and 1.17 to 1.19 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.16 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.17 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -312,7 +330,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.17 A1 core text is about three times the v1 text**
+- [ ] **1.18 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -327,7 +345,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.18 The Pliron pivot's overhead has never been measured**
+- [ ] **1.19 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -346,7 +364,7 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.15, 1.16, and 1.17.
+  - Depends on 1.16, 1.17, and 1.18.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -1550,6 +1568,10 @@ last.
     struct's static on a spelled receiver, even at an instance that
     collapses its family
     (`assets/ok/template_method_collapsed_static_overload.mojo`).
+  - A call through a bound whose witness is overloaded selects the member
+    witnessing the requirement, as the pin binds it, even where a rival
+    would outrank it on the argument
+    (`tests/compiler_test.rs:template_method_requirement_witness_outranks_a_better_rival`).
   - What remains is any body still outside the derivation classes for
     another reason: its instances are checked again, and rank the set
     again. It closes as section 1 widens the classes.
@@ -2356,6 +2378,10 @@ last.
     `F$$u3C$function$u20$type$u3E$` at the declaration (`Variant.set`).
   - Only per-call clones reach these methods today; a call left on the
     template path stops with "vm: unknown method".
+  - A call through a bound reaches one from a method whose own binder the
+    instance keeps: `self.item.__hash__(hasher)` in a `__hash__[H: Hasher]`
+    over a struct overloading `__hash__[H: Hasher]` stops there, as does
+    `self.item.total(e)` in a `run[E]` over an overloaded `total[V]`.
   - The per-call clone filter matches the call side's spelling against
     `MethodBinderOwners::call_qualifier`, and a callable-typed overload
     falls back to minting every same-named member for the request.
@@ -2519,6 +2545,24 @@ last.
     that differs only in an origin reads as no mismatch at all.
   - Found while binding a homogeneous `*args` element's origins
     (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.102 A plain overload beside a variadic one over the same element
+  type stops at run time**
+
+  Problem: `def total(by: Int)` beside `def total(*rest: Int)` checks, and
+  then `total(3)` fails with "operator Add is not defined for Int and
+  Tuple[Int]", where the pin prints both results.
+  - Both overloads lower to `total$ov$Int`: the overload key spells a
+    collector by its element type, so the MIR holds one function under two
+    declarations (`emit-mir` reports "duplicate MIR function name").
+  - Struct methods collide the same way; overloads that differ in arity or
+    element type, or in a keyword-only name after the collector, do not.
+  - The lever is `SignatureKey` (`crates/mojito-symbol/src/symbol.rs`),
+    which must mark the collector on the declaration side and at every call
+    side that builds a key (`method_lowered_name`, `callable_lowered_name`,
+    `callable_contract_target`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
