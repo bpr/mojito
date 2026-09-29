@@ -602,6 +602,10 @@ pub struct Checker {
     /// the regular conventions only). A name whose overloads disagree is
     /// absent.
     owned_collectors: HashMap<String, bool>,
+    /// Each function's positional collector's parameter name, by function
+    /// name, for the argument exclusivity rule's diagnostics. A name whose
+    /// overloads disagree is absent.
+    collector_names: HashMap<String, String>,
     /// Per-scope compile-time bindings of a validated body: `comptime for`
     /// variables and the declaration's value parameters. The elaborator
     /// substitutes each as a literal, so a nested function or lambda reading
@@ -1029,6 +1033,7 @@ impl Checker {
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
             owned_collectors: HashMap::new(),
+            collector_names: HashMap::new(),
             compile_time_bindings: vec![HashSet::new()],
             enclosing_type_params: Vec::new(),
             self_ty: None,

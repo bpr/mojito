@@ -574,6 +574,8 @@ impl Checker {
                 declared: &declared,
                 bound: &selected.param_types,
                 nested_origins: selected.nested_origins,
+                collected: None,
+                initializer: false,
             },
             None,
             &effective_conventions,

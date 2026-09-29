@@ -1290,6 +1290,7 @@ impl Checker {
             }
         }
         // Each overflow argument must coerce to the `*args` element type.
+        let mut collected = Vec::new();
         if let Some(elem) = &variadic {
             for (pack_index, &p) in overflow.iter().enumerate() {
                 let expected = match &**elem {
@@ -1316,6 +1317,7 @@ impl Checker {
                     });
                 }
                 score += conversion_count(&arg_ty, expected);
+                collected.push((&args[p], vec![expected.clone(), arg_ty]));
             }
             if let Ty::RuntimePack(elements) = &**elem
                 && elements.len() != overflow.len()
@@ -1387,8 +1389,9 @@ impl Checker {
                 Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;
+        let collected = self.collected_arguments(name, collected);
         self.check_free_call_aliasing(
-            &self.free_callee(name, &names, &declared, &params),
+            &self.free_callee(name, &names, &declared, &params, Some(&collected)),
             &effective_conventions,
             &copied_reads,
             &slots,
@@ -1661,8 +1664,10 @@ impl Checker {
             .iter()
             .map(|parameter| resolve(parameter).unwrap_or_else(|_| parameter.clone()))
             .collect();
+        let collected =
+            self.generic_collected_arguments(name, variadic.as_deref(), &overflow, args, resolve);
         self.check_free_call_aliasing(
-            &self.free_callee(name, names, params, &bound),
+            &self.free_callee(name, names, params, &bound, Some(&collected)),
             &effective_conventions,
             &copied_reads,
             &slots,

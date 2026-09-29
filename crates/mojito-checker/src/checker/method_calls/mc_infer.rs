@@ -2126,6 +2126,8 @@ impl Checker {
                 declared: &declared,
                 bound: &resolved.param_types,
                 nested_origins: resolved.nested_origins,
+                collected: None,
+                initializer: false,
             },
             Some(&ExclusivityReceiver {
                 object,

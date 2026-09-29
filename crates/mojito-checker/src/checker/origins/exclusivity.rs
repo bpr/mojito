@@ -12,7 +12,11 @@
 //! its argument types carry immutably, so two such paths do not conflict.
 //! Two arguments' *own* places are the syntactic place rule's business
 //! (`check_call_aliasing`); this rule judges every pair with a carried origin
-//! on at least one side.
+//! on at least one side. Each argument a positional collector (`*args`)
+//! gathers is an argument of its own under the collector's name, and a
+//! tuple literal is its `Tuple` initializer's call over `var *args`: the pin
+//! rejects `show(Span(xs), Span(xs))` and `(Span(xs), Span(xs))` over a
+//! `var xs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -54,6 +58,36 @@ pub(in crate::checker) struct ExclusivityCallee<'a> {
     /// The parameter types this call binds, type parameters substituted.
     pub(in crate::checker) bound: &'a [Ty],
     pub(in crate::checker) nested_origins: NestedOrigins,
+    /// The arguments the callee's positional collector gathers.
+    pub(in crate::checker) collected: Option<&'a CollectedArguments<'a>>,
+    /// The callee is a type's initializer.
+    pub(in crate::checker) initializer: bool,
+}
+
+/// The arguments a positional collector (`*args`) gathers, each judged as an
+/// argument of its own under the collector's name.
+pub(in crate::checker) struct CollectedArguments<'a> {
+    pub(in crate::checker) name: &'a str,
+    pub(in crate::checker) convention: Option<ArgConvention>,
+    /// Each gathered argument with the types its access carries origins
+    /// through: the declared element and the type the call binds it to.
+    pub(in crate::checker) elements: Vec<(&'a Expr, Vec<Ty>)>,
+}
+
+impl<'a> CollectedArguments<'a> {
+    /// A tuple literal's elements, gathered by `Tuple.__init__(out self, var
+    /// *args: *element_types)`, each bound to its own type.
+    pub(in crate::checker) fn tuple_literal(elements: &'a [Expr], types: &[Ty]) -> Self {
+        Self {
+            name: "args",
+            convention: Some(ArgConvention::Var),
+            elements: elements
+                .iter()
+                .zip(types)
+                .map(|(element, ty)| (element, vec![ty.clone()]))
+                .collect(),
+        }
+    }
 }
 
 /// A method call's receiver: its expression and convention, the declared
@@ -155,6 +189,86 @@ impl Checker {
         self.check_argument_origin_exclusivity(callee, None, conventions, slots, args, kwargs)
     }
 
+    /// The arguments `callee`'s positional collector gathers, each with the
+    /// types its access carries origins through.
+    pub(in crate::checker) fn collected_arguments<'a>(
+        &'a self,
+        callee: &str,
+        elements: Vec<(&'a Expr, Vec<Ty>)>,
+    ) -> CollectedArguments<'a> {
+        CollectedArguments {
+            name: self
+                .collector_names
+                .get(callee)
+                .map_or("args", String::as_str),
+            convention: (self.owned_collectors.get(callee) == Some(&true))
+                .then_some(ArgConvention::Var),
+            elements,
+        }
+    }
+
+    /// The arguments a generic callee's positional collector gathers at
+    /// `positions`: a pack element binds to its argument's own type, a
+    /// homogeneous element to the type the call resolves it to.
+    pub(in crate::checker) fn generic_collected_arguments<'a>(
+        &'a self,
+        callee: &str,
+        element: Option<&Ty>,
+        positions: &[usize],
+        args: &'a [Expr],
+        resolve: impl Fn(&Ty) -> Result<Ty, TypeError>,
+    ) -> CollectedArguments<'a> {
+        let elements = element.map_or_else(Vec::new, |element| {
+            let pack = matches!(
+                element,
+                Ty::Param { binder, .. } if binder.name.starts_with('*')
+            );
+            positions
+                .iter()
+                .map(|&position| {
+                    let bound = if pack {
+                        self.infer(&args[position]).ok()
+                    } else {
+                        resolve(element).ok()
+                    };
+                    (
+                        &args[position],
+                        std::iter::once(element.clone()).chain(bound).collect(),
+                    )
+                })
+                .collect()
+        });
+        self.collected_arguments(callee, elements)
+    }
+
+    /// Reject a tuple literal two of whose elements reach overlapping caller
+    /// storage with at least one mutable path, as its initializer's call.
+    pub(in crate::checker) fn check_tuple_literal_exclusivity(
+        &self,
+        tuple: &Ty,
+        elements: &[Expr],
+        types: &[Ty],
+    ) -> Result<(), TypeError> {
+        let name = tuple.to_string();
+        let collected = CollectedArguments::tuple_literal(elements, types);
+        self.check_argument_origin_exclusivity(
+            &ExclusivityCallee {
+                name: &name,
+                parameter_names: &[],
+                declared: &[],
+                bound: &[],
+                nested_origins: NestedOrigins::AsDeclared,
+                collected: Some(&collected),
+                initializer: true,
+            },
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+    }
+
     /// A free function's side of the exclusivity rule.
     pub(in crate::checker) fn free_callee<'a>(
         &self,
@@ -162,6 +276,7 @@ impl Checker {
         parameter_names: &'a [String],
         declared: &'a [Ty],
         bound: &'a [Ty],
+        collected: Option<&'a CollectedArguments<'a>>,
     ) -> ExclusivityCallee<'a> {
         ExclusivityCallee {
             name,
@@ -173,6 +288,8 @@ impl Checker {
             } else {
                 NestedOrigins::AsDeclared
             },
+            collected,
+            initializer: false,
         }
     }
 
@@ -233,6 +350,23 @@ impl Checker {
             }
             accesses.push(access);
         }
+        if let Some(collected) = callee.collected {
+            for (argument, types) in &collected.elements {
+                let mut access = ArgumentAccess::new(
+                    collected.name.to_string(),
+                    callee.nested_origins.read_only(),
+                );
+                access.own = self.own_place(
+                    argument,
+                    collected.convention,
+                    callee.nested_origins.read_only(),
+                );
+                for ty in types {
+                    self.record_carried_places(&mut access, ty);
+                }
+                accesses.push(access);
+            }
+        }
         for (left, first) in accesses.iter().enumerate() {
             for second in &accesses[left + 1..] {
                 let first_mutable = first.mutably_overlaps(second);
@@ -250,6 +384,7 @@ impl Checker {
                     other: other.name.clone(),
                     other_mutable,
                     callee: callee.name.to_string(),
+                    initializer: callee.initializer,
                 });
             }
         }

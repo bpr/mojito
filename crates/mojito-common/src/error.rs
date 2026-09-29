@@ -178,6 +178,8 @@ pub enum TypeError {
         other: String,
         other_mutable: bool,
         callee: String,
+        /// The call is a type's initializer (a tuple literal's).
+        initializer: bool,
     },
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
@@ -600,14 +602,20 @@ impl fmt::Display for TypeError {
                 other,
                 other_mutable,
                 callee,
+                initializer,
             } => write!(
                 f,
                 "aliasing values passed mutably to '{mutable}' argument and passed {} \
-                 to '{other}' argument in '{callee}' call",
+                 to '{other}' argument in '{callee}' {}",
                 if *other_mutable {
                     "mutably"
                 } else {
                     "immutably"
+                },
+                if *initializer {
+                    "initializer call"
+                } else {
+                    "call"
                 }
             ),
             Self::AssignToUndeclared(name) => {

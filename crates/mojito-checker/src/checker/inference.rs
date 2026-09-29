@@ -1243,7 +1243,8 @@ impl Checker {
                     .iter()
                     .map(|e| self.infer(e))
                     .collect::<Result<Vec<_>, _>>()?;
-                let result = self.public_tuple_type(tys);
+                let result = self.public_tuple_type(tys.clone());
+                self.check_tuple_literal_exclusivity(&result, elems, &tys)?;
                 self.record_collection_construction(expr.source_span(), &result);
                 Ok(result)
             }

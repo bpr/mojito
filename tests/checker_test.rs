@@ -5610,7 +5610,7 @@ fn argument_exclusivity_judges_carried_origins() {
         "{boxed}def stash[o: Origin[mut=True]](mut sink: List[RefBox[o]], var box: RefBox[o]):\n    sink.append(box^)\n\ndef main():\n    var local = List[Int]()\n    ref view = local\n    var sink = List[RefBox[origin_of(view)]]()\n    stash(sink, RefBox(Pointer(to=view)))\n"
     );
     assert!(
-        matches!(err(&stash), TypeError::AliasingArguments { mutable, other, other_mutable: true, callee }
+        matches!(err(&stash), TypeError::AliasingArguments { mutable, other, other_mutable: true, callee, .. }
             if mutable == "sink" && other == "box" && callee == "stash"),
         "got {:?}",
         err(&stash)

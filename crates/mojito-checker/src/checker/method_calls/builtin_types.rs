@@ -233,6 +233,8 @@ impl Checker {
                         declared: &bound,
                         bound: &bound,
                         nested_origins: NestedOrigins::AsDeclared,
+                        collected: None,
+                        initializer: false,
                     },
                     Some(&ExclusivityReceiver {
                         object,

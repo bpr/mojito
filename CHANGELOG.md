@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each element a `*args` pack collects, and each element of a tuple
+  literal, is now judged by argument exclusivity as an argument of its own,
+  as the pin judges it: `show(Span(xs), Span(xs))` over `def show[*Ts:
+  Copyable](*args: *Ts)` and `(Span(xs), Span(xs))` over a `var xs` are
+  rejected with "aliasing values passed mutably to 'args' argument and
+  passed mutably to 'args' argument". Both used to compile
+  (`assets/type_error/variadic_elements_share_mutable_origin.mojo`,
+  `assets/type_error/tuple_literal_elements_share_mutable_origin.mojo`).
 - A nested `def` that reads only its enclosing function's value parameters
   is now `thin`, as the pin's is: `apply(inner)` against `def apply(f: def()
   thin -> Int)`, where `inner` reads `outer[n]`'s `n`, prints the result on

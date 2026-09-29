@@ -2322,25 +2322,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 Variadic and tuple-literal elements carrying one mutable
-  origin do not conflict**
-
-  Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
-  Copyable](*args: *Ts)` and the literal `(Span(xs), Span(xs))` where `xs` is
-  a `var`; the pin rejects both with "aliasing values passed mutably to
-  'args' argument and passed mutably to 'args' argument".
-  - The argument exclusivity rule judges the regular parameter slots and the
-    receiver only (`check_argument_origin_exclusivity` in
-    `checker/origins/exclusivity.rs`).
-  - The pin judges each element collected by `*args` or a pack as an
-    argument of its own, and a tuple literal as its initializer's call.
-  - `conformance/probes/variadic_elements_share_mutable_origin.mojo` pins it.
-  - Found while counting type-argument origins in argument exclusivity
-    (2026-09-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.90 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2357,7 +2339,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.92 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.91 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2373,7 +2355,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.93 A write through a reference skips the overwritten value's
+- [ ] **3.92 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2391,7 +2373,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.93 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2412,7 +2394,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.95 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.94 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2432,7 +2414,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A generic `def` reads a module constant where a local shadows
+- [ ] **3.95 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2446,7 +2428,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A trait requirement's default reading more than module
+- [ ] **3.96 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2461,7 +2443,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A default naming a binder in scope fails at run time**
+- [ ] **3.97 A default naming a binder in scope fails at run time**
 
   Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]`, checks but stops on the VM with "non-constant default
@@ -2480,7 +2462,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A list literal default for a `List` parameter is an `Array`**
+- [ ] **3.98 A list literal default for a `List` parameter is an `Array`**
 
   Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
   mismatch for default value of 'xs': expected List[Int], found Array[Int,
@@ -2492,7 +2474,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A static method cannot read its struct's value parameter**
+- [ ] **3.99 A static method cannot read its struct's value parameter**
 
   Problem: `return Self.k` in a `@staticmethod` of `struct W[k: Int]` fails
   at run time with "field access on non-struct None", where the pin prints
@@ -2509,7 +2491,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A generic nested `def` with a by-value capture does not
+- [ ] **3.100 A generic nested `def` with a by-value capture does not
   compile natively**
 
   Problem: `def inner[k: Int]() {var x} -> Int` runs on the VM and prints
@@ -2524,6 +2506,54 @@ last.
     call can reach, such as a hidden local copied at the declaration.
   - `conformance/probes/generic_nested_def_var_capture.mojo` pins it.
   - Found while compiling capturing generic nested `def`s natively
+    (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.101 An initializer call is not judged by argument aliasing**
+
+  Problem: `Tuple(Span(xs), Span(xs))` over a `var xs` runs and prints
+  `3`; the pin rejects it with "aliasing values passed mutably to 'args'
+  argument and passed mutably to 'args' argument in 'Tuple[...]'
+  initializer call".
+  - Neither the place rule (`check_call_aliasing`) nor the carried-origin
+    rule (`check_argument_origin_exclusivity`) runs on a constructor call;
+    both run on free calls, methods, and static methods.
+  - A tuple literal is judged as its initializer's call already
+    (`check_tuple_literal_exclusivity`).
+  - `conformance/probes/initializer_arguments_share_mutable_origin.mojo`
+    pins it.
+  - Found while judging variadic elements in argument exclusivity
+    (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.102 A method's `*Ts` pack does not take a `Span` argument**
+
+  Problem: `S().show(Span(xs), 1)` over `def show[*Ts: Copyable](self,
+  *args: *Ts)` is rejected with "'Span[_]' is not concrete; use '[]' to bind
+  missing parameters"; the pin runs it.
+  - The same pack on a module `def` takes the span.
+  - Once it binds, the method's collected elements also need judging by
+    argument exclusivity, as a free call's are: the method path passes no
+    `CollectedArguments` (`check_argument_origin_exclusivity` in
+    `method_calls/mc_infer.rs`), and the pin rejects
+    `S().show(Span(xs), Span(xs))` over a `var xs`.
+  - `conformance/probes/method_pack_span_argument.mojo` pins it.
+  - Found while judging variadic elements in argument exclusivity
+    (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.103 A tuple literal holding a pointer to a local is rejected**
+
+  Problem: `var p = (Pointer(to=x), 2)` is rejected with "not a
+  compile-time value: type pack contains a type which cannot be
+  materialized in source"; the pin prints `p[1]`.
+  - `(Span(xs), Span(xs))` over a read parameter materializes, so the
+    pointer's origin spelling is the likely difference.
+  - `conformance/probes/tuple_literal_pointer_to_local.mojo` pins it.
+  - Found while judging variadic elements in argument exclusivity
     (2026-09-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.

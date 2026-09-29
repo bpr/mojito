@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	448
+# swept-count	450
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -446,6 +446,7 @@ assets/type_error/tuple_consume_elements_discard.mojo	compile-reject	agree	error
 assets/type_error/tuple_consume_elements_len.mojo	compile-reject	agree	error: no matching function in call to 'len'
 assets/type_error/tuple_consume_elements_print.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Array[Int, Int(3)], Array[Int, Int(3)][SIMDLength(index)]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	agree	error: 'element' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
+assets/type_error/tuple_literal_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
 assets/type_error/tuple_unhashable_element_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Tuple[Int, Opaque]]'
 assets/type_error/type_argument_origin_function_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'items' argument and passed mutably to 'default' argument in 'pick' call
 assets/type_error/type_argument_origin_method_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
@@ -468,6 +469,7 @@ assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/value_call_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/variadic_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'show' call
 assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
 assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed

@@ -570,22 +570,19 @@ impl Checker {
         }
     }
 
-    /// Note whether a function's positional collector is `var` as it is
-    /// declared (`None` when it has no collector). Overloads of one name that
-    /// disagree leave the name unrecorded.
-    pub(super) fn record_owned_collector(&mut self, name: &str, owned: Option<bool>) {
-        let Some(owned) = owned else {
+    /// Note a function's positional collector as it is declared (`None` when
+    /// it has no collector): its parameter name and whether it is `var`.
+    /// Overloads of one name that disagree leave the name unrecorded.
+    pub(super) fn record_positional_collector(
+        &mut self,
+        name: &str,
+        collector: Option<(&str, bool)>,
+    ) {
+        let Some((parameter, owned)) = collector else {
             return;
         };
-        match self.owned_collectors.get(name) {
-            Some(recorded) if *recorded != owned => {
-                self.owned_collectors.remove(name);
-            }
-            Some(_) => {}
-            None => {
-                self.owned_collectors.insert(name.to_string(), owned);
-            }
-        }
+        record_agreed(&mut self.owned_collectors, name, owned);
+        record_agreed(&mut self.collector_names, name, parameter.to_string());
     }
 
     /// A callee with no pack collector cannot take a forwarded pack: the
@@ -1609,4 +1606,18 @@ fn comptime_index_binder(var: &str, iter: &Expr) -> ParamExpr {
         span.span.1
     );
     value_binder_expr(ParamId::new(&owner, 0), var, &Ty::Int)
+}
+
+/// Record `value` for `name` unless a different value is already recorded,
+/// in which case the disagreement leaves `name` unrecorded.
+fn record_agreed<V: PartialEq>(recorded: &mut HashMap<String, V>, name: &str, value: V) {
+    match recorded.get(name) {
+        Some(known) if *known != value => {
+            recorded.remove(name);
+        }
+        Some(_) => {}
+        None => {
+            recorded.insert(name.to_string(), value);
+        }
+    }
 }

@@ -2500,12 +2500,15 @@ impl Checker {
             self.tparams.pop();
             return Err(e);
         }
-        self.record_owned_collector(
+        self.record_positional_collector(
             name,
             variadic_idx.map(|index| {
-                matches!(
-                    params[index].convention,
-                    Some(mojito_ast::ast::ArgConvention::Var)
+                (
+                    params[index].name.as_str(),
+                    matches!(
+                        params[index].convention,
+                        Some(mojito_ast::ast::ArgConvention::Var)
+                    ),
                 )
             }),
         );
