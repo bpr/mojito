@@ -116,6 +116,21 @@ fn comptime_if_arms_of_a_template_check_with_symbolic_parameters() {
 }
 
 #[test]
+fn a_default_that_does_io_is_rejected() {
+    // Current Mojo evaluates a default once, at compile time; one that prints
+    // would print at a different time and count, so it is rejected, used or
+    // not. An effect-free call is admitted.
+    let io = "def tick() -> Int:\n    print(\"tick\")\n    return 7\n\ndef f(x: Int = tick()) -> Int:\n    return x\n\ndef main():\n    print(f(1))\n";
+    let err = run(io).unwrap_err();
+    assert!(
+        err.contains("the default value of parameter 'x' of 'f' is not safe"),
+        "{err}"
+    );
+    let pure = "def seven() -> Int:\n    return 7\n\ndef f(x: Int = seven()) -> Int:\n    return x\n\ndef main():\n    print(f())\n";
+    assert_eq!(run(pure).unwrap(), "7\n");
+}
+
+#[test]
 fn comptime_if_arms_are_block_scoped_and_dead_arms_have_no_effect() {
     // A binding declared in an arm is not visible after the conditional, as
     // upstream scopes it; a valid untaken arm produces no output.

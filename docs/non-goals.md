@@ -99,7 +99,9 @@ Mojito may reject valid Mojo.
   later use.
 - `generic_ctfe_impure.mojo` keeps VM-CTFE pure. The pin lets a compile-time
   callee `print`, but that output has no stable home: it appears under
-  `mojo run` and is absent from a `mojo build` binary.
+  `mojo run` and is absent from a `mojo build` binary. A parameter default
+  that prints or reads input rejects for the same reason, since the pin
+  evaluates a default at compile time.
 - `assets/runtime_error/nominal_string_justify_fillchar.mojo` traps on an
   `assert` in upstream's own `_justify`. Mojito evaluates every
   standard-library assert, as the pin does under `-D ASSERT=all`; the pin's

@@ -477,6 +477,10 @@ impl FnLowering<'_> {
                 "converting-constructor default argument is not yet lowered natively".into(),
                 dest,
             )),
+            (CheckedConst::Evaluate { .. }, _) => Err(self.unsupported_reg(
+                "evaluated default argument is not yet lowered natively".into(),
+                dest,
+            )),
         }
     }
 }

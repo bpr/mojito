@@ -1160,6 +1160,7 @@ pub fn elaborate_prepared(
         generic_aliases: RefCell::new(HashMap::new()),
     };
     drop(indexes);
+    elab.check_default_effects(program)?;
     let mut env = HashMap::new();
     let mut elaborated = elab.block(program, &mut env, false)?;
     // A module constant declared after its use crosses here.

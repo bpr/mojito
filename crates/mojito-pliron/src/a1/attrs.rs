@@ -1094,6 +1094,12 @@ impl CoreDefault {
                     "a floating default has no core form",
                 ));
             }
+            CheckedConst::Evaluate { .. } => {
+                return Err(A1Error::new(
+                    A1ErrorKind::UnsupportedForm,
+                    "an evaluated default has no core form",
+                ));
+            }
         };
         Ok(Self {
             constructors,

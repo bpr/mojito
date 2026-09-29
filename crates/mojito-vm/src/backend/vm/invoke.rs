@@ -207,9 +207,10 @@ impl VmBackend {
         };
         // Materialize omitted defaults. A `Construct` default runs its
         // converting constructor (e.g. the empty `Optional[T]` for a `None`
-        // default) through the same path an explicit `f(arg=None)` takes;
-        // scalars fold directly; a non-constant default without a construction
-        // errors only when its slot is actually taken.
+        // default) through the same path an explicit `f(arg=None)` takes; an
+        // `Evaluate` default runs its lowered default function; scalars fold
+        // directly; a default MIR could not lower errors only when its slot
+        // is actually taken.
         let make_default = |i: usize| -> Result<Value, RuntimeError> {
             match &sig.defaults[i] {
                 Some(CheckedConst::Construct { target, arg }) => self.call_named(
@@ -219,6 +220,15 @@ impl VmBackend {
                     vec![],
                     &CallTypes::default(),
                 ),
+                Some(CheckedConst::Evaluate { function }) => {
+                    let index = prog.index_of(function).ok_or_else(|| {
+                        RuntimeError::Unsupported(format!(
+                            "vm: missing default function '{function}'"
+                        ))
+                    })?;
+                    self.call_frame(prog, index, Vec::new(), &[])
+                        .map(|(value, _)| value)
+                }
                 Some(other) => Ok(checked_const_value(other)),
                 None => Err(RuntimeError::Unsupported(format!(
                     "vm: non-constant default for parameter '{}' of '{name}'",

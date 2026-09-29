@@ -152,12 +152,24 @@ impl Checker {
     }
 
     /// Whether the binding `name` resolves to is a compile-time binding of an
-    /// enclosing validated body (a `comptime for` variable or a value
-    /// parameter) — a compile-time constant, not runtime storage.
+    /// enclosing validated body (a `comptime for` variable, a local
+    /// `comptime` binding, or a value parameter) — a compile-time constant,
+    /// not runtime storage.
     pub(super) fn is_compile_time_binding(&self, name: &str) -> bool {
         self.binding_scope(name)
             .and_then(|scope| self.compile_time_bindings.get(scope))
             .is_some_and(|bindings| bindings.contains(name))
+    }
+
+    /// Record, under source validation, that the innermost scope's `name` is
+    /// a compile-time binding: the elaborator folds its uses before the
+    /// executable check.
+    pub(super) fn mark_compile_time_binding(&mut self, name: &str) {
+        if self.source_validation
+            && let Some(bindings) = self.compile_time_bindings.last_mut()
+        {
+            bindings.insert(name.to_string());
+        }
     }
 
     pub(super) fn is_binding_mutable(&self, name: &str) -> bool {

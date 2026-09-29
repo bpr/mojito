@@ -349,6 +349,9 @@ pub enum TypeError {
     /// An expression used in a compile-time position (`comptime NAME = …`, or a
     /// value-parameter argument) is not a constant `Int` expression.
     NotComptime(String),
+    /// A parameter default names runtime storage (an enclosing local or a
+    /// parameter): a default is evaluated at compile time.
+    DynamicDefault(String),
     /// A `SIMD` element-type argument was not a recognized `DType.<name>`.
     BadDtype(String),
     /// A SIMD width was not a positive power of two.
@@ -805,6 +808,12 @@ impl fmt::Display for TypeError {
             }
             Self::NotComptime(what) => {
                 write!(f, "not a compile-time Int constant: {what}")
+            }
+            Self::DynamicDefault(name) => {
+                write!(
+                    f,
+                    "cannot use a dynamic value in default argument: '{name}'"
+                )
             }
             Self::BadDtype(what) => write!(f, "not a valid SIMD element type: {what}"),
             Self::BadSimdWidth(w) => {

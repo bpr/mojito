@@ -3199,6 +3199,19 @@ fn accepts_implicit_conversion_in_parameter_defaults() {
 }
 
 #[test]
+fn rejects_a_default_naming_runtime_storage() {
+    // A default is evaluated at compile time, so it cannot read an enclosing
+    // local; an enclosing value parameter is a compile-time binding.
+    assert!(matches!(
+        err("def main():\n    var x = 1\n\n    def inner(y: Int = x) -> Int:\n        return y\n\n    _ = inner()\n"),
+        TypeError::DynamicDefault(name) if name == "x"
+    ));
+    ok(
+        "def outer[n: Int]() -> Int:\n    def inner(y: Int = n) -> Int:\n        return y\n\n    return inner(1)\n",
+    );
+}
+
+#[test]
 fn rejects_bad_default_values_and_arity() {
     // Default value must fit the parameter type.
     assert!(matches!(

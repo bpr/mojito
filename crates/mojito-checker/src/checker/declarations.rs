@@ -1212,6 +1212,9 @@ impl Checker {
         };
         for param in &m.params {
             if let Some(default) = &param.default {
+                if let Some(name) = self.dynamic_default_reference(default) {
+                    return Err(TypeError::DynamicDefault(name));
+                }
                 let expected = self.ty_from_anno(&param.ty)?;
                 let found = self.infer(default)?;
                 // Fall back to an `@implicit` converting constructor (records the

@@ -1753,6 +1753,35 @@ fn default_argument_values_fill_missing_trailing_args() {
 }
 
 #[test]
+fn evaluated_default_arguments_fill_missing_args() {
+    // A default that is no literal (a construction, arithmetic over a module
+    // constant) runs as code for each call that leaves its slot out, so an
+    // owned default is fresh at every such call.
+    let e = output(concat!(
+        "comptime TWO = 2
+
+",
+        "def f(s: String = String(\"a\") + String(\"b\"), x: Int = TWO + 1) -> String:\n",
+        "    return s + String(x)\n\n",
+        "def grow(var xs: List[Int] = List[Int]()) -> Int:\n",
+        "    xs.append(1)\n",
+        "    return len(xs)\n\n",
+        "struct S:\n",
+        "    def __init__(out self):\n",
+        "        pass\n\n",
+        "    def label(self, s: String = String(\"m\")) -> String:\n",
+        "        return s\n\n",
+        "def main():\n",
+        "    def inner(s: String = String(\"in\")) -> String:\n",
+        "        return s\n\n",
+        "    print(f(), f(\"c\"), f(x=4))\n",
+        "    print(grow(), grow())\n",
+        "    print(S().label(), inner())\n",
+    ));
+    assert_eq!(e, "ab3 c3 ab4\n1 1\nm in\n");
+}
+
+#[test]
 fn main_is_called_as_entry_point() {
     let e = output("def main():\n    print(\"hi\")\n");
     assert_eq!(e, "hi\n");

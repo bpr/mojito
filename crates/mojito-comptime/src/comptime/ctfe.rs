@@ -950,6 +950,44 @@ impl Elab<'_> {
         }
     }
 
+    /// Reject a declared parameter default that does I/O. Current Mojo
+    /// evaluates a default at compile time, once, while the VM runs the
+    /// lowered default at each call that takes it (`CheckedConst::Evaluate`),
+    /// which is the same only for a default the effect classifier admits.
+    pub(super) fn check_default_effects(&self, program: &[Stmt]) -> Result<(), ComptimeError> {
+        let declared = program.iter().flat_map(|statement| match &statement.kind {
+            StmtKind::Def { name, params, .. } => params
+                .iter()
+                .map(|param| (name.clone(), param))
+                .collect::<Vec<_>>(),
+            StmtKind::Struct { name, methods, .. } => methods
+                .iter()
+                .flat_map(|method| {
+                    method
+                        .params
+                        .iter()
+                        .map(move |param| (format!("{name}.{}", method.name), param))
+                })
+                .collect(),
+            _ => Vec::new(),
+        });
+        for (owner, param) in declared {
+            let Some(default) = param.default.as_ref().filter(|default| {
+                mojito_checked::checked::CheckedConst::from_expr(default).is_none()
+            }) else {
+                continue;
+            };
+            if !self.vm_ctfe_safe_expr(default, &mut HashSet::new(), &mut HashSet::new()) {
+                return Err(ComptimeError::NotComptime(format!(
+                    "the default value of parameter '{}' of '{owner}' is not safe for \
+                     VM-backed compile-time execution",
+                    param.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn vm_ctfe_safe_fn(
         &self,
         name: &str,

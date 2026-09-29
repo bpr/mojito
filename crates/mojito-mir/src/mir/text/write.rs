@@ -1852,6 +1852,7 @@ fn checked_const(value: &CheckedConst) -> String {
             "checked_construct",
             &[("target", quote(target)), ("arg", checked_const(arg))],
         ),
+        CheckedConst::Evaluate { function } => positional("checked_evaluate", &quote(function)),
     }
 }
 /// A parameter expression in schema 1.1's typed structural form. Operands

@@ -300,6 +300,32 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             param_writes: Vec::new(),
                         }
                     });
+                let defaults = regular
+                    .iter()
+                    .map(|p| {
+                        let ty = checked.checked_type_at(&AnnotationSite::FunctionParam {
+                            module: s.module.clone(),
+                            declaration: s.span,
+                            syntax: s.syntax_id,
+                            param: params
+                                .iter()
+                                .position(|candidate| std::ptr::eq(candidate, *p))
+                                .unwrap_or(params.len()),
+                        });
+                        lower_default(
+                            DefaultLowering {
+                                checked,
+                                overloads: &overloads,
+                                owner: &lowered_name,
+                                parameter: p,
+                                binders: &enclosing_binders,
+                                ty,
+                            },
+                            &mut functions,
+                            &mut declarations,
+                        )
+                    })
+                    .collect();
                 declarations.functions.push(MirFunctionDeclaration {
                     lowered_name: lowered_name.clone(),
                     param_names: regular.iter().map(|p| p.name.clone()).collect(),
@@ -322,10 +348,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             )
                         })
                         .collect(),
-                    defaults: regular
-                        .iter()
-                        .map(|p| mir_default(checked, p.default.as_ref()))
-                        .collect(),
+                    defaults,
                     required: regular.iter().map(|p| p.default.is_none()).collect(),
                     variadic: variadic_idx.map(|i| {
                         checked_type_or_record(
@@ -582,6 +605,33 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             _ => None,
                         })
                         .collect();
+                    let defaults = regular
+                        .iter()
+                        .map(|param| {
+                            let ty = checked.checked_type_at(&AnnotationSite::MethodParam {
+                                module: s.module.clone(),
+                                declaration: name.clone(),
+                                method: method_index,
+                                param: m
+                                    .params
+                                    .iter()
+                                    .position(|candidate| std::ptr::eq(candidate, *param))
+                                    .unwrap_or(m.params.len()),
+                            });
+                            lower_default(
+                                DefaultLowering {
+                                    checked,
+                                    overloads: &overloads,
+                                    owner: &mangled,
+                                    parameter: param,
+                                    binders: &enclosing_binders,
+                                    ty,
+                                },
+                                &mut functions,
+                                &mut declarations,
+                            )
+                        })
+                        .collect();
                     declarations.functions.push(MirFunctionDeclaration {
                         lowered_name: mangled.clone(),
                         param_names: regular.iter().map(|param| param.name.clone()).collect(),
@@ -608,10 +658,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 )
                             })
                             .collect(),
-                        defaults: regular
-                            .iter()
-                            .map(|param| mir_default(checked, param.default.as_ref()))
-                            .collect(),
+                        defaults,
                         required: regular
                             .iter()
                             .map(|param| param.default.is_none())
@@ -806,8 +853,8 @@ fn span(e: &Expr) -> SourceSpan {
 /// A parameter's default metadata: a folded literal, or a `Construct` when the
 /// checker recorded an `@implicit` conversion at the default expression's span
 /// (so the omitted-arg slot materializes by running the converting constructor,
-/// e.g. a `None` default for `Optional[T]`). A non-const default folds to
-/// `None` (the backends' "non-constant default" case), unchanged.
+/// e.g. a `None` default for `Optional[T]`). Any other default is `None`
+/// here; [`lower_default`] lowers it as code.
 fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<CheckedConst> {
     let expr = default?;
     let base = CheckedConst::from_expr(expr)?;
@@ -819,6 +866,104 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
         None => Some(base),
     }
 }
+
+/// A declaration parameter whose default [`lower_default`] lowers: `ty` is its
+/// checked type, and `binders` the binders in scope at the declaration, which
+/// the default function lacks.
+#[derive(Clone, Copy)]
+struct DefaultLowering<'a> {
+    checked: &'a CheckedProgram,
+    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    owner: &'a str,
+    parameter: &'a FnParam,
+    binders: &'a EnclosingBinders,
+    ty: Option<&'a Ty>,
+}
+
+/// A parameter's default metadata ([`mir_default`]), or, for any other
+/// default naming no binder, the zero-parameter function
+/// `$default$<owner>$<parameter>` lowered from the expression, which a call
+/// leaving the slot out runs.
+fn lower_default(
+    request: DefaultLowering<'_>,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) -> Option<CheckedConst> {
+    let DefaultLowering {
+        checked,
+        overloads,
+        owner,
+        parameter,
+        binders,
+        ty,
+    } = request;
+    let default = parameter.default.as_ref()?;
+    if let Some(constant) = mir_default(checked, Some(default)) {
+        return Some(constant);
+    }
+    let ty = ty.filter(|_| !binders.named_by(default))?;
+    let function = format!("$default${owner}${}", parameter.name);
+    let body = [Stmt {
+        kind: StmtKind::Return(Some(default.clone())),
+        span: default.span,
+        module: default.source.clone(),
+        syntax_id: mojito_common::token::SyntaxId::derived(default.syntax_id, DEFAULT_RETURN),
+    }];
+    lower_fn_nested(
+        FunctionLowering {
+            checked,
+            name: &function,
+            parameter_names: &[],
+            parameter_types: Vec::new(),
+            value_parameter_locals: Vec::new(),
+            receiver_value_parameters: Vec::new(),
+            enclosing_origin_parameters: Vec::new(),
+            enclosing_binders: EnclosingBinders::default(),
+            owned_parameters: Vec::new(),
+            deinit_parameters: Vec::new(),
+            reference_parameters: Vec::new(),
+            returns_reference: false,
+            ret_ty: ty.clone(),
+            raises: false,
+            error_ty: None,
+            named_result: None,
+            body: &body,
+            overloads,
+        },
+        functions,
+        declarations,
+    );
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: function.clone(),
+        param_names: Vec::new(),
+        param_types: Vec::new(),
+        defaults: Vec::new(),
+        required: Vec::new(),
+        variadic: None,
+        variadic_convention: None,
+        variadic_index: None,
+        kw_variadic: None,
+        kw_variadic_convention: None,
+        kw_variadic_index: None,
+        positional_only: None,
+        keyword_only: None,
+        param_decls: Vec::new(),
+        has_receiver: false,
+        receiver_convention: None,
+        param_conventions: Vec::new(),
+        ret_ty: ty.clone(),
+        returns_reference: false,
+        raises: false,
+        error_ty: None,
+        ref_params: Vec::new(),
+        param_writes: Vec::new(),
+    });
+    Some(CheckedConst::Evaluate { function })
+}
+
+/// The derivation ordinal of an evaluated default's `return` statement under
+/// its expression.
+const DEFAULT_RETURN: u32 = 0x0def_0000;
 
 fn checked_type_or_record(
     checked: &CheckedProgram,
@@ -2886,6 +3031,33 @@ impl EnclosingBinders {
             }
         }
         binders
+    }
+
+    /// Whether `expression` spells `Self` or one of these binders.
+    fn named_by(&self, expression: &Expr) -> bool {
+        struct Names(Vec<String>);
+        impl mojito_ast::visit::Visitor for Names {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Identifier(name) | ExprKind::Call { name, .. } = &expr.kind {
+                    self.0.push(name.clone());
+                }
+            }
+            fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
+                if let mojito_ast::ast::Type::Named(name, _) = ty {
+                    self.0.push(name.clone());
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        mojito_ast::visit::walk_expr(&mut names, expression);
+        names.0.iter().any(|name| {
+            name == "Self"
+                || self
+                    .types
+                    .iter()
+                    .chain(self.values.iter().map(|(binder, _)| binder))
+                    .any(|binder| binder.name.as_ref() == name)
+        })
     }
 
     /// The reference a value binder's spelling denotes: `Self.n` names the

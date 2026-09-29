@@ -14,9 +14,10 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
         CheckedConst::String(value) => Value::Str(value.clone()),
         CheckedConst::None => Value::None,
         CheckedConst::Dtype(dtype) => Value::Dtype(*dtype),
-        // A `Construct` default runs its constructor in interpreter context
-        // (`bind_for_call`), so it never reaches this pure value-folder.
-        CheckedConst::Construct { .. } => Value::None,
+        // A `Construct` or `Evaluate` default runs code in interpreter
+        // context (`bind_for_call`), so it never reaches this pure
+        // value-folder.
+        CheckedConst::Construct { .. } | CheckedConst::Evaluate { .. } => Value::None,
     }
 }
 

@@ -282,13 +282,14 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 let body = self.block(body, env, true)?;
+                let params = fold_default_bindings(params, env);
                 out.push(rebuilt(
                     stmt,
                     StmtKind::Def {
                         name: name.clone(),
                         decorators: decorators.clone(),
                         type_params: type_params.clone(),
-                        params: params.clone(),
+                        params,
                         positional_only: *positional_only,
                         keyword_only: *keyword_only,
                         captures: captures.clone(),
@@ -900,6 +901,30 @@ impl Elab<'_> {
         );
         clones
     }
+}
+
+/// `params` with each default reading an enclosing compile-time binding
+/// (`x: Int = k * 2` under `comptime k = 3`) spelled at its value: a default
+/// is evaluated at compile time.
+fn fold_default_bindings(
+    params: &[mojito_ast::ast::FnParam],
+    env: &HashMap<String, CtValue>,
+) -> Vec<mojito_ast::ast::FnParam> {
+    let subs: rewrite::Subs = &|name| {
+        env.get(name)
+            .filter(|value| !value.is_runtime_collection())
+            .cloned()
+    };
+    params
+        .iter()
+        .map(|param| {
+            let mut param = param.clone();
+            if let Some(default) = &mut param.default {
+                rewrite::rewrite_expr(default, subs);
+            }
+            param
+        })
+        .collect()
 }
 
 /// Append the block elaboration kept of a compile-time statement — the arm a

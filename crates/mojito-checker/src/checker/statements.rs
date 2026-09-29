@@ -1688,6 +1688,7 @@ impl Checker {
                 // the validator binds them itself.
                 let local_validation = self.source_validation && type_params.is_empty();
                 if local_validation && self.bind_local_comptime(stmt, name, ty.as_ref(), value)? {
+                    self.mark_compile_time_binding(name);
                     return Ok(());
                 }
                 if !local_validation
@@ -1754,6 +1755,7 @@ impl Checker {
                     self.declare_immutable(name, declared)?;
                 }
                 self.record_statement_binding(stmt, name);
+                self.mark_compile_time_binding(name);
                 Ok(())
             }
 
@@ -3002,7 +3004,7 @@ impl Checker {
                 } else {
                     (**ty).clone()
                 };
-                self.declare_immutable(name.trim_start_matches('*'), ty)
+                self.declare_value_parameter(name.trim_start_matches('*'), ty)
             })
             .and_then(|()| self.check_parameter_default_values(params, param_tys));
         self.pop_scope();
@@ -3018,6 +3020,9 @@ impl Checker {
             let Some(d) = &p.default else {
                 continue;
             };
+            if let Some(name) = self.dynamic_default_reference(d) {
+                return Err(TypeError::DynamicDefault(name));
+            }
             let dty = self.infer(d)?;
             // Fall back to an `@implicit` converting constructor, like the
             // binding and argument positions do (records the ctor target so
@@ -3032,6 +3037,39 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// The first runtime binding — an enclosing local or a parameter — a
+    /// parameter default names, which current Mojo rejects: a default is
+    /// evaluated at compile time.
+    pub(super) fn dynamic_default_reference(&self, default: &Expr) -> Option<String> {
+        struct Names(Vec<String>);
+        impl mojito_ast::visit::Visitor for Names {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Identifier(name) = &expr.kind {
+                    self.0.push(name.clone());
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        mojito_ast::visit::walk_expr(&mut names, default);
+        names.0.into_iter().find(|name| {
+            self.binding_scope(name).is_some_and(|scope| scope > 0)
+                && self.lookup(name).is_some_and(|ty| {
+                    !matches!(
+                        ty,
+                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+                    )
+                })
+                && !self.is_compile_time_binding(name)
+                && !self
+                    .lookup_owner(name)
+                    .is_some_and(|owner| self.value_parameter_owners.contains(&owner))
+                && !self
+                    .local_comptime_values
+                    .iter()
+                    .any(|values| values.contains_key(name.as_str()))
+        })
     }
 
     pub(super) fn param_tys(

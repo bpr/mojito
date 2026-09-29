@@ -530,6 +530,10 @@ impl FnLowering<'_> {
                 };
                 self.constructed_default_value(ctx, target, arg, *layout, callee, dest)
             }
+            CheckedConst::Evaluate { .. } => Err(self.unsupported_reg(
+                format!("evaluated default argument of `{callee}` is not yet lowered natively"),
+                dest,
+            )),
             CheckedConst::Int(_)
             | CheckedConst::Float(_)
             | CheckedConst::Bool(_)

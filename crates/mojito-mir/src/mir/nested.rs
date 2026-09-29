@@ -445,17 +445,28 @@ fn lower_nested_node(
                 param_writes: Vec::new(),
             });
         let capture_count = captures.len();
+        let binders = enclosing_binders.with(&param_decls);
+        let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
+            .chain(regular.iter().enumerate().map(|(slot, (_, parameter))| {
+                lower_default(
+                    DefaultLowering {
+                        checked,
+                        overloads,
+                        owner: mangled,
+                        parameter,
+                        binders: &binders,
+                        ty: declaration_types.get(capture_count + slot),
+                    },
+                    out,
+                    declarations,
+                )
+            }))
+            .collect();
         declarations.functions.push(MirFunctionDeclaration {
             lowered_name: mangled.clone(),
             param_names: declaration_names,
             param_types: declaration_types,
-            defaults: std::iter::repeat_n(None, capture_count)
-                .chain(
-                    regular
-                        .iter()
-                        .map(|(_, parameter)| mir_default(checked, parameter.default.as_ref())),
-                )
-                .collect(),
+            defaults,
             required: std::iter::repeat_n(true, capture_count)
                 .chain(
                     regular

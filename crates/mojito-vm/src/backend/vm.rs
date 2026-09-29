@@ -732,9 +732,10 @@ struct FnSig {
     param_names: Vec<String>,
     param_types: Vec<Ty>,
     /// Declared default per regular parameter (`None` = no default, or a
-    /// non-constant default the VM can't fold — using such a slot errors). A
+    /// default MIR could not lower — using such a slot errors). A
     /// `CheckedConst::Construct` default is materialized at bind time by running
-    /// its converting constructor (see `bind_for_call`); scalars fold directly.
+    /// its converting constructor, an `Evaluate` one by running its default
+    /// function (see `bind_for_call`); scalars fold directly.
     defaults: Vec<Option<CheckedConst>>,
     required: Vec<bool>,
     variadic: Option<Ty>,

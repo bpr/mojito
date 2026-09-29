@@ -113,9 +113,9 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.95), and a `String`
-    element needs `String` to be `Defaultable` (3.96).
-  - Depends on 3.95.
+  - A SIMD element needs its nullary construction (3.94), and a `String`
+    element needs `String` to be `Defaultable` (3.95).
+  - Depends on 3.94.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -143,16 +143,15 @@ Pliron experiment rather than move the check order sit last, 1.15 to 1.18.
   - `def join(x: Int, sep: String = String("-"))` keeps the clone check, as
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
-  - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.90).
+  - A call leaving the argument out runs on the VM, which runs such a
+    default as a lowered default function (`CheckedConst::Evaluate`).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.90: until a constructed default runs, no fixture can take
-    it.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **1.7 An explicitly applied or overloaded generic static with
@@ -384,7 +383,23 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.3 An evaluated default argument does not compile natively**
+
+  Problem: `f()`, beside `def f(s: String = String("a"))`, prints `a` on
+  the VM and the pin, but the native backend stops with "unsupported
+  evaluated default argument of `f` is not yet lowered natively".
+  - MIR lowers such a default as the zero-parameter function
+    `$default$<owner>$<parameter>` and records it as
+    `CheckedConst::Evaluate`, which the VM runs at the call.
+  - Native lowering fills an omitted slot only from a literal or a
+    converting construction of one (`default_argument_value` in
+    `lower/calls.rs`); it needs to call the default function, and
+    reachability (`lib.rs`) needs the edge no call instruction spells.
+  - Probe: `conformance/probes/constructed_default_argument.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2290,24 +2305,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A call leaving out a constructed default fails at run time**
-
-  Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
-  on the VM with "non-constant default for parameter 's'", where the pin
-  prints `a`.
-  - A signature carries a default only as a folded constant or a converting
-    construction of one (`CheckedConst`); anything else is recorded as
-    missing, and the VM refuses the slot when a call takes it.
-  - The refusal is a late one: the checker should reject the call, or the
-    default should lower as code evaluated at the call.
-  - Probe: `conformance/probes/constructed_default_argument.mojo`.
-  - Arithmetic over a module constant fails alike: `f()` beside `def f(x:
-    Int = TWO + 1)` stops with the same message, since the elaborator
-    substitutes `TWO` but folds nothing.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 An instance ranks a generic struct's overload family again
+- [ ] **3.90 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2324,7 +2322,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 A generic static's per-call clone takes a call to its
+- [ ] **3.91 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2336,7 +2334,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 A generic static with its own binder cannot infer its struct's
+- [ ] **3.92 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2347,7 +2345,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A variadic struct's index-keyed method not named
+- [ ] **3.93 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2363,7 +2361,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A SIMD value has no nullary construction**
+- [ ] **3.94 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2378,7 +2376,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 `String` is not `Defaultable`**
+- [ ] **3.95 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2388,7 +2386,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A `def` does not infer a value parameter from an argument's
+- [ ] **3.96 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2403,7 +2401,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.98 A generic nested `def` that captures does not compile
+- [ ] **3.97 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2421,7 +2419,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.99 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.98 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2440,7 +2438,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.99 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2458,7 +2456,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.100 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2475,7 +2473,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.102 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.101 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2491,7 +2489,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.103 A write through a reference skips the overwritten value's
+- [ ] **3.102 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2509,7 +2507,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.103 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2530,7 +2528,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.105 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.104 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2550,7 +2548,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.106 A generic `def` reads a module constant where a local shadows
+- [ ] **3.105 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2564,7 +2562,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.107 A trait requirement's default reading more than module
+- [ ] **3.106 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2576,7 +2574,38 @@ last.
   - A literal, a module constant bound to one, and a compile-time `Int`
     expression over module constants fold; a method's own parameter, a
     call, or a constant of another shape does not.
-  - Depends on 3.90 for a constructed default.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.107 A default naming a binder in scope fails at run time**
+
+  Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
+  `struct V[n: Int]`, checks but stops on the VM with "non-constant default
+  for parameter 'x'", where the pin prints `6`.
+  - MIR lowers a default that is no literal as a zero-parameter function
+    (`lower_default` in `mir.rs`), which has no binder of its own, so a
+    default spelling `Self`, a struct or enclosing function's parameter, or
+    the declaration's own stays unlowered and the VM refuses its slot.
+  - A nested `def`'s `x: Int = n` inside `def outer[n: Int]()` fails the
+    same way.
+  - `def g[n: Int](x: Int = n)` is rejected earlier, with "Undefined
+    variable 'n'", where the pin prints the argument.
+  - The fix is to substitute the instance's binders into the default, or
+    to give the default function the declaration's parameters.
+  - Found while running constructed defaults (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.108 A list literal default for a `List` parameter is an `Array`**
+
+  Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
+  mismatch for default value of 'xs': expected List[Int], found Array[Int,
+  2]", where the pin accepts it and a call leaving `xs` out gets a fresh
+  list.
+  - A default is inferred without the parameter's type as context, so an
+    uncontextualized display types as `Array`.
+  - Found while running constructed defaults (2026-09-28).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
