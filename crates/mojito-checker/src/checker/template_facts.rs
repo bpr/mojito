@@ -4498,6 +4498,7 @@ impl Checker {
             struct_vectors: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
+            runtime_loops: std::cell::Cell::new(0),
             borrowed_params: mut_params.clone(),
             mut_params,
             keyed,
@@ -5122,6 +5123,7 @@ impl Checker {
             struct_vectors: self.validated_struct_binders(struct_vector_binders),
             print_calls: RefCell::new(Vec::new()),
             nested_depth: std::cell::Cell::new(0),
+            runtime_loops: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
             keyed: false,
@@ -9869,9 +9871,9 @@ struct BodyShape<'a> {
     mut_params: Vec<&'a str>,
     /// Whether source validation produced the facts. A body it checks may
     /// hold compile-time control flow over scalar locals, assignments, and
-    /// runtime `if`s, under that check's own rules; any other body may hold
-    /// runtime statements instead: scalar locals and assignments, `if`,
-    /// `while`, and a bare `return`, each checked once.
+    /// runtime `if`s and `while`s, under that check's own rules; any other
+    /// body may hold runtime statements instead: scalar locals and
+    /// assignments, `if`, `while`, and a bare `return`, each checked once.
     keyed: bool,
     /// Whether the body is a method's, which may read `self`'s fields.
     receiver: bool,
@@ -9960,6 +9962,10 @@ struct BodyShape<'a> {
     print_calls: RefCell<Vec<OccurrenceId>>,
     /// How many nested `def` bodies the statement being judged lies in.
     nested_depth: std::cell::Cell<u32>,
+    /// How many runtime `while` loops of a keyed body the statement being
+    /// judged lies in: a `break` or `continue` there leaves the runtime
+    /// loop, never an unrolled `comptime for`.
+    runtime_loops: std::cell::Cell<u32>,
     /// The hidden dtype and width binders of the method's wildcard vector
     /// binders (`$simd.dtype`, `$simd.size`), which a lane-shaped type may
     /// name and every clone folds ([`Self::lane_shaped_simd`]).
@@ -10231,13 +10237,24 @@ impl BodyShape<'_> {
                 self.tuple_unpack(targets, value, *declares)
                     && self.holds(MethodFeatures::STATEMENTS)
             }
+            // A runtime `while` is checked once, or once per unrolled copy in
+            // a keyed body, as a runtime `if` is.
             StmtKind::While {
                 cond,
                 body,
                 orelse: None,
-            } if !self.keyed => {
-                self.condition(cond) && self.block(body) && self.holds(MethodFeatures::STATEMENTS)
+            } if self.keyed => {
+                self.runtime_loops.set(self.runtime_loops.get() + 1);
+                let admitted = self.condition(cond) && self.block(body);
+                self.runtime_loops.set(self.runtime_loops.get() - 1);
+                admitted
             }
+            StmtKind::Break | StmtKind::Continue if self.keyed => self.runtime_loops.get() > 0,
+            StmtKind::While {
+                cond,
+                body,
+                orelse: None,
+            } => self.condition(cond) && self.block(body) && self.holds(MethodFeatures::STATEMENTS),
             StmtKind::SetPlace { place, value } if self.element_initialization(place, value) => {
                 self.holds(MethodFeatures::STATEMENTS)
                     && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS)

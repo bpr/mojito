@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime `while` in a compile-time-keyed `def` — at the top level of
+  the body, inside a `comptime for` with `break` and `continue`, or under a
+  `comptime if` arm — now derives the instance's facts from the checked
+  template, each unrolled copy keeping its own loop
+  (`assets/ok/template_keyed_runtime_while.mojo`). Such instances used to be
+  checked again.
 - A generic struct's method or keyed `def` binding a comparison of its
   symbolic lane's values to a local (`var m = self.pos == other`), read
   as a condition or through `Bool(m)`, or comparing such a value with an

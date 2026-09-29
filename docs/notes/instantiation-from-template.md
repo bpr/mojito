@@ -359,7 +359,9 @@ truthiness fact, unless the body holds `TRUTHINESS`. A keyed body keeps its own 
 inside a `comptime for` is one binding per unrolled copy, a runtime `if` there
 is copied with its arms once per copy, its condition folding the loop variable
 as the copy's other statements do
-(`assets/ok/template_keyed_runtime_if.mojo`), and a folded name is read only
+(`assets/ok/template_keyed_runtime_if.mojo`), a runtime `while` is kept the
+same way, a `break` or `continue` admitted only inside one, never to leave an
+unrolled loop (`assets/ok/template_keyed_runtime_while.mojo`), and a folded name is read only
 where its literal records what the name's occurrence would.
 
 ### `MethodBody`
@@ -1459,7 +1461,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A pack element's default construction that is not the value stored to
   the element's own storage: an argument (`print(Self.Ts[i]())`) or a
-  local's value in a pack-keyed `def` (roadmap 1.8).
+  local's value in a pack-keyed `def` (roadmap 1.6).
 
 - A method body beyond `MethodBody`: a receiver origin naming anything but
   one of the method's own origin binders, a copy or move
@@ -1497,10 +1499,6 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 - An instance whose argument may carry a loan that its origins do not
   confine to the elaborator's origin binders or erase, including a struct
   whose fields hold a reference or a loan-carrying pointer.
-- A member of a value-keyed struct specialized whole outside the method
-  grammar (a lane comparison's mask bound to a local or beside a literal:
-  roadmap 1.1).
-- A `while` loop in a compile-time-keyed `def` (roadmap 1.2).
 - A surviving trait-bound `def` template whose body constructs a struct,
   calls a bound builtin, or consumes a local through a method
   (`hash_seeded`), or holds any feature outside `FUNCTION_FEATURES`. A local
