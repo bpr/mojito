@@ -1060,12 +1060,20 @@ impl Checker {
     /// `owner[arguments]` (`get$y3:Int`), once the elaborator has appended it
     /// to the template's method list. The value list agrees with the
     /// elaborator's `method_request_values` over the struct's parameters.
+    ///
+    /// A clone is minted from its source method only, so a `method` that is
+    /// already a clone has none: keying it by the instance would spell a
+    /// sibling's per-call clone (`pick$y3:Int` at `[Int]` is
+    /// `pick[U]`'s clone `pick$y3:Int$y3:Int`).
     pub(super) fn instance_method_clone(
         &self,
         owner: &str,
         method: &str,
         arguments: &[TyArg],
     ) -> Option<String> {
+        if mojito_symbol::symbol::specialization_template(method).is_some() {
+            return None;
+        }
         let info = self.structs.get(owner)?;
         let name =
             mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments)?;

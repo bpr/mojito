@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's overloaded static called on a spelled receiver from a
+  generic method (`Pair[Self.T].pick(1, 2)` beside `pick[U: Writable](u: U)`
+  and `pick(u: Int, v: Int)`) now calls the two-argument member at every
+  instance, printing `3` as the pin does, where it used to stop with
+  "'Pair.pick$y3:Int$y3:Int' expects 1 argument(s), got 2". The same
+  overloads as instance methods, called on a `Box[Self.T]` local, no longer
+  reject with "no overload matches"
+  (`assets/ok/template_method_static_binder_overload_arity.mojo`).
 - A generic struct's overloaded static called on a spelled receiver
   (`Pair[Self.T].pick(v)` beside `pick(v: Self.T)` and `pick(v: Float64)`)
   now calls the member its template ranked at every instance, as the pin
@@ -47,7 +55,7 @@ to evolve under the `0.x` compatibility rules.
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.102).
+  reference result is still rejected (roadmap 3.101).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -71,7 +79,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.96).
+  (roadmap 3.95).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The
