@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound with keyword arguments out of parameter order
+  (`self.s.shift(1, extra=a, by=b)`) now derives a clone's call boundary
+  in source order, as the clone's own check records it. The derived
+  boundary used to list the arguments in parameter order, which template
+  fact verification (`MOJITO_VERIFY_TEMPLATE_FACTS`) flagged.
 - `Array`'s copy and move initializers, `deinit_with`, and both `__iter__`
   overloads now reuse their checked templates in every later checker pass
   (`array_members_reuse_templates`). They used to be inferred again: the

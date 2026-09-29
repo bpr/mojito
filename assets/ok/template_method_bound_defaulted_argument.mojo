@@ -4,7 +4,8 @@
 # (`docs/notes/instantiation-from-template.md`, class MethodBody, feature
 # `bound_dispatch`). Current Mojo runs the requirement's default; every
 # witness here declares that default alike, so the one an instance runs is
-# the same, and the call records only the omitted slot.
+# the same, and the call records only the omitted slot. Keywords out of
+# parameter order keep their source order at the call's boundary.
 trait Scaler:
     def scale(
         self, value: Int, factor: Int = 2, offset: Int = 0, label: String = "x"
@@ -47,9 +48,22 @@ struct Holder[S: Scaler & Copyable & Deinitable](Movable):
     def keyword_offset(self) -> String:
         return self.s.scale(2, offset=1)
 
+    def keywords_swapped(self) -> String:
+        return self.s.scale(1, offset=2, factor=4)
+
 
 def main():
     var offset = Holder[Offset](Offset(1))
     var repeat = Holder[Repeat](Repeat(String("ab")))
-    print(offset.both_default(), offset.one_default(), offset.keyword_offset())
-    print(repeat.both_default(), repeat.one_default(), repeat.keyword_offset())
+    print(
+        offset.both_default(),
+        offset.one_default(),
+        offset.keyword_offset(),
+        offset.keywords_swapped(),
+    )
+    print(
+        repeat.both_default(),
+        repeat.one_default(),
+        repeat.keyword_offset(),
+        repeat.keywords_swapped(),
+    )

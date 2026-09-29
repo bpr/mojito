@@ -1370,23 +1370,22 @@ impl Checker {
             .find(|(site, _)| *site == id)
             .ok_or("a bound dispatch lost its contract")?
             .1;
+        // The boundary keeps the call's source order, which keyword
+        // arguments out of parameter order leave apart from the contract's.
         // A literal the requirement's closed parameter materialized is
         // materialized to the witness's, the same type.
-        let boundaries = arguments
+        let boundaries = call
+            .arguments
             .iter()
-            .zip(&invalidations)
-            .filter_map(|(argument, invalidations)| {
-                let value = argument.value?;
-                let adjustments = call
-                    .arguments
+            .filter_map(|bound| {
+                let (argument, invalidations) = arguments
                     .iter()
-                    .find(|bound| bound.source == argument.source)
-                    .map(|bound| bound.adjustments.clone())
-                    .unwrap_or_default();
+                    .zip(&invalidations)
+                    .find(|(argument, _)| argument.source == bound.source)?;
                 Some(TemplateArgumentBoundary {
                     source: argument.source,
-                    value,
-                    adjustments,
+                    value: argument.value?,
+                    adjustments: bound.adjustments.clone(),
                     invalidations: invalidations.clone(),
                 })
             })

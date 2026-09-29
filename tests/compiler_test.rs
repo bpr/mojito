@@ -5125,17 +5125,19 @@ fn template_defaulted_argument_derives() {
 fn template_bound_defaulted_argument_derives() {
     // A call through a bound leaving a defaulted parameter of the requirement
     // to its default records only the omitted slot when every witness
-    // declares the requirement's default alike.
+    // declares the requirement's default alike; keywords out of parameter
+    // order keep their source order at the boundary.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_defaulted_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
     assert_methods_derive(
         &source,
-        "x7 x4 x6\nxabababababab xababab xababababab\n",
+        "x7 x4 x6 x7\nxabababababab xababab xababababab xabababababab\n",
         &[
             ("Holder.both_default", 2),
             ("Holder.one_default", 2),
             ("Holder.keyword_offset", 2),
+            ("Holder.keywords_swapped", 2),
         ],
     );
 }
