@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's method or keyed `def` binding a comparison of its
+  symbolic lane's values to a local (`var m = self.pos == other`), read
+  as a condition or through `Bool(m)`, or comparing such a value with an
+  integer literal (`self.pos < 0`), now reuses its template's checked
+  facts, re-typing the mask local and its reads to `Bool` where the lane
+  folds to `Int` or `Float64` (`lane_comparisons_derive`). Such bodies
+  used to be checked again per instance.
 - A generic struct's method calling a float lane's `__fma__` with a
   temporary argument (`k.__fma__(self.step * self.step, self.start)` over
   `Scalar[Self.dtype]`) now reuses its template's checked facts, recording

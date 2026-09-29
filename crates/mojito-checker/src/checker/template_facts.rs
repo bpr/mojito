@@ -229,6 +229,8 @@ struct Occurrence {
     prefix: Option<(mojito_ast::ast::PrefixOp, SyntaxId)>,
     /// An augmented assignment's place and value occurrences.
     augmented: Option<(SyntaxId, SyntaxId)>,
+    /// A `var` declaration's value occurrence.
+    declared: Option<SyntaxId>,
     /// Whether this is a `^` transfer.
     transfer: bool,
     /// How the clone check ranks an overload member it is handed to.
@@ -5577,13 +5579,20 @@ impl Checker {
             fn visit_stmt(&mut self, statement: &Stmt) {
                 let id = self.next_copy(statement.syntax_id);
                 self.push_plain(id, statement.source_span());
-                if let StmtKind::AugAssign { place, value, .. } = &statement.kind
-                    && let Some(occurrence) = self.found.last_mut()
-                {
-                    occurrence.augmented = Some((
-                        self.origins.origin(place.syntax_id),
-                        self.origins.origin(value.syntax_id),
-                    ));
+                let Some(occurrence) = self.found.last_mut() else {
+                    return;
+                };
+                match &statement.kind {
+                    StmtKind::AugAssign { place, value, .. } => {
+                        occurrence.augmented = Some((
+                            self.origins.origin(place.syntax_id),
+                            self.origins.origin(value.syntax_id),
+                        ));
+                    }
+                    StmtKind::VarDecl { value, .. } => {
+                        occurrence.declared = Some(self.origins.origin(value.syntax_id));
+                    }
+                    _ => {}
                 }
             }
 
@@ -5638,6 +5647,7 @@ impl Checker {
                     operator: None,
                     prefix: None,
                     augmented: None,
+                    declared: None,
                     transfer: false,
                     ranking: ArgumentRanking::default(),
                     literal: None,
@@ -5768,6 +5778,7 @@ impl Checker {
                         _ => None,
                     },
                     augmented: None,
+                    declared: None,
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
                     ranking: ArgumentRanking {
                         context_free: context_free(expr),
@@ -9359,40 +9370,86 @@ fn realize_lane_float_methods(
 
 /// [`BodyShape::lane_comparison`]'s comparisons, re-typed at the instance's
 /// lane: over a sized scalar vector the comparison stays the template's
-/// mask, and over a native scalar it compares natively to a `Bool`. Any
-/// other lane refuses, for the clone check to report. A condition's
-/// truthiness mark is judged again from the re-typed value afterwards.
+/// mask, and over a native scalar it compares natively to a `Bool`, as does
+/// a local it initializes ([`LocalKind::Mask`]) and every read of that
+/// local. Any other lane refuses, for the clone check to report. A
+/// condition's truthiness mark is judged again from the re-typed value
+/// afterwards.
 fn realize_lane_comparisons(
     template: &CheckedBodyFacts,
     facts: &mut CheckedBodyFacts,
     occurrences: &[Occurrence],
 ) -> Result<(), &'static str> {
     for occurrence in occurrences {
-        let Some((op, left, _, _)) = occurrence.operator else {
+        let Some((op, left, right, _)) = occurrence.operator else {
             continue;
         };
         let at = |syntax| OccurrenceId {
             syntax,
             copy: occurrence.id.copy,
         };
-        let open = fact_at(&template.expression_types, at(left)).is_some_and(|ty| {
-            matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
-        });
+        let open = |syntax| {
+            fact_at(&template.expression_types, at(syntax)).is_some_and(|ty| {
+                matches!(ty, Ty::Simd { .. }) && mojito_types::types::is_symbolic(ty)
+            })
+        };
+        let Some(operand) = [left, right].into_iter().find(|syntax| open(*syntax)) else {
+            continue;
+        };
         if !comparison(op)
-            || !open
             || fact_at(&template.expression_types, occurrence.id) != Some(&lane_mask())
         {
             continue;
         }
-        let lane = fact_at(&facts.expression_types, at(left))
+        let lane = fact_at(&facts.expression_types, at(operand))
             .ok_or("a lane comparison's operand has no retained type")?;
         if closed_scalar(lane) {
             if super::operators::scalar_operator_result(op, lane) != Some(Ty::Bool) {
                 return Err("a lane comparison is not the instance's scalar operation");
             }
             set_fact(&mut facts.expression_types, occurrence.id, Ty::Bool);
+            let declaration = occurrences.iter().find(|found| {
+                found.id.copy == occurrence.id.copy && found.declared == Some(occurrence.id.syntax)
+            });
+            if let Some(declaration) = declaration {
+                retype_mask_local(facts, declaration.id, occurrence.id)?;
+            }
         } else if mojito_types::types::simd_shape(lane).is_none_or(|(_, width)| width != 1) {
             return Err("a lane comparison's instance lane is not a scalar");
+        }
+    }
+    Ok(())
+}
+
+/// A lane comparison's mask local declared at `declaration` from the
+/// comparison `value`, at an instance whose lane compares to a `Bool`: its
+/// binding, recorded at the value, and every read of it.
+fn retype_mask_local(
+    facts: &mut CheckedBodyFacts,
+    declaration: OccurrenceId,
+    value: OccurrenceId,
+) -> Result<(), &'static str> {
+    if fact_at(&facts.binding_types, value) != Some(&lane_mask()) {
+        return Err("a lane comparison's local is not bound to its mask");
+    }
+    set_fact(&mut facts.binding_types, value, Ty::Bool);
+    let owner = fact_at(&facts.statement_bindings, declaration)
+        .cloned()
+        .ok_or("a lane comparison's local has no binding")?;
+    let reads: Vec<OccurrenceId> = facts
+        .expression_bindings
+        .iter()
+        .filter(|(_, bound)| *bound == owner)
+        .map(|(id, _)| *id)
+        .collect();
+    for read in reads {
+        for table in [
+            &mut facts.expression_types,
+            &mut facts.expression_place_types,
+        ] {
+            if fact_at(table, read) == Some(&lane_mask()) {
+                set_fact(table, read, Ty::Bool);
+            }
         }
     }
     Ok(())
@@ -9949,6 +10006,10 @@ enum LocalKind {
     Reference,
     /// A nested `def`'s name, which the body may only call.
     Callable,
+    /// A `var` bound to a lane comparison's mask
+    /// ([`BodyShape::lane_comparison`]), read only as a condition or through
+    /// `Bool(...)`: an instance re-types the binding and each read alike.
+    Mask,
 }
 
 impl BodyShape<'_> {
@@ -9999,13 +10060,17 @@ impl BodyShape<'_> {
                 self.loop_vars.borrow_mut().pop();
                 admitted
             }
-            StmtKind::VarDecl { name, value, .. } if self.keyed => {
+            StmtKind::VarDecl { name, ty, value } if self.keyed => {
                 let scalar =
                     (self.expression(value) && self.scalar(value)) || self.simd_value(value);
-                self.locals
-                    .borrow_mut()
-                    .push((name.clone(), LocalKind::Scalar));
-                scalar
+                let mask = !scalar && ty.is_none() && self.lane_comparison(value);
+                let kind = if mask {
+                    LocalKind::Mask
+                } else {
+                    LocalKind::Scalar
+                };
+                self.locals.borrow_mut().push((name.clone(), kind));
+                scalar || mask
             }
             // A validated method keeps its compile-time control flow: every
             // arm is checked once, and an instance keeps the arms the
@@ -10036,7 +10101,9 @@ impl BodyShape<'_> {
                 let closed =
                     (self.expression(value) && self.scalar(value)) || self.lane_local_value(value);
                 let scalar = closed && (ty.is_none() || self.scalar_binding(value));
+                let mask = !scalar && ty.is_none() && self.lane_comparison(value);
                 let moved = !scalar
+                    && !mask
                     && self.moved_result.is_some()
                     && (closed
                         || self.whole_value(value)
@@ -10047,11 +10114,13 @@ impl BodyShape<'_> {
                     && (ty.is_none() || self.annotated_binding(value));
                 let kind = if scalar {
                     LocalKind::Scalar
+                } else if mask {
+                    LocalKind::Mask
                 } else {
                     LocalKind::Value
                 };
                 self.locals.borrow_mut().push((name.clone(), kind));
-                (scalar || moved) && self.holds(MethodFeatures::STATEMENTS)
+                (scalar || mask || moved) && self.holds(MethodFeatures::STATEMENTS)
             }
             StmtKind::RefDecl { name, value } if !self.keyed => {
                 let bound = self.bound_place(statement, value);
@@ -10992,6 +11061,7 @@ impl BodyShape<'_> {
                 self.params.contains(&name.as_str())
                     || self.declared(name)
                     || self.reference_local(name)
+                    || self.local_kind(name) == Some(LocalKind::Mask)
             }
             ExprKind::Member { .. } => self.receiver_field(expr) || self.reference_member(expr),
             _ => false,
@@ -13092,7 +13162,10 @@ impl BodyShape<'_> {
             // A `ref` local is read through its handle, as the scalar every
             // use site of `expression` also demands.
             ExprKind::Identifier(name) => match self.local_kind(name) {
-                Some(kind) => !matches!(kind, LocalKind::Value | LocalKind::Callable),
+                Some(kind) => !matches!(
+                    kind,
+                    LocalKind::Value | LocalKind::Callable | LocalKind::Mask
+                ),
                 None => {
                     self.params.contains(&name.as_str())
                         || self.folded_value(expr)
@@ -13386,7 +13459,8 @@ impl BodyShape<'_> {
 
     /// A built-in scalar conversion of one value of a closed type
     /// (`Int(key_hash)`, or `Bool(result)` of a closed struct place, which
-    /// its conversion dunder reads in place), of a value-shaped vector a
+    /// its conversion dunder reads in place, or of a lane comparison's mask
+    /// local, [`LocalKind::Mask`]), of a value-shaped vector a
     /// keyed body holds (`Int(Scalar[dt](v))`), or of a place whose type
     /// binder carries the conversion's bound (`Int(mode)` on `mode: intable`
     /// with `intable: Intable`, `Int(self.value)` on `value: Self.T`), whose
@@ -13406,10 +13480,11 @@ impl BodyShape<'_> {
             return false;
         };
         let place = match &argument.kind {
-            ExprKind::Identifier(name) => {
-                self.params.contains(&name.as_str())
-                    || self.declared(name)
-                    || self.reference_local(name)
+            ExprKind::Identifier(local) => {
+                self.params.contains(&local.as_str())
+                    || self.declared(local)
+                    || self.reference_local(local)
+                    || (name == "Bool" && self.local_kind(local) == Some(LocalKind::Mask))
             }
             ExprKind::Member { .. } => self.receiver_field(argument),
             _ => false,
@@ -13509,8 +13584,10 @@ impl BodyShape<'_> {
     }
 
     /// A comparison between two values of one value-shaped scalar type
-    /// (`self.pos < Scalar[Self.dtype](limit)`), read only as a condition or
-    /// through `Bool(...)`.
+    /// (`self.pos < Scalar[Self.dtype](limit)`), or between such a value and
+    /// an integer literal (`x < 0`), read only as a condition, through
+    /// `Bool(...)`, or bound to a local that is itself read only so
+    /// ([`LocalKind::Mask`]).
     ///
     /// Over the open lane it is a `SIMD[DType.bool, 1]` mask, which a
     /// condition tests through `__bool__`; an instance whose lane folds to a
@@ -13518,20 +13595,33 @@ impl BodyShape<'_> {
     /// compares natively to a `Bool`, which a condition reads as it stands.
     /// Each instance re-types the comparison (`realize_lane_comparisons`),
     /// and the truthiness mark follows the type, so its value may go only
-    /// where that is all that changes.
+    /// where that is all that changes. A literal operand materializes at a
+    /// native lane (`realize_lane_literals`).
     fn lane_comparison(&self, expr: &Expr) -> bool {
         let ExprKind::Infix(op, left, right) = &expr.kind else {
             return false;
         };
         let id = self.occurrence(expr);
+        let lane = |operand: &Expr| {
+            !self.folding(operand) && self.expression(operand) && self.value_shaped(operand)
+        };
+        let literal = |operand: &Expr| {
+            matches!(operand.kind, ExprKind::Int(_))
+                && !self.folding(operand)
+                && self.facts.is_none_or(|facts| {
+                    fact_at(&facts.expression_types, self.occurrence(operand))
+                        == Some(&Ty::IntLiteral)
+                })
+        };
         let admitted = comparison(*op)
-            && [left, right].iter().all(|operand| {
-                !self.folding(operand) && self.expression(operand) && self.value_shaped(operand)
-            })
+            && (lane(left) || lane(right))
+            && [left, right]
+                .iter()
+                .all(|operand| lane(operand) || literal(operand))
             && self.facts.is_none_or(|facts| {
                 let operand =
                     |operand: &Expr| fact_at(&facts.expression_types, self.occurrence(operand));
-                operand(left) == operand(right)
+                (operand(left) == operand(right) || literal(left) || literal(right))
                     && fact_at(&facts.expression_types, id) == Some(&lane_mask())
                     && fact_at(&facts.conversions, self.occurrence(left)).is_none()
                     && fact_at(&facts.conversions, self.occurrence(right)).is_none()
