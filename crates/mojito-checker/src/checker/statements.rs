@@ -2912,7 +2912,14 @@ impl Checker {
                     .iter()
                     .flat_map(|capture| capture.origins.iter().cloned()),
             );
-            let environment = if parameter_closure || lambda_forces_closure || !captures.is_empty()
+            // A value parameter's snapshot folds per instance, so a
+            // function capturing nothing else stays thin, as upstream reads
+            // the parameter as a compile-time value.
+            let environment = if parameter_closure
+                || lambda_forces_closure
+                || !captures
+                    .iter()
+                    .all(|capture| self.is_value_parameter_snapshot(capture))
             {
                 mojito_types::origin::CallableEnvironment::Capturing(concrete)
             } else {

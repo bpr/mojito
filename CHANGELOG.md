@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A nested `def` that reads only its enclosing function's value parameters
+  is now `thin`, as the pin's is: `apply(inner)` against `def apply(f: def()
+  thin -> Int)`, where `inner` reads `outer[n]`'s `n`, prints the result on
+  both backends instead of being rejected with "expected def() thin -> Int,
+  found def() capturing[...] -> Int". Natively each instance of the
+  enclosing function gets its own environment-free instance of `inner`
+  (`assets/ok/thin_nested_def_reads_value_parameter.mojo`).
 - A generic nested `def` that captures now compiles natively, as it runs on
   the VM and the pin: `inner[10]()` reading its enclosing function's value
   parameter, a captured local, or a `mut` capture used to stop with

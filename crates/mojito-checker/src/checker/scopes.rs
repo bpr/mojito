@@ -452,12 +452,33 @@ impl Checker {
             .unwrap_or(false)
     }
 
+    /// Whether `capture` is a value parameter's implicit snapshot: a
+    /// compile-time value the nested function's instance folds, so it keeps
+    /// the function `thin`.
+    pub(super) fn is_value_parameter_snapshot(
+        &self,
+        capture: &mojito_checked::checked::CheckedCapture,
+    ) -> bool {
+        capture.kind == mojito_ast::ast::CaptureKind::Copy
+            && self.value_parameter_owners.contains(&capture.binding)
+    }
+
     /// A value parameter denotes a compile-time value, so a nested function
-    /// reads it without naming it in a capture list; its runtime slot is
-    /// borrowed immutably.
+    /// reads it without naming it in a capture list: an implicitly copyable
+    /// value is snapshotted into the environment, any other borrows its
+    /// runtime slot immutably.
     fn implicit_value_parameter_capture(&self, name: &str) -> Option<mojito_ast::ast::CaptureKind> {
         self.lookup_owner(name)
             .filter(|owner| self.value_parameter_owners.contains(owner))
-            .map(|_| mojito_ast::ast::CaptureKind::Imm)
+            .map(|_| {
+                if self
+                    .lookup(name)
+                    .is_some_and(|ty| self.is_implicitly_copyable(ty))
+                {
+                    mojito_ast::ast::CaptureKind::Copy
+                } else {
+                    mojito_ast::ast::CaptureKind::Imm
+                }
+            })
     }
 }

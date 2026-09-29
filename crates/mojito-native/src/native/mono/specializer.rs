@@ -43,6 +43,7 @@ impl<'a> Specializer<'a> {
             callable_targets: HashMap::new(),
             closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
+            folded_slots: HashSet::new(),
             speculative: HashSet::new(),
         }
     }
@@ -331,6 +332,27 @@ impl<'a> Specializer<'a> {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        if !bindings.folded_captures.is_empty() {
+            let constants = bindings
+                .folded_captures
+                .iter()
+                .zip(&function.param_types)
+                .map(|((name, value), ty)| {
+                    value_parameter_constant(value, Some(ty)).ok_or_else(|| {
+                        self.error(
+                            Some(&key.template),
+                            format!("captured value parameter `{name}` has no native constant"),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            fold_leading_captures(&mut function, &constants);
+        }
+        let folded_values = self.folded_parameter_values(&key.template, &function, bindings);
+        if !folded_values.is_empty() {
+            self.fold_parameter_closures(&mut function.blocks, &folded_values)?;
+        }
+        self.folded_slots = folded_values.into_keys().collect();
         // A callable parameter the call site could not fold into this body
         // becomes its last runtime parameter, carrying the closure — and its
         // environment — that the body then calls indirectly.
@@ -370,6 +392,7 @@ impl<'a> Specializer<'a> {
             substitute_declaration(&mut declaration, bindings)?;
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
+            fold_leading_capture_parameters(&mut declaration, bindings.folded_captures.len());
             for (parameter, ty) in promoted {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
             }
@@ -936,17 +959,23 @@ impl<'a> Specializer<'a> {
                                     .collect();
                                 preludes.push((index, loads));
                             }
-                            let (target, bindings, arguments) = self.infer_call(
-                                owner,
-                                function,
-                                &target,
-                                None,
-                                *dest,
-                                args,
-                                kwargs,
-                                param_arg_regs,
-                            )?;
-                            let concrete = self.enqueue(&target, bindings, arguments)?;
+                            // A closure over folded value parameters already
+                            // names its lifted body's instance.
+                            let concrete = if self.functions.contains_key(target.as_str()) {
+                                let (target, bindings, arguments) = self.infer_call(
+                                    owner,
+                                    function,
+                                    &target,
+                                    None,
+                                    *dest,
+                                    args,
+                                    kwargs,
+                                    param_arg_regs,
+                                )?;
+                                self.enqueue(&target, bindings, arguments)?
+                            } else {
+                                target
+                            };
                             *instruction = MirInstr::Call {
                                 dest: *dest,
                                 func: mojito_mir::mir::FuncRef(concrete),
@@ -1376,6 +1405,113 @@ impl<'a> Specializer<'a> {
     /// call loads it into. Only by-reference environments are the caller's
     /// storage; a copied or moved capture is the closure's own snapshot,
     /// which a direct call cannot recover.
+    /// The value each of `function`'s slots holds when it names one of
+    /// `owner`'s value parameters (or a capture its instance folded) bound
+    /// to a compile-time constant here, keyed by slot.
+    fn folded_parameter_values(
+        &self,
+        owner: &str,
+        function: &MirFunction,
+        bindings: &Bindings,
+    ) -> HashMap<u32, CtValue> {
+        let scope = self
+            .declarations
+            .get(owner)
+            .map_or(&[][..], |declaration| &declaration.param_decls);
+        let locals = bound_parameter_locals(scope, bindings);
+        (0u32..)
+            .zip(&function.var_names)
+            .filter_map(|(slot, name)| {
+                let value = bindings
+                    .callables
+                    .get(name)
+                    .map(|callable| CtValue::Str(callable.clone()))
+                    .or_else(|| locals.get(name.as_str()).map(|value| (*value).clone()))
+                    .or_else(|| {
+                        bindings
+                            .folded_captures
+                            .iter()
+                            .find(|(folded, _)| folded == name)
+                            .map(|(_, value)| value.clone())
+                    })?;
+                Some((slot, value))
+            })
+            .collect()
+    }
+
+    /// Point each closure whose captures are all snapshots of folded value
+    /// parameters at its lifted body's instance over those values, which
+    /// takes no environment: the closure is the `thin` function the checker
+    /// typed, with no frame-local record to outlive.
+    fn fold_parameter_closures(
+        &mut self,
+        blocks: &mut [MirBlock],
+        values: &HashMap<u32, CtValue>,
+    ) -> Result<(), MonoError> {
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            match instruction {
+                MirInstr::MakeClosure {
+                    function: target,
+                    captures,
+                    ..
+                } if !captures.is_empty()
+                    && self
+                        .declarations
+                        .get(target.as_str())
+                        .is_some_and(|declaration| declaration.param_decls.is_empty())
+                    && self
+                        .functions
+                        .get(target.as_str())
+                        .is_some_and(|body| !function_types(body).any(is_symbolic)) =>
+                {
+                    let Some(folded) = captures
+                        .iter()
+                        .map(|capture| {
+                            (capture.mode == MirCaptureMode::Copy && capture.place.proj.is_empty())
+                                .then_some(capture.place.root)
+                                .and_then(|root| values.get(&root))
+                                .cloned()
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue;
+                    };
+                    let arguments = folded.iter().cloned().map(InstanceArg::Value).collect();
+                    let bindings = Bindings {
+                        folded_captures: self.functions[target.as_str()]
+                            .var_names
+                            .iter()
+                            .cloned()
+                            .zip(folded)
+                            .collect(),
+                        ..self.base_bindings()
+                    };
+                    *target = self.enqueue(target, bindings, arguments)?;
+                    captures.clear();
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    self.fold_parameter_closures(body, values)?;
+                    for blocks in handler
+                        .iter_mut()
+                        .map(|(_, blocks)| blocks)
+                        .chain(orelse)
+                        .chain(finalbody)
+                    {
+                        self.fold_parameter_closures(blocks, values)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn capture_arguments(
         &self,
         owner: &str,
@@ -1387,9 +1523,11 @@ impl<'a> Specializer<'a> {
             .get(target)
             .map_or(&[][..], Vec::as_slice);
         if captures.is_empty()
-            || captures
-                .iter()
-                .any(|capture| !matches!(capture.mode, MirCaptureMode::Reference))
+            || captures.iter().any(|capture| match capture.mode {
+                MirCaptureMode::Reference => false,
+                MirCaptureMode::Copy => !self.folded_slots.contains(&capture.place.root),
+                MirCaptureMode::Move => true,
+            })
         {
             return Err(self.error(
                 Some(owner),

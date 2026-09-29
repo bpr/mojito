@@ -90,6 +90,9 @@ struct Bindings {
     /// a runtime parameter and its body keeps the indirect call, instead of
     /// folding the callable's name into a direct one.
     runtime_callables: Vec<ParamRef>,
+    /// The enclosing value parameters a lifted body's instance folds in
+    /// place of its leading captures, by name, in capture order.
+    folded_captures: Vec<(String, CtValue)>,
 }
 
 struct Specializer<'a> {
@@ -113,6 +116,10 @@ struct Specializer<'a> {
     /// (`hash[Self.H](key)`), or building a value argument from its own
     /// value binders (`successor[n, 1 + n]()`), resolves them here.
     enclosing: Bindings,
+    /// The slots of the function being specialized that hold a folded value
+    /// parameter. A snapshot of one never differs from the slot, so a
+    /// direct call to a generic nested `def` may pass the slot itself.
+    folded_slots: HashSet<u32>,
     /// Instance names enqueued only by struct discovery's eager `__init__`
     /// walk, never by a call site. A conditional constructor (`__init__(out
     /// self) where conforms_to(Self.T, Defaultable)`) has no MIR-visible

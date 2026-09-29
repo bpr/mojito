@@ -743,7 +743,7 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
 
 /// The constant a value parameter's slot holds: a scalar, or a function
 /// named by a callable-typed slot.
-fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
+pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
@@ -835,7 +835,7 @@ fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
 /// value binder's local by its spelling, which the declaration's `scope`
 /// resolves to the binder: a signature declares a spelling once. A callable
 /// promoted to a runtime parameter keeps its reads.
-fn bound_parameter_locals<'a>(
+pub(super) fn bound_parameter_locals<'a>(
     scope: &[ParamDecl],
     bindings: &'a Bindings,
 ) -> HashMap<String, &'a CtValue> {

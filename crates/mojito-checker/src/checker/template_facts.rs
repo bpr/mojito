@@ -2175,6 +2175,11 @@ impl Checker {
         {
             return Err("an occurrence still names a folded compile-time parameter");
         }
+        // A nested `def`'s snapshot of a parameter the instance folds is no
+        // capture there: the body reads the folded value.
+        for (_, recipe) in &mut facts.nested_defs {
+            recipe.captures.retain(|capture| !folded(&capture.owner));
+        }
         // A nested `def`'s call selects the declaration the body itself
         // introduces, whose signature no instance changes, and reads its
         // summaries under the same name.
