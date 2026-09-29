@@ -682,7 +682,26 @@ impl Checker {
             // declaration's selection stands, so only the template states it.
             let facts = &comparable(realized);
             let inferred = comparable(&inferred);
-            if inferred != *facts && overload_rebinding_only(facts, &inferred) {
+            let rebinding = || {
+                let arguments: Vec<OccurrenceId> = self
+                    .body_occurrences(body)
+                    .iter()
+                    .filter(|occurrence| {
+                        facts
+                            .overload_targets
+                            .iter()
+                            .any(|(id, _)| *id == occurrence.id)
+                    })
+                    .flat_map(|occurrence| {
+                        occurrence.arguments.iter().map(|syntax| OccurrenceId {
+                            syntax: *syntax,
+                            copy: occurrence.id.copy,
+                        })
+                    })
+                    .collect();
+                overload_rebinding_only(facts, &inferred, &arguments)
+            };
+            if inferred != *facts && rebinding() {
                 // The one expected difference: the clone check ranked an
                 // overload set again on concrete arguments, which the
                 // template's selection forbids. The derived facts stand.
@@ -3075,14 +3094,15 @@ impl Checker {
     /// instance's clone of the static where the receiver's arguments,
     /// resolved in the instance, have one.
     ///
-    /// The clone check re-ranks the clone family there. Where its members
-    /// differ only in closed parameter types it selects the clone of the
-    /// template's member (`method_clone_target`); where one is typed by the
-    /// struct's parameters, the instance ranks the family at its own
-    /// argument types (`ranked_static_member`) and must rank the template's
-    /// member best, since the call's contract is that member's. A receiver
-    /// with no clone keeps the erased member, as does a static on an
-    /// inferred or contextual receiver, which no instance retargets. A lone
+    /// The template ranked the family with the struct's parameters
+    /// symbolic, and every instance keeps that member, as the pin does, even
+    /// where its own argument types would rank another best: the instance
+    /// calls its clone of the member (`method_clone_target`). An instance
+    /// whose substitution makes two members identical has no clone of the
+    /// family ([`collapses`]) and keeps the erased member, as does a
+    /// receiver with no clone of a family differing only in closed parameter
+    /// types, or a static on an inferred or contextual receiver, which no
+    /// instance retargets. A lone
     /// static with binders of its own names its per-call clone
     /// (`realize_static_instantiations`).
     fn realize_static_overloads(
@@ -3120,12 +3140,10 @@ impl Checker {
                 .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
                 .1;
             let Some(clone) = self.instance_method_clone(owner, method, &arguments) else {
-                if info
-                    .methods
-                    .get(method)
-                    .is_some_and(|family| !closed_differences(family))
-                {
-                    return Err("an instance has no clone of a static it must rank again");
+                if info.methods.get(method).is_some_and(|family| {
+                    !closed_differences(family) && !collapses(family, &info.decls, &arguments)
+                }) {
+                    return Err("an instance has no clone of a static's overload family");
                 }
                 continue;
             };
@@ -3152,27 +3170,6 @@ impl Checker {
                     })
                 })
                 .ok_or("a static's selected overload is not declared")?;
-            // Members typed by the struct's parameters may rank apart at the
-            // instance's types: the instance must rank the template's member
-            // best, whose contract the template recorded.
-            if let Some(family) = info
-                .methods
-                .get(method)
-                .filter(|family| !closed_differences(family))
-            {
-                let receiver = Ty::Struct(owner.clone(), arguments.clone());
-                let ranked = self.ranked_static_member(
-                    family,
-                    &receiver,
-                    substitution,
-                    facts,
-                    occurrence,
-                    occurrences,
-                )?;
-                if !std::ptr::eq(ranked, declared) {
-                    return Err("an instance ranks another member of a static's overload family");
-                }
-            }
             let target = self
                 .method_clone_target(owner, method, &arguments, declared, substitution)
                 .ok_or("a static's clone family has no overloaded member for the selection")?;
@@ -7174,9 +7171,14 @@ fn comparable(facts: &CheckedBodyFacts) -> CheckedBodyFacts {
 ///
 /// That is the single difference verification expects, and it is confined to
 /// the selection facts of calls the derived bundle resolves through an
-/// overload target. Every other table, and every other occurrence, must
-/// still agree.
-fn overload_rebinding_only(derived: &CheckedBodyFacts, inferred: &CheckedBodyFacts) -> bool {
+/// overload target, and the adjustments at those calls' `arguments`, which
+/// convert to the selected member's parameters. Every other table, and
+/// every other occurrence, must still agree.
+fn overload_rebinding_only(
+    derived: &CheckedBodyFacts,
+    inferred: &CheckedBodyFacts,
+    arguments: &[OccurrenceId],
+) -> bool {
     let selected: Vec<OccurrenceId> = derived.overload_targets.iter().map(|(id, _)| *id).collect();
     if selected.is_empty() {
         return false;
@@ -7192,6 +7194,9 @@ fn overload_rebinding_only(derived: &CheckedBodyFacts, inferred: &CheckedBodyFac
         facts
             .call_parameters
             .retain(|(id, _)| !selected.contains(id));
+        facts
+            .operation_adjustments
+            .retain(|(id, _)| !arguments.contains(id));
         facts
     };
     without_selection(derived) == without_selection(inferred)
@@ -8422,6 +8427,36 @@ fn context_free(expr: &Expr) -> bool {
 /// Whether an overload family's members differ only in closed parameter
 /// types, so that they rank alike under every instance: a parameter of the
 /// struct's parameter type is the same one in each of them.
+/// Whether an instance's struct arguments make two members of an
+/// overloaded `family` declare the same parameters, which leaves the
+/// instance no clone of the family: the elaborator mints none that would
+/// redeclare an overload.
+fn collapses(
+    family: &[super::MethodSig],
+    decls: &[ParamDecl],
+    arguments: &[mojito_types::types::TyArg],
+) -> bool {
+    let substitution = crate::checker::annotations::struct_subst(decls, arguments);
+    let shape = |member: &super::MethodSig| {
+        (
+            member.has_self,
+            member.self_convention,
+            member.positional_only,
+            member.keyword_only,
+            member.conventions.clone(),
+            member
+                .params
+                .iter()
+                .map(|ty| mojito_types::types::substitute(ty, &substitution))
+                .collect::<Vec<_>>(),
+        )
+    };
+    family.iter().enumerate().any(|(index, member)| {
+        let this = shape(member);
+        family[..index].iter().any(|earlier| shape(earlier) == this)
+    })
+}
+
 fn closed_differences(signatures: &[super::MethodSig]) -> bool {
     let arity = signatures.iter().map(|sig| sig.params.len()).max();
     (0..arity.unwrap_or(0)).all(|position| {
@@ -11996,8 +12031,8 @@ impl BodyShape<'_> {
     /// keyed by its own receiver (`realize_static_instantiations`).
     /// On an inferred or contextual receiver the members differ only in
     /// closed parameter types, so the call ranks the same member whatever
-    /// solves the struct's parameters; on a spelled receiver the instance
-    /// ranks them again at its own types (`realize_static_overloads`). The
+    /// solves the struct's parameters; on a spelled receiver every instance
+    /// keeps the template's member (`realize_static_overloads`). The
     /// struct's parameters are solved from the receiver's `[...]` type arguments, or from the
     /// arguments' types, and an instance solves them at the substituted
     /// types, as its struct application is substituted. Where the instance's
@@ -12064,10 +12099,10 @@ impl BodyShape<'_> {
                 receiver.then(|| info.methods.get(method)).flatten()
             })
             .is_some_and(|signatures| {
-                // A spelled receiver's instance ranks the family again at
-                // its own types (`realize_static_overloads`); any other
-                // ranks alike under every instance only where the members
-                // differ in closed parameter types.
+                // A spelled receiver's instance keeps the template's member
+                // (`realize_static_overloads`); any other ranks alike under
+                // every instance only where the members differ in closed
+                // parameter types.
                 if generic {
                     signatures.iter().all(derivable)
                         && (signatures.len() == 1

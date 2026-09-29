@@ -2,9 +2,8 @@
 # the body calls an overloaded static method of a generic struct on a spelled
 # receiver (`Pair[Self.T].pick(v)`) whose members differ in a parameter of
 # the struct's parameter type (`docs/notes/instantiation-from-template.md`,
-# class MethodBody, feature `static_calls`). Each instance ranks the family
-# again at its own argument types and calls its clone of the template's
-# member, which it must rank best.
+# class MethodBody, feature `static_calls`). Each instance calls its clone
+# of the template's member.
 
 
 @fieldwise_init

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic struct's overloaded static called on a spelled receiver
+  (`Pair[Self.T].pick(v)` beside `pick(v: Self.T)` and `pick(v: Float64)`)
+  now calls the member its template ranked at every instance, as the pin
+  does: at `T = Float64`, where both members take a `Float64`, it prints
+  `1` instead of `2`, and `Pair[Self.T].pick(1)` calls the `Float64` member
+  at `T = Int` too
+  (`assets/ok/template_method_collapsed_static_overload.mojo`).
 - A call may now leave out a parameter whose default is a construction or
   other expression, as the pin allows: `f()` beside `def f(s: String =
   String("a"))` prints `a`, and `x: Int = TWO + 1` runs `3`, where the VM
@@ -40,7 +47,7 @@ to evolve under the `0.x` compatibility rules.
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.103).
+  reference result is still rejected (roadmap 3.102).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -64,7 +71,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.97).
+  (roadmap 3.96).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The

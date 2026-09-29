@@ -508,65 +508,6 @@ impl Checker {
         Ok(())
     }
 
-    /// The member of a generic struct's overloaded static `family` the clone
-    /// check ranks at the instance's argument types, the receiver being the
-    /// instance's application of the struct (`Pair[Int].pick(v)`): the lone
-    /// member of the arguments' arity, or the one the ranking leaves best
-    /// ([`Self::best_members`]). A tie is the clone check's to judge.
-    pub(super) fn ranked_static_member<'a>(
-        &self,
-        family: &'a [MethodSig],
-        receiver: &Ty,
-        substitution: &TySubst,
-        facts: &CheckedBodyFacts,
-        occurrence: &Occurrence,
-        occurrences: &[Occurrence],
-    ) -> Result<&'a MethodSig, &'static str> {
-        let arguments = occurrence
-            .arguments
-            .iter()
-            .enumerate()
-            .map(|(index, syntax)| {
-                let value = OccurrenceId {
-                    syntax: *syntax,
-                    copy: occurrence.id.copy,
-                };
-                let ty = fact_at(&facts.expression_types, value)
-                    .cloned()
-                    .ok_or("a static's argument has no retained type")?;
-                let ranking = occurrences
-                    .iter()
-                    .find(|found| found.id == value)
-                    .map(|found| found.ranking)
-                    .unwrap_or_default();
-                Ok(DispatchedArgument {
-                    source: CheckedCallArgumentSource::Positional(index),
-                    value: Some(value),
-                    parameter_ty: ty.clone(),
-                    ty,
-                    convention: None,
-                    requires_place: false,
-                    ranked: ranking.context_free,
-                    owned: ranking.owned,
-                })
-            })
-            .collect::<Result<Vec<_>, &'static str>>()?;
-        let taking: Vec<&MethodSig> = family
-            .iter()
-            .filter(|member| !member.has_self && takes_arity(member, arguments.len()))
-            .collect();
-        if let [member] = taking.as_slice() {
-            return Ok(member);
-        }
-        match self
-            .best_members(taking, receiver, substitution, &arguments)?
-            .as_slice()
-        {
-            [member] => Ok(member),
-            _ => Err("the clone check's ranking leaves the instance's overloaded static tied"),
-        }
-    }
-
     /// The witness the instance's type selects for `method`, from the types
     /// alone.
     ///

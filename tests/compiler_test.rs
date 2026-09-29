@@ -4807,9 +4807,8 @@ fn template_overloaded_generic_static_call_derives() {
 
 #[test]
 fn template_overloaded_static_on_a_parameter_type_derives() {
-    // Members differing in a parameter of the struct's parameter type are
-    // ranked again at each instance's argument types; an instance that ranks
-    // the template's member best calls its own clone of it.
+    // Members differing in a parameter of the struct's parameter type: each
+    // instance calls its own clone of the member the template ranked.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_overloaded_parameter_typed_static.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
@@ -4825,28 +4824,21 @@ fn template_overloaded_static_on_a_parameter_type_derives() {
 }
 
 #[test]
-fn template_overloaded_static_tied_at_an_instance_keeps_the_clone_check() {
-    // At `T = Float64` both members take a `Float64`: the family collapses,
-    // so that instance is the clone check's to judge.
-    let source = "@fieldwise_init\nstruct Pair[T: Copyable & Deinitable](Copyable, Movable):\n    var a: Self.T\n\n    @staticmethod\n    def pick(v: Self.T) -> Int:\n        return 1\n\n    @staticmethod\n    def pick(v: Float64) -> Int:\n        return 2\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def picked(self) -> Int:\n        return Pair[Self.T].pick(self.item)\n\n\ndef main():\n    print(Shelf[Int](3).picked(), Shelf[Float64](2.5).picked())\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
-    assert!(
-        stats
-            .derived
-            .iter()
-            .any(|name| name.starts_with("Shelf.picked$") && name.contains("Int")),
-        "the `Int` instance derives: {:?}",
-        stats.refused
-    );
-    assert!(
-        stats
-            .refused
-            .iter()
-            .any(|(name, _)| name.starts_with("Shelf.picked$") && name.contains("Float64")),
-        "the tied instance keeps the clone check: {:?}",
-        stats.refused
+fn template_overloaded_static_keeps_the_template_member_at_every_instance() {
+    // At `T = Float64` both members take a `Float64`: the instance has no
+    // clone of the family and calls the erased member the template ranked.
+    // At `T = Int` the instance's own types would rank the other member best.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_collapsed_static_overload.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "1 1\n1 2 2\n2\n",
+        &[
+            ("Shelf.picked", 3),
+            ("Shelf.given", 3),
+            ("Shelf.literal", 3),
+        ],
     );
 }
 
