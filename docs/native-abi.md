@@ -163,7 +163,10 @@ specialized name). Rules:
   (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the
   frame-local environment record of the creating `MakeClosure`, or is null
   for a bare function value or empty-capture closure. Generic callable
-  values (`Ty::GenericFunc`) have no representation and reject.
+  values (`Ty::GenericFunc`) have no representation: monomorphization turns
+  each call through one into a direct call to its instance, passing a
+  by-reference environment's places as the lifted body's leading reference
+  arguments. A by-value environment has nowhere to live and rejects.
 - Types with no defined native representation (unspecialized packs and
   unmaterialized literal types) reject with a contextual diagnostic —
   backends never guess.

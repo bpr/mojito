@@ -19,8 +19,8 @@ use unify::*;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::{
-    Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
-    MirProgram, MirStructDeclaration, Reg,
+    Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, Reg,
 };
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
@@ -105,6 +105,9 @@ struct Specializer<'a> {
     output_structs: Vec<MirStructDeclaration>,
     constant_values: HashMap<u32, CtValue>,
     callable_targets: HashMap<u32, (String, bool)>,
+    /// The environment of each lifted body closed over in the function being
+    /// specialized (see [`equiv::function_closure_captures`]).
+    closure_captures: HashMap<String, Vec<MirClosureCapture>>,
     /// The bindings of the instance being specialized: an erased body
     /// forwarding its own binder as a callee's type argument
     /// (`hash[Self.H](key)`), or building a value argument from its own

@@ -75,14 +75,22 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
 /// when that constant has a `CtValue` form — the resolver for value-parameter
 /// arguments spelled as materialized literal registers.
 pub(super) fn const_reg_value(function: &MirFunction, reg: Reg) -> Option<CtValue> {
-    const_reg_value_inner(function, reg, &mut HashSet::new())
+    register_constant(
+        &nested_instructions(&function.blocks),
+        reg,
+        &mut HashSet::new(),
+    )
 }
 
 pub(super) fn function_constant_values(function: &MirFunction) -> HashMap<u32, CtValue> {
+    let instructions = nested_instructions(&function.blocks);
     function
         .reg_types
         .keys()
-        .filter_map(|reg| const_reg_value(function, Reg(*reg)).map(|value| (*reg, value)))
+        .filter_map(|reg| {
+            register_constant(&instructions, Reg(*reg), &mut HashSet::new())
+                .map(|value| (*reg, value))
+        })
         .collect()
 }
 
@@ -160,37 +168,21 @@ pub(super) fn function_callable_targets(function: &MirFunction) -> HashMap<u32, 
     registers
 }
 
-pub(super) fn const_reg_value_inner(
+/// The environment each lifted body is closed over in this function, keyed
+/// by the lifted body's name: a direct call devirtualized from one of its
+/// indirect calls passes these places as the body's leading parameters.
+pub(super) fn function_closure_captures(
     function: &MirFunction,
-    reg: Reg,
-    visiting: &mut HashSet<u32>,
-) -> Option<CtValue> {
-    if !visiting.insert(reg.0) {
-        return None;
-    }
-    for block in &function.blocks {
-        for instr in &block.instrs {
-            match instr {
-                MirInstr::Const { dest, k } if *dest == reg => {
-                    return match k {
-                        Const::Int(value) => Some(CtValue::Int(*value)),
-                        Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
-                        Const::Bool(value) => Some(CtValue::Bool(*value)),
-                        Const::Dtype(value) => Some(CtValue::Dtype(*value)),
-                        Const::Function(function) => Some(CtValue::Str(function.clone())),
-                        // A reified type argument names its struct as a string.
-                        Const::Str(text) => Some(CtValue::Str(text.clone())),
-                        _ => None,
-                    };
-                }
-                MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
-                    return const_reg_value_inner(function, *value, visiting);
-                }
-                _ => {}
-            }
-        }
-    }
-    None
+) -> HashMap<String, Vec<MirClosureCapture>> {
+    nested_instructions(&function.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeClosure {
+                function, captures, ..
+            } if !captures.is_empty() => Some((function.clone(), captures.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) fn dunder_method_call(
@@ -430,4 +422,60 @@ pub(super) fn reg_ty<'a>(
         function: Some(owner.to_string()),
         construct: format!("register r{} lacks a concrete type", reg.0),
     })
+}
+
+/// Every instruction of `blocks` in order, descending into `try` regions.
+fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+    let mut instructions = Vec::new();
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        instructions.push(instruction);
+        if let MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            finalbody,
+            ..
+        } = instruction
+        {
+            for blocks in [Some(body), handler.as_ref().map(|(_, blocks)| blocks)]
+                .into_iter()
+                .chain([orelse.as_ref(), finalbody.as_ref()])
+                .flatten()
+            {
+                instructions.extend(nested_instructions(blocks));
+            }
+        }
+    }
+    instructions
+}
+
+/// The compile-time value `reg` holds when `instructions` define it by a
+/// constant, directly or through a literal materialization.
+fn register_constant(
+    instructions: &[&MirInstr],
+    reg: Reg,
+    visiting: &mut HashSet<u32>,
+) -> Option<CtValue> {
+    if !visiting.insert(reg.0) {
+        return None;
+    }
+    instructions
+        .iter()
+        .find_map(|instr| match instr {
+            MirInstr::Const { dest, k } if *dest == reg => Some(match k {
+                Const::Int(value) => Some(CtValue::Int(*value)),
+                Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
+                Const::Bool(value) => Some(CtValue::Bool(*value)),
+                Const::Dtype(value) => Some(CtValue::Dtype(*value)),
+                Const::Function(function) => Some(CtValue::Str(function.clone())),
+                // A reified type argument names its struct as a string.
+                Const::Str(text) => Some(CtValue::Str(text.clone())),
+                _ => None,
+            }),
+            MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
+                Some(register_constant(instructions, *value, visiting))
+            }
+            _ => None,
+        })
+        .flatten()
 }

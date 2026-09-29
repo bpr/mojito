@@ -41,6 +41,7 @@ impl<'a> Specializer<'a> {
             output_structs: Vec::new(),
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
+            closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
             speculative: HashSet::new(),
         }
@@ -343,6 +344,7 @@ impl<'a> Specializer<'a> {
             .collect();
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
+        self.closure_captures = function_closure_captures(&function);
         self.enclosing.clone_from(bindings);
         self.constant_values.extend(
             self.callable_targets
@@ -471,7 +473,10 @@ impl<'a> Specializer<'a> {
         blocks: &mut [MirBlock],
     ) -> Result<(), MonoError> {
         for block in blocks {
-            for instruction in &mut block.instrs {
+            // Argument loads a devirtualized capturing call needs, spliced in
+            // ahead of the call once the walk over this block is done.
+            let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
+            for (index, instruction) in block.instrs.iter_mut().enumerate() {
                 if let MirInstr::Try {
                     body,
                     handler,
@@ -914,11 +919,22 @@ impl<'a> Specializer<'a> {
                             self.callable_targets.get(&callee.0).cloned()
                             && (captures_are_empty || dependent_callable)
                         {
+                            // The lifted body takes its environment as leading
+                            // reference parameters: the direct call passes the
+                            // captured places themselves.
                             if !captures_are_empty {
-                                return Err(self.error(
-                                    Some(owner),
-                                    format!("generic retained callable `{target}` has captures"),
-                                ));
+                                let captured = self.capture_arguments(owner, function, &target)?;
+                                arg_places.resize(args.len(), None);
+                                args.splice(0..0, captured.iter().map(|(reg, _)| *reg));
+                                arg_places.splice(
+                                    0..0,
+                                    captured.iter().map(|(_, place)| Some(place.clone())),
+                                );
+                                let loads = captured
+                                    .into_iter()
+                                    .map(|(dest, place)| MirInstr::LoadPlace { dest, place })
+                                    .collect();
+                                preludes.push((index, loads));
                             }
                             let (target, bindings, arguments) = self.infer_call(
                                 owner,
@@ -1143,6 +1159,9 @@ impl<'a> Specializer<'a> {
                     _ => {}
                 }
             }
+            for (index, prelude) in preludes.into_iter().rev() {
+                block.instrs.splice(index..index, prelude);
+            }
         }
         Ok(())
     }
@@ -1350,6 +1369,48 @@ impl<'a> Specializer<'a> {
         });
         let first = (*packs.next()?).to_string();
         packs.next().is_none().then_some(first)
+    }
+
+    /// The captured places a direct call to the lifted body `target` passes
+    /// ahead of its source arguments, each paired with a fresh register the
+    /// call loads it into. Only by-reference environments are the caller's
+    /// storage; a copied or moved capture is the closure's own snapshot,
+    /// which a direct call cannot recover.
+    fn capture_arguments(
+        &self,
+        owner: &str,
+        function: &mut MirFunction,
+        target: &str,
+    ) -> Result<Vec<(Reg, MirPlace)>, MonoError> {
+        let captures = self
+            .closure_captures
+            .get(target)
+            .map_or(&[][..], Vec::as_slice);
+        if captures.is_empty()
+            || captures
+                .iter()
+                .any(|capture| !matches!(capture.mode, MirCaptureMode::Reference))
+        {
+            return Err(self.error(
+                Some(owner),
+                format!("generic retained callable `{target}` captures by value"),
+            ));
+        }
+        captures
+            .iter()
+            .map(|capture| {
+                let ty = capture.place.ty.clone().ok_or_else(|| {
+                    self.error(
+                        Some(owner),
+                        format!("capture of generic retained callable `{target}` is untyped"),
+                    )
+                })?;
+                let reg = Reg(function.n_regs);
+                function.n_regs += 1;
+                function.reg_types.insert(reg.0, ty);
+                Ok((reg, capture.place.clone()))
+            })
+            .collect()
     }
 
     #[allow(

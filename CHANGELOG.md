@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic nested `def` that captures now compiles natively, as it runs on
+  the VM and the pin: `inner[10]()` reading its enclosing function's value
+  parameter, a captured local, or a `mut` capture used to stop with
+  "generic retained callable `outer$inner` has captures". A generic nested
+  `def` called inside a `try` region no longer fails natively with "value
+  parameter `k` is not compile-time constant"
+  (`assets/ok/generic_nested_def_captures.mojo`).
 - A `def` value parameter now infers from an argument's type, as the pin's
   does: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
   prints `4` on both backends, where it used to stop with "required

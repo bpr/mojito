@@ -148,6 +148,7 @@ assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
+assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
