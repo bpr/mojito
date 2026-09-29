@@ -2307,22 +2307,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A `def` does not infer a value parameter from an argument's
-  type**
-
-  Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
-  checks, then fails MIR verification with "required compile-time value
-  parameter 'n' is missing"; the pin infers `n = 4` and runs it.
-  - Supplying it, `size[4](Counter[4](1))`, runs on both backends.
-  - The binder solved from the argument's type does not reach the call's
-    parameter arguments in MIR.
-  - `conformance/probes/value_parameter_inferred_from_argument_type.mojo`
-    pins it.
-  - Found while closing the symbolic instance construction (2026-09-28).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **3.91 A generic nested `def` that captures does not compile
+- [ ] **3.90 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2340,7 +2325,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.92 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.91 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2359,7 +2344,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.92 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2377,7 +2362,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.93 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2394,7 +2379,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.95 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.94 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2410,7 +2395,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.96 A write through a reference skips the overwritten value's
+- [ ] **3.95 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2428,7 +2413,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.96 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2449,7 +2434,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.98 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.97 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2469,7 +2454,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A generic `def` reads a module constant where a local shadows
+- [ ] **3.98 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2483,7 +2468,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A trait requirement's default reading more than module
+- [ ] **3.99 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2498,7 +2483,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A default naming a binder in scope fails at run time**
+- [ ] **3.100 A default naming a binder in scope fails at run time**
 
   Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]`, checks but stops on the VM with "non-constant default
@@ -2517,7 +2502,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A list literal default for a `List` parameter is an `Array`**
+- [ ] **3.101 A list literal default for a `List` parameter is an `Array`**
 
   Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
   mismatch for default value of 'xs': expected List[Int], found Array[Int,
@@ -2526,6 +2511,23 @@ last.
   - A default is inferred without the parameter's type as context, so an
     uncontextualized display types as `Array`.
   - Found while running constructed defaults (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.102 A static method cannot read its struct's value parameter**
+
+  Problem: `return Self.k` in a `@staticmethod` of `struct W[k: Int]` fails
+  at run time with "field access on non-struct None", where the pin prints
+  `5` for `W[5].st()`.
+  - The erased static body reads `Self.k` as a field of a `self` it does
+    not have (`receiver_value_parameter_read` in `mojito-mir`).
+  - A call there inferring a value parameter from `Counter[Self.k]` fails
+    MIR verification with "required compile-time value parameter 'n' is
+    missing" for the same reason.
+  - `conformance/probes/static_method_reads_struct_value_parameter.mojo`
+    pins both.
+  - Found while inferring value parameters from argument types
+    (2026-09-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

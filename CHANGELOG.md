@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` value parameter now infers from an argument's type, as the pin's
+  does: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
+  prints `4` on both backends, where it used to stop with "required
+  compile-time value parameter 'n' is missing". An infer-only parameter
+  (`def size[n: Int, //](c: Counter[n])`) used to read as `None`
+  (`assets/ok/value_parameter_inferred_from_argument_type.mojo`).
 - `String` now conforms to `Defaultable`, as the pin's does: `make[String]()`
   over a `T: Defaultable` bound and `Tuple[String, Int]()` run, where they
   used to fail the bound or stop with "no constructor overload matches the

@@ -297,6 +297,34 @@ pub struct GenericInstantiation {
     /// only in where the collector sits or in its pack's bounds.
     pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
     pub arguments: Vec<mojito_types::types::TyArg>,
+    /// The value parameters the call's brackets leave to inference
+    /// (`size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`), as
+    /// declaration indices into [`Self::arguments`] with their names. A call
+    /// that stays on the erased declaration passes each as a named
+    /// compile-time argument ([`SemanticAdjustment::InferredValueArguments`]).
+    pub inferred_values: Vec<(usize, String)>,
+}
+
+impl GenericInstantiation {
+    /// The inferred value parameters with their checked arguments, or `None`
+    /// when there are none. A slot filled later (`CtValue::Deferred`) is no
+    /// argument the call passes and is left out.
+    pub fn inferred_value_arguments(&self) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
+        use mojito_types::ct::CtValue;
+        let arguments: Vec<_> = self
+            .inferred_values
+            .iter()
+            .filter_map(|(index, name)| match self.arguments.get(*index) {
+                Some(mojito_types::types::TyArg::Val(
+                    CtValue::Deferred(_) | CtValue::Marker(_),
+                ))
+                | None => None,
+                Some(mojito_types::types::TyArg::Val(value)) => Some((name.clone(), value.clone())),
+                Some(_) => None,
+            })
+            .collect();
+        (!arguments.is_empty()).then_some(arguments)
+    }
 }
 
 /// One resolved application of a struct method that declares its own
@@ -574,6 +602,11 @@ pub enum SemanticAdjustment {
     /// source position for declaration alignment but must not evaluate it into
     /// a runtime register (notably an explicitly supplied `Origin`).
     EraseCompileTimeArgument,
+    /// The value parameters a call to an erased generic `def` inferred from
+    /// its arguments' types (`size(Counter[4](1))` binds `n = 4`), by name,
+    /// with their checked values: MIR passes each as a named compile-time
+    /// argument, exactly as if the brackets had spelled it.
+    InferredValueArguments(Vec<(String, mojito_types::ct::CtValue)>),
     /// A consuming method receiver is a source place, but the selected type is
     /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
     /// tombstoning the caller's place. This coexists with parameterized-method
@@ -1130,6 +1163,7 @@ impl DiscoveryResult {
             &self.read_temporary_arguments,
             &self.implicitly_copied_consuming_receivers,
             &self.truthiness_conditions,
+            &self.generic_instantiations,
             Some(visit),
         );
     }
@@ -1522,6 +1556,7 @@ impl CheckedProgram {
             read_temporary_arguments,
             implicitly_copied_consuming_receivers,
             truthiness_conditions,
+            &generic_instantiations,
             None,
         );
         drop(expressions_span);
@@ -1706,6 +1741,7 @@ fn build_checked_expressions(
     read_temporary_arguments: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
+    generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
     scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a, 's> {
@@ -1744,6 +1780,7 @@ fn build_checked_expressions(
         read_temporary_arguments: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
+        generic_instantiations: &'a HashMap<SourceSpan, GenericInstantiation>,
     }
     impl Builder<'_, '_> {
         #[allow(
@@ -2049,6 +2086,13 @@ fn build_checked_expressions(
                     param_decls: param_decls.clone(),
                 });
             }
+            if let Some(arguments) = self
+                .generic_instantiations
+                .get(&span)
+                .and_then(GenericInstantiation::inferred_value_arguments)
+            {
+                adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
+            }
             if let Some(elements) = self.tuple_unpack_plans.get(&span) {
                 adjustments.push(SemanticAdjustment::TupleUnpack {
                     elements: elements.clone(),
@@ -2315,6 +2359,7 @@ fn build_checked_expressions(
         read_temporary_arguments,
         implicitly_copied_consuming_receivers,
         truthiness_conditions,
+        generic_instantiations,
     };
     builder.block(statements);
     (builder.nodes, builder.index)

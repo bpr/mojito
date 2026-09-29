@@ -921,6 +921,7 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments: arguments.clone(),
+                inferred_values: Vec::new(),
             },
         );
         Ok(Some(Ty::Struct(family.to_string(), arguments)))

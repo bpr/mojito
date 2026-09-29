@@ -1817,6 +1817,7 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments: tyargs.to_vec(),
+                inferred_values: Vec::new(),
             },
         );
         let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {

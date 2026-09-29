@@ -2091,6 +2091,151 @@ impl Flatten<'_> {
         registers
     }
 
+    /// The value parameters the checker inferred for a call to an erased
+    /// generic `def` (`size(Counter[4](1))` binding `n = 4`), each as a named
+    /// argument, just as brackets spelling it would pass it: a closed scalar
+    /// as a constant, an `Int` expression over enclosing value binders
+    /// (`size(c)` over `c: Counter[m]`, `size(Counter[m + 1](1))`) as its
+    /// evaluation. Any other value has no runtime form here and is left for
+    /// verification to report missing.
+    fn inferred_param_arg_regs(&mut self, call: &Expr) -> Vec<MirParamArg> {
+        let Some(arguments) = self
+            .checked_adjustments(call)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InferredValueArguments(arguments) => {
+                    Some(arguments)
+                }
+                _ => None,
+            })
+        else {
+            return Vec::new();
+        };
+        arguments
+            .into_iter()
+            .filter_map(|(name, value)| {
+                let k = match value {
+                    mojito_types::ct::CtValue::Int(value) => Const::Int(value),
+                    mojito_types::ct::CtValue::IntLiteral(value) => Const::IntLiteral(value),
+                    mojito_types::ct::CtValue::Bool(value) => Const::Bool(value),
+                    mojito_types::ct::CtValue::Dtype(value) => Const::Dtype(value),
+                    mojito_types::ct::CtValue::Expr(expr) => {
+                        let value = self.inferred_value_register(&expr, &span(call))?;
+                        return Some(MirParamArg {
+                            name: Some(name),
+                            value: Some(value),
+                            binder: None,
+                            expr: Some(expr),
+                        });
+                    }
+                    _ => return None,
+                };
+                Some(MirParamArg {
+                    name: Some(name),
+                    value: Some(self.constant(call, k)),
+                    binder: None,
+                    expr: None,
+                })
+            })
+            .collect()
+    }
+
+    /// The evaluation of an `Int` parameter expression over the enclosing
+    /// value binders: its constants, binder reads, and the `+`, `*`, `-`, and
+    /// negation it is built from. `None` for any other shape.
+    fn inferred_value_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
+        if *expr.meta() != mojito_types::param_expr::MetaTy::value(Ty::Int) {
+            return None;
+        }
+        let (op, operands) = match expr.kind() {
+            mojito_types::param_expr::ParamKind::Constant(value) => {
+                let value = match value {
+                    mojito_types::ct::CtValue::Int(value) => *value,
+                    mojito_types::ct::CtValue::IntLiteral(value) => value.to_i64()?,
+                    _ => return None,
+                };
+                let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::Int(value),
+                });
+                return Some(dest);
+            }
+            mojito_types::param_expr::ParamKind::DeclRef(_) => {
+                return self.enclosing_value_binder_read(expr, site);
+            }
+            mojito_types::param_expr::ParamKind::Op { op, operands } => (op, operands),
+            _ => return None,
+        };
+        let infix = match op {
+            mojito_types::param_expr::ParamOp::Add => InfixOp::Add,
+            mojito_types::param_expr::ParamOp::Mul => InfixOp::Mul,
+            mojito_types::param_expr::ParamOp::Sub => InfixOp::Sub,
+            mojito_types::param_expr::ParamOp::Neg => {
+                let [operand] = operands.as_slice() else {
+                    return None;
+                };
+                let a = self.inferred_value_register(operand, site)?;
+                let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+                self.emit(MirInstr::UnOp {
+                    op: PrefixOp::Neg,
+                    dest,
+                    a,
+                });
+                return Some(dest);
+            }
+            _ => return None,
+        };
+        let (first, rest) = operands.split_first()?;
+        let mut accumulated = self.inferred_value_register(first, site)?;
+        for operand in rest {
+            let b = self.inferred_value_register(operand, site)?;
+            let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+            self.emit(MirInstr::BinOp {
+                op: infix,
+                dest,
+                a: accumulated,
+                b,
+                resolved: None,
+            });
+            accumulated = dest;
+        }
+        Some(accumulated)
+    }
+
+    /// A read of the enclosing value binder `expr` names, when it is exactly
+    /// such a reference: the receiver's reified parameter for the enclosing
+    /// struct's own (`Self.k`), otherwise the function's local of its name.
+    fn enclosing_value_binder_read(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
+        let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
+            return None;
+        };
+        let values = &self.enclosing_binders.values;
+        let ty = values
+            .iter()
+            .rfind(|(binder, _)| binder == reference)
+            .map(|(_, ty)| ty.clone())?;
+        let struct_binder = values
+            .iter()
+            .find(|(binder, _)| binder.name == reference.name)
+            .is_some_and(|(binder, _)| binder == reference)
+            && self
+                .receiver_value_parameters
+                .iter()
+                .any(|(name, _)| name.as_str() == reference.name.as_ref());
+        if struct_binder {
+            return self.receiver_value_parameter_read(&reference.name, site);
+        }
+        let var = self.var(&reference.name);
+        let dest = self.fresh_typed(site.clone(), Some(var), ty);
+        self.emit(MirInstr::UseVar {
+            dest,
+            var,
+            mode: UseMode::Copy,
+        });
+        Some(dest)
+    }
+
     /// Intern a fresh synthetic variable (a `$`-prefixed name never produced by
     /// the parser), used to carry a short-circuit result across CFG blocks.
     fn fresh_var(&mut self) -> VarId {

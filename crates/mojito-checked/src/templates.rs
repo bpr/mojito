@@ -342,7 +342,8 @@ pub fn derive_adjustment(
         | SemanticAdjustment::UninitStorageDestroy { .. }
         | SemanticAdjustment::SliceDescriptors { .. }
         | SemanticAdjustment::InteriorReference { .. }
-        | SemanticAdjustment::InvalidateInteriors { .. } => None,
+        | SemanticAdjustment::InvalidateInteriors { .. }
+        | SemanticAdjustment::InferredValueArguments(..) => None,
     }
 }
 

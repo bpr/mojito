@@ -581,7 +581,8 @@ impl Flatten<'_> {
                 // evaluated before ordinary call arguments: a
                 // **value** parameter is a comptime `Int` expression flattened to a
                 // register; a **type** parameter is erased (`None`).
-                let param_arg_regs = self.param_arg_regs(param_args, &span(e));
+                let mut param_arg_regs = self.param_arg_regs(param_args, &span(e));
+                param_arg_regs.extend(self.inferred_param_arg_regs(e));
                 // Retain only checker-selected `mut`/`ref` caller places. A
                 // syntactically simple copied argument remains eligible for
                 // ASAP destruction after its value has been evaluated.

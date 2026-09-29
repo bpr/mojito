@@ -3310,6 +3310,7 @@ impl Checker {
                     .collect(),
                 variadic: mojito_symbol::symbol::VariadicKey::from_callable(callee),
                 arguments,
+                inferred_values: Vec::new(),
             };
             set_fact(&mut facts.call_parameters, id, call_parameter_facts(callee));
             note_realized_callee(facts, name, name);
