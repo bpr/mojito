@@ -598,6 +598,12 @@ impl Flatten<'_> {
                 }
                 p
             }
+            // A call returning a mutable reference: its result is the place.
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                if let Some(place) = self.materialize_reference_result_place(e) =>
+            {
+                place
+            }
             ExprKind::TypeApply { name, .. } => {
                 let index = self
                     .checked_adjustments(e)

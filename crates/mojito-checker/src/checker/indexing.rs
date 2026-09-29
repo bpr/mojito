@@ -493,12 +493,49 @@ impl Checker {
                 }
                 Ok(alternative)
             }
-            ExprKind::MethodCall { method, .. } => Err(TypeError::InvalidAssignTarget(format!(
-                "the temporary result of method call '{method}()'"
-            ))),
-            ExprKind::Call { name, .. } => Err(TypeError::InvalidAssignTarget(format!(
-                "the temporary result of call '{name}()'"
-            ))),
+            // A call returning a mutable reference (`bump(k) = 9`,
+            // `bump(k) += 1`): its result handle is the place, written
+            // through and never read out as a value.
+            ExprKind::MethodCall { method: name, .. } | ExprKind::Call { name, .. } => {
+                let found = self.infer(place)?;
+                let kind = if matches!(place.kind, ExprKind::MethodCall { .. }) {
+                    "method call"
+                } else {
+                    "call"
+                };
+                let callee = format!("{kind} '{name}()'");
+                let span = place.source_span();
+                let reference = match &found {
+                    Ty::Ref(reference) => Some(reference.clone()),
+                    _ => self
+                        .selected_calls
+                        .borrow()
+                        .get(&span)
+                        .and_then(|contract| contract.reference_result.clone())
+                        .or_else(|| match self.operation_adjustments.borrow().get(&span) {
+                            Some(
+                                mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                                    reference,
+                                },
+                            ) => Some(reference.clone()),
+                            _ => None,
+                        }),
+                };
+                match reference {
+                    Some(reference)
+                        if reference.mutability != mojito_types::origin::Mutability::Immutable =>
+                    {
+                        self.reference_value_uses.borrow_mut().insert(span, true);
+                        Ok(*reference.referent)
+                    }
+                    Some(_) => Err(TypeError::ImmutableBinding(format!(
+                        "immutable reference returned by {callee}"
+                    ))),
+                    None => Err(TypeError::InvalidAssignTarget(format!(
+                        "the temporary result of {callee}"
+                    ))),
+                }
+            }
             other => Err(TypeError::InvalidAssignTarget(format!("{other:?}"))),
         }
     }

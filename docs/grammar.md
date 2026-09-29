@@ -125,9 +125,10 @@ assignment: assign_target '=' expression
 unpack_assignment: target (',' target)* ','? '=' expression   # a top-level comma ⇒ tuple unpacking
 augmented_assignment: assign_target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
-assign_target: target | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
+assign_target: target | call | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
 target: NAME | place
-place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable)
+place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable or a call)
+call: primary '(' [args] ')'                       # a function or method call; checker: returns a mutable reference
 comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression
 return_stmt: 'return' [expression]
 raise_stmt: 'raise' expression
@@ -143,7 +144,11 @@ the declared type — a checker rule, not expressible in the grammar). The targe
 checker requires the place's root to be a mutable location: any variable, or
 `self` inside a `mut self` method (writing a field of a read-only `self` is an
 error). A place write mutates the root variable's binding **in place** (value
-semantics: only that binding changes).
+semantics: only that binding changes). A **call** — a function or method call,
+or a place chain rooted at one — is a target only when it returns a mutable
+reference (`bump(k) = 9`, `p.x_ref() += 1`, `pick(p).y = 4`): the write goes
+through the returned reference. A call returning a value or an immutable
+reference is a checker error, as in Mojo.
 
 `x = e` on an **undeclared** name is a **checker error** (`AssignToUndeclared`):
 Mojito requires `var` to introduce a new binding, matching Mojo's move to a single

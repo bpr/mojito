@@ -1825,8 +1825,32 @@ fn parses_field_and_nested_place_assignment() {
 
 #[test]
 fn rejects_non_place_assignment_target() {
-    let mut parser = Parser::new(Lexer::new("f() = 1\n"));
+    let mut parser = Parser::new(Lexer::new("a + b = 1\n"));
     assert!(parser.parse_program().is_err());
+}
+
+#[test]
+fn parses_call_as_assignment_target() {
+    assert!(matches!(
+        &parse("f(x) = 1\n")[0].kind,
+        StmtKind::SetPlace {
+            place: Expr {
+                kind: ExprKind::Call { .. },
+                ..
+            },
+            ..
+        }
+    ));
+    assert!(matches!(
+        &parse("p.get() += 1\n")[0].kind,
+        StmtKind::AugAssign {
+            place: Expr {
+                kind: ExprKind::MethodCall { .. },
+                ..
+            },
+            ..
+        }
+    ));
 }
 
 // --- Tuple unpacking and declaration destructuring ---
@@ -1954,7 +1978,7 @@ fn parses_augmented_assignment() {
 
 #[test]
 fn rejects_augmented_assignment_to_non_place() {
-    let mut parser = Parser::new(Lexer::new("f() += 1\n"));
+    let mut parser = Parser::new(Lexer::new("a + b += 1\n"));
     assert!(parser.parse_program().is_err());
 }
 
@@ -1985,8 +2009,6 @@ fn parses_rebind_as_assignment_target() {
             ..
         } if name == "rebind"
     ));
-    let mut parser = Parser::new(Lexer::new("f() = 1\n"));
-    assert!(parser.parse_program().is_err());
 }
 
 // --- Walrus / named expression ---

@@ -356,7 +356,8 @@ impl Checker {
     }
 
     /// Select the in-place dunder for a nominal-subscript element
-    /// (`c[i] += v` → `element.__iadd__(v)`). The receiver is a fresh mutable
+    /// (`c[i] += v` → `element.__iadd__(v)`) or a reference-returning call's
+    /// referent (`p.name_ref() += s`). The receiver is a fresh mutable
     /// temporary typed as the element, declared in a throwaway scope, so
     /// selection reuses `select_inplace_operator` without re-inferring the
     /// subscript `place` — which would disturb the getter/setter adjustment state
@@ -1125,13 +1126,36 @@ impl Checker {
                 let inplace_operand = matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
                     || self.bound_inplace_operator(&target, *op);
                 if !nominal_subscript && inplace_operand {
-                    let contract = self.select_inplace_operator(
-                        &place.source_span(),
-                        place,
-                        *op,
-                        value,
-                        &target,
-                    )?;
+                    // A module `def`'s reference result has no selected
+                    // contract to carry it past the in-place record at its
+                    // span.
+                    if let ExprKind::Call { name, .. } = &place.kind
+                        && !self
+                            .selected_calls
+                            .borrow()
+                            .contains_key(&place.source_span())
+                    {
+                        return Err(TypeError::Unsupported(format!(
+                            "an in-place operator on the reference returned by '{name}()'; \
+                             bind it with 'ref' first"
+                        )));
+                    }
+                    // A reference-returning call's facts share the place's
+                    // span, so its dunder is selected on a temporary receiver.
+                    let contract = if matches!(
+                        place.kind,
+                        ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                    ) {
+                        self.select_subscript_inplace_operator(place, *op, value, &target)?
+                    } else {
+                        self.select_inplace_operator(
+                            &place.source_span(),
+                            place,
+                            *op,
+                            value,
+                            &target,
+                        )?
+                    };
                     self.operation_adjustments.borrow_mut().insert(
                         place.source_span(),
                         mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(Box::new(

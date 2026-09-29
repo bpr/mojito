@@ -466,6 +466,7 @@ assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_result_field_value_copy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reference_call_assignment_target.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape

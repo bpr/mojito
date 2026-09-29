@@ -183,12 +183,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     | ExprKind::Slice { .. }
                     | ExprKind::MultiIndex { .. }
                     | ExprKind::TypeApply { .. }
-            ) || matches!(&expr.kind, ExprKind::Call { name, .. } if name == "rebind")
-            {
-                // A field/index chain, or `rebind[Dest](place)`, which the
-                // checker erases to its operand — the checker verifies its
-                // root is a mutable variable (or `mut self`) and that the write
-                // is valid.
+                    | ExprKind::Call { .. }
+                    | ExprKind::MethodCall { .. }
+            ) {
+                // A field/index chain, `rebind[Dest](place)`, which the
+                // checker erases to its operand, or any other call, which the
+                // checker requires to return a mutable reference — the checker
+                // verifies the root is writable and that the write is valid.
                 StmtKind::SetPlace { place: expr, value }
             } else {
                 return Err(ParseError::UnexpectedToken(
@@ -201,7 +202,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
 
         // Augmented assignment `target OP= value` (target is a NAME, a place, or
-        // `rebind[Dest](place)`, which the checker erases to its operand).
+        // a call: `rebind[Dest](place)`, which the checker erases to its
+        // operand, or one the checker requires to return a mutable reference).
         if let Some(op) = self.peek_token()?.and_then(aug_assign_op) {
             self.next_token()?; // consume the `OP=` token
             if !matches!(
@@ -212,8 +214,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     | ExprKind::Slice { .. }
                     | ExprKind::MultiIndex { .. }
                     | ExprKind::TypeApply { .. }
-            ) && !matches!(&expr.kind, ExprKind::Call { name, .. } if name == "rebind")
-            {
+                    | ExprKind::Call { .. }
+                    | ExprKind::MethodCall { .. }
+            ) {
                 return Err(ParseError::UnexpectedToken(
                     Token::Assign,
                     format!("invalid augmented-assignment target: {:?}", expr.kind),

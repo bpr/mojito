@@ -466,6 +466,7 @@ assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitize
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized
 assets/ok/ref_result_field_value_copy.mojo	main	exe-differential	sanitized
+assets/ok/reference_call_assignment_target.mojo	main	exe-differential	sanitized
 assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized

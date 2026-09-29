@@ -110,9 +110,9 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
   - No recipe derives an elaborated element construction. Its facts differ
     by element kind: `Int()`, a SIMD scalar such as `UInt64`, a struct such
     as `Optional[Int]` with its overload target, a nested `Tuple` instance.
-  - A SIMD element needs its nullary construction (3.99), and a `String`
-    element needs `String` to be `Defaultable` (3.100).
-  - Depends on 3.99.
+  - A SIMD element needs its nullary construction (3.98), and a `String`
+    element needs `String` to be `Defaultable` (3.99).
+  - Depends on 3.98.
   - Model: Fable, Planned.
 
 - [ ] **1.5 `repr` in a runtime `def` keeps the clone check**
@@ -141,14 +141,14 @@ Pliron experiment rather than move the check order sit last, 1.14 to 1.17.
     the test `template_nested_def_constructed_default_keeps_the_clone_check`
     pins.
   - Only a call that passes the argument runs today: the VM cannot run a
-    constructed default at all (3.94).
+    constructed default at all (3.93).
   - Found while literal defaults, typed `raises`, and `out` parameters
     joined nested `def`s in the method grammar (2026-09-28); no bundled body
     is known to need it.
   - A module `def` with such a default refuses the same way: the function
     class admits only a literal or negated numeric default
     (`template_facts.rs:literal_default`, 2026-09-28).
-  - Depends on 3.94: until a constructed default runs, no fixture can take
+  - Depends on 3.93: until a constructed default runs, no fixture can take
     it.
   - Model: Opus, Not Planned.
 
@@ -2271,21 +2271,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A reference-returning call cannot be assigned through**
-
-  Problem: `bump(k) = 9` and `bump(k) += 1`, for `def bump(ref a: Int) ->
-  ref[origin_of(a)] Int`, stop at parse with "invalid assignment target",
-  where the pin writes through the returned reference and prints `9` then
-  `10`.
-  - Reading the same result already works: a module `def`'s reference
-    result is read through wherever a value is wanted.
-  - The parser admits only names, fields, and subscripts as targets, so
-    `docs/grammar.md` changes first.
-  - Probe: `conformance/probes/reference_call_assignment_target.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.91 Two same-arity generic overloads of one method collide when a
+- [ ] **3.90 Two same-arity generic overloads of one method collide when a
   call specializes them alike**
 
   Problem: `First(0).pick(2, 3)`, beside `pick[T](self, a: T, b: T)` and
@@ -2300,7 +2286,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 A witness whose defaults differ from its requirement's is
+- [ ] **3.91 A witness whose defaults differ from its requirement's is
   rejected**
 
   Problem: a witness declaring `factor: Int = 7`, or no default, for a
@@ -2318,17 +2304,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 A trait requirement's default other than a literal is
+- [ ] **3.92 A trait requirement's default other than a literal is
   rejected**
 
   Problem: `def scale(self, value: Int, factor: Int = TWO)` in a trait is
   rejected as unsupported.
   - A literal means the same in the trait's scope as in every witness's; a
     name may not.
-  - Depends on 3.92: a default bound at the call would lift it.
+  - Depends on 3.91: a default bound at the call would lift it.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A call leaving out a constructed default fails at run time**
+- [ ] **3.93 A call leaving out a constructed default fails at run time**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, checks but stops
   on the VM with "non-constant default for parameter 's'", where the pin
@@ -2342,7 +2328,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 An instance ranks a generic struct's overload family again
+- [ ] **3.94 An instance ranks a generic struct's overload family again
   where the pin keeps the template's member**
 
   Problem: `Pair[Self.T].pick(self.item)`, beside `pick(v: Self.T)` and
@@ -2359,7 +2345,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A generic static's per-call clone takes a call to its
+- [ ] **3.95 A generic static's per-call clone takes a call to its
   overload sibling**
 
   Problem: `Pair[Self.T].pick(1, 2)`, beside `pick[U: Writable](u: U)` and
@@ -2371,7 +2357,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A generic static with its own binder cannot infer its struct's
+- [ ] **3.96 A generic static with its own binder cannot infer its struct's
   parameter beside a spelled call**
 
   Problem: `Pair.both(7, self.item)` in a generic method is rejected with
@@ -2382,7 +2368,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A variadic struct's index-keyed method not named
+- [ ] **3.97 A variadic struct's index-keyed method not named
   `__getitem__` is rejected**
 
   Problem: `def item[i: Int](self) -> Self.Ts[i]` in a user variadic struct
@@ -2398,7 +2384,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A SIMD value has no nullary construction**
+- [ ] **3.98 A SIMD value has no nullary construction**
 
   Problem: `Float32()`, `UInt8()`, `Scalar[DType.int16]()`, and
   `SIMD[DType.int32, 2]()` stop with "SIMD construction expects 1
@@ -2413,7 +2399,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 `String` is not `Defaultable`**
+- [ ] **3.99 `String` is not `Defaultable`**
 
   Problem: `Tuple[String, Int]()` stops with "no constructor overload
   matches the supplied arguments", and `make[String]()` over
@@ -2423,7 +2409,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A `def` does not infer a value parameter from an argument's
+- [ ] **3.100 A `def` does not infer a value parameter from an argument's
   type**
 
   Problem: `size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`
@@ -2438,7 +2424,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.102 A generic nested `def` that captures does not compile
+- [ ] **3.101 A generic nested `def` that captures does not compile
   natively**
 
   Problem: a generic nested `def` with any capture, such as
@@ -2456,7 +2442,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.103 A nested `def` reading only an enclosing value parameter is
+- [ ] **3.102 A nested `def` reading only an enclosing value parameter is
   not `thin`**
 
   Problem: `apply(inner)` against `def apply(f: def() thin -> Int)`, where
@@ -2475,7 +2461,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 Variadic and tuple-literal elements carrying one mutable
+- [ ] **3.103 Variadic and tuple-literal elements carrying one mutable
   origin do not conflict**
 
   Problem: Mojito compiles `show(Span(xs), Span(xs))` over `def show[*Ts:
@@ -2493,7 +2479,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.105 A store through a dereferenced pointer to a loan-carrying
+- [ ] **3.104 A store through a dereferenced pointer to a loan-carrying
   pointee fails at run time**
 
   Problem: `q[] = Span(xs)` where `q` is an
@@ -2510,7 +2496,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.106 A homogeneous `*args` over a loan-carrying element type is
+- [ ] **3.105 A homogeneous `*args` over a loan-carrying element type is
   rejected**
 
   Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
@@ -2522,6 +2508,45 @@ last.
   - `conformance/probes/homogeneous_variadic_loan_carrying_element.mojo`
     pins it.
   - Found while counting type-argument origins in argument exclusivity
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **3.106 A write through a reference skips the overwritten value's
+  `Deinitable` check**
+
+  Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
+  `same(x) = v.copy()` (a call returning `ref[origin_of(x)] T`) run on
+  Mojito, where the pin rejects both: the overwritten `T` is "abandoned
+  without being explicitly destroyed".
+  - Mojito accepts a program the pin rejects, so this is a divergence.
+  - The plain store `x = v.copy()` is rejected alike on both.
+  - The abstract destruction walk (`explicit_destroy.rs`) checks a store to
+    a named variable, not a `SetPlace` whose place is a reference binding
+    or a reference-returning call.
+  - `conformance/probes/reference_write_non_deinitable.mojo` pins it.
+  - Found while making a reference-returning call an assignment target
+    (2026-09-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.107 An in-place operator cannot apply to a module `def`'s
+  reference result**
+
+  Problem: `text(s) += "d"` for `def text(ref t: String) ->
+  ref[origin_of(t)] String` is rejected ("an in-place operator on the
+  reference returned by 'text()'"), where the pin prints `ad`.
+  - A method's reference result takes the operator
+    (`n.name_ref() += "b"`), as does a `ref` binding of `text(s)`, and a
+    scalar referent takes `+=` through the builtin operator.
+  - A module `def`'s reference result is carried only by the
+    `ReferenceResult` adjustment at the call's span, which the operator's
+    `AugmentedInPlace` record at the same span replaces; a method's is also
+    in its selected-call contract.
+  - Carrying it in a selected-call contract for module `def` calls, as the
+    MIR's `reference_result` already prefers, would lift it.
+  - `conformance/probes/reference_call_inplace_operator.mojo` pins it.
+  - Found while making a reference-returning call an assignment target
     (2026-09-28).
   - Depends on nothing.
   - Model: Opus, Planned.

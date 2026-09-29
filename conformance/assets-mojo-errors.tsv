@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	446
+# swept-count	448
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -389,6 +389,7 @@ assets/type_error/rebind_register_passable_bound_inplace_destination.mojo	compil
 assets/type_error/rebind_register_passable_inplace_destination.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
+assets/type_error/reference_call_immutable_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/reference_element_append_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reference_element_handle_replacement_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
 assets/type_error/reflected_field_proof_is_positional.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
@@ -465,6 +466,7 @@ assets/type_error/untaken_comptime_if_reflection_def.mojo	compile-reject	agree	e
 assets/type_error/untaken_comptime_if_reflection_method.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/untaken_comptime_if_type_error.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["hello"]' value to 'Int'
 assets/type_error/untracked_pointer_field_tracked_argument.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/value_call_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/variadic_constructor_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
