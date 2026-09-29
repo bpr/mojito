@@ -1240,8 +1240,19 @@ impl Checker {
         // The callee's own origin binders bind from the arguments before each
         // argument coerces, and the result carries what they bound;
         // `declared` keeps the type parameters abstract.
-        let (params, declared, bindings) =
-            self.substitute_callee_pointer_origins(name, &names, params, &slots, args, kwargs)?;
+        let origin_arguments = CalleeOriginArguments {
+            slots: &slots,
+            overflow: &overflow,
+            args,
+            kwargs,
+        };
+        let (params, declared, bound_variadic, bindings) = self.substitute_callee_pointer_origins(
+            name,
+            &names,
+            params,
+            variadic.as_deref(),
+            &origin_arguments,
+        )?;
         let ret = match bindings {
             Some(bindings) => bindings.substitute(&ret),
             None => *ret,
@@ -1289,46 +1300,20 @@ impl Checker {
                 )?;
             }
         }
-        // Each overflow argument must coerce to the `*args` element type.
-        let mut collected = Vec::new();
-        if let Some(elem) = &variadic {
-            for (pack_index, &p) in overflow.iter().enumerate() {
-                let expected = match &**elem {
-                    Ty::RuntimePack(elements) => {
-                        elements
-                            .get(pack_index)
-                            .ok_or_else(|| TypeError::ArityMismatch {
-                                name: name.to_string(),
-                                expected: elements.len(),
-                                got: overflow.len(),
-                            })?
-                    }
-                    _ => elem,
-                };
-                let arg_ty = self.infer_with_expected(&args[p], expected, true)?;
-                // A checker-minted pack clone materializes a literal element
-                // as its nominal type (`"lit"` → `String`): the element
-                // converts exactly as a regular argument does.
-                if !self.record_implicit_conversion(&args[p], &arg_ty, expected)? {
-                    return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
-                        found: arg_ty.to_string(),
-                        context: format!("variadic argument to '{name}'"),
-                    });
-                }
-                score += conversion_count(&arg_ty, expected);
-                collected.push((&args[p], vec![expected.clone(), arg_ty]));
+        let collected = match &variadic {
+            Some(element) => {
+                let (collected_score, collected) = self.check_collected_arguments(
+                    name,
+                    element,
+                    bound_variadic.as_ref(),
+                    &overflow,
+                    args,
+                )?;
+                score += collected_score;
+                collected
             }
-            if let Ty::RuntimePack(elements) = &**elem
-                && elements.len() != overflow.len()
-            {
-                return Err(TypeError::ArityMismatch {
-                    name: name.to_string(),
-                    expected: elements.len(),
-                    got: overflow.len(),
-                });
-            }
-        }
+            None => Vec::new(),
+        };
         if let Some(elem) = kw_collector {
             for index in kw_overflow {
                 let expression = &kwargs[index].value;
@@ -1851,24 +1836,79 @@ impl Checker {
         binding
     }
 
+    /// Check each argument a `*args` collector gathers at `overflow` against
+    /// its element type — `bound`, the element with the callee's origin
+    /// binders substituted, where the call bound any — returning the
+    /// conversion score and each element's declared and found types for the
+    /// exclusivity rule.
+    fn check_collected_arguments<'a>(
+        &self,
+        name: &str,
+        element: &Ty,
+        bound: Option<&Ty>,
+        overflow: &[usize],
+        args: &'a [Expr],
+    ) -> Result<(usize, CollectedElements<'a>), TypeError> {
+        let arity_mismatch = |expected: usize| TypeError::ArityMismatch {
+            name: name.to_string(),
+            expected,
+            got: overflow.len(),
+        };
+        let mut score = 0;
+        let mut collected = Vec::new();
+        for (pack_index, &position) in overflow.iter().enumerate() {
+            let expected = match bound.unwrap_or(element) {
+                Ty::RuntimePack(elements) => elements
+                    .get(pack_index)
+                    .ok_or_else(|| arity_mismatch(elements.len()))?,
+                bound => bound,
+            };
+            let argument = &args[position];
+            let found = self.infer_with_expected(argument, expected, true)?;
+            // A checker-minted pack clone materializes a literal element
+            // as its nominal type (`"lit"` → `String`): the element
+            // converts exactly as a regular argument does.
+            if !self.record_implicit_conversion(argument, &found, expected)? {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: found.to_string(),
+                    context: format!("variadic argument to '{name}'"),
+                });
+            }
+            score += conversion_count(&found, expected);
+            let declared = match element {
+                Ty::RuntimePack(elements) => &elements[pack_index],
+                declared => declared,
+            };
+            collected.push((argument, vec![declared.clone(), found]));
+        }
+        match element {
+            Ty::RuntimePack(elements) if elements.len() != overflow.len() => {
+                Err(arity_mismatch(elements.len()))
+            }
+            _ => Ok((score, collected)),
+        }
+    }
+
     /// Bind a callee's own origin binders named by its parameters — a
     /// `Pointer[T, o]`, a `ref[o]` referent, or a struct carrying `o` in its
     /// origin tail (`List[RefBox[o]]`) — from the arguments filling those
-    /// slots, and substitute the bindings into `params` before each argument
-    /// coerces. Returns the bound parameters, the bound declared spellings
-    /// (type parameters left abstract, for the exclusivity rule), and the
-    /// bindings, which the result carries too.
+    /// slots and those its `*args` collector gathers, and substitute the
+    /// bindings into `params` and the collector's element type before each
+    /// argument coerces. Returns the bound parameters, the bound declared
+    /// spellings (type parameters left abstract, for the exclusivity rule),
+    /// the bound element type, and the bindings, which the result carries
+    /// too.
     fn substitute_callee_pointer_origins(
         &self,
         name: &str,
         names: &[String],
         params: Vec<Ty>,
-        slots: &[ArgSlot],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        variadic: Option<&Ty>,
+        arguments: &CalleeOriginArguments<'_>,
     ) -> Result<CalleeOriginSubstitution, TypeError> {
         let mut origin_bound: Vec<(usize, Ty)> = Vec::new();
-        for (index, slot) in slots.iter().enumerate() {
+        for (index, slot) in arguments.slots.iter().enumerate() {
             if !params
                 .get(index)
                 .is_some_and(super::origins::names_origin_binder)
@@ -1876,21 +1916,45 @@ impl Checker {
                 continue;
             }
             let argument = match slot {
-                ArgSlot::Positional(position) => &args[*position],
-                ArgSlot::Keyword(position) => &kwargs[*position].value,
+                ArgSlot::Positional(position) => &arguments.args[*position],
+                ArgSlot::Keyword(position) => &arguments.kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
             origin_bound.push((index, self.infer(argument)?));
         }
+        // Each collected argument binds against the collector's element
+        // (a pack's own element), appended past the regular parameters.
+        let mut patterns = params.clone();
+        let mut pattern_names = names.to_vec();
+        for (pack_index, &position) in arguments.overflow.iter().enumerate() {
+            let element = match variadic {
+                Some(Ty::RuntimePack(elements)) => elements.get(pack_index),
+                element => element,
+            };
+            let Some(element) =
+                element.filter(|element| super::origins::names_origin_binder(element))
+            else {
+                continue;
+            };
+            origin_bound.push((patterns.len(), self.infer(&arguments.args[position])?));
+            patterns.push(element.clone());
+            pattern_names.push(
+                self.collector_names
+                    .get(name)
+                    .map_or("args", String::as_str)
+                    .to_string(),
+            );
+        }
         if origin_bound.is_empty() {
             let declared = params.clone();
-            return Ok((params, declared, None));
+            return Ok((params, declared, None, None));
         }
         let bound: Vec<(usize, &Ty)> = origin_bound
             .iter()
             .map(|(index, ty)| (*index, ty))
             .collect();
-        let bindings = Self::bind_callee_origins(name, names, &params, &bound)?;
+        let bindings = Self::bind_callee_origins(name, &pattern_names, &patterns, &bound)?;
+        let bound_variadic = variadic.map(|element| bindings.substitute(element));
         let bound = bindings.substitute_all(&params);
         // A clone's own binders stand for the origin slots of a type argument
         // (`first_or$…` over `List[Span[Int, __clone_origin0]]`), which the
@@ -1916,7 +1980,7 @@ impl Checker {
             }
             .substitute_all(&params)
         };
-        Ok((bound, declared, Some(bindings)))
+        Ok((bound, declared, bound_variadic, Some(bindings)))
     }
 
     /// The binders a generated clone `name` declares for the origin slots of
@@ -1942,12 +2006,27 @@ impl Checker {
 }
 
 /// A call's origin-bound parameters, their declared spellings for the
-/// exclusivity rule, and the bindings, when any parameter names a binder.
+/// exclusivity rule, its bound `*args` element type, and the bindings, when
+/// any parameter or collected argument names a binder.
 type CalleeOriginSubstitution = (
     Vec<Ty>,
     Vec<Ty>,
+    Option<Ty>,
     Option<super::origins::ConstructorOriginBindings>,
 );
+
+/// The arguments a `*args` collector gathers, each with its declared and
+/// found element types.
+type CollectedElements<'a> = Vec<(&'a Expr, Vec<Ty>)>;
+
+/// The arguments of a call whose callee's origin binders bind: the regular
+/// slots and the positions its `*args` collector gathers.
+struct CalleeOriginArguments<'a> {
+    slots: &'a [ArgSlot],
+    overflow: &'a [usize],
+    args: &'a [Expr],
+    kwargs: &'a [mojito_ast::ast::KwArg],
+}
 
 /// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's
 /// call diagnostic naming the function and the parameter.

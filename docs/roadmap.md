@@ -2322,23 +2322,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A homogeneous `*args` over a loan-carrying element type is
-  rejected**
-
-  Problem: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args: T)`
-  with `xs` a read parameter is rejected ("type mismatch for variadic
-  argument to 'two$y9:Span[Int]': expected Span[Int], found Span[Int]"); the
-  pin runs it.
-  - The cause is not diagnosed: the two types print alike, so they differ
-    in an origin slot the message does not show.
-  - `conformance/probes/homogeneous_variadic_loan_carrying_element.mojo`
-    pins it.
-  - Found while counting type-argument origins in argument exclusivity
-    (2026-09-28).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **3.91 A write through a reference skips the overwritten value's
+- [ ] **3.90 A write through a reference skips the overwritten value's
   `Deinitable` check**
 
   Problem: in a `def` over `T: Copyable`, `ref r = x; r = v.copy()` and
@@ -2356,7 +2340,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.91 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2377,7 +2361,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.93 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.92 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2397,7 +2381,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A generic `def` reads a module constant where a local shadows
+- [ ] **3.93 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2411,7 +2395,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A trait requirement's default reading more than module
+- [ ] **3.94 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2426,7 +2410,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A default naming a binder in scope fails at run time**
+- [ ] **3.95 A default naming a binder in scope fails at run time**
 
   Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]`, checks but stops on the VM with "non-constant default
@@ -2445,7 +2429,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A list literal default for a `List` parameter is an `Array`**
+- [ ] **3.96 A list literal default for a `List` parameter is an `Array`**
 
   Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
   mismatch for default value of 'xs': expected List[Int], found Array[Int,
@@ -2457,7 +2441,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 A static method cannot read its struct's value parameter**
+- [ ] **3.97 A static method cannot read its struct's value parameter**
 
   Problem: `return Self.k` in a `@staticmethod` of `struct W[k: Int]` fails
   at run time with "field access on non-struct None", where the pin prints
@@ -2474,7 +2458,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 A generic nested `def` with a by-value capture does not
+- [ ] **3.98 A generic nested `def` with a by-value capture does not
   compile natively**
 
   Problem: `def inner[k: Int]() {var x} -> Int` runs on the VM and prints
@@ -2493,7 +2477,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 An initializer call is not judged by argument aliasing**
+- [ ] **3.99 An initializer call is not judged by argument aliasing**
 
   Problem: `Tuple(Span(xs), Span(xs))` over a `var xs` runs and prints
   `3`; the pin rejects it with "aliasing values passed mutably to 'args'
@@ -2511,7 +2495,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A method's `*Ts` pack does not take a `Span` argument**
+- [ ] **3.100 A method's `*Ts` pack does not take a `Span` argument**
 
   Problem: `S().show(Span(xs), 1)` over `def show[*Ts: Copyable](self,
   *args: *Ts)` is rejected with "'Span[_]' is not concrete; use '[]' to bind
@@ -2528,7 +2512,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 A tuple literal holding a pointer to a local is rejected**
+- [ ] **3.101 A tuple literal holding a pointer to a local is rejected**
 
   Problem: `var p = (Pointer(to=x), 2)` is rejected with "not a
   compile-time value: type pack contains a type which cannot be
@@ -2537,6 +2521,21 @@ last.
     pointer's origin spelling is the likely difference.
   - `conformance/probes/tuple_literal_pointer_to_local.mojo` pins it.
   - Found while judging variadic elements in argument exclusivity
+    (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.102 A type mismatch between two loan-carrying types prints them
+  alike**
+
+  Problem: `two(Span(xs), Span(ys))` over `def two[T: Copyable](a: T, b:
+  T)` or `(*args: T)` is rejected, as the pin rejects it, but with "type
+  mismatch for type parameter 'T': expected Span[Int], found Span[Int]".
+  - The pin names the origins: "cannot be converted from 'Span[Int,
+    origin_of(ys)]' to 'Span[Int, origin_of(xs)]'".
+  - `Ty`'s display drops a struct's origin arguments, so every mismatch
+    that differs only in an origin reads as no mismatch at all.
+  - Found while binding a homogeneous `*args` element's origins
     (2026-09-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.

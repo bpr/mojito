@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A homogeneous `*args` over a loan-carrying element type now runs, as the
+  pin runs it: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args:
+  T)` with `xs` a read parameter used to be rejected with "type mismatch
+  for variadic argument to 'two$y9:Span[Int]'". The collected arguments now
+  bind the element's origins (`assets/ok/homogeneous_variadic_loan_carrying_element.mojo`).
 - A loan-carrying value stored through a dereferenced pointer keeps its
   borrowed owner alive while the pointer is used, as the pin does: `q[] =
   Span(xs)` into an `unsafe_alloc[Span[Int, origin_of(xs)]](1)` followed by
