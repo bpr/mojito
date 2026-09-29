@@ -1413,11 +1413,20 @@ fn a_witness_defaults_apart_from_its_requirement() {
         "trait Scaler:\n    def scale(self, value: Int, factor: Int) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n    def scale(self, value: Int, factor: Int = 3) -> Int:\n        return value * factor\n",
     );
 
+    // A module constant, declared before or after the trait, folds to the
+    // value it names in the trait's scope.
+    for default in ["TWO", "-TWO * 3 + LATER", "FLAG"] {
+        ok(&format!(
+            "comptime TWO = 2\ncomptime FLAG = True\n\ntrait Scaler:\n    def scale(self, value: Int, factor: {} = {default}) -> Int: ...\n\ncomptime LATER = 1\n",
+            if default == "FLAG" { "Bool" } else { "Int" }
+        ));
+    }
+
     let error = err(
-        "comptime TWO = 2\n\ntrait Scaler:\n    def scale(self, value: Int, factor: Int = TWO) -> Int: ...\n",
+        "trait Scaler:\n    def scale[n: Int](self, value: Int, factor: Int = n) -> Int: ...\n",
     );
     assert!(
-        matches!(error, TypeError::Unsupported(feature) if feature.contains("other than a literal"))
+        matches!(error, TypeError::Unsupported(feature) if feature.contains("other than a literal or a module constant"))
     );
 }
 

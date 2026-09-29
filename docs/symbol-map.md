@@ -115,7 +115,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `BoundDefaultArguments`), and `bind_bound_default_arguments` spells them
   as keyword arguments of the call and of every clone of it, before a pass
   and again, with another pass, when a pass found new ones
-  (`check_program_carrying`).
+  (`check_program_carrying`). The spelled defaults are literals:
+  `requirement_default` in `checker/traits.rs` folds a requirement's
+  default over module constants (`comptimes`, `comptime_literals`, both
+  registered before the trait pass) when the trait is declared.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
   list/tuple/variant construction, and t-string typing (the lazy `TString`
   element list and its snapshot capture policy). `infer_variant_storage_method`

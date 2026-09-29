@@ -93,6 +93,27 @@ impl Checker {
         }
         drop(phase);
         let phase = timing::span("declarations.traits");
+        // A trait requirement's default folds against the module's constants,
+        // which a trait may name wherever they are declared.
+        for statement in stmts {
+            let StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            if !type_params.is_empty() {
+                continue;
+            }
+            if let Ok(constant) = self.eval_ct(value) {
+                self.comptimes.insert(name.clone(), constant);
+            } else if super::traits::literal_default(value) {
+                self.comptime_literals.insert(name.clone(), value.clone());
+            }
+        }
         for statement in stmts {
             let StmtKind::Trait {
                 name,

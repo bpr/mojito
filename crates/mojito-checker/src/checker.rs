@@ -616,6 +616,9 @@ pub struct Checker {
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
     /// Exact integer constants declared by `comptime NAME = value`.
     comptimes: HashMap<String, mojito_common::literal::IntLiteral>,
+    /// Module constants declared by `comptime NAME = <literal>`, which a
+    /// trait requirement's default folds to (`Float`, `Bool`, string).
+    comptime_literals: HashMap<String, Expr>,
     /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
     /// arguments. A binding of a `[dt: DType]` parameter keys a lane
     /// symbolically, so a template body may name its own dtype through one.
@@ -1031,6 +1034,7 @@ impl Checker {
             self_ty: None,
             trait_self_comptime: Vec::new(),
             comptimes: HashMap::new(),
+            comptime_literals: HashMap::new(),
             comptime_dtypes: HashMap::new(),
             comptime_aliases: HashMap::new(),
             self_mutable: false,

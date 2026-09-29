@@ -3886,7 +3886,11 @@ the call and of every clone of it; a pass that finds a new one is followed by
 another over the spelled tree, and the template catalog carries them to later
 discovery rounds so those bind them before their first pass. The spelled
 nodes' identities are derived from the call's, so a clone's traces to the
-template's.
+template's. A literal means the same at the call as in the trait, so the
+trait's declaration folds each requirement default to one
+(`requirement_default` in `checker/traits.rs`): a module constant, or a
+compile-time `Int` expression over them, becomes the value it names in the
+trait's scope, and any other default is rejected.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

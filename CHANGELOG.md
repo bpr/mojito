@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait requirement's default may now name a module constant, as the pin
+  allows: `def scale(self, value: Int, factor: Int = TWO)` beside `comptime
+  TWO = 2` used to be rejected as unsupported, and a call through the bound
+  leaving `factor` out now runs `2` even where a local `TWO` is in scope at
+  the call. A compile-time `Int` expression over such constants folds too.
 - A witness may now default a parameter differently from its trait
   requirement, or not at all, as the pin allows. A call through the bound
   leaving the parameter out runs the requirement's default, so
@@ -28,7 +33,7 @@ to evolve under the `0.x` compatibility rules.
   result (`p.x_ref() *= 3`) or a field below one (`pick(p).y = 4`) is
   written through alike. They used to stop at parse with "invalid
   assignment target". An in-place operator dunder on a module `def`'s
-  reference result is still rejected (roadmap 3.105).
+  reference result is still rejected (roadmap 3.104).
 - A SIMD scalar now conforms to `Equatable` and `Comparable`, so
   `(UInt64(1), UInt64(2)) < (UInt64(1), UInt64(3))` prints `True` as the
   pin does, where it used to reject with "operator '<' is not defined".
@@ -52,7 +57,7 @@ to evolve under the `0.x` compatibility rules.
   parameter without naming it in a capture list, as the pin does. It used
   to fail with "Could not infer capture convention of the captured value
   n". A generic nested `def` reading one still runs on the VM only
-  (roadmap 3.99).
+  (roadmap 3.98).
 - A struct constructed over arithmetic on a compile-time parameter,
   `Counter[1 + Self.length](i)` in a method or `Counter[n + 1](i)` in a
   generic `def`, now runs on the VM and natively, as the pin does. The
