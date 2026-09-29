@@ -3529,7 +3529,10 @@ linearity; it supplies the required user-facing diagnostic when an obligation
 is violated and is inert on an implicitly deletable type. A checked,
 stable-binding obligation analysis requires every initialized linear value to
 reach exactly one named `deinit self` method on every exit. It rejects
-abandonment, overwrite, and inconsistent branch or loop states.
+abandonment, overwrite, and inconsistent branch or loop states. A write through
+a reference (`ref r = x; r = v`, `same(x) = v`) is an overwrite the checker
+rejects at the store itself, since the reference owns no obligation the
+analysis could track.
 MIR retains the resulting declaration metadata. The checked obligation ensures
 that an intact linear value is consumed before it can reach automatic
 `DropVar`; the VM therefore does not guess concrete deletability from an open

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A write through a reference over a value the body cannot implicitly
+  destroy is now rejected, as the pin rejects it: in a `def` over `T:
+  Copyable`, `ref r = x; r = v.copy()` and `same(x) = v.copy()` through a
+  call returning `ref[origin_of(x)] T` used to run, and now report the
+  overwritten value "abandoned without being explicitly destroyed", as the
+  plain `x = v.copy()` already did. The same holds for an
+  `@explicit_destroy` referent
+  (`assets/type_error/reference_binding_write_linear_parameter.mojo`,
+  `assets/type_error/reference_call_write_linear_parameter.mojo`,
+  `assets/type_error/reference_write_explicit_destroy.mojo`).
 - A homogeneous `*args` over a loan-carrying element type now runs, as the
   pin runs it: `two(Span(xs), Span(xs))` over `def two[T: Copyable](*args:
   T)` with `xs` a read parameter used to be rejected with "type mismatch

@@ -565,7 +565,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Env.linear_temporaries` carries the call results the checker recorded as
   owned-but-unconsumed (`places.rs`'s `record_linear_temporary` and
   `record_unconsumed_temporary`, intersected in `run_explicit_destroy`),
-  reported as `'(expression temporary)'`.
+  reported as `'(expression temporary)'`. A write through a reference (a
+  `ref` binding, a reference-returning call) owns no obligation of its own,
+  so the checker rejects one over a non-`Deinitable` referent at the store
+  (`places.rs`'s `check_overwritten_referent`).
 - `mojito-types`' `types::is_symbolic`/`ct_value_is_symbolic` answer whether a
   type still mentions something only an instantiation can resolve. MIR's
   `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into

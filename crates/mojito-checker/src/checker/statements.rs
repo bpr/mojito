@@ -977,6 +977,9 @@ impl Checker {
                             }
                         }
                         let target_is_reference = matches!(target, Ty::Ref(_));
+                        if let Ty::Ref(reference) = &target {
+                            self.check_overwritten_referent(name, &reference.referent)?;
+                        }
                         let target = match target {
                             Ty::Ref(reference) => *reference.referent,
                             other => other,
@@ -1531,6 +1534,11 @@ impl Checker {
                 // keep the place's type. A width-1 SIMD target (a lane write, or
                 // a scalar-alias field) additionally accepts a splatting literal.
                 let target = self.check_place(place)?;
+                if let ExprKind::Call { name, .. } | ExprKind::MethodCall { method: name, .. } =
+                    &place.kind
+                {
+                    self.check_overwritten_referent(&format!("{name}(...)"), &target)?;
+                }
                 self.record_place_write_invalidation(place.source_span(), place);
                 let storage = self.place_storage_ty(place);
                 // The place's type is the assignment's expected context, so a

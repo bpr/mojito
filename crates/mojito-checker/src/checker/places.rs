@@ -77,16 +77,55 @@ impl Checker {
             expr.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         );
-        let own_parameter = self.tparams.iter().any(|scope| {
-            scope
-                .values()
-                .any(|declared| matches!(declared, Ty::Param { binder: own, .. } if own == binder))
-        });
-        if call && own_parameter && !self.is_deinitable(ty) {
+        if call && self.is_own_parameter(binder) && !self.is_deinitable(ty) {
             self.linear_temporaries
                 .borrow_mut()
                 .insert(expr.source_span());
         }
+    }
+
+    /// Reject a write through a reference (`ref r = x; r = v`, or
+    /// `same(x) = v` through a reference-returning call) over a referent the
+    /// body cannot implicitly destroy: the overwritten value is abandoned, as
+    /// upstream. `target` names the written place in the diagnostic.
+    pub(super) fn check_overwritten_referent(
+        &self,
+        target: &str,
+        referent: &Ty,
+    ) -> Result<(), TypeError> {
+        if self.is_deinitable(referent) {
+            return Ok(());
+        }
+        match referent {
+            Ty::Param { binder, .. } if self.is_own_parameter(binder) => {
+                Err(TypeError::LinearAbandoned {
+                    var: target.to_string(),
+                    message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
+                })
+            }
+            Ty::Struct(name, _) => match self.structs.get(name) {
+                Some(info) => Err(TypeError::Abandoned {
+                    var: target.to_string(),
+                    message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
+                        "value is not implicitly deletable and must be explicitly destroyed"
+                            .to_string()
+                    }),
+                }),
+                None => Ok(()),
+            },
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether `binder` is one of the enclosing declarations' own type
+    /// parameters. The same `Ty::Param` at a concrete call site is the
+    /// erased-dispatch spelling of a solved argument instead.
+    fn is_own_parameter(&self, binder: &mojito_types::param_expr::ParamRef) -> bool {
+        self.tparams.iter().any(|scope| {
+            scope
+                .values()
+                .any(|declared| matches!(declared, Ty::Param { binder: own, .. } if own == binder))
+        })
     }
 }
 
