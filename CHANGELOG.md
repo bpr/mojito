@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack element's default construction handed to `print` or bound to a
+  local (`print(Self.Ts[i]())` in a method, `var value = Ts[i]()` in a
+  method or a pack-keyed `def`) now reuses the template's checked facts,
+  each instance checking the elaborated construction alone
+  (`assets/ok/pack_element_default_construction.mojo`). Such bodies used to
+  be checked again per instance.
 - A value of a struct parameter's type handed through a bound to a
   requirement parameter typed `Self` or by the requirement's own binder
   (`self.s.merge(self.t)` over `merge(self, other: Self)`,

@@ -346,7 +346,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   place is `indexing.rs:check_place_impl`'s compile-time index of the
   private storage, counted by
   `declarations.rs:initializes_storage_elements`, and an instance derives
-  the store through `template_facts.rs:element_construction_facts`),
+  the store, a `print` argument, or a local's value through
+  `template_facts.rs:element_construction_facts`, a copy with no folded
+  index taking its loop index from `constructed_element_indices`),
   `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
   call argument (its placement through `call.rs:spread_position` and
   `bind_spread`) and `bind_forwarded_pack` binds it whole to a callee's pack

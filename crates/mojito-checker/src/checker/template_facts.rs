@@ -1629,6 +1629,15 @@ impl Checker {
             })
             .collect();
         let indices = loop_element_indices(indices, &checked.facts, &occurrences);
+        let Some(indices) = constructed_element_indices(
+            indices,
+            &checked.facts,
+            elements,
+            &substitution,
+            &occurrences,
+        ) else {
+            return refuse("an element's default construction does not name its loop index");
+        };
         let indices = transferred_element_indices(indices, &occurrences);
         let mut selected = checked.facts.selected(&ids, &folded);
         if !relocate_packs(&mut selected, &ids) {
@@ -1697,19 +1706,35 @@ impl Checker {
         struct Stores<'a> {
             origins: &'a mojito_ast::ast::SyntaxOrigins,
             constructed: &'a [OccurrenceId],
-            found: Vec<(&'a Expr, &'a Expr)>,
+            found: Vec<(Option<&'a Expr>, &'a Expr)>,
         }
 
         impl<'a> Stores<'a> {
+            fn built(&self, value: &Expr) -> bool {
+                self.constructed
+                    .iter()
+                    .any(|element| element.syntax == self.origins.origin(value.syntax_id))
+            }
+
             fn collect(&mut self, body: &'a [Stmt]) {
                 for statement in body {
                     match &statement.kind {
-                        StmtKind::SetPlace { place, value }
-                            if self.constructed.iter().any(|element| {
-                                element.syntax == self.origins.origin(value.syntax_id)
-                            }) =>
-                        {
-                            self.found.push((place, value));
+                        StmtKind::SetPlace { place, value } if self.built(value) => {
+                            self.found.push((Some(place), value));
+                        }
+                        StmtKind::VarDecl { value, .. } if self.built(value) => {
+                            self.found.push((None, value));
+                        }
+                        StmtKind::Expr(Expr {
+                            kind: ExprKind::Call { name, args, .. },
+                            ..
+                        }) if name == "print" => {
+                            let built: Vec<_> = args
+                                .iter()
+                                .filter(|argument| self.built(argument))
+                                .map(|argument| (None, argument))
+                                .collect();
+                            self.found.extend(built);
                         }
                         StmtKind::Scope(body) => self.collect(body),
                         _ => {}
@@ -1740,6 +1765,13 @@ impl Checker {
             .borrow_mut()
             .push(Some(Vec::new()));
         let checked = stores.found.iter().try_for_each(|(place, value)| {
+            // A construction handed to `print` or bound to a local is
+            // checked as that statement checks its value, with nothing
+            // expected of it.
+            let Some(place) = place else {
+                self.infer(value).map_err(|_| UNCHECKED)?;
+                return Ok(());
+            };
             let target = self.place_storage_ty(place).ok_or(UNCHECKED)?;
             let found = self
                 .infer_with_expected(value, &target, true)
@@ -4487,6 +4519,7 @@ impl Checker {
                 .collect(),
             packs,
             pack_struct: None,
+            pack_binders: pack_binders.clone(),
             loop_vars: RefCell::new(Vec::new()),
             values: decls
                 .iter()
@@ -4580,6 +4613,7 @@ impl Checker {
                     simd_to_bits: shape.simd_to_bits.borrow().clone(),
                     simd_casts: shape.simd_casts.borrow().clone(),
                     simd_lengths: shape.simd_lengths.borrow().clone(),
+                    element_constructions: shape.element_constructions.borrow().clone(),
                     ..GrammarNotes::default()
                 },
             )
@@ -5120,6 +5154,7 @@ impl Checker {
             static_calls: RefCell::new(Vec::new()),
             packs,
             pack_struct,
+            pack_binders: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: struct_scalar_binders(&self.self_decls),
@@ -7295,7 +7330,8 @@ impl SpanKeyed for HashSet<SourceSpan> {
 /// construction of a declared struct, a method call on a local or a parameter whose contract
 /// is a value contract or which dispatches through the parameter's bound, a
 /// keyword slice of a closed local, the stringify builtin, `external_call`,
-/// an operator over a closed struct type, and a `raises` declaration. Each
+/// an operator over a closed struct type, a pack element's default
+/// construction, and a `raises` declaration. Each
 /// recipe is a method body's, on a body without a receiver.
 const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::OPAQUE_MOVES)
@@ -7317,6 +7353,7 @@ const FUNCTION_FEATURES: MethodFeatures = MethodFeatures::STATEMENTS
     .union(MethodFeatures::STRING_BUILTINS)
     .union(MethodFeatures::FOREIGN_CALLS)
     .union(MethodFeatures::CLOSED_OPERATORS)
+    .union(MethodFeatures::ELEMENT_CONSTRUCTIONS)
     .union(MethodFeatures::BOUND_DISPATCH);
 
 /// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
@@ -9948,6 +9985,9 @@ struct BodyShape<'a> {
     /// (`self.storage`, `other.storage`) the body may read by loop index,
     /// and whose length (`Self.Ts.length`) every instance folds.
     pack_struct: Option<&'a str>,
+    /// A `def`'s own type packs, whose element the body may default-construct
+    /// at a loop index ([`Self::element_construction`]).
+    pack_binders: Vec<&'a str>,
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
     /// The declaration's scalar value parameters, which the elaborator
@@ -10078,13 +10118,16 @@ impl BodyShape<'_> {
                 let scalar =
                     (self.expression(value) && self.scalar(value)) || self.simd_value(value);
                 let mask = !scalar && ty.is_none() && self.lane_comparison(value);
+                let element = !scalar && !mask && ty.is_none() && self.element_construction(value);
                 let kind = if mask {
                     LocalKind::Mask
+                } else if element {
+                    LocalKind::Value
                 } else {
                     LocalKind::Scalar
                 };
                 self.locals.borrow_mut().push((name.clone(), kind));
-                scalar || mask
+                scalar || mask || (element && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS))
             }
             // A validated method keeps its compile-time control flow: every
             // arm is checked once, and an instance keeps the arms the
@@ -10124,6 +10167,9 @@ impl BodyShape<'_> {
                         || self.simd_value(value)
                         || self.reference_read(value)
                         || self.tuple_element_value(value)
+                        || (ty.is_none()
+                            && self.element_construction(value)
+                            && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS))
                         || (ty.is_some() && self.converted_place(value)))
                     && (ty.is_none() || self.annotated_binding(value));
                 let kind = if scalar {
@@ -11274,54 +11320,79 @@ impl BodyShape<'_> {
 
     /// `self.storage[i] = Self.Ts[i]()`: one element of a pack struct's
     /// storage on a writable `self`, built at the innermost `comptime for`
-    /// variable from the pack element's own default construction.
-    ///
-    /// The template typed the place and the construction as the same
-    /// dependent element `Ts[i]`, which the availability clause proves
-    /// `Defaultable`, and recorded nothing else at the construction. The
-    /// elaborator writes the element's concrete construction there, closed
-    /// syntax naming nothing the body binds, whose facts an instance
-    /// records from its own check of that construction alone
-    /// ([`Checker::element_construction_facts`]).
+    /// variable from the pack element's own default construction
+    /// ([`Self::element_construction`]), the place typed as the same
+    /// dependent element.
     fn element_initialization(&self, place: &Expr, value: &Expr) -> bool {
         let ExprKind::Index { object, index } = &place.kind else {
             return false;
         };
-        let ExprKind::Invoke {
-            callee,
-            param_args,
-            args,
-            kwargs,
-        } = &value.kind
-        else {
-            return false;
+        self.self_writable()
+            && self.receiver_field(object)
+            && self.at_loop(index)
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_place_types, self.occurrence(place))
+                    == fact_at(&facts.expression_types, self.occurrence(value))
+            })
+            && self.element_construction(value)
+    }
+
+    /// `Self.Ts[i]()`, or a `def`'s own `Ts[i]()`: a pack element's default
+    /// construction at the innermost `comptime for` variable, stored to the
+    /// element's own storage ([`Self::element_initialization`]), handed to
+    /// `print`, or bound to a local.
+    ///
+    /// The template typed the construction as the dependent element `Ts[i]`,
+    /// which the availability clause or the pack's bound proves
+    /// `Defaultable`, and recorded nothing else at it. The elaborator writes
+    /// the element's concrete construction there, closed syntax naming
+    /// nothing the body binds, whose facts an instance records from its own
+    /// check of that construction alone
+    /// ([`Checker::element_construction_facts`]). What the statement around
+    /// it decides from its type — the store, the print's `Writable` proof,
+    /// the local's binding — each instance decides at its own element.
+    fn element_construction(&self, value: &Expr) -> bool {
+        let (pack, param_args, args, kwargs) = match &value.kind {
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => (
+                matches!(&callee.kind, ExprKind::Member { object, field }
+                    if self.pack_struct == Some(field.as_str())
+                        && matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")),
+                param_args,
+                args,
+                kwargs,
+            ),
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } => (
+                self.pack_binders.contains(&name.as_str()),
+                param_args,
+                args,
+                kwargs,
+            ),
+            _ => return false,
         };
-        let at_loop = |expr: &Expr| {
-            matches!(&expr.kind, ExprKind::Identifier(name)
-                if self.loop_vars.borrow().last() == Some(name))
-        };
-        let element = matches!(&callee.kind, ExprKind::Member { object, field }
-            if self.pack_struct == Some(field.as_str())
-                && matches!(&object.kind, ExprKind::Identifier(base) if base == "Self"))
-            && matches!(param_args.as_slice(),
-                [mojito_ast::ast::ParamArg::Value(index)] if at_loop(index))
-            && args.is_empty()
-            && kwargs.is_empty();
         let dependent_element = |ty: &Ty| {
             matches!(ty, Ty::Dependent(dependent)
             if dependent.pack_element().is_some_and(|(_, index)| {
                 matches!(index.kind(), mojito_types::param_expr::ParamKind::DeclRef(_))
             }))
         };
-        let admitted = element
-            && self.self_writable()
-            && self.receiver_field(object)
-            && at_loop(index)
+        let admitted = pack
+            && matches!(param_args.as_slice(),
+                [mojito_ast::ast::ParamArg::Value(index)] if self.at_loop(index))
+            && args.is_empty()
+            && kwargs.is_empty()
             && self.facts.is_none_or(|facts| {
                 let built = self.occurrence(value);
-                let stored = fact_at(&facts.expression_place_types, self.occurrence(place));
-                stored.is_some_and(dependent_element)
-                    && stored == fact_at(&facts.expression_types, built)
+                fact_at(&facts.expression_types, built).is_some_and(dependent_element)
                     && fact_at(&facts.operation_adjustments, built).is_none()
                     && fact_at(&facts.conversions, built).is_none()
                     && fact_at(&facts.overload_targets, built).is_none()
@@ -11333,6 +11404,12 @@ impl BodyShape<'_> {
             );
         }
         admitted
+    }
+
+    /// Whether `expr` names the innermost `comptime for` variable.
+    fn at_loop(&self, expr: &Expr) -> bool {
+        matches!(&expr.kind, ExprKind::Identifier(name)
+            if self.loop_vars.borrow().last() == Some(name))
     }
 
     /// The iterable of a runtime `for`: a place the loop borrows (`self`, a
@@ -14225,7 +14302,9 @@ impl BodyShape<'_> {
                 (self.expression(argument) && self.scalar(argument)) || self.pack_element(argument)
             };
             closed || {
-                let sink = self.sink_argument(argument);
+                let sink = self.sink_argument(argument)
+                    || (self.element_construction(argument)
+                        && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS));
                 sinks |= sink;
                 sink
             }
@@ -15092,6 +15171,74 @@ fn element_index_binder(ty: &Ty) -> Option<mojito_types::param_expr::ParamId> {
         mojito_types::param_expr::ParamKind::DeclRef(reference) => Some(reference.id.clone()),
         _ => None,
     }
+}
+
+/// `indices` with each pack element default construction no folded index
+/// fixed (`print(Self.Ts[i]())`, `var value = Ts[i]()`) fixed at the one
+/// loop index whose element is the type the instance's own check of the
+/// construction found ([`Checker::element_construction_facts`]), and every
+/// other occurrence of that copy with it ([`loop_element_indices`]). `None`
+/// when the element's type names no index, or more than one.
+fn constructed_element_indices(
+    mut indices: ElementIndices,
+    template: &CheckedBodyFacts,
+    elements: Option<&CheckedBodyFacts>,
+    substitution: &InstanceSubstitution,
+    occurrences: &[Occurrence],
+) -> Option<ElementIndices> {
+    let Some(elements) = elements else {
+        return Some(indices);
+    };
+    let mut seeded = false;
+    for occurrence in occurrences {
+        let constructed = template
+            .element_constructions
+            .iter()
+            .any(|element| element.syntax == occurrence.id.syntax);
+        if !constructed || indices.contains_key(&occurrence.id) {
+            continue;
+        }
+        let built = fact_at(&elements.expression_types, occurrence.id)?;
+        let Some(Ty::Dependent(dependent)) = template
+            .expression_types
+            .iter()
+            .find_map(|(id, ty)| (id.syntax == occurrence.id.syntax).then_some(ty))
+        else {
+            return None;
+        };
+        let (pack, index) = dependent.pack_element()?;
+        let (
+            mojito_types::param_expr::ParamKind::DeclRef(pack),
+            mojito_types::param_expr::ParamKind::DeclRef(index),
+        ) = (pack.kind(), index.kind())
+        else {
+            return None;
+        };
+        let packed = substitution.packs.get(&pack.id)?;
+        let mut matching = packed.iter().enumerate().filter(|(_, element)| {
+            mojito_types::types::substitute_packs(
+                element,
+                &substitution.types,
+                &substitution.packs,
+                &substitution.values,
+            ) == *built
+        });
+        let (at, _) = matching.next()?;
+        if matching.next().is_some() {
+            return None;
+        }
+        let at = i64::try_from(at).ok()?;
+        indices.insert(
+            occurrence.id,
+            (index.id.clone(), mojito_types::ct::CtValue::Int(at)),
+        );
+        seeded = true;
+    }
+    Some(if seeded {
+        loop_element_indices(indices, template, occurrences)
+    } else {
+        indices
+    })
 }
 
 /// `indices` with each `^` transfer of a pack element fixed at its

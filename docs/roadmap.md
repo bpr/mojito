@@ -38,27 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
 
-- [ ] **1.1 A pack element's default construction outside a storage
-  store keeps the clone check**
-
-  Problem: `print(Self.Ts[i]())` in a method and `var value = Ts[i]()` in a
-  `def` refuse the template, so each instance is checked again.
-  - The method grammar admits the construction only as the value stored to
-    the element's own storage (`BodyShape::element_initialization`).
-  - `Row.defaults` and `build` in
-    `assets/ok/pack_element_default_construction.mojo` are the two bodies
-    known to pay.
-  - An instance checks the elaborated construction alone and carries what it
-    recorded (`element_construction_facts`). A construction that is an
-    argument or a local's value also owes the facts of the call or binding
-    around it, which depend on the element's type.
-  - A pack-keyed `def` is outside the method grammar altogether.
-  - Found while `Tuple`'s default initializer moved into source
-    (2026-09-29). No bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.2 A field read of a nested `def`'s struct parameter keeps the
+- [ ] **1.1 A field read of a nested `def`'s struct parameter keeps the
   clone check**
 
   Problem: `def f(x: Int, p: Pair) -> Int: return x + p.a` inside a generic
@@ -72,7 +52,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 `String(x)` of a closed-scalar parameter keeps the clone
+- [ ] **1.2 `String(x)` of a closed-scalar parameter keeps the clone
   check**
 
   Problem: `return String(k)` for `k: Int` in a generic struct's method
@@ -86,7 +66,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A string literal handed to a generic static's own binder
+- [ ] **1.3 A string literal handed to a generic static's own binder
   keeps the clone check**
 
   Problem: `Pair[Self.T].pick("s")`, or `Pair[Self.T].pick[String]("s")`,
@@ -103,7 +83,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 `_ArrayIter.__next__` keeps the clone check**
+- [ ] **1.4 `_ArrayIter.__next__` keeps the clone check**
 
   Problem: the borrowed `Array` iterator's `__next__` is inferred again in
   every checker pass, while the rest of `Array` and its iterators reuse
@@ -116,7 +96,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 A float literal beside a symbolic lane's value keeps the
+- [ ] **1.5 A float literal beside a symbolic lane's value keeps the
   clone check**
 
   Problem: `self.pos * 0.5` or `self.pos < 0.5` over `Scalar[Self.dtype]`
@@ -131,7 +111,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 An overloaded witness with binders of its own keeps the
+- [ ] **1.6 An overloaded witness with binders of its own keeps the
   clone check over a generic struct's instance**
 
   Problem: `self.item.__hash__(hasher)` over `Pair[Int]`, whose
@@ -148,7 +128,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A call through a bound whose requirement names no single
+- [ ] **1.7 A call through a bound whose requirement names no single
   witness still ranks the overload set on the recorded types**
 
   Problem: where no one member witnesses the requirement, `bound_witness`
@@ -169,7 +149,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A call through a bound whose result is typed by the
+- [ ] **1.8 A call through a bound whose result is typed by the
   requirement's own binder keeps the clone check**
 
   Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
@@ -184,6 +164,25 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
     (`assets/ok/template_method_bound_self_argument.mojo`).
   - Found while `Self`-typed and binder-typed arguments joined the method
     grammar (2026-09-29); no bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.9 A pack element's default construction keeps the clone check
+  where two elements share a type**
+
+  Problem: `print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, or `var value
+  = Ts[i]()` in `build[Int, Int]`, refuses the derivation, so each instance
+  is checked again.
+  - The elaborator writes the element's concrete construction in place of
+    `Ts[i]()`, so a copy with no other folded index names its loop index
+    only through the element's type (`constructed_element_indices`).
+  - Two elements of one type name two indices, and the derivation refuses
+    rather than guess one. The choice only matters where the copy also
+    reads another pack at the same index.
+  - A copy that also holds a folded index (`self.storage[i] =
+    Self.Ts[i]()`) takes it from there and derives.
+  - Found while such constructions joined the method and `def` grammars
+    (2026-09-29); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

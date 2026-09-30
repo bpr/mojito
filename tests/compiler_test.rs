@@ -1721,6 +1721,44 @@ fn template_print_whole_value_derives() {
 }
 
 #[test]
+fn template_pack_element_construction_derives() {
+    // A pack element's default construction handed to `print` or bound to a
+    // local is checked once with the pack symbolic; each instance checks
+    // the elaborated construction alone and fixes its copy's loop index at
+    // the element that construction built.
+    let source = "struct Row[*Ts: Movable & Writable & Deinitable](Movable):\n    var width: Int\n\n    def __init__(out self):\n        self.width = 3\n\n    def defaults(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            print(Self.Ts[i]())\n\n    def locals(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            var value = Self.Ts[i]()\n            print(value, self.width)\n\n\ndef build[*Ts: Movable & Defaultable & Writable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        var value = Ts[i]()\n        print(value)\n\n\ndef main():\n    var row = Row[Int, Float64, Bool]()\n    row.defaults()\n    row.locals()\n    build[Int, Optional[Int], Tuple[Int, Bool]]()\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler
+            .compile_source(
+                source,
+                std::path::Path::new("/tmp/mojito_template_pack_element_construction.mojo"),
+            )
+            .expect("compile");
+        let stats = program.template_stats();
+        let served = if verify {
+            &stats.verified
+        } else {
+            &stats.derived
+        };
+        let derived: std::collections::HashSet<&str> = served
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                name.starts_with("build$")
+                    || name.ends_with(".defaults")
+                    || name.ends_with(".locals")
+            })
+            .collect();
+        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n"
+        );
+    }
+}
+
+#[test]
 fn template_def_string_builtins_derive() {
     // `repr` and `_unqualified_type_name[T]()` in a runtime `def` select no
     // callee; each instance proves the argument `Writable` again and

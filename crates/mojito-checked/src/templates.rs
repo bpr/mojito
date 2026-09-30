@@ -994,10 +994,11 @@ impl MethodFeatures {
     /// residue the call publishes names the binder, which no instance
     /// renames ([`TemplateObligation::CallThroughResidue`]).
     pub const CALLABLE_BINDERS: Self = Self(1 << 45);
-    /// A pack struct's initializer building its storage one element at a
-    /// time, each the pack element's own default construction at a folded
-    /// loop index (`self.storage[i] = Self.Ts[i]()`): the template typed
-    /// the construction as the dependent element, which its clause proves
+    /// A pack element's own default construction at a folded loop index,
+    /// stored to a pack struct's storage (`self.storage[i] =
+    /// Self.Ts[i]()`), handed to `print`, or bound to a local
+    /// (`var value = Ts[i]()`): the template typed the construction as the
+    /// dependent element, which a clause or the pack's bound proves
     /// `Defaultable`, and the elaborator writes each element's concrete
     /// construction, closed syntax whose facts the instance records itself
     /// ([`CheckedBodyFacts::element_constructions`]).
@@ -1822,7 +1823,8 @@ pub struct CheckedBodyFacts {
     /// one.
     pub pack_spreads: Vec<PackSpread>,
     /// The pack element default constructions the grammar admitted
-    /// (`Self.Ts[i]()` stored to the element's own storage). An instance
+    /// (`Self.Ts[i]()` stored to the element's own storage, printed, or
+    /// bound to a local). An instance
     /// holds the element's concrete construction there, under the same
     /// identity, its nodes derived from it.
     pub element_constructions: Vec<OccurrenceId>,
