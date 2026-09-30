@@ -14458,8 +14458,9 @@ impl BodyShape<'_> {
     /// ([`Self::sink_argument`], under `STRING_BUILTINS`), and call results
     /// of any type ([`Self::call_result`]), which it leaves unconsumed. Its
     /// `sep`, `end`, `flush`, and `file` keywords take closed values, string
-    /// literals, or values it reads where they lie; any other keyword is an
-    /// error the template already reported.
+    /// literals, values it reads where they lie, or temporaries of a closed
+    /// type ([`Self::whole_value`]); any other keyword is an error the
+    /// template already reported.
     ///
     /// What the builtin records at an argument its syntax decides (an
     /// unconsumed temporary, a literal's materialization); what it proves,
@@ -14495,7 +14496,10 @@ impl BodyShape<'_> {
                 }),
                 _ => self.expression(value) && self.scalar(value),
             };
-            let sink = !closed && self.sink_argument(value);
+            // A temporary's type is the keyword's own, which mentions no
+            // parameter, so every instance builds and drops the same one.
+            let sink = !closed
+                && (self.sink_argument(value) || (self.whole_value(value) && self.closed(value)));
             sinks |= sink;
             matches!(keyword.name.as_str(), "sep" | "end" | "flush" | "file") && (closed || sink)
         });

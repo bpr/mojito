@@ -5393,6 +5393,23 @@ fn template_print_keywords_derive() {
 }
 
 #[test]
+fn template_print_call_keywords_derive() {
+    // `print` with a call result as `sep`, `end`, or `file`: the keyword's
+    // type never mentions a parameter, so every instance builds and drops
+    // the same temporary.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_print_call_keywords.mojo"),
+        "3-3\n35\ndone\ns-s\ns6\ndone\n1 1\n4 = 4\nq = q\n47 <\nq8 <\nw:4\nw:q\n",
+        &[
+            ("show", 2),
+            ("Holder.spaced", 2),
+            ("Holder.ended", 2),
+            ("Holder.filed", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

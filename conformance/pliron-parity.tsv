@@ -680,6 +680,7 @@ assets/ok/template_overload_binding.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_local.mojo	main	exe-differential	sanitized
 assets/ok/template_overload_binding_method.mojo	main	exe-differential	sanitized
 assets/ok/template_pack_elements.mojo	main	exe-differential	sanitized
+assets/ok/template_print_call_keywords.mojo	main	exe-differential	sanitized
 assets/ok/template_print_keywords.mojo	main	exe-differential	sanitized
 assets/ok/template_print_statement.mojo	main	exe-differential	sanitized
 assets/ok/template_print_whole_value.mojo	main	exe-differential	sanitized

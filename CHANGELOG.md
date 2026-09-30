@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `print` with a call result as a keyword (`print(x, sep=String("-"))`,
+  `print(x, file=FileDescriptor(1))`) in a method or a runtime `def` now
+  reuses the template's checked facts
+  (`assets/ok/template_print_call_keywords.mojo`). Such bodies used to be
+  checked again per instance.
 - `print` with a `sep`, `end`, `flush`, or `file` keyword
   (`print(self.w, sep=" ")`, `print(x, end="")`) in a method or a runtime
   `def` now reuses the template's checked facts, each instance seeing each

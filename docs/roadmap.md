@@ -36,23 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
+Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
 
-- [ ] **1.1 `print` with a call result as a keyword keeps the clone check**
-
-  Problem: `print(x, sep=String("-"))` or `print(x, file=FileDescriptor(2))`
-  in a method or a runtime `def` leaves the body outside the method
-  grammar, so every instance is checked again.
-  - A literal, a closed scalar, or a named string as the keyword derives.
-  - `infer_print` records no unconsumed temporary at a keyword, unlike a
-    positional argument, so the template's drop facts would need a look
-    first.
-  - Found while `print` keywords joined the method grammar (2026-09-29); no
-    bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 The A1 shadow core has never been run over the decision
+- [ ] **1.1 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -69,12 +55,12 @@ Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.3 to 1.5 are the ones in this section that do
+  - This entry and 1.2 to 1.4 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.3 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.2 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -88,7 +74,7 @@ Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.4 A1 core text is about three times the v1 text**
+- [ ] **1.3 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -103,7 +89,7 @@ Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.5 The Pliron pivot's overhead has never been measured**
+- [ ] **1.4 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -122,7 +108,7 @@ Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.2, 1.3, and 1.4.
+  - Depends on 1.1, 1.2, and 1.3.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
