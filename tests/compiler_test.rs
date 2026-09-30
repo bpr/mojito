@@ -5078,18 +5078,20 @@ fn template_applied_overloaded_static_derives() {
     // explicit compile-time arguments or ranked from an overload family one
     // of whose members declares binders, derives: the per-call clone keyed by
     // the instance's receiver exists from the round that mints it, and a
-    // member without binders retargets to the instance's clone of it.
+    // member without binders retargets to the instance's clone of it. A
+    // string literal bound to the static's own binder, inferred or spelled,
+    // converts into the clone's baked parameter type.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_applied_overloaded_static.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
     assert_methods_derive(
         &source,
-        "6 6\n6 6\n5\n5\n1 1\n7\n7\n1 1\n11 11\n6 6\n",
+        "6 6\n6 6\n5\n5\n1 1\n7\n7\n1 1\ns\ns\n1 1\nt\nt\n1 1\n11 11\n6 6\n",
         &[("Shelf.summed", 2), ("Shelf.valued", 2)],
     );
     let compiler = Compiler::default().with_template_verification(false);
     let program = compile_entry(&compiler, &source);
-    for method in ["scaled", "twice", "picked", "applied"] {
+    for method in ["scaled", "twice", "picked", "applied", "worded", "spelled"] {
         let derived: std::collections::HashSet<&String> = program
             .template_stats()
             .derived

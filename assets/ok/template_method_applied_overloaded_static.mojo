@@ -4,7 +4,9 @@
 # `static_calls`) spelled with explicit compile-time arguments, or chosen
 # from an overload family one of whose members declares binders: each
 # instance calls the per-call clone of the template's member keyed by its
-# own receiver, or the instance's clone of a member without binders.
+# own receiver, or the instance's clone of a member without binders. A
+# string literal bound to the static's own binder converts into the per-call
+# clone's baked parameter type.
 
 
 @fieldwise_init
@@ -47,6 +49,12 @@ struct Shelf[T: Copyable & Deinitable](Movable):
     def applied(self) -> Int:
         return Pair[Self.T].pick[Int](7)
 
+    def worded(self) -> Int:
+        return Pair[Self.T].pick("s")
+
+    def spelled(self) -> Int:
+        return Pair[Self.T].pick[String]("t")
+
     def summed(self) -> Int:
         return Pair[Self.T].pick(5, 6)
 
@@ -61,5 +69,7 @@ def main():
     print(ints.twice(), words.twice())
     print(ints.picked(), words.picked())
     print(ints.applied(), words.applied())
+    print(ints.worded(), words.worded())
+    print(ints.spelled(), words.spelled())
     print(ints.summed(), words.summed())
     print(ints.valued(), words.valued())

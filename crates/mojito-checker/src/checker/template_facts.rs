@@ -3520,6 +3520,16 @@ impl Checker {
                 });
             let target = match clone {
                 Some(clone) => {
+                    let member = info
+                        .methods
+                        .get(&clone)
+                        .and_then(|family| match family.as_slice() {
+                            [member] => Some(member),
+                            family => family
+                                .iter()
+                                .find(|member| member.overload == request.overload),
+                        })
+                        .ok_or("a static's per-call clone declares no requested member")?;
                     // An explicit application calls the clone, whose binders
                     // are baked, as the clone check records.
                     if let Some(entry) = facts
@@ -3527,17 +3537,36 @@ impl Checker {
                         .iter_mut()
                         .find(|(site, _)| site == id)
                     {
-                        entry.1 = info
-                            .methods
-                            .get(&clone)
-                            .and_then(|family| match family.as_slice() {
-                                [member] => Some(member),
-                                family => family
-                                    .iter()
-                                    .find(|member| member.overload == request.overload),
-                            })
-                            .map(|member| member.decls.clone())
-                            .ok_or("a static's per-call clone declares no requested member")?;
+                        entry.1.clone_from(&member.decls);
+                    }
+                    // A string literal the template bound to the static's
+                    // own binder converts into the clone's baked parameter
+                    // type, selected with every other conversion.
+                    for (position, syntax) in occurrence.arguments.iter().enumerate() {
+                        let argument = OccurrenceId {
+                            syntax: *syntax,
+                            copy: id.copy,
+                        };
+                        if fact_at(&facts.expression_types, argument) != Some(&Ty::StringLiteral)
+                            || fact_at(&facts.conversions, argument).is_some()
+                        {
+                            continue;
+                        }
+                        let parameter = member
+                            .params
+                            .get(position)
+                            .ok_or("a string literal binds a static's variadic parameter")?;
+                        if *parameter != Ty::StringLiteral {
+                            facts.conversions.push((
+                                argument,
+                                mojito_checked::templates::TemplateConversion {
+                                    target: String::new(),
+                                    result: Some(parameter.clone()),
+                                    raises: None,
+                                    source_borrow: None,
+                                },
+                            ));
+                        }
                     }
                     format!("{owner}.{clone}")
                 }
@@ -4571,6 +4600,7 @@ impl Checker {
             binders: Vec::new(),
             struct_binders: Vec::new(),
             binder_constructions: RefCell::new(Vec::new()),
+            type_arguments: RefCell::new(Vec::new()),
             callable_params: Vec::new(),
             callable_calls: RefCell::new(Vec::new()),
             callable_binders: Vec::new(),
@@ -5226,6 +5256,7 @@ impl Checker {
                 .collect(),
             struct_binders: self.self_decls.iter().map(ParamDecl::id).collect(),
             binder_constructions: RefCell::new(Vec::new()),
+            type_arguments: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
             lane_binders: method
                 .type_params
@@ -5315,8 +5346,10 @@ impl Checker {
             .iter()
             .all(|(_, effects)| effect_derives(effects));
         let binder_constructions = shape.binder_constructions.borrow();
+        let type_arguments = shape.type_arguments.borrow();
         let adjustments_derive = facts.operation_adjustments.iter().all(|(id, adjustment)| {
             binder_constructions.contains(id)
+                || type_arguments.contains(id)
                 || adjustment_derives(adjustment)
                 || matches!(adjustment,
                     mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target)
@@ -9644,6 +9677,16 @@ fn substituted_facts(
                     .or_else(|| {
                         mojito_checked::templates::derive_adjustment(adjustment, &substitute)
                     })
+                    // An erased type argument names no type: a certificate
+                    // admits one only where the syntax spells a closed type
+                    // (`BodyShape::closed_type_argument`).
+                    .or_else(|| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
+                        )
+                        .then(|| adjustment.clone())
+                    })
                     .map(|derived| (*id, derived))
             })
             .collect::<Option<_>>()
@@ -9972,6 +10015,10 @@ struct BodyShape<'a> {
     /// The constructions of a method's own binder admitted, whose
     /// adjustment every clone records again as the template does.
     binder_constructions: RefCell<Vec<OccurrenceId>>,
+    /// The closed struct types an explicit application spells as bare
+    /// identifiers (`pick[String](…)`), whose erasure every clone records
+    /// again as the template does ([`Self::closed_type_argument`]).
+    type_arguments: RefCell<Vec<OccurrenceId>>,
     /// The parameters declared with a `def(...)` type, which the body may
     /// call or forward.
     callable_params: Vec<&'a str>,
@@ -12632,10 +12679,11 @@ impl BodyShape<'_> {
         };
         let literal = |argument: &ParamArg| match argument {
             ParamArg::Type(_) => true,
-            ParamArg::Value(value) => matches!(
-                value.kind,
-                ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Float(_)
-            ),
+            ParamArg::Value(value) => match &value.kind {
+                ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Float(_) => true,
+                ExprKind::Identifier(name) => self.closed_type_argument(value, name),
+                _ => false,
+            },
             ParamArg::Named { .. } => false,
         };
         let id = self.occurrence(expr);
@@ -12648,7 +12696,36 @@ impl BodyShape<'_> {
             })
             && (self.method_call(expr, object, field, args, kwargs)
                 || self.static_call(expr, object, field, args, kwargs, true));
+        if admitted {
+            for argument in param_args {
+                if let ParamArg::Value(
+                    value @ Expr {
+                        kind: ExprKind::Identifier(_),
+                        ..
+                    },
+                ) = argument
+                {
+                    push_unique(
+                        &mut self.type_arguments.borrow_mut(),
+                        self.occurrence(value),
+                    );
+                }
+            }
+        }
         admitted && self.holds(MethodFeatures::PARAMETERIZED_CALLS)
+    }
+
+    /// A bare identifier the parser left as a value where it names a closed
+    /// struct type (`pick[String](…)`): the check resolved it as the type
+    /// and erased the argument, which every instance repeats.
+    fn closed_type_argument(&self, argument: &Expr, name: &str) -> bool {
+        let erased = mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument;
+        self.structs
+            .get(name)
+            .is_some_and(|info| info.decls.is_empty())
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.operation_adjustments, self.occurrence(argument)) == Some(&erased)
+            })
     }
 
     /// A static method of a struct called on its type: `Color.of(n)`,
@@ -12783,6 +12860,8 @@ impl BodyShape<'_> {
                 let packed = pack_from.is_some_and(|from| position >= from);
                 if kept {
                     self.static_argument(argument, packed)
+                } else if matches!(argument.kind, ExprKind::Str(_)) {
+                    self.static_literal(argument)
                 } else {
                     (self.expression(argument) && self.scalar(argument))
                         || ((generic || self.facts.is_none())
@@ -12798,7 +12877,8 @@ impl BodyShape<'_> {
                     && (generic || fact_at(&facts.method_instantiations, id).is_none())
                     && fact_at(&facts.parameterized_method_calls, id).is_some() == parameterized
                     && args.iter().all(|argument| {
-                        fact_at(&facts.conversions, self.occurrence(argument)).is_none()
+                        matches!(argument.kind, ExprKind::Str(_))
+                            || fact_at(&facts.conversions, self.occurrence(argument)).is_none()
                     })
             });
         if admitted {
@@ -12845,6 +12925,25 @@ impl BodyShape<'_> {
             push_unique(&mut self.places.borrow_mut(), id);
         }
         admitted && self.holds(MethodFeatures::VALUE_ARGUMENTS)
+    }
+
+    /// A string literal passed to a static call ([`Self::static_call`]): a
+    /// temporary of its own closed type, bound to a parameter of that type
+    /// or converted into it.
+    ///
+    /// A conversion the template recorded (`pick[String]("s")`, or a
+    /// parameter typed `String`) is selected again per instance
+    /// ([`Checker::realize_conversion`]). A literal bound to the static's own
+    /// binder records none in the template, whose callee keeps the binder
+    /// symbolic, and one where the instance calls the per-call clone that
+    /// bakes it (`realize_static_instantiations`).
+    fn static_literal(&self, argument: &Expr) -> bool {
+        let id = self.occurrence(argument);
+        !self.keyed
+            && self.facts.is_none_or(|facts| {
+                fact_at(&facts.expression_types, id) == Some(&Ty::StringLiteral)
+            })
+            && self.holds(MethodFeatures::VALUE_ARGUMENTS)
     }
 
     /// Whether the call at `expr` recorded a closed contract naming `method`

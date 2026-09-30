@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A string literal handed to a generic struct's static whose own binder
+  types the parameter (`Pair[Self.T].pick("s")`, or spelled
+  `Pair[Self.T].pick[String]("s")`, over `pick[U: Writable](u: U)`) now
+  reuses the template's checked facts, each instance converting the literal
+  into the per-call clone's parameter type. Such methods used to be checked
+  again per instance.
 - `String(value)` of a closed value in a generic struct's method or a
   nested `def` (`return String(k)` for `k: Int`, `return sep + String(x)`)
   now reuses the template's checked facts, as it already did in a
