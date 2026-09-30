@@ -2,6 +2,8 @@
 # `Ts[i]()`, is checked once with the pack symbolic, where the pack's bound
 # or a `where` clause makes each element `Defaultable`, and each instance
 # constructs the element it binds: handed to `print`, or bound to a local.
+# Two elements of one type (`Row[Int, Int, Bool]`) leave the copy nothing
+# to tell their indices apart by, and still derive.
 struct Row[*Ts: Movable & Writable & Deinitable](Movable):
     var width: Int
 
@@ -30,3 +32,7 @@ def main():
     row.defaults()
     row.locals()
     build[Int, Optional[Int], Tuple[Int, Bool]]()
+    var shared = Row[Int, Int, Bool]()
+    shared.defaults()
+    shared.locals()
+    build[Bool, Int, Bool]()

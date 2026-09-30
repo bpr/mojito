@@ -1725,8 +1725,9 @@ fn template_pack_element_construction_derives() {
     // A pack element's default construction handed to `print` or bound to a
     // local is checked once with the pack symbolic; each instance checks
     // the elaborated construction alone and fixes its copy's loop index at
-    // the element that construction built.
-    let source = "struct Row[*Ts: Movable & Writable & Deinitable](Movable):\n    var width: Int\n\n    def __init__(out self):\n        self.width = 3\n\n    def defaults(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            print(Self.Ts[i]())\n\n    def locals(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            var value = Self.Ts[i]()\n            print(value, self.width)\n\n\ndef build[*Ts: Movable & Defaultable & Writable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        var value = Ts[i]()\n        print(value)\n\n\ndef main():\n    var row = Row[Int, Float64, Bool]()\n    row.defaults()\n    row.locals()\n    build[Int, Optional[Int], Tuple[Int, Bool]]()\n";
+    // the element that construction built, or at the first of several
+    // elements sharing its type, which the copy cannot tell apart.
+    let source = "struct Row[*Ts: Movable & Writable & Deinitable](Movable):\n    var width: Int\n\n    def __init__(out self):\n        self.width = 3\n\n    def defaults(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            print(Self.Ts[i]())\n\n    def locals(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            var value = Self.Ts[i]()\n            print(value, self.width)\n\n\ndef build[*Ts: Movable & Defaultable & Writable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        var value = Ts[i]()\n        print(value)\n\n\ndef main():\n    var row = Row[Int, Float64, Bool]()\n    row.defaults()\n    row.locals()\n    build[Int, Optional[Int], Tuple[Int, Bool]]()\n    var shared = Row[Int, Int, Bool]()\n    shared.defaults()\n    shared.locals()\n    build[Bool, Int, Bool]()\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler
@@ -1750,10 +1751,10 @@ fn template_pack_element_construction_derives() {
                     || name.ends_with(".locals")
             })
             .collect();
-        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
+        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
-            "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n"
+            "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n0\n0\nFalse\n0 3\n0 3\nFalse 3\nFalse\n0\nFalse\n"
         );
     }
 }

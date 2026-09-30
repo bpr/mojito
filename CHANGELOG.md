@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack element's default construction over a pack holding its type
+  more than once (`print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, `var
+  value = Ts[i]()` in `build[Int, Int]`) now reuses the template's checked
+  facts, since nothing else in the loop copy tells those elements apart.
+  Such instances used to be checked again.
 - A call through a bound whose result is typed by the requirement's own
   binder (`self.s.echo(self.w)` over `echo[T: Copyable](self, other: T) ->
   T`) now reuses the template's checked facts, the result taking the

@@ -15313,8 +15313,10 @@ fn element_index_binder(ty: &Ty) -> Option<mojito_types::param_expr::ParamId> {
 /// fixed (`print(Self.Ts[i]())`, `var value = Ts[i]()`) fixed at the one
 /// loop index whose element is the type the instance's own check of the
 /// construction found ([`Checker::element_construction_facts`]), and every
-/// other occurrence of that copy with it ([`loop_element_indices`]). `None`
-/// when the element's type names no index, or more than one.
+/// other occurrence of that copy with it ([`loop_element_indices`]). Where
+/// several elements share that type, the first is taken when the copy reads
+/// the same types whichever it is ([`index_indifferent`]). `None` when the
+/// element's type names no index, or indices the copy tells apart.
 fn constructed_element_indices(
     mut indices: ElementIndices,
     template: &CheckedBodyFacts,
@@ -15351,23 +15353,34 @@ fn constructed_element_indices(
             return None;
         };
         let packed = substitution.packs.get(&pack.id)?;
-        let mut matching = packed.iter().enumerate().filter(|(_, element)| {
-            mojito_types::types::substitute_packs(
-                element,
-                &substitution.types,
-                &substitution.packs,
-                &substitution.values,
-            ) == *built
-        });
-        let (at, _) = matching.next()?;
-        if matching.next().is_some() {
+        let matching: Vec<mojito_types::ct::CtValue> = packed
+            .iter()
+            .enumerate()
+            .filter(|(_, element)| {
+                mojito_types::types::substitute_packs(
+                    element,
+                    &substitution.types,
+                    &substitution.packs,
+                    &substitution.values,
+                ) == *built
+            })
+            .map(|(at, _)| i64::try_from(at).map(mojito_types::ct::CtValue::Int))
+            .collect::<Result<_, _>>()
+            .ok()?;
+        let (at, rivals) = matching.split_first()?;
+        if !rivals.is_empty()
+            && !index_indifferent(
+                template,
+                substitution,
+                occurrences,
+                occurrence.id,
+                &index.id,
+                (at, rivals),
+            )
+        {
             return None;
         }
-        let at = i64::try_from(at).ok()?;
-        indices.insert(
-            occurrence.id,
-            (index.id.clone(), mojito_types::ct::CtValue::Int(at)),
-        );
+        indices.insert(occurrence.id, (index.id.clone(), at.clone()));
         seeded = true;
     }
     Some(if seeded {
@@ -15375,6 +15388,71 @@ fn constructed_element_indices(
     } else {
         indices
     })
+}
+
+/// Whether every occurrence of `construction`'s loop copy that
+/// [`loop_element_indices`] fixes at `binder` takes the same types at
+/// `first` as at each of `rivals`: the copy then cannot tell those indices
+/// apart, where it reads only the constructed pack at that index, and does
+/// where it also reads another pack there.
+fn index_indifferent(
+    template: &CheckedBodyFacts,
+    substitution: &InstanceSubstitution,
+    occurrences: &[Occurrence],
+    construction: OccurrenceId,
+    binder: &mojito_types::param_expr::ParamId,
+    (first, rivals): (&mojito_types::ct::CtValue, &[mojito_types::ct::CtValue]),
+) -> bool {
+    let copies = |syntax: SyntaxId| {
+        occurrences
+            .iter()
+            .filter(|occurrence| occurrence.id.syntax == syntax)
+            .count()
+    };
+    let count = copies(construction.syntax);
+    let references = template
+        .reference_binding_types
+        .iter()
+        .chain(&template.reference_place_types)
+        .map(|(id, reference)| (id.syntax, &reference.referent));
+    let typed: Vec<(SyntaxId, &Ty)> = template
+        .expression_types
+        .iter()
+        .chain(&template.expression_place_types)
+        .chain(&template.binding_types)
+        .map(|(id, ty)| (id.syntax, ty))
+        .chain(references)
+        .filter(|(syntax, _)| {
+            copies(*syntax) == count
+                && occurrences.iter().any(|occurrence| {
+                    occurrence.id.syntax == *syntax && occurrence.id.copy == construction.copy
+                })
+        })
+        .collect();
+    let fixed: HashSet<SyntaxId> = typed
+        .iter()
+        .filter(|(_, ty)| element_index_binder(ty).as_ref() == Some(binder))
+        .map(|(syntax, _)| *syntax)
+        .collect();
+    let at = |candidate: &mojito_types::ct::CtValue| -> Vec<Ty> {
+        let values: Vec<_> = std::iter::once((binder.clone(), candidate.clone()))
+            .chain(substitution.values.iter().cloned())
+            .collect();
+        typed
+            .iter()
+            .filter(|(syntax, _)| fixed.contains(syntax))
+            .map(|(_, ty)| {
+                mojito_types::types::substitute_packs(
+                    &fold_binder_views(ty, &substitution.views),
+                    &substitution.types,
+                    &substitution.packs,
+                    &values,
+                )
+            })
+            .collect()
+    };
+    let expected = at(first);
+    rivals.iter().all(|candidate| at(candidate) == expected)
 }
 
 /// `indices` with each `^` transfer of a pack element fixed at its
