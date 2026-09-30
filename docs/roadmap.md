@@ -53,22 +53,20 @@ Pliron experiment rather than move the check order, 1.1 to 1.3, sit last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.2 Two decision-corpus inputs still refuse the A1 shadow, so the
+- [ ] **1.2 One decision-corpus input still refuses the A1 shadow, so the
   bulk lane exits nonzero**
 
-  Problem: `scripts/cover-pliron-a1` converts 891 of 893 inputs, and
+  Problem: `scripts/cover-pliron-a1` converts 892 of 893 inputs, and
   `scripts/bench-pliron-a1` refuses a verdict while any input fails, so
-  the two residues stand between the shadow and its overhead measurement.
+  the last residue stands between the shadow and its overhead measurement.
   - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md)
-    §Coverage, which names each input.
-  - One is monomorphization's `Tuple` argument spelled two ways across
-    one instance (2.5), which stands without the shadow.
-  - One is a `return` inside a `finally` body
+    §Coverage, which names the input.
+  - It is a `return` inside a `finally` body
     (`assets/ok/pliron_finally_overrides.mojo`), refused by name. Admitting
     it needs a pending-outcome resolution at the override site, as the
     native lowering's `emit_pending_resolution` does, and the same for a
     return carrying cleanup across a finally, which no input reaches.
-  - Depends on 2.5.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **1.3 The Pliron pivot's overhead has never been measured**
@@ -90,7 +88,7 @@ Pliron experiment rather than move the check order, 1.1 to 1.3, sit last.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert,
-    and 891 of the 893 corpus inputs.
+    and 892 of the 893 corpus inputs.
   - Depends on 1.1 and 1.2.
   - Model: Fable, Planned.
 
@@ -158,28 +156,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.5 A specialized program is not VM-transparent where it slices, and
-  spells one `Tuple` argument two ways**
-
-  Problem: the exported A1 program of some inputs runs on the VM no
-  better than the specialized one does, and one instance's field
-  projection names no declared field.
-  - The VM's slice bounds construct the nominal `Optional` through its
-    template declaration (`dispatch.rs`, `slice_bound_optional`), which
-    specialization drops; `assets/ok/keyword_slice_subscripts.mojo`,
-    `assets/ok/with_statement.mojo`, and `assets/ok/path_operations.mojo`
-    stop with `Slice bound access requires the nominal Optional
-    declaration`. Keep the template and its positional constructor when a
-    slice with bounds survives, as the nominal `String`'s lifecycle
-    members are kept.
-  - `assets/ok/tuple_hashable_dict_key.mojo`: `Set$mono$TTuple…` declares
-    its `items` field over `List$mono$TTuple…$Int$String[Tuple$t2[…][Int,
-    String]]` while the projection spells `List$mono$TTuple…[Tuple$t2[…]]`,
-    the argument without its element types. One spelling per instance.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **2.6 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.5 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an

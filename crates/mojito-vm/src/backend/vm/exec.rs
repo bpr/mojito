@@ -877,7 +877,8 @@ impl VmBackend {
                                 )));
                             }
                         };
-                        self.slice_bound_optional(prog, bound)?
+                        let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                        self.slice_bound_optional(prog, bound, target)?
                     }
                     _ => get_field(&base, field)?,
                 };

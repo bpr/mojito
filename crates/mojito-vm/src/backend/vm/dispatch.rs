@@ -175,14 +175,24 @@ impl VmBackend {
     }
 
     /// Materialize one intrinsic Slice bound through the ordinary bundled
-    /// `Optional[Int]` constructor. The linker may keep Optional module-qualified,
-    /// so accept its unique nominal suffix but never guess between declarations.
+    /// `Optional[Int]` constructor. The projection's declared result names the
+    /// declaration: the template (`Optional[Int]`) or, in a specialized
+    /// program, its instance (`Optional$mono$TInt`). Without one, the linker
+    /// may keep Optional module-qualified, so accept its unique nominal suffix
+    /// but never guess between declarations.
     pub(super) fn slice_bound_optional(
         &mut self,
         prog: &Prog,
         bound: Option<i64>,
+        target: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
-        let name = if prog.structs.contains_key("Optional") {
+        let declared = target.and_then(|ty| match ty {
+            Ty::Struct(name, _) if prog.structs.contains_key(name) => Some(name.clone()),
+            _ => None,
+        });
+        let name = if let Some(name) = declared {
+            name
+        } else if prog.structs.contains_key("Optional") {
             "Optional".to_string()
         } else {
             let mut candidates = prog

@@ -149,7 +149,11 @@ pub(super) fn bind_explicit_value_arguments(
             // erased body forwarding its own binder (`hash[Self.H](key)`)
             // records that binder, which the enclosing instance's bindings
             // resolve. An unresolvable argument leaves the slot to its
-            // default.
+            // default. A binder the receiver already solved keeps that
+            // solution: the name alone drops a minted `Tuple$tN`'s element
+            // arguments, which the receiver's type — and so the instance's
+            // owner — spells.
+            ParamDecl::Type { .. } if bindings.types.contains_key(&declaration.binder()) => {}
             ParamDecl::Type { .. } => {
                 let Some(CtValue::Str(spelling)) = constant_values.get(&value_reg.0) else {
                     continue;

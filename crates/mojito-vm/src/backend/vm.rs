@@ -613,6 +613,37 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
+    /// The instance of `receiver_type.method` a specialized program minted
+    /// for `hasher`'s struct (`String.__hash__$mono$T…AHasher…`), when the
+    /// program declares no template of that name: the instance whose hasher
+    /// parameter is that struct. `None` keeps by-name dispatch.
+    fn hasher_method_instance(
+        &self,
+        receiver_type: &str,
+        method: &str,
+        hasher: &Value,
+    ) -> Option<String> {
+        let Value::Struct { name: hasher, .. } = hasher else {
+            return None;
+        };
+        let symbol = format!("{receiver_type}.{method}");
+        if self.index_of(&symbol).is_some() {
+            return None;
+        }
+        let prefix = format!("{symbol}$mono$");
+        let mut instances = self.mir.functions.iter().filter(|(fname, function)| {
+            fname.starts_with(&prefix)
+                && matches!(
+                    function.param_types.get(1).map(peel_references),
+                    Some(mojito_types::types::Ty::Struct(name, _)) if name == hasher
+                )
+        });
+        match (instances.next(), instances.next()) {
+            (Some((fname, _)), None) => Some(fname.clone()),
+            _ => None,
+        }
+    }
+
     /// Whether any function name ends with `suffix` (e.g. `.__copyinit__`) — used to
     /// decide whether copy/move needs the lifecycle-method path at all.
     fn defines(&self, suffix: &str) -> bool {

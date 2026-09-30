@@ -12,8 +12,8 @@ Record of the Stage A1 vertical slice from
 - All seven proof items pass on the gate fixture, on the VM and natively.
 - F1 to F4 pass. F5 (overhead) is **not measured**.
 - The pivot is neither approved nor rejected. A2 is not started.
-- All ten focused inputs convert, and 891 of the 893 inputs of the decision
-  corpus (§Coverage). The two that do not are named there; neither is a
+- All ten focused inputs convert, and 892 of the 893 inputs of the decision
+  corpus (§Coverage). The one that does not is named there; it is not a
   form the inventory lacks.
 - The pin rehearsal passed on 2026-09-30 (§Pin rehearsal): upstream
   `81155d9` needed ten changed lines, all inside the adapter.
@@ -31,7 +31,7 @@ input are unchanged. A1 is optional, default off, and removable.
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
 | F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | 891 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the two residues in §Coverage |
+| Full canonical-artifact compatibility | 892 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the residue in §Coverage |
 | Pin-maintenance rehearsal | PASS | `477e6b0` to `81155d9` in under an hour, 10 lines in 4 adapter files and 2 test files, no escape, no fork (§Pin rehearsal) |
 
 Core text is 2.6 to 3.4 times the v1 text of the same module. That is over
@@ -355,6 +355,16 @@ and replacement stay with `ParamContext`.
 16. **`#[format]` prints a variant's name before its own literal.** A
     tuple variant with a custom format holding a literal word printed the
     word twice (`Taketake`); the default tuple format is the one to use.
+18. **A named type argument dropped a `Tuple`'s elements.** A
+    constructor's type argument reaches MIR as a string naming the struct
+    (`Set[Tuple[Int, String]]()`), so it binds `Tuple$t2[…]` without the
+    element arguments the receiver's type carries and the instance's owner
+    spells. The instance's declaration and its body then named two
+    `List` instances. The spelled argument now leaves a binder the
+    receiver solved alone. Specialization also stopped being
+    VM-transparent where the VM names a template the specialized program
+    no longer declares: the slice bound's `Optional` and a string
+    literal's `String.__hash__`. The VM now takes both from the instance.
 
 ## Coverage
 
@@ -395,25 +405,26 @@ input, coverage only. Run 2026-09-29 at each stage of the coverage task:
 | The plain forms and variants | 887 with exits crossing a try refused | 6 plus those |
 | Exits crossing a try, with and without `finally` | 887 | 6 |
 | A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | 888 | 5 |
-| Specialized MIR verifies (2026-09-30; the three inputs re-run alone, debug build) | **891** | **2** |
+| Specialized MIR verifies (2026-09-30; the three inputs re-run alone, debug build) | 891 | 2 |
+| A named type argument keeps a receiver's `Tuple` spelling (2026-09-30; the input re-run alone, debug build) | **892** | **1** |
 
-The two that do not convert, neither a form the inventory lacks:
+The one that does not convert, not a form the inventory lacks:
 
 | Input | Why |
 |---|---|
-| `assets/ok/tuple_hashable_dict_key.mojo` | a `Tuple` type argument spelled with and without its element types across one instance, so a field projection names no declared field |
 | `assets/ok/pliron_finally_overrides.mojo` | a `return` inside a `finally` body, refused by name |
 
 Still refused by name, because no corpus input reaches them: a subscript
 store through a slice, a return carrying cleanup across a finally, a
 call with unresolved parameters, and the four rejected forms.
 
-Beyond conversion, the exported program of some inputs does not run on
-the VM as the specialized one does not either: the VM's slice bounds
-construct the nominal `Optional`, whose template declaration
-specialization drops. That is a VM-transparency defect of
-monomorphization, filed on the roadmap, not a shadow defect: the exported
-text is the specialized text byte for byte.
+Beyond conversion, the exported programs of
+`assets/ok/keyword_slice_subscripts.mojo`, `with_statement.mojo`,
+`path_operations.mojo`, and `tuple_hashable_dict_key.mojo` run on the VM
+as the original programs do. The VM builds a slice bound as the
+`Optional` instance its projection declares, and hashes a string literal
+through the `String.__hash__` instance minted for its hasher, where it
+looked both up by the template's name, which specialization drops.
 
 ## Measurements
 

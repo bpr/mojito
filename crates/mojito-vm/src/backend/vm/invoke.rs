@@ -414,13 +414,14 @@ impl VmBackend {
                     if let Value::Str(text) = &recv {
                         let text = text.clone();
                         let materialized = self.nominal_string_value(prog, &text)?;
-                        if matches!(materialized, Value::Struct { .. }) {
+                        if let Value::Struct { name, .. } = &materialized {
+                            let instance = prog.hasher_method_instance(name, method, &args[0]);
                             return self.method_call(
                                 prog,
                                 MethodInvocation {
                                     receiver: materialized,
                                     method,
-                                    resolved_name: None,
+                                    resolved_name: instance.as_deref(),
                                     result_adapter,
                                     arguments: args,
                                     keyword_arguments: kwargs,

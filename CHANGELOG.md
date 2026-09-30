@@ -29,6 +29,13 @@ to evolve under the `0.x` compatibility rules.
   `List[ref[o] Int]`, an `Array` of capturing closures, and
   `Array.deinit_with` specialize into verifying MIR, and the A1 shadow
   core converts 891 of its 893 corpus inputs.
+- A specialized program runs on the VM where it slices or hashes a string
+  literal (`assets/ok/keyword_slice_subscripts.mojo`,
+  `assets/ok/tuple_hashable_dict_key.mojo`): the VM takes the slice bound's
+  `Optional` and the literal's `String.__hash__` from the instances the
+  program declares. A type argument named by string no longer drops a
+  minted `Tuple`'s elements where the receiver spells them, so the A1
+  shadow core converts 892 of its 893 corpus inputs.
 
 - `print` with a call result as a keyword (`print(x, sep=String("-"))`,
   `print(x, file=FileDescriptor(1))`) in a method or a runtime `def` now
