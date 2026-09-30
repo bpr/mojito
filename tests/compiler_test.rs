@@ -1986,6 +1986,34 @@ fn lane_comparisons_derive() {
 }
 
 #[test]
+fn float_lane_literals_derive() {
+    // A float literal beside a value of a symbolic lane — an operand, a
+    // comparison's operand, or an augmented assignment's value — derives at
+    // a sized float lane and at the native `Float64`, where it materializes.
+    let source = "struct W[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        self.pos = pos\n\n    def half(self) -> Scalar[Self.dtype]:\n        return self.pos * 0.5\n\n    def small(self) -> Bool:\n        if self.pos < 0.5:\n            return True\n        return False\n\n    def big(self) -> Bool:\n        return Bool(1.5 <= self.pos)\n\n    def nudge(mut self):\n        self.pos += 0.25\n\n\ndef main():\n    var a = W[DType.float64](3.0)\n    var b = W[DType.float32](0.25)\n    a.nudge()\n    b.nudge()\n    print(a.half(), a.small(), a.big(), b.half(), b.small(), b.big())\n";
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "1.625 False True 0.25 False False\n"
+        );
+    }
+    let stats = derived.template_stats();
+    let members = ["dfloat64", "dfloat32"].iter().flat_map(|lane| {
+        ["half", "small", "big", "nudge"].map(|member| format!("W${lane};.{member}"))
+    });
+    for name in members {
+        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
+        assert!(
+            !stats.inferred_clones.contains(&name),
+            "{name} is never inferred: {stats:?}"
+        );
+    }
+}
+
+#[test]
 fn spread_pack_initializer_derives() {
     // `self.storage = Tuple(*args^)` in a variadic struct's initializer, a
     // user struct's and the bundled `TString`'s (named by its public

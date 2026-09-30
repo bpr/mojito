@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A float literal beside a value of a struct's symbolic lane
+  (`self.pos * 0.5`, `self.pos < 0.5`, `self.pos += 0.25` over
+  `Scalar[Self.dtype]`) now reuses the template's checked facts, the literal
+  materializing at an instance whose lane folds to `Float64`. Such methods
+  used to be checked again per instance.
 - The borrowed `Array` and `List` iterators' `__next__`, which returns a
   reference into the iterated collection through the iterator's `ref`
   field, now reuses the template's checked facts. It used to be checked

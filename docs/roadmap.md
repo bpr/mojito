@@ -36,24 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
+Pliron experiment rather than move the check order sit last, 1.5 to 1.8.
 
-- [ ] **1.1 A float literal beside a symbolic lane's value keeps the
-  clone check**
-
-  Problem: `self.pos * 0.5` or `self.pos < 0.5` over `Scalar[Self.dtype]`
-  is inferred per instance wherever the lane folds to `Float64`.
-  - `realize_lane_literals` judges a literal's fit from the occurrence's
-    recorded value, which is kept for integer and `Bool` literals only, so
-    a float literal refuses at a native lane.
-  - `BodyShape::lane_comparison` admits an integer literal operand only
-    (`lane_comparisons_derive`); a float one is refused there outright.
-  - Found while literal operands joined lane comparisons (2026-09-29); no
-    bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 An overloaded witness with binders of its own keeps the
+- [ ] **1.1 An overloaded witness with binders of its own keeps the
   clone check over a generic struct's instance**
 
   Problem: `self.item.__hash__(hasher)` over `Pair[Int]`, whose
@@ -70,7 +55,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A call through a bound whose requirement names no single
+- [ ] **1.2 A call through a bound whose requirement names no single
   witness still ranks the overload set on the recorded types**
 
   Problem: where no one member witnesses the requirement, `bound_witness`
@@ -91,7 +76,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 A call through a bound whose result is typed by the
+- [ ] **1.3 A call through a bound whose result is typed by the
   requirement's own binder keeps the clone check**
 
   Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
@@ -109,7 +94,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A pack element's default construction keeps the clone check
+- [ ] **1.4 A pack element's default construction keeps the clone check
   where two elements share a type**
 
   Problem: `print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, or `var value
@@ -128,7 +113,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 The A1 shadow core has never been run over the decision
+- [ ] **1.5 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -145,12 +130,12 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.7 to 1.9 are the ones in this section that do
+  - This entry and 1.6 to 1.8 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.7 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.6 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -164,7 +149,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.8 A1 core text is about three times the v1 text**
+- [ ] **1.7 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -179,7 +164,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.9 The Pliron pivot's overhead has never been measured**
+- [ ] **1.8 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -198,7 +183,7 @@ Pliron experiment rather than move the check order sit last, 1.6 to 1.9.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.6, 1.7, and 1.8.
+  - Depends on 1.5, 1.6, and 1.7.
   - Model: Fable, Planned.
 
 ### 2. Native Backend

@@ -238,6 +238,9 @@ struct Occurrence {
     /// The value of an integer or `Bool` literal, which may be a folded
     /// compile-time value.
     literal: Option<mojito_types::ct::CtValue>,
+    /// The value of a float literal, which only a lane literal's fit reads
+    /// (`realize_lane_literals`).
+    float_literal: Option<mojito_common::literal::FloatLiteral>,
     /// A subscript's index occurrence and value, when the elaborator folded
     /// it to an integer literal: the iteration a pack element was copied for.
     folded_index: Option<(SyntaxId, i64)>,
@@ -1028,7 +1031,14 @@ impl Checker {
             occurrences
                 .iter()
                 .find(|occurrence| occurrence.id == id)
-                .and_then(|occurrence| occurrence.literal.clone())
+                .and_then(|occurrence| {
+                    occurrence.literal.clone().or_else(|| {
+                        occurrence
+                            .float_literal
+                            .clone()
+                            .map(mojito_types::ct::CtValue::FloatLiteral)
+                    })
+                })
                 .map(|value| match value {
                     mojito_types::ct::CtValue::Int(value) => {
                         mojito_types::ct::CtValue::IntLiteral(value.into())
@@ -5728,6 +5738,7 @@ impl Checker {
                     transfer: false,
                     ranking: ArgumentRanking::default(),
                     literal: None,
+                    float_literal: None,
                     folded_index: None,
                     dimensions: Vec::new(),
                     compile_time_literals: Vec::new(),
@@ -5867,6 +5878,10 @@ impl Checker {
                             mojito_types::ct::CtValue::Int,
                         )),
                         ExprKind::Bool(value) => Some(mojito_types::ct::CtValue::Bool(*value)),
+                        _ => None,
+                    },
+                    float_literal: match &expr.kind {
+                        ExprKind::Float(value) => Some(value.clone()),
                         _ => None,
                     },
                     folded_index: match &expr.kind {
@@ -13884,7 +13899,7 @@ impl BodyShape<'_> {
 
     /// A comparison between two values of one value-shaped scalar type
     /// (`self.pos < Scalar[Self.dtype](limit)`), or between such a value and
-    /// an integer literal (`x < 0`), read only as a condition, through
+    /// an integer or float literal (`x < 0`, `x < 0.5`), read only as a condition, through
     /// `Bool(...)`, or bound to a local that is itself read only so
     /// ([`LocalKind::Mask`]).
     ///
@@ -13905,11 +13920,14 @@ impl BodyShape<'_> {
             !self.folding(operand) && self.expression(operand) && self.value_shaped(operand)
         };
         let literal = |operand: &Expr| {
-            matches!(operand.kind, ExprKind::Int(_))
-                && !self.folding(operand)
+            let ty = match operand.kind {
+                ExprKind::Int(_) => Ty::IntLiteral,
+                ExprKind::Float(_) => Ty::FloatLiteral,
+                _ => return false,
+            };
+            !self.folding(operand)
                 && self.facts.is_none_or(|facts| {
-                    fact_at(&facts.expression_types, self.occurrence(operand))
-                        == Some(&Ty::IntLiteral)
+                    fact_at(&facts.expression_types, self.occurrence(operand)) == Some(&ty)
                 })
         };
         let admitted = comparison(*op)
