@@ -14766,6 +14766,20 @@ impl BodyShape<'_> {
                     }
                     kept
                 };
+                // A result typed by a requirement binder is the type the
+                // binder was inferred from: a by-value argument's, which
+                // `kept_argument` asks to be the parameter's own, so the
+                // witness's result under every instance is the argument's
+                // type there, whose copy, move, or drop the instance proves.
+                let binder_result = |result: &Ty| {
+                    !call.contract.param_decls.is_empty()
+                        && call.contract.arguments.iter().any(|parameter| {
+                            !parameter.requires_place
+                                && parameter.source
+                                    != mojito_checked::checked::CheckedCallArgumentSource::Default
+                                && parameter.parameter_ty == *result
+                        })
+                };
                 // A by-value parameter of a type other than a closed scalar
                 // is judged at its argument (`kept_argument`). The
                 // requirement's own type binders, inferred from the
@@ -14815,7 +14829,8 @@ impl BodyShape<'_> {
                     }
                     && (call.contract.result_ty == *receiver
                         || viewed(&call.contract.result_ty)
-                        || !mojito_types::types::is_symbolic(&call.contract.result_ty))
+                        || !mojito_types::types::is_symbolic(&call.contract.result_ty)
+                        || binder_result(&call.contract.result_ty))
                     && call
                         .contract
                         .arguments

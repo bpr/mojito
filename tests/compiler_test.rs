@@ -5311,6 +5311,27 @@ fn template_bound_self_argument_derives() {
 }
 
 #[test]
+fn template_bound_binder_result_derives() {
+    // A call through a bound whose result is typed by the requirement's own
+    // binder, inferred from a by-value argument: the result is the
+    // argument's type in every instance.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_bound_binder_result.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "w 7\nw w q\n7 7 9\n",
+        &[
+            ("Holder.echoed_field", 2),
+            ("Holder.echoed_local", 2),
+            ("Holder.echoed_nested", 2),
+            ("Holder.echoed_discarded", 2),
+            ("Holder.echoed_parameter", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

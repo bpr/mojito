@@ -36,27 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
+Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
 
-- [ ] **1.1 A call through a bound whose result is typed by the
-  requirement's own binder keeps the clone check**
-
-  Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
-  Copyable](self, other: T) -> T` returns its binder, leaves the method
-  outside the method grammar, so every instance is checked again.
-  - `BodyShape::bound_dispatch` admits a result that is the receiver's own
-    type, a view of a pack element, or a closed type. The binder's
-    template result is the argument's symbolic type, none of those.
-  - The witness's result under the instance is the argument's type there,
-    so the result's copy, move, or drop must be re-proved at that type.
-  - An argument of the binder's type, with a closed result, derives
-    (`assets/ok/template_method_bound_self_argument.mojo`).
-  - Found while `Self`-typed and binder-typed arguments joined the method
-    grammar (2026-09-29); no bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 A pack element's default construction keeps the clone check
+- [ ] **1.1 A pack element's default construction keeps the clone check
   where two elements share a type**
 
   Problem: `print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, or `var value
@@ -75,7 +57,35 @@ Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 The A1 shadow core has never been run over the decision
+- [ ] **1.2 `String(value)` of a struct parameter's type keeps the clone
+  check**
+
+  Problem: `return String(self.w)` over `W: Writable`, or `String(w)` of a
+  local of that type, leaves the method outside the method grammar, so
+  every instance is checked again.
+  - `String(value)` of a closed value derives (`return String(k)` for `k:
+    Int`).
+  - The conversion's overload is selected on the value's type, which the
+    instance knows and the template does not.
+  - Found while call results typed by a requirement binder joined the
+    method grammar (2026-09-29); no bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.3 `print` of a temporary of a struct parameter's type keeps the
+  clone check**
+
+  Problem: `print(self.w.copy())` or `print(self.s.echo(self.w))` over `W:
+  Writable` leaves the method outside the method grammar, so every instance
+  is checked again.
+  - `print(self.w)` of a place, or of a local, derives.
+  - The temporary's write and its drop depend on the instance's type.
+  - Found while call results typed by a requirement binder joined the
+    method grammar (2026-09-29); no bundled body is known to need it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.4 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -92,12 +102,12 @@ Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.4 to 1.6 are the ones in this section that do
+  - This entry and 1.5 to 1.7 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.4 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.5 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -111,7 +121,7 @@ Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.5 A1 core text is about three times the v1 text**
+- [ ] **1.6 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -126,7 +136,7 @@ Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.6 The Pliron pivot's overhead has never been measured**
+- [ ] **1.7 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -145,7 +155,7 @@ Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.3, 1.4, and 1.5.
+  - Depends on 1.4, 1.5, and 1.6.
   - Model: Fable, Planned.
 
 ### 2. Native Backend

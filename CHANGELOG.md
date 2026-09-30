@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound whose result is typed by the requirement's own
+  binder (`self.s.echo(self.w)` over `echo[T: Copyable](self, other: T) ->
+  T`) now reuses the template's checked facts, the result taking the
+  argument's type in every instance
+  (`assets/ok/template_method_bound_binder_result.mojo`). Such methods used
+  to be checked again per instance.
 - A call through a bound into an overload set no longer ranks the set on
   the argument types when no single member witnesses the requirement: the
   instance takes the requirement's witness, as the pinned Mojo binds the
