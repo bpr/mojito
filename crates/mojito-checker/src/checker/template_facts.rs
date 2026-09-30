@@ -10516,6 +10516,7 @@ impl BodyShape<'_> {
             });
         if admitted {
             self.references.borrow_mut().push(self.occurrence(expr));
+            self.borrowed_field_receiver(object);
         }
         admitted && self.holds(MethodFeatures::REFERENCE_CALLS)
     }
@@ -10893,6 +10894,22 @@ impl BodyShape<'_> {
             }
         }
         admitted && self.holds(MethodFeatures::REFERENCE_RECEIVERS)
+    }
+
+    /// A `ref` field of the receiver (`self.src` over
+    /// `var src: ref[origin] Array[...]`) a reference call borrows for its
+    /// own receiver rather than reading the referent out. The field's
+    /// declaration decides that, so every instance borrows it too.
+    fn borrowed_field_receiver(&self, object: &Expr) {
+        let id = self.occurrence(object);
+        let borrowed = self.receiver_field(object)
+            && self
+                .facts
+                .is_some_and(|facts| facts.borrowed_reference_receivers.contains(&id));
+        let mut receivers = self.receivers.borrow_mut();
+        if borrowed && !receivers.contains(&id) {
+            receivers.push(id);
+        }
     }
 
     /// Note that `id` is kept as a reference handle.

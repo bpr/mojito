@@ -3465,9 +3465,10 @@ fn template_method_value_parameter_templates_reuse() {
 fn array_members_reuse_templates() {
     // `Array`'s initializers, the copy and move ones among them, its
     // comparisons over pointer slots and over whole values, `__contains__`,
-    // `unsafe_ptr`, `write_repr_to`, `deinit_with`, and both `__iter__`
-    // overloads are certified templates whose facts every later pass reuses,
-    // verified against their own check.
+    // `unsafe_ptr`, `write_repr_to`, `deinit_with`, both `__iter__`
+    // overloads, and the borrowed iterator's `__next__` are certified
+    // templates whose facts every later pass reuses, verified against their
+    // own check.
     let source = "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n    var d = a.copy()\n    var e = d^\n    def show(var element: Int):\n        print(element)\n\n    e^.deinit_with(show)\n    for x in b:\n        print(x)\n    for x in a^:\n        print(x)\n";
     let expected = "False True True True False False\nTrue False 1\n1\n5\n2\n4\n4\n4\n1\n5\n2\n";
     let compiler = Compiler::default();
@@ -3493,6 +3494,7 @@ fn array_members_reuse_templates() {
         ("Array.unsafe_ptr", 1),
         ("Array.write_to", 1),
         ("Array.write_repr_to", 1),
+        ("__module$std$collections$array$_ArrayIter.__next__", 1),
     ] {
         assert_eq!(
             certified_count(stats, name),

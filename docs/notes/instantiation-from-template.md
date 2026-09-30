@@ -1460,6 +1460,13 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   `stray_method_call` counted its `"String"` overload target as a stray
   call. It now accounts for the stringified occurrences as the function
   certificate does (`tests/compiler_test.rs:template_stringify_scalar_parameter_derives`).
+- 2026-09-29, the borrowed iterators' `__next__` (`return self.src[r]`
+  over `var src: ref[iterable_origin] Array[...]`): the checker borrows
+  the `ref` field as the subscript call's receiver, which the method shape
+  never recorded, so the reference facts looked unaccounted for. A
+  reference call on a receiver field now records that borrow
+  (`BodyShape::borrowed_field_receiver`); `_ArrayIter.__next__` and
+  `_ListIter.__next__` derive (`array_members_reuse_templates`).
 
 ## What is not covered
 
@@ -1467,7 +1474,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A pack element's default construction handed to `print` or bound to a
   local where two of the pack's elements share a type, so the element's
-  type names no single loop index (roadmap 1.6).
+  type names no single loop index (roadmap 1.5).
 
 - A method body beyond `MethodBody`: a receiver origin naming anything but
   one of the method's own origin binders, a copy or move

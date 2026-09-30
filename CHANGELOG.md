@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The borrowed `Array` and `List` iterators' `__next__`, which returns a
+  reference into the iterated collection through the iterator's `ref`
+  field, now reuses the template's checked facts. It used to be checked
+  again in every checker pass.
 - A string literal handed to a generic struct's static whose own binder
   types the parameter (`Pair[Self.T].pick("s")`, or spelled
   `Pair[Self.T].pick[String]("s")`, over `pick[U: Writable](u: U)`) now
