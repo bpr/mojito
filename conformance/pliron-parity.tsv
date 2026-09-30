@@ -653,6 +653,7 @@ assets/ok/template_method_static_binder_overload_arity.mojo	main	exe-differentia
 assets/ok/template_method_static_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_string_builtins.mojo	main	exe-differential	sanitized
 assets/ok/template_method_string_literal_argument.mojo	main	exe-differential	sanitized
+assets/ok/template_method_stringify_parameter_value.mojo	main	exe-differential	sanitized
 assets/ok/template_method_struct_lane.mojo	main	exe-differential	sanitized
 assets/ok/template_method_subscript_store.mojo	main	exe-differential	sanitized
 assets/ok/template_method_subscripted_receiver.mojo	main	exe-differential	sanitized

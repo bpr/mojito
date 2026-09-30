@@ -15,7 +15,7 @@
 
 use super::annotations::{existential_binder, simd_binder_slots, simd_binder_view};
 use super::body_carry::ObservedEffects;
-use super::builtins::{SIMD_WILDCARD_BOUND, simd_wildcard_binder};
+use super::builtins::{SIMD_WILDCARD_BOUND, is_numeric, simd_wildcard_binder};
 use super::{Checker, EffectRead, callable_contract_target, callable_lowered_name};
 use mojito_ast::ast::{CaptureKind, Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
@@ -2533,6 +2533,7 @@ impl Checker {
             self.realize_print_call(&mut facts, *call, occurrences)?;
         }
         facts.print_calls.clear();
+        self.realize_stringify_calls(&mut facts, occurrences)?;
         // A conversion is selected last: its source type is one the call and
         // construction recipes may have realized.
         for index in 0..facts.conversions.len() {
@@ -3979,6 +3980,57 @@ impl Checker {
             self.borrow_nominal_place_operand(facts, argument, &ty, occurrences);
             Ok(())
         })
+    }
+
+    /// `String(value)` ([`BodyShape::stringify`]) at the instance's type of
+    /// its argument, as [`Checker::infer_stringify`] types it: a numeric or
+    /// `Bool` value is written by the builtin itself, and any other value
+    /// through its `Writable` conformance, which reads it where it lies. A
+    /// string literal would construct instead, which the template did not.
+    fn realize_stringify_calls(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        for index in 0..facts.overload_targets.len() {
+            let (id, target) = &facts.overload_targets[index];
+            if target == "String" {
+                let id = *id;
+                self.realize_stringify(facts, id, occurrences)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn realize_stringify(
+        &self,
+        facts: &mut CheckedBodyFacts,
+        id: OccurrenceId,
+        occurrences: &[Occurrence],
+    ) -> Result<(), &'static str> {
+        let syntax = occurrences
+            .iter()
+            .find(|occurrence| occurrence.id == id)
+            .and_then(|occurrence| occurrence.arguments.first().copied())
+            .ok_or("a String conversion has no argument in the instance")?;
+        let argument = OccurrenceId {
+            syntax,
+            copy: id.copy,
+        };
+        let ty = fact_at(&facts.expression_types, argument)
+            .ok_or("a String conversion's argument has no retained type")?;
+        if *ty == Ty::StringLiteral {
+            Err("a String conversion's argument is a string literal for the instance")
+        } else if is_numeric(ty) || *ty == Ty::Bool {
+            facts.call_place_uses.retain(|kept| *kept != argument);
+            Ok(())
+        } else if !self.conforms_to(ty, "Writable") {
+            Err("a String conversion's argument is not Writable for the instance")
+        } else if facts.call_place_uses.contains(&argument) {
+            Ok(())
+        } else {
+            Err("a String conversion's argument is not kept where it lies")
+        }
     }
 
     /// Realize one implicit conversion for an instance, as
@@ -11694,16 +11746,19 @@ impl BodyShape<'_> {
             })
     }
 
-    /// `String(value)` of one value of a closed type other than a string
-    /// literal (`String(fspath[byte=:i])`, `String(err)`): the stringify
-    /// builtin, which reads the value where it lies to write it through its
-    /// `Writable` conformance and wraps the text as the nominal `String`.
+    /// `String(value)` of one value other than a string literal
+    /// (`String(fspath[byte=:i])`, `String(err)`, `String(self.w)` over `W:
+    /// Writable`): the stringify builtin, which reads the value where it
+    /// lies to write it through its `Writable` conformance and wraps the text
+    /// as the nominal `String`.
     ///
     /// The call routes to the builtin (an overload target of `"String"`) and
-    /// records the wrap's conversion at itself, both chosen by the closed
-    /// type alone. A value other than a scalar is written through its
+    /// records the wrap's conversion at itself, neither chosen by the
+    /// argument's type. A value other than a scalar is written through its
     /// `Writable` conformance, which keeps its place, admitted here
-    /// ([`Self::references_recorded`]).
+    /// ([`Self::references_recorded`]). A named place of a symbolic type is
+    /// kept so in the template, and an instance keeps it or, at a numeric
+    /// or `Bool` type, releases it ([`Checker::realize_stringify`]).
     fn stringify(&self, expr: &Expr) -> bool {
         let ExprKind::Call {
             name,
@@ -11734,7 +11789,7 @@ impl BodyShape<'_> {
             && param_args.is_empty()
             && kwargs.is_empty()
             && (scalar || named || self.whole_value(argument))
-            && self.closed(argument)
+            && (self.closed(argument) || (named && kept))
             && self.facts.is_none_or(|facts| {
                 fact_at(&facts.overload_targets, id).is_some_and(|target| target == "String")
                     && fact_at(&facts.conversions, id).is_some()

@@ -5333,6 +5333,26 @@ fn template_bound_binder_result_derives() {
 }
 
 #[test]
+fn template_stringify_parameter_value_derives() {
+    // `String(value)` of a named value of a struct parameter's type: each
+    // instance writes a numeric or `Bool` value itself and any other value
+    // through its `Writable` conformance, read where it lies.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_stringify_parameter_value.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "3 3 4 1\nTrue True False 4\nab ab c 2\n#7 #7 #12 2\n",
+        &[
+            ("Holder.field", 4),
+            ("Holder.local", 4),
+            ("Holder.parameter", 4),
+            ("Holder.stored", 4),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

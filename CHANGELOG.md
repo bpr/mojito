@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `String(value)` of a named value of a struct parameter's type
+  (`String(self.w)` over `W: Writable`, or of a local or parameter of that
+  type) now reuses the template's checked facts, each instance writing a
+  numeric or `Bool` value itself and any other through its `Writable`
+  conformance (`assets/ok/template_method_stringify_parameter_value.mojo`).
+  Such methods used to be checked again per instance.
 - A pack element's default construction over a pack holding its type
   more than once (`print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, `var
   value = Ts[i]()` in `build[Int, Int]`) now reuses the template's checked
