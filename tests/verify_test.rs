@@ -1853,3 +1853,57 @@ fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
     domain.root += 1;
     expect_finding(&prog, "loan destination domain roots at slot");
 }
+
+#[test]
+fn verifier_checks_stores_into_erased_instance_storage() {
+    let with_environment = |environment| {
+        let mut ty = concrete_callable(Ty::Int);
+        if let Ty::Func {
+            environment: slot, ..
+        } = &mut ty
+        {
+            *slot = environment;
+        }
+        ty
+    };
+    let store = |storage: Ty, source: Ty| {
+        program(function(
+            vec![block(
+                vec![MirInstr::Store {
+                    place: MirPlace::root(0, Some(storage)),
+                    src: Reg(0),
+                }],
+                MirTerm::Return(None),
+            )],
+            1,
+            &[(0, source)],
+        ))
+    };
+    let clean = |prog: &MirProgram| assert_eq!(verify(prog), Vec::<String>::new());
+
+    // A `ref` element slot takes a reference of any origin, or writes
+    // through to its referent.
+    let slot = reference_ty(Ty::Int, mojito::Mutability::Mutable);
+    let mut elsewhere = slot.clone();
+    if let Ty::Ref(reference) = &mut elsewhere {
+        reference.origin = mojito::Origin::Unbound;
+    }
+    clean(&store(slot.clone(), elsewhere));
+    clean(&store(slot.clone(), Ty::Int));
+    expect_finding(
+        &store(
+            slot,
+            reference_ty(Ty::StringLiteral, mojito::Mutability::Mutable),
+        ),
+        "store of ref StringLiteral into storage of type Int",
+    );
+
+    // A capturing closure fits unqualified callable storage; an unqualified
+    // callable does not fit capturing storage.
+    let capturing = with_environment(mojito::CallableEnvironment::Capturing(
+        mojito::CaptureOriginSet::Concrete(Vec::new()),
+    ));
+    let unqualified = with_environment(mojito::CallableEnvironment::Default);
+    clean(&store(unqualified.clone(), capturing.clone()));
+    expect_finding(&store(capturing, unqualified), "store of def(");
+}

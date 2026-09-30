@@ -12,9 +12,9 @@ Record of the Stage A1 vertical slice from
 - All seven proof items pass on the gate fixture, on the VM and natively.
 - F1 to F4 pass. F5 (overhead) is **not measured**.
 - The pivot is neither approved nor rejected. A2 is not started.
-- All ten focused inputs convert, and 888 of the 893 inputs of the decision
-  corpus (§Coverage). The five that do not are named there; none is a form
-  the inventory lacks.
+- All ten focused inputs convert, and 891 of the 893 inputs of the decision
+  corpus (§Coverage). The two that do not are named there; neither is a
+  form the inventory lacks.
 - The pin rehearsal passed on 2026-09-30 (§Pin rehearsal): upstream
   `81155d9` needed ten changed lines, all inside the adapter.
 - The scheduled measurement lane has not run (§Remaining boundaries).
@@ -31,7 +31,7 @@ input are unchanged. A1 is optional, default off, and removable.
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
 | F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | 888 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the five residues in §Coverage |
+| Full canonical-artifact compatibility | 891 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the two residues in §Coverage |
 | Pin-maintenance rehearsal | PASS | `477e6b0` to `81155d9` in under an hour, 10 lines in 4 adapter files and 2 test files, no escape, no fork (§Pin rehearsal) |
 
 Core text is 2.6 to 3.4 times the v1 text of the same module. That is over
@@ -341,9 +341,17 @@ and replacement stay with `ParamContext`.
     arity-specialized variadic instance kept the ABI-only `RuntimePack` in
     its slots, a retargeted method call kept the compile-time parameter
     declarations its instance had shed, and the specialized program was
-    never verified by the native backend. Both are fixed in
-    `crates/mojito-native/src/native/mono/`; three inputs still do not
-    verify after specialization (§Coverage).
+    never verified by the native backend. All three are fixed in
+    `crates/mojito-native/src/native/mono/`: specialization now runs
+    `mir::verify` on its output and refuses a program that fails it.
+17. **Three more specialized programs did not verify.** An indirect call
+    kept the callable-contract target of the template's binders
+    (`__call__$ov$T$AnyType`), which the specializer now respells from the
+    instance's contract. The other two were the verifier's: it read a
+    `ref` element slot's store as a write through the reference, and
+    compared a capturing closure to the unqualified callable storage its
+    instance erased to by the strict value-coercion rule rather than by
+    the environment predicate it had already applied.
 16. **`#[format]` prints a variant's name before its own literal.** A
     tuple variant with a custom format holding a literal word printed the
     word twice (`Taketake`); the default tuple format is the one to use.
@@ -386,15 +394,13 @@ input, coverage only. Run 2026-09-29 at each stage of the coverage task:
 | Defects fixed; floats, `DType`, function types, closures, indirect calls, reference results | 841 | 52 |
 | The plain forms and variants | 887 with exits crossing a try refused | 6 plus those |
 | Exits crossing a try, with and without `finally` | 887 | 6 |
-| A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | **888** | **5** |
+| A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | 888 | 5 |
+| Specialized MIR verifies (2026-09-30; the three inputs re-run alone, debug build) | **891** | **2** |
 
-The five that do not convert, none a form the inventory lacks:
+The two that do not convert, neither a form the inventory lacks:
 
 | Input | Why |
 |---|---|
-| `assets/extensions/ok/container_owning_family_apis.mojo` | specialized MIR does not verify: an indirect-call target does not match its callable contract |
-| `assets/extensions/ok/reference_list_write_through_method.mojo` | specialized MIR does not verify: a store of `ref Int` into `Int` storage |
-| `assets/ok/capturing_lambda_array_display.mojo` | specialized MIR does not verify: a subscript's reference-result referent differs from the declaration |
 | `assets/ok/tuple_hashable_dict_key.mojo` | a `Tuple` type argument spelled with and without its element types across one instance, so a field projection names no declared field |
 | `assets/ok/pliron_finally_overrides.mojo` | a `return` inside a `finally` body, refused by name |
 
@@ -618,7 +624,7 @@ native operand fix. They stand without A1.
 
 ## Remaining boundaries
 
-- **Coverage.** 888 of 893 corpus inputs convert; the five residues are
+- **Coverage.** 891 of 893 corpus inputs convert; the two residues are
   named in §Coverage and filed on the roadmap by their kind.
 - **Overhead.** No release measurement exists. The debug diagnostic cannot
   stand in for one.

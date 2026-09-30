@@ -42,6 +42,19 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         // contracts here.
         return false;
     }
+    // Once the environments agree by that predicate, the rest of the
+    // contract compares structurally: a capturing closure stored in the
+    // unqualified callable storage of a specialized instance is one value.
+    if let (Some(found_environment), Some(expected_environment)) =
+        (callable_environment(found), callable_environment(expected))
+        && found_environment != expected_environment
+    {
+        let mut respelled = found.clone();
+        if let Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } = &mut respelled {
+            *environment = expected_environment.clone();
+        }
+        return types_compatible(&respelled, expected);
+    }
     // Two residual sizes over the same binders are one type only when they
     // are one canonical expression: a parameter occurring in both does not
     // make `Buf[n + 1]` and `Buf[n + 2]` interchangeable.
@@ -67,6 +80,14 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     ) = (found, expected)
     {
         return types_compatible(found_element, expected_element);
+    }
+    // So does a reference's: a specialized instance erases the origins of
+    // its type arguments, so a `ref T` element slot holds a reference of any
+    // origin with the same mutability.
+    if let (Ty::Ref(found_reference), Ty::Ref(expected_reference)) = (found, expected)
+        && found_reference.mutability == expected_reference.mutability
+    {
+        return types_compatible(&found_reference.referent, &expected_reference.referent);
     }
     // A bare `Struct(name, [])` is the established erased spelling for a
     // receiver or synthesized construction of any instantiation of `name`.

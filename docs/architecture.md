@@ -199,6 +199,8 @@ source -> Compiler -> ownership-verified, post-drop verified MIR
                             v
               backend-private monomorphization
                             |
+                  mir::verify (again)
+                            |
                     Pliron lowering
                             |
              Mojito ops only where justified

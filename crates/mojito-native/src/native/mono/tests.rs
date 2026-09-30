@@ -635,3 +635,37 @@ fn subscript_value_parameters_join_the_accessor_instance_identity() {
          instances: {targets:?}"
     );
 }
+
+#[test]
+fn specialized_programs_verify_over_erased_contracts() {
+    // A capturing closure stored in an instance whose element contract
+    // erased its environment, a `ref` element type, and an indirect call
+    // through a callable contract over the owner's binder.
+    let sources = [
+        "def main():\n\
+         \x20   var k = 3\n\
+         \x20   var scaled = [lambda (x: Int) {k} -> Int: x * k]\n\
+         \x20   print(scaled[0](2))\n",
+        "@fieldwise_init\n\
+         struct RefList[origin: Origin[mut=True]]:\n\
+         \x20   var values: List[ref[origin] Int]\n\
+         \x20   def bump_first(mut self):\n\
+         \x20       self.values[0] += 2\n\
+         def main():\n\
+         \x20   var keep = 4\n\
+         \x20   ref a = keep\n\
+         \x20   var refs = RefList([a])\n\
+         \x20   refs.bump_first()\n\
+         \x20   print(keep)\n",
+        "def main():\n\
+         \x20   var values: Array[Int, 2] = [1, 2]\n\
+         \x20   values^.deinit_with(lambda (var element: Int): print(element))\n",
+    ];
+    for source in sources {
+        let specialized = specialized_main(source);
+        assert_eq!(
+            mojito_mir::mir::verify::verify(&specialized.program),
+            Vec::<String>::new()
+        );
+    }
+}

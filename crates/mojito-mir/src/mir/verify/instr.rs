@@ -543,7 +543,9 @@ pub(super) fn verify_instruction(
                     Ty::Ref(reference) => reference.referent.as_ref(),
                     other => other,
                 };
-                if !types_compatible(found, target) {
+                // Storage of a reference type (a `List[ref T]` element) takes
+                // a reference; any other store writes through to the referent.
+                if !types_compatible(found, target) && !types_compatible(found, expected) {
                     errors.push(format!(
                         "{prefix}: store of {found} into storage of type {target}"
                     ));

@@ -124,15 +124,26 @@ impl<'a> Specializer<'a> {
                 .unwrap_or(decl.lowered_name.as_str());
             function_order.get(template).copied().unwrap_or(usize::MAX)
         });
-        Ok(SpecializedProgram {
-            program: MirProgram {
-                functions: self.output_functions,
-                declarations: MirDeclarations {
-                    structs: self.output_structs,
-                    functions: self.output_function_decls,
-                },
-                invariant_errors: self.source.invariant_errors.clone(),
+        let program = MirProgram {
+            functions: self.output_functions,
+            declarations: MirDeclarations {
+                structs: self.output_structs,
+                functions: self.output_function_decls,
             },
+            invariant_errors: self.source.invariant_errors.clone(),
+        };
+        let findings = mojito_mir::mir::verify::verify(&program);
+        if !findings.is_empty() {
+            return Err(MonoError {
+                function: None,
+                construct: format!(
+                    "specialized MIR that does not verify: {}",
+                    findings.join("; ")
+                ),
+            });
+        }
+        Ok(SpecializedProgram {
+            program,
             entries: entry_map,
         })
     }
@@ -996,6 +1007,16 @@ impl<'a> Specializer<'a> {
                         let Some(receiver) = function.reg_types.get(&callee.0) else {
                             continue;
                         };
+                        // A callable contract's dispatch symbol spells its
+                        // parameter types, so a contract over the template's
+                        // binders names the instance's concrete ones.
+                        if let Some(target) = resolved.as_mut()
+                            && target.starts_with("__trait_dispatch.")
+                            && let Some(contract) =
+                                mojito_symbol::symbol::callable_contract_target(receiver)
+                        {
+                            *target = contract;
+                        }
                         let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
                             continue;
                         };

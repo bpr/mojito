@@ -116,21 +116,12 @@ pub fn shadow(
     let started = Instant::now();
     let findings = mojito_mir::mir::verify::verify(&exported.program);
     timed("verify_mir", started);
+    // Specialization verifies its own output, so a finding here is the
+    // export's.
     if !findings.is_empty() {
-        let input = mojito_native::native::mono::specialize(program, entries)
-            .map(|specialized| mojito_mir::mir::verify::verify(&specialized.program))
-            .unwrap_or_default();
-        let (kind, what) = if input == findings {
-            (
-                A1ErrorKind::UnsupportedForm,
-                "the specialized input does not verify, and the export reproduces it",
-            )
-        } else {
-            (A1ErrorKind::Export, "the exported MIR does not verify")
-        };
         return Err(A1Error::new(
-            kind,
-            format!("{what}: {}", findings.join("; ")),
+            A1ErrorKind::Export,
+            format!("the exported MIR does not verify: {}", findings.join("; ")),
         ));
     }
     Ok(ShadowRun {

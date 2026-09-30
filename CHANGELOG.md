@@ -21,6 +21,14 @@ to evolve under the `0.x` compatibility rules.
   as a tuple rather than the ABI-only runtime pack, and a method call it
   retargets to an instance sheds the instance's compile-time parameter
   declarations, so such specialized programs verify.
+- Native monomorphization now runs `mir::verify` on the program it
+  specializes and refuses one that does not verify. An indirect call's
+  callable-contract target names the instance's concrete parameter types,
+  and the verifier accepts a reference of any origin in a `ref` element
+  slot and a capturing closure in unqualified callable storage, so
+  `List[ref[o] Int]`, an `Array` of capturing closures, and
+  `Array.deinit_with` specialize into verifying MIR, and the A1 shadow
+  core converts 891 of its 893 corpus inputs.
 
 - `print` with a call result as a keyword (`print(x, sep=String("-"))`,
   `print(x, file=FileDescriptor(1))`) in a method or a runtime `def` now
