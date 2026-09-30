@@ -5375,6 +5375,24 @@ fn template_print_parameter_temporary_derives() {
 }
 
 #[test]
+fn template_print_keywords_derive() {
+    // `print` with `sep`, `end`, or `flush`: a literal, a closed scalar, or a
+    // `String` read where it lies, each keyword typed by its own spelling
+    // and seen again by every instance.
+    assert_methods_derive(
+        include_str!("../assets/ok/template_print_keywords.mojo"),
+        "3, 3\n3|\ndone\ns+s\ns|\ndone\n1 1\n4 - 4\nq - q\n4 <\nq <\n4/7/4;\nq::7::q;\nw 4\nw q\n",
+        &[
+            ("show", 2),
+            ("Holder.spaced", 2),
+            ("Holder.ended", 2),
+            ("Holder.glued", 2),
+            ("Holder.flushed", 2),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

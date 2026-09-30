@@ -124,6 +124,28 @@ pub(super) fn not_writable(ty: &Ty) -> TypeError {
     }
 }
 
+/// Whether `print` accepts a value of type `ty` for its keyword `name`, with
+/// the type it expects there: `sep`/`end` take a string, `flush` a `Bool`,
+/// and `file` the stdlib `FileDescriptor`. `None` for any other keyword.
+pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)> {
+    match name {
+        "sep" | "end" => Some((
+            *ty == Ty::StringLiteral
+                || matches!(ty, Ty::Struct(name, targs)
+                    if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+                        || mojito_types::types::is_stdlib_string_span_struct(name)),
+            "String",
+        )),
+        "flush" => Some((*ty == Ty::Bool, "Bool")),
+        "file" => Some((
+            matches!(ty, Ty::Struct(name, _)
+                if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
+            "FileDescriptor",
+        )),
+        _ => None,
+    }
+}
+
 pub(super) fn has_len_bound(ty: &Ty) -> bool {
     match ty {
         Ty::Param { bounds, .. } => bounds
@@ -487,27 +509,11 @@ impl Checker {
             let ty = self.infer(&keyword.value)?;
             self.borrow_reference_result_argument(&keyword.value);
             self.borrow_nominal_place_argument(&keyword.value, &ty);
-            let (accepted, expected) = match keyword.name.as_str() {
-                "sep" | "end" => (
-                    ty == Ty::StringLiteral
-                        || matches!(&ty, Ty::Struct(name, targs)
-                            if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
-                                || mojito_types::types::is_stdlib_string_span_struct(name)),
-                    "String",
-                ),
-                "flush" => (ty == Ty::Bool, "Bool"),
-                "file" => (
-                    matches!(&ty, Ty::Struct(name, _)
-                        if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
-                    "FileDescriptor",
-                ),
-                other => {
-                    return Err(TypeError::BadCall {
-                        func: "print".to_string(),
-                        reason: format!("unexpected keyword argument '{other}'"),
-                    });
-                }
-            };
+            let (accepted, expected) =
+                print_keyword(&keyword.name, &ty).ok_or_else(|| TypeError::BadCall {
+                    func: "print".to_string(),
+                    reason: format!("unexpected keyword argument '{}'", keyword.name),
+                })?;
             if !accepted {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),

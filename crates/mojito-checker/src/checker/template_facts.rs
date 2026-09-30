@@ -15,7 +15,7 @@
 
 use super::annotations::{existential_binder, simd_binder_slots, simd_binder_view};
 use super::body_carry::ObservedEffects;
-use super::builtins::{SIMD_WILDCARD_BOUND, is_numeric, simd_wildcard_binder};
+use super::builtins::{SIMD_WILDCARD_BOUND, is_numeric, print_keyword, simd_wildcard_binder};
 use super::{Checker, EffectRead, callable_contract_target, callable_lowered_name};
 use mojito_ast::ast::{CaptureKind, Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
@@ -3954,19 +3954,33 @@ impl Checker {
     /// argument must still be printable at the instance's type, the demand
     /// the builtin makes of it. The call selects no callee and records at an
     /// argument what its syntax decides, beside the in-place read of a named
-    /// place the instance's type makes nominal, as `len`'s operand is.
+    /// place the instance's type makes nominal, as `len`'s operand is. Each
+    /// keyword must still have the type `print` takes for it.
     fn realize_print_call(
         &self,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
     ) -> Result<(), &'static str> {
-        let arguments = occurrences
+        let call = occurrences
             .iter()
             .find(|occurrence| occurrence.id == id)
-            .map(|occurrence| occurrence.arguments.as_slice())
             .ok_or("a print call has no occurrence in the instance")?;
-        arguments.iter().try_for_each(|syntax| {
+        call.keywords.iter().try_for_each(|(name, syntax)| {
+            let value = OccurrenceId {
+                syntax: *syntax,
+                copy: id.copy,
+            };
+            let ty = fact_at(&facts.expression_types, value)
+                .ok_or("a print keyword has no retained type")?
+                .clone();
+            if !print_keyword(name, &ty).is_some_and(|(accepted, _)| accepted) {
+                return Err("a print keyword has the wrong type for the instance");
+            }
+            self.borrow_nominal_place_operand(facts, value, &ty, occurrences);
+            Ok(())
+        })?;
+        call.arguments.iter().try_for_each(|syntax| {
             let argument = OccurrenceId {
                 syntax: *syntax,
                 copy: id.copy,
@@ -14442,7 +14456,10 @@ impl BodyShape<'_> {
     /// callee, over closed scalars, pack elements, string literals,
     /// arguments it reads where they lie, as `repr` does
     /// ([`Self::sink_argument`], under `STRING_BUILTINS`), and call results
-    /// of any type ([`Self::call_result`]), which it leaves unconsumed.
+    /// of any type ([`Self::call_result`]), which it leaves unconsumed. Its
+    /// `sep`, `end`, `flush`, and `file` keywords take closed values, string
+    /// literals, or values it reads where they lie; any other keyword is an
+    /// error the template already reported.
     ///
     /// What the builtin records at an argument its syntax decides (an
     /// unconsumed temporary, a literal's materialization); what it proves,
@@ -14465,28 +14482,43 @@ impl BodyShape<'_> {
             fact_at(&facts.call_parameters, id).is_some()
                 || fact_at(&facts.expression_bindings, id).is_some()
         });
-        if name != "print" || declared || !param_args.is_empty() || !kwargs.is_empty() {
+        if name != "print" || declared || !param_args.is_empty() {
             return false;
         }
         let mut sinks = false;
-        let admitted = args.iter().all(|argument| {
-            let closed = if let ExprKind::Str(_) = argument.kind {
-                self.facts.is_none_or(|facts| {
-                    fact_at(&facts.expression_types, self.occurrence(argument))
+        let keywords = kwargs.iter().all(|keyword| {
+            let value = &keyword.value;
+            let closed = match value.kind {
+                ExprKind::Str(_) => self.facts.is_none_or(|facts| {
+                    fact_at(&facts.expression_types, self.occurrence(value))
                         == Some(&Ty::StringLiteral)
-                })
-            } else {
-                (self.expression(argument) && self.scalar(argument)) || self.pack_element(argument)
+                }),
+                _ => self.expression(value) && self.scalar(value),
             };
-            closed || {
-                let sink = self.sink_argument(argument)
-                    || self.call_result(argument)
-                    || (self.element_construction(argument)
-                        && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS));
-                sinks |= sink;
-                sink
-            }
+            let sink = !closed && self.sink_argument(value);
+            sinks |= sink;
+            matches!(keyword.name.as_str(), "sep" | "end" | "flush" | "file") && (closed || sink)
         });
+        let admitted = keywords
+            && args.iter().all(|argument| {
+                let closed = if let ExprKind::Str(_) = argument.kind {
+                    self.facts.is_none_or(|facts| {
+                        fact_at(&facts.expression_types, self.occurrence(argument))
+                            == Some(&Ty::StringLiteral)
+                    })
+                } else {
+                    (self.expression(argument) && self.scalar(argument))
+                        || self.pack_element(argument)
+                };
+                closed || {
+                    let sink = self.sink_argument(argument)
+                        || self.call_result(argument)
+                        || (self.element_construction(argument)
+                            && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS));
+                    sinks |= sink;
+                    sink
+                }
+            });
         if admitted {
             let mut calls = self.print_calls.borrow_mut();
             if !calls.contains(&id) {

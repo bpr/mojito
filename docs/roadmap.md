@@ -36,18 +36,19 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.2 to 1.5.
+Pliron experiment rather than move the check order, 1.2 to 1.5, sit last.
 
-- [ ] **1.1 `print` with a keyword argument keeps the clone check**
+- [ ] **1.1 `print` with a call result as a keyword keeps the clone check**
 
-  Problem: `print(self.w, sep=" ")` or `print(x, end="")` in a method or a
-  runtime `def` leaves the body outside the method grammar, so every
-  instance is checked again.
-  - The same `print` without `sep`, `end`, `flush`, or `file` derives.
-  - `infer_print` types each keyword by its own spelling, so the instance
-    only needs to see that check again.
-  - Found while `print` of a temporary of a struct parameter's type joined
-    the method grammar (2026-09-29); no bundled body is known to need it.
+  Problem: `print(x, sep=String("-"))` or `print(x, file=FileDescriptor(2))`
+  in a method or a runtime `def` leaves the body outside the method
+  grammar, so every instance is checked again.
+  - A literal, a closed scalar, or a named string as the keyword derives.
+  - `infer_print` records no unconsumed temporary at a keyword, unlike a
+    positional argument, so the template's drop facts would need a look
+    first.
+  - Found while `print` keywords joined the method grammar (2026-09-29); no
+    bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

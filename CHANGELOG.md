@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `print` with a `sep`, `end`, `flush`, or `file` keyword
+  (`print(self.w, sep=" ")`, `print(x, end="")`) in a method or a runtime
+  `def` now reuses the template's checked facts, each instance seeing each
+  keyword's type again (`assets/ok/template_print_keywords.mojo`). Such
+  bodies used to be checked again per instance.
 - `print` of a temporary of a struct parameter's type
   (`print(self.w.copy())`, or `print(self.s.echo(self.w))` through a bound
   whose result is the requirement's binder) now reuses the template's
