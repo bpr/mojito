@@ -20,16 +20,16 @@ use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 
 use super::attrs::{
-    BlockCategory, BlockRecord, CoreLifecycle, CoreRole, CoreStorage, ExitAttr, IdentityAttr,
-    LayoutAttr, LifecycleAttr, OutcomeAttr, OutcomeKind, ProvenanceAttr, SlotAttr, StoreAttr, Text,
-    TryAttr,
+    BlockCategory, BlockRecord, CleanupAttr, CoreLifecycle, CoreRole, CoreStorage, EscapeAttr,
+    ExitAttr, ExitSiteAttr, IdentityAttr, LayoutAttr, LifecycleAttr, OutcomeAttr, OutcomeKind,
+    ProvenanceAttr, ResumeAttr, SlotAttr, StoreAttr, Text, TryAttr,
 };
 use super::import::{annotate, set};
 use super::inventory::{CoreOpKind, try_path};
 use super::lifecycle::derive_contract;
 use super::ops::{
-    self, KEY_CONTRACT, KEY_EXIT, KEY_IDENTITY, KEY_LAYOUT, KEY_LIFECYCLE, KEY_OUTCOME, KEY_SLOT,
-    KEY_STORE, KEY_TRY,
+    self, KEY_CLEANUP, KEY_CONTRACT, KEY_ESCAPE, KEY_EXIT, KEY_EXIT_SITE, KEY_IDENTITY, KEY_LAYOUT,
+    KEY_LIFECYCLE, KEY_OUTCOME, KEY_RESUME, KEY_SLOT, KEY_STORE, KEY_TRY,
 };
 use super::types::{EffectType, ErrorType, OutcomeType};
 use super::verify::{attr, describe, invoked_kind, raised_by};
@@ -118,6 +118,7 @@ impl FnPlan {
             normal: None,
             error: None,
             resume: None,
+            frames: Vec::new(),
         };
         let root = builder.region("", &exits)?;
         let covered = root.block_count();
@@ -186,6 +187,12 @@ enum End {
     Own,
     /// A region's normal exit.
     FallOff,
+    /// A return crossing out of a try region, after the `synthesized`
+    /// drops of the tries it leaves.
+    Return { synthesized: usize },
+    /// A `break` or `continue` leaving a try region for a function-level
+    /// block, after its own cleanup drops and those of the tries it leaves.
+    Escape { synthesized: usize },
 }
 
 struct TryPlan {
@@ -220,6 +227,19 @@ struct PlanExits {
     error: Option<Ptr<BasicBlock>>,
     /// The continuation and error target of a `finally` region's resume.
     resume: Option<(Ptr<BasicBlock>, Option<Ptr<BasicBlock>>)>,
+    /// Each enclosing try, outermost first.
+    frames: Vec<PlanFrame>,
+}
+
+/// What the plan knows of one enclosing try at an exit site.
+#[derive(Clone)]
+struct PlanFrame {
+    path: String,
+    /// The cleanup the try runs on the way out; empty for a part whose
+    /// try already ran it.
+    cleanup: Vec<u32>,
+    /// Whether the try's `finally` runs on the way out.
+    finally: bool,
 }
 
 /// What one cleanup block holds.
@@ -345,6 +365,34 @@ impl PlanBuilder<'_> {
                         self.error_edge(term, successors[1], exits)?;
                         Link::Invoke
                     }
+                    CoreOpKind::Br if attr::<ExitSiteAttr>(ctx, term, &KEY_EXIT_SITE).is_some() => {
+                        let synthesized = self.exit_site(current, term, path, exits)?;
+                        if attr::<EscapeAttr>(ctx, term, &KEY_ESCAPE).is_some() {
+                            Link::End(End::Escape { synthesized })
+                        } else {
+                            Link::End(End::Return { synthesized })
+                        }
+                    }
+                    CoreOpKind::Br if attr::<EscapeAttr>(ctx, term, &KEY_ESCAPE).is_some() => {
+                        let target = successors[0];
+                        let function_level = self.records.get(&target).is_some_and(|record| {
+                            record.category == BlockCategory::Body
+                                && record.region.as_str().is_empty()
+                                && record.segment == 0
+                        });
+                        if path.is_empty() || !function_level {
+                            return Err(invalid(
+                                ctx,
+                                term,
+                                "an escape leaves a try region for a block of the function",
+                            ));
+                        }
+                        let own = attr::<CleanupAttr>(ctx, term, &KEY_CLEANUP)
+                            .and_then(|cleanup| usize::try_from(cleanup.0).ok())
+                            .ok_or_else(|| invalid(ctx, term, "an escape counts its cleanup"))?;
+                        let synthesized = self.exit_drops(current, term, own, &exits.frames, 0)?;
+                        Link::End(End::Escape { synthesized })
+                    }
                     CoreOpKind::Br => {
                         let target = successors[0];
                         let entered = self.records.get(&target).filter(|record| {
@@ -383,12 +431,11 @@ impl PlanBuilder<'_> {
                         }
                         Link::End(End::Own)
                     }
-                    CoreOpKind::Return => {
-                        if !path.is_empty() {
-                            return Err(invalid(ctx, term, "a return crosses out of a try region"));
-                        }
-                        Link::End(End::Own)
+                    CoreOpKind::Return if !path.is_empty() => {
+                        let synthesized = self.exit_drops(current, term, 0, &exits.frames, 0)?;
+                        Link::End(End::Return { synthesized })
                     }
+                    CoreOpKind::Return => Link::End(End::Own),
                     CoreOpKind::Raise => {
                         match (successors.as_slice(), exits.error) {
                             ([], None) => {}
@@ -418,12 +465,14 @@ impl PlanBuilder<'_> {
                                 "a resume continues after the try it belongs to",
                             ));
                         }
-                        if let Some(target) = successors.get(1) {
+                        let sites = attr::<ResumeAttr>(ctx, term, &KEY_RESUME)
+                            .map_or(0, |resume| resume.sites.len());
+                        if successors.len() - sites == 2 {
                             let resume_exits = PlanExits {
                                 error,
                                 ..exits.clone()
                             };
-                            self.error_edge(term, *target, &resume_exits)?;
+                            self.error_edge(term, successors[1], &resume_exits)?;
                         }
                         Link::End(End::FallOff)
                     }
@@ -504,10 +553,25 @@ impl PlanBuilder<'_> {
         };
         let normal = pending.map_or(after, |(normal, _, _)| normal);
         let part_error = pending.map_or(outer.error, |(_, error, _)| Some(error));
+        let frames = |cleanup: Vec<u32>| {
+            let mut frames = outer.frames.clone();
+            frames.push(PlanFrame {
+                path: path.to_string(),
+                cleanup,
+                finally: parts.finalbody,
+            });
+            frames
+        };
+        let CleanupBlock {
+            owners: cleanup,
+            caught,
+            exit: unwind_exit,
+        } = self.cleanup_block(unwind, true)?;
         let part_exits = PlanExits {
             normal: Some(normal),
             error: part_error,
             resume: None,
+            frames: frames(Vec::new()),
         };
         let body = self.region(
             &format!("{path}.body"),
@@ -515,6 +579,7 @@ impl PlanBuilder<'_> {
                 normal: Some(done),
                 error: Some(unwind),
                 resume: None,
+                frames: frames(cleanup.clone()),
             },
         )?;
         let part = |present: bool, name: &str, exits: &PlanExits| {
@@ -531,15 +596,10 @@ impl PlanBuilder<'_> {
                 normal: None,
                 error: outer.error,
                 resume: Some((after, outer.error)),
+                frames: frames(Vec::new()),
             },
         )?;
         let entry = |plan: &RegionPlan| plan.blocks[0].segments[0].block;
-
-        let CleanupBlock {
-            owners: cleanup,
-            caught,
-            exit: unwind_exit,
-        } = self.cleanup_block(unwind, true)?;
         if caught != parts.error_var.filter(|_| parts.handler) {
             return Err(invalid(
                 ctx,
@@ -591,6 +651,7 @@ impl PlanBuilder<'_> {
                 .ok_or_else(|| invalid(ctx, enter, "a try's finally region is missing"))?;
             self.pending_block(pending_normal, OutcomeKind::Normal, finally_entry)?;
             self.pending_block(pending_error, OutcomeKind::Error, finally_entry)?;
+            synthesized += self.resume_sites(path, finalbody)?;
             let ops: Vec<_> = finally_entry.deref(ctx).iter(ctx).collect();
             let enters = ops.len() == 1
                 && CoreOpKind::of(ctx, ops[0]) == Some(CoreOpKind::Br)
@@ -612,6 +673,255 @@ impl PlanBuilder<'_> {
             finalbody,
             synthesized,
         })
+    }
+
+    /// A branch into a pending exit: the exit's drops before it, the
+    /// pending block it enters, and the site's way out after each
+    /// `finally` it crosses. The result is the count of drops before it.
+    fn exit_site(
+        &self,
+        block: Ptr<BasicBlock>,
+        term: Ptr<Operation>,
+        path: &str,
+        exits: &PlanExits,
+    ) -> Result<usize, A1Error> {
+        let ctx = self.ctx;
+        let site: ExitSiteAttr = attr(ctx, term, &KEY_EXIT_SITE)
+            .ok_or_else(|| invalid(ctx, term, "an exit site names itself"))?;
+        let escape = attr::<EscapeAttr>(ctx, term, &KEY_ESCAPE);
+        let own = match escape {
+            Some(_) => attr::<CleanupAttr>(ctx, term, &KEY_CLEANUP)
+                .and_then(|cleanup| usize::try_from(cleanup.0).ok())
+                .ok_or_else(|| invalid(ctx, term, "an escape counts its cleanup"))?,
+            None => 0,
+        };
+        if path.is_empty() {
+            return Err(invalid(ctx, term, "an exit site lies inside a try region"));
+        }
+        let target = self.successors(term)[0];
+        let record = self
+            .records
+            .get(&target)
+            .filter(|record| {
+                record.category == BlockCategory::PendingExit && record.block == site.site
+            })
+            .ok_or_else(|| invalid(ctx, term, "an exit site enters its pending exit"))?;
+        let crossed = exits
+            .frames
+            .iter()
+            .rposition(|frame| frame.path == record.region.as_str() && frame.finally)
+            .ok_or_else(|| {
+                invalid(
+                    ctx,
+                    term,
+                    "a pending exit enters the finally of a try it leaves",
+                )
+            })?;
+        let inner = &exits.frames[crossed..];
+        let synthesized = self.exit_drops(block, term, own, inner, 0)?;
+        self.pending_exit(target, site.site, record.region.as_str())?;
+        self.exit_chain(
+            term,
+            site,
+            escape.map(|escape| escape.target),
+            record.region.as_str(),
+            &exits.frames[..crossed],
+        )?;
+        Ok(synthesized)
+    }
+
+    /// A pending exit block: the exit's outcome, then the branch into the
+    /// finally of `path`.
+    fn pending_exit(&self, block: Ptr<BasicBlock>, site: u64, path: &str) -> Result<(), A1Error> {
+        let ctx = self.ctx;
+        let entry = self
+            .lookup(BlockCategory::FinallyEntry, path, 0, 0)
+            .ok_or_else(|| invalid(ctx, self.func, "a pending exit enters a finally"))?;
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        let shaped = ops.len() == 2
+            && attr::<OutcomeAttr>(ctx, ops[0], &KEY_OUTCOME)
+                == Some(OutcomeAttr {
+                    kind: OutcomeKind::Exit(site),
+                })
+            && CoreOpKind::of(ctx, ops[1]) == Some(CoreOpKind::Br)
+            && self.successors(ops[1]) == [entry];
+        if shaped {
+            return Ok(());
+        }
+        Err(invalid(
+            ctx,
+            ops.first().copied().unwrap_or(self.func),
+            "a pending exit records its outcome and enters the one finally entry",
+        ))
+    }
+
+    /// The way out of exit `site` after the finally of `path`: drops of
+    /// the tries it leaves next, then the terminator, or the next pending
+    /// exit.
+    fn exit_chain(
+        &self,
+        term: Ptr<Operation>,
+        site: ExitSiteAttr,
+        escape: Option<u64>,
+        path: &str,
+        outer: &[PlanFrame],
+    ) -> Result<(), A1Error> {
+        let ctx = self.ctx;
+        let block = self
+            .lookup(BlockCategory::ExitContinue, path, site.site, 0)
+            .ok_or_else(|| invalid(ctx, term, "an exit continues after the finally it enters"))?;
+        let arguments = block.deref(ctx).arguments().count();
+        if arguments != 1 + usize::from(site.value) {
+            return Err(invalid(
+                ctx,
+                term,
+                "an exit's continuation takes its value and the token",
+            ));
+        }
+        let next = outer.iter().rposition(|frame| frame.finally);
+        let inner = next.map_or(outer, |next| &outer[next..]);
+        let tail = self.terminator(block)?;
+        // Into the next finally, the outcome stands between the drops and
+        // the branch.
+        let trailing = usize::from(next.is_some());
+        let synthesized = self.exit_drops(block, tail, 0, inner, trailing)?;
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        let before = ops.len() - synthesized - 1 - trailing;
+        let Some(next) = next else {
+            let shaped = before == 0
+                && match escape {
+                    Some(target) => {
+                        CoreOpKind::of(ctx, tail) == Some(CoreOpKind::Br)
+                            && self
+                                .lookup(BlockCategory::Body, "", target, 0)
+                                .is_some_and(|block| self.successors(tail) == [block])
+                    }
+                    None => {
+                        CoreOpKind::of(ctx, tail) == Some(CoreOpKind::Return)
+                            && tail.deref(ctx).operands().count() == 1 + usize::from(site.value)
+                    }
+                };
+            if !shaped {
+                return Err(invalid(
+                    ctx,
+                    tail,
+                    "an exit's way out ends where the exit did",
+                ));
+            }
+            return Ok(());
+        };
+        let outcome = ops.get(ops.len() - 2).copied();
+        let entry = self.lookup(BlockCategory::FinallyEntry, &outer[next].path, 0, 0);
+        let shaped = before == 0
+            && outcome.is_some_and(|op| {
+                attr::<OutcomeAttr>(ctx, op, &KEY_OUTCOME)
+                    == Some(OutcomeAttr {
+                        kind: OutcomeKind::Exit(site.site),
+                    })
+            })
+            && CoreOpKind::of(ctx, tail) == Some(CoreOpKind::Br)
+            && entry.is_some_and(|entry| self.successors(tail) == [entry]);
+        if !shaped {
+            return Err(invalid(
+                ctx,
+                tail,
+                "an exit's continuation records its outcome again and enters the next finally",
+            ));
+        }
+        self.exit_chain(term, site, escape, &outer[next].path, &outer[..next])
+    }
+
+    /// The exit sites the finally of `path` resumes, each with its
+    /// continuation as a successor; the result is the count of blocks
+    /// they synthesized for this try: each continuation, and each pending
+    /// exit entered from a site of this try's own regions.
+    fn resume_sites(&self, path: &str, finalbody: &RegionPlan) -> Result<usize, A1Error> {
+        let ctx = self.ctx;
+        let mut count = 0;
+        for block in &finalbody.blocks {
+            for segment in &block.segments {
+                let term = self.terminator(segment.block)?;
+                if CoreOpKind::of(ctx, term) != Some(CoreOpKind::Resume) {
+                    continue;
+                }
+                let sites = attr::<ResumeAttr>(ctx, term, &KEY_RESUME)
+                    .map_or_else(Vec::new, |resume| resume.sites);
+                let successors = self.successors(term);
+                let fixed = successors.len() - sites.len();
+                let mut blocks = 0;
+                for (site, successor) in sites.iter().zip(&successors[fixed..]) {
+                    let continuation = self.lookup(BlockCategory::ExitContinue, path, *site, 0);
+                    if continuation != Some(*successor) {
+                        return Err(invalid(
+                            ctx,
+                            term,
+                            "a resume continues each exit site it lists",
+                        ));
+                    }
+                    blocks += 1 + usize::from(
+                        self.lookup(BlockCategory::PendingExit, path, *site, 0)
+                            .is_some(),
+                    );
+                }
+                count = count.max(blocks);
+            }
+        }
+        Ok(count)
+    }
+
+    /// The synthesized drops of `block` before its exit `term` and the
+    /// `trailing` operations ahead of it: `own` of the exit's own cleanup,
+    /// then the cleanup of each enclosing try, innermost first. The result
+    /// is their count.
+    fn exit_drops(
+        &self,
+        block: Ptr<BasicBlock>,
+        term: Ptr<Operation>,
+        own: usize,
+        frames: &[PlanFrame],
+        trailing: usize,
+    ) -> Result<usize, A1Error> {
+        let ctx = self.ctx;
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        let expected: Vec<u32> = frames
+            .iter()
+            .rev()
+            .flat_map(|frame| frame.cleanup.iter())
+            .copied()
+            .collect();
+        let synthesized = own + expected.len();
+        let Some(before) = ops.len().checked_sub(synthesized + 1 + trailing) else {
+            return Err(invalid(ctx, term, "an exit short of the drops it crosses"));
+        };
+        let drops = &ops[before..ops.len() - 1 - trailing];
+        for (position, op) in drops.iter().enumerate() {
+            let identity: IdentityAttr = attr(ctx, *op, &KEY_IDENTITY)
+                .ok_or_else(|| invalid(ctx, *op, "an operation without identity"))?;
+            let lifecycle = attr::<LifecycleAttr>(ctx, *op, &KEY_LIFECYCLE);
+            let owner = match (CoreOpKind::of(ctx, *op), lifecycle) {
+                (Some(CoreOpKind::Drop), Some(lifecycle))
+                    if identity.role == CoreRole::ExitDrop(position as u64)
+                        && lifecycle.kind == CoreLifecycle::DropVar =>
+                {
+                    lifecycle.owner
+                }
+                _ => {
+                    return Err(invalid(
+                        ctx,
+                        *op,
+                        "an exit crossing a try runs the drops of the tries it leaves",
+                    ));
+                }
+            };
+            if position >= own && expected[position - own] != owner {
+                return Err(invalid(
+                    ctx,
+                    *op,
+                    "an exit crossing a try drops each try's cleanup list in order",
+                ));
+            }
+        }
+        Ok(synthesized)
     }
 
     /// The owners a cleanup block drops in order, the slot a caught error
@@ -724,6 +1034,20 @@ fn invalid(ctx: &Context, op: Ptr<Operation>, message: &str) -> A1Error {
         A1ErrorKind::Verification,
         format!("{message} ({})", describe(ctx, op)),
     )
+}
+
+/// The cleanup list a structured try's entry carries: its slot operands.
+fn cleanup_of(ctx: &Context, enter: Ptr<Operation>) -> Result<Vec<u32>, A1Error> {
+    let operands: Vec<Value> = enter.deref(ctx).operands().collect();
+    operands[..operands.len().saturating_sub(1)]
+        .iter()
+        .map(|slot| {
+            slot.defining_op()
+                .and_then(|slot| attr::<SlotAttr>(ctx, slot, &KEY_SLOT))
+                .map(|slot| slot.id)
+                .ok_or_else(|| invalid(ctx, enter, "a cleanup operand that is no slot"))
+        })
+        .collect()
 }
 
 /// Insert `rebuilt` where `func` stands and erase `func`.
@@ -919,6 +1243,8 @@ enum NormalExit {
         after: Ptr<BasicBlock>,
         /// The block a pending error continues to, when one can be pending.
         error: Option<Ptr<BasicBlock>>,
+        /// The try the finally belongs to, whose pending exits resume too.
+        path: String,
     },
 }
 
@@ -934,11 +1260,44 @@ enum ErrorExit {
 struct Exits {
     normal: NormalExit,
     error: ErrorExit,
+    /// Each enclosing try, outermost first.
+    frames: Vec<Frame>,
+}
+
+/// What an exit crossing out of a try region owes that try.
+#[derive(Clone)]
+struct Frame {
+    path: String,
+    /// The cleanup the try runs on its way out; empty for a part whose
+    /// try already ran it.
+    cleanup: Vec<u32>,
+    /// The entry of the `finally` that still runs between this region and
+    /// the way out, when one does.
+    finally: Option<Ptr<BasicBlock>>,
+    /// Whether the region is the `finally` body itself.
+    in_finally: bool,
+}
+
+/// What an exit crossing out of a try region carries to its way out.
+struct ExitSite {
+    site: u64,
+    /// The value type a return carries.
+    value: Option<TypeHandle>,
+    /// The function-level block an escape leaves for.
+    target: Option<Ptr<BasicBlock>>,
+    identity: IdentityAttr,
 }
 
 struct Normalizer {
     rebuild: Rebuild,
     layout: Vec<BlockRecord>,
+    /// The rebuilt block standing for each function-level MIR block.
+    function_blocks: Vec<Ptr<BasicBlock>>,
+    /// Exit sites minted so far.
+    sites: u64,
+    /// For each try whose `finally` a pending exit enters, by path, the
+    /// sites entering it in order, each with its continuation block.
+    continuations: HashMap<String, Vec<(u64, Ptr<BasicBlock>)>>,
     /// The error type each lazily typed error block takes.
     error_types: HashMap<Ptr<BasicBlock>, TypeHandle>,
     propagate: HashMap<TypeHandle, Ptr<BasicBlock>>,
@@ -954,6 +1313,9 @@ impl Normalizer {
         let mut normalizer = Self {
             rebuild,
             layout: vec![record(BlockCategory::Entry, "", 0, 0)],
+            function_blocks: Vec::new(),
+            sites: 0,
+            continuations: HashMap::new(),
             error_types: HashMap::new(),
             propagate: HashMap::new(),
             outcome: OutcomeType::get(ctx).into(),
@@ -963,6 +1325,7 @@ impl Normalizer {
         let exits = Exits {
             normal: NormalExit::None,
             error: ErrorExit::Propagate,
+            frames: Vec::new(),
         };
         let first = normalizer.region(ctx, old_region, "", &exits)?;
         let old_entry = old_region
@@ -1065,6 +1428,9 @@ impl Normalizer {
         let Some(first) = firsts.first().copied() else {
             return Err(invalid(ctx, self.rebuild.func, "a region without a block"));
         };
+        if path.is_empty() {
+            self.function_blocks.clone_from(&firsts);
+        }
         let mut tries = 0usize;
         for (index, block) in blocks.iter().enumerate() {
             let mut current = firsts[index];
@@ -1089,7 +1455,12 @@ impl Normalizer {
                             .insert(token, after.deref(ctx).get_argument(0));
                         current = after;
                     }
-                    CoreOpKind::Call | CoreOpKind::Index | CoreOpKind::MultiSet
+                    CoreOpKind::Call
+                    | CoreOpKind::Index
+                    | CoreOpKind::MultiSet
+                    | CoreOpKind::IterNext
+                    | CoreOpKind::MultiIndex
+                    | CoreOpKind::Slice
                         if raised_by(ctx, op).is_some() =>
                     {
                         segment += 1;
@@ -1128,9 +1499,17 @@ impl Normalizer {
                                 pending,
                                 after,
                                 error,
+                                path: try_path,
                             } => {
-                                let successors: Vec<_> =
-                                    std::iter::once(*after).chain(*error).collect();
+                                let continued = self
+                                    .continuations
+                                    .get(try_path)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let successors: Vec<_> = std::iter::once(*after)
+                                    .chain(*error)
+                                    .chain(continued.iter().map(|(_, block)| *block))
+                                    .collect();
                                 let resume = self.rebuild.copy(
                                     ctx,
                                     op,
@@ -1138,6 +1517,19 @@ impl Normalizer {
                                     &successors,
                                 )?;
                                 Operation::insert_operand(resume, ctx, 0, *pending);
+                                if !continued.is_empty() {
+                                    set(
+                                        ctx,
+                                        resume,
+                                        &KEY_RESUME,
+                                        ResumeAttr {
+                                            sites: continued
+                                                .iter()
+                                                .map(|(site, _)| *site)
+                                                .collect(),
+                                        },
+                                    );
+                                }
                                 resume
                             }
                             NormalExit::None => {
@@ -1175,13 +1567,10 @@ impl Normalizer {
                         copy.insert_at_back(current, ctx);
                     }
                     CoreOpKind::Return if !path.is_empty() => {
-                        return Err(A1Error::new(
-                            A1ErrorKind::UnsupportedForm,
-                            format!(
-                                "a return crossing out of a try region has no core form ({})",
-                                describe(ctx, op)
-                            ),
-                        ));
+                        self.exit(ctx, current, path, op, exits)?;
+                    }
+                    CoreOpKind::Escape => {
+                        self.exit(ctx, current, path, op, exits)?;
                     }
                     _ => {
                         let copy = self.rebuild.copy(ctx, op, None, &[])?;
@@ -1247,9 +1636,20 @@ impl Normalizer {
         } else {
             None
         };
+        let frames = |cleanup: Vec<u32>, in_finally: bool| {
+            let mut frames = outer.frames.clone();
+            frames.push(Frame {
+                path: path.to_string(),
+                cleanup,
+                finally: pending.map(|(_, _, entry)| entry).filter(|_| !in_finally),
+                in_finally,
+            });
+            frames
+        };
         let part_exits = Exits {
             normal: NormalExit::Branch(pending.map_or(after, |(normal, _, _)| normal)),
             error: pending.map_or(outer.error, |(_, error, _)| ErrorExit::Block(error)),
+            frames: frames(Vec::new(), false),
         };
 
         let body = self.region(
@@ -1259,6 +1659,7 @@ impl Normalizer {
             &Exits {
                 normal: NormalExit::Branch(done),
                 error: ErrorExit::Block(unwind),
+                frames: frames(cleanup.clone(), false),
             },
         )?;
         let enter = self
@@ -1288,7 +1689,16 @@ impl Normalizer {
         BasicBlock::push_argument(unwind, ctx, effect);
         let error = unwind.deref(ctx).get_argument(0);
         let mut chain = unwind.deref(ctx).get_argument(1);
-        chain = self.cleanup(ctx, unwind, path, &cleanup, chain, true, &identity, op)?;
+        chain = self.cleanup(
+            ctx,
+            unwind,
+            path,
+            &cleanup,
+            chain,
+            Edge::Unwind,
+            &identity,
+            op,
+        )?;
         if let (Some(var), true) = (parts.error_var, parts.handler) {
             let slot = self.rebuild.variable(ctx, op, var)?;
             let store = self.rebuild.synthesize(
@@ -1328,7 +1738,7 @@ impl Normalizer {
 
         // The normal edge: the same cleanup, then `else` or the way on.
         let mut chain = done.deref(ctx).get_argument(0);
-        chain = self.cleanup(ctx, done, path, &cleanup, chain, false, &identity, op)?;
+        chain = self.cleanup(ctx, done, path, &cleanup, chain, Edge::Done, &identity, op)?;
         let NormalExit::Branch(onward) = part_exits.normal else {
             return Err(invalid(ctx, op, "a try part without a normal exit"));
         };
@@ -1381,8 +1791,10 @@ impl Normalizer {
                 pending: finally_entry.deref(ctx).get_argument(0),
                 after,
                 error,
+                path: path.to_string(),
             },
             error: outer.error,
+            frames: frames(Vec::new(), true),
         };
         let finalbody = self.region(ctx, regions[3], &format!("{path}.finally"), &exits)?;
         let chain = finally_entry.deref(ctx).get_argument(1);
@@ -1401,6 +1813,265 @@ impl Normalizer {
         Ok(())
     }
 
+    /// An exit crossing out of a try region: the drops of the tries it
+    /// leaves, then its way out. A `finally` on the way makes the exit a
+    /// pending outcome of that finally, continued after it; an exit from a
+    /// `finally` body, or a return carrying cleanup across a finally, has
+    /// no core form yet.
+    fn exit(
+        &mut self,
+        ctx: &mut Context,
+        current: Ptr<BasicBlock>,
+        path: &str,
+        op: Ptr<Operation>,
+        exits: &Exits,
+    ) -> Result<(), A1Error> {
+        let described = describe(ctx, op);
+        let refuse = move |what: &str| {
+            A1Error::new(
+                A1ErrorKind::UnsupportedForm,
+                format!("{what} has no core form ({described})"),
+            )
+        };
+        if exits.frames.iter().any(|frame| frame.in_finally) {
+            return Err(refuse("an exit crossing out of a finally body"));
+        }
+        let identity: IdentityAttr = attr(ctx, op, &KEY_IDENTITY)
+            .ok_or_else(|| invalid(ctx, op, "an operation without identity"))?;
+        let escape = attr::<EscapeAttr>(ctx, op, &KEY_ESCAPE);
+        let target = escape
+            .map(|escape| {
+                usize::try_from(escape.target)
+                    .ok()
+                    .and_then(|index| self.function_blocks.get(index).copied())
+                    .ok_or_else(|| invalid(ctx, op, "an escape to a missing block"))
+            })
+            .transpose()?;
+        let own = match escape {
+            Some(_) => cleanup_of(ctx, op)?,
+            None => Vec::new(),
+        };
+        let operands: Vec<Value> = op.deref(ctx).operands().collect();
+        let carried = attr::<CleanupAttr>(ctx, op, &KEY_CLEANUP)
+            .filter(|_| escape.is_none())
+            .map_or(0, |cleanup| cleanup.0 as usize);
+        let value = (escape.is_none() && operands.len() > carried + 1)
+            .then(|| self.rebuild.value(ctx, op, operands[0]))
+            .transpose()?;
+        let chain = self.rebuild.value(ctx, op, operands[operands.len() - 1])?;
+        let crossed = exits
+            .frames
+            .iter()
+            .rposition(|frame| frame.finally.is_some());
+        if crossed.is_some() && carried > 0 {
+            return Err(refuse("a return carrying cleanup across a finally"));
+        }
+        let inner = crossed.map_or(&exits.frames[..], |crossed| &exits.frames[crossed..]);
+        let owed: Vec<u32> = own
+            .iter()
+            .chain(inner.iter().rev().flat_map(|frame| frame.cleanup.iter()))
+            .copied()
+            .collect();
+        let chain = self.cleanup(ctx, current, path, &owed, chain, Edge::Exit, &identity, op)?;
+        let Some(crossed) = crossed else {
+            // No finally on the way: the exit ends here.
+            let copy = if let Some(target) = target {
+                let copy = self
+                    .rebuild
+                    .copy(ctx, op, Some((CoreOpKind::Br, vec![])), &[target])?;
+                Operation::replace_operand(copy, ctx, 0, chain);
+                copy
+            } else {
+                let copy = self.rebuild.copy(ctx, op, None, &[])?;
+                Operation::replace_operand(copy, ctx, chain_position(ctx, copy), chain);
+                copy
+            };
+            copy.insert_at_back(current, ctx);
+            return Ok(());
+        };
+        let site = ExitSite {
+            site: self.sites,
+            value: value.map(|value| value.get_type(ctx)),
+            target,
+            identity,
+        };
+        self.sites += 1;
+        let frame = exits.frames[crossed].clone();
+        let pending = self.pending_exit(ctx, &site, &frame)?;
+        let mut branch_operands = Vec::new();
+        branch_operands.extend(value);
+        branch_operands.push(chain);
+        let branch = self
+            .rebuild
+            .copy(ctx, op, Some((CoreOpKind::Br, vec![])), &[pending])?;
+        for (position, operand) in branch_operands.into_iter().enumerate() {
+            if position == 0 {
+                Operation::replace_operand(branch, ctx, 0, operand);
+            } else {
+                Operation::insert_operand(branch, ctx, position, operand);
+            }
+        }
+        set(
+            ctx,
+            branch,
+            &KEY_EXIT_SITE,
+            ExitSiteAttr {
+                site: site.site,
+                value: site.value.is_some(),
+            },
+        );
+        branch.insert_at_back(current, ctx);
+        self.continue_exit(ctx, &site, &frame, &exits.frames[..crossed], op)
+    }
+
+    /// The block an exit enters the finally of `frame` through: its
+    /// outcome recorded, then the single finally entry.
+    fn pending_exit(
+        &mut self,
+        ctx: &mut Context,
+        site: &ExitSite,
+        frame: &Frame,
+    ) -> Result<Ptr<BasicBlock>, A1Error> {
+        let effect = self.rebuild.effect;
+        let entry = frame
+            .finally
+            .ok_or_else(|| invalid(ctx, self.rebuild.func, "a pending exit enters a finally"))?;
+        let mut arguments = Vec::new();
+        arguments.extend(site.value);
+        arguments.push(effect);
+        let block = self.new_block(
+            ctx,
+            arguments,
+            record(BlockCategory::PendingExit, &frame.path, site.site, 0),
+        );
+        let operands = block.deref(ctx).arguments().collect();
+        self.pending_outcome(ctx, block, entry, &frame.path, site, operands);
+        Ok(block)
+    }
+
+    /// Record exit `site`'s pending outcome in `block` and enter `entry`.
+    fn pending_outcome(
+        &self,
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        entry: Ptr<BasicBlock>,
+        path: &str,
+        site: &ExitSite,
+        operands: Vec<Value>,
+    ) {
+        let outcome = self.rebuild.synthesize(
+            ctx,
+            block,
+            CoreOpKind::Outcome,
+            vec![self.outcome, self.rebuild.effect],
+            operands,
+            vec![],
+            path,
+            CoreRole::PendingExit,
+            &site.identity,
+            "pending exit outcome",
+        );
+        set(
+            ctx,
+            outcome,
+            &KEY_OUTCOME,
+            OutcomeAttr {
+                kind: OutcomeKind::Exit(site.site),
+            },
+        );
+        let results = outcome.deref(ctx).results().collect();
+        self.rebuild.synthesize(
+            ctx,
+            block,
+            CoreOpKind::Br,
+            vec![],
+            results,
+            vec![entry],
+            path,
+            CoreRole::PendingExitExit,
+            &site.identity,
+            "pending exit outcome",
+        );
+    }
+
+    /// Exit `site`'s way out after the finally of `frame`: the drops of the
+    /// tries it leaves next, then its terminator, or the next finally on
+    /// the way as another pending outcome.
+    fn continue_exit(
+        &mut self,
+        ctx: &mut Context,
+        site: &ExitSite,
+        frame: &Frame,
+        outer: &[Frame],
+        op: Ptr<Operation>,
+    ) -> Result<(), A1Error> {
+        let effect = self.rebuild.effect;
+        let mut arguments = Vec::new();
+        arguments.extend(site.value);
+        arguments.push(effect);
+        let block = self.new_block(
+            ctx,
+            arguments,
+            record(BlockCategory::ExitContinue, &frame.path, site.site, 0),
+        );
+        self.continuations
+            .entry(frame.path.clone())
+            .or_default()
+            .push((site.site, block));
+        let arguments: Vec<Value> = block.deref(ctx).arguments().collect();
+        let value = site.value.map(|_| arguments[0]);
+        let chain = arguments[arguments.len() - 1];
+        let next = outer.iter().rposition(|frame| frame.finally.is_some());
+        let inner = next.map_or(outer, |next| &outer[next..]);
+        let owed: Vec<u32> = inner
+            .iter()
+            .rev()
+            .flat_map(|frame| frame.cleanup.iter())
+            .copied()
+            .collect();
+        let chain = self.cleanup(
+            ctx,
+            block,
+            &frame.path,
+            &owed,
+            chain,
+            Edge::Exit,
+            &site.identity,
+            op,
+        )?;
+        if let Some(next) = next {
+            let entry = outer[next]
+                .finally
+                .ok_or_else(|| invalid(ctx, op, "a pending exit enters a finally"))?;
+            let mut operands = Vec::new();
+            operands.extend(value);
+            operands.push(chain);
+            self.pending_outcome(ctx, block, entry, &outer[next].path, site, operands);
+            return self.continue_exit(ctx, site, &outer[next], &outer[..next], op);
+        }
+        let (kind, operands, successors) = if let Some(target) = site.target {
+            (CoreOpKind::Br, vec![chain], vec![target])
+        } else {
+            let mut operands = Vec::new();
+            operands.extend(value);
+            operands.push(chain);
+            (CoreOpKind::Return, operands, vec![])
+        };
+        self.rebuild.synthesize(
+            ctx,
+            block,
+            kind,
+            vec![],
+            operands,
+            successors,
+            &frame.path,
+            CoreRole::ExitTerminal,
+            &site.identity,
+            "exit after finally",
+        );
+        Ok(())
+    }
+
     /// The ordered cleanup drops of one edge; the result is the effect
     /// token after them.
     #[allow(clippy::too_many_arguments, reason = "one edge, fully described")]
@@ -1411,17 +2082,17 @@ impl Normalizer {
         path: &str,
         cleanup: &[u32],
         mut chain: Value,
-        error_edge: bool,
+        edge: Edge,
         identity: &IdentityAttr,
         op: Ptr<Operation>,
     ) -> Result<Value, A1Error> {
         for (position, var) in cleanup.iter().enumerate() {
             let slot = self.rebuild.variable(ctx, op, *var)?;
             let position = position as u64;
-            let (role, edge) = if error_edge {
-                (CoreRole::UnwindDrop(position), "exceptional")
-            } else {
-                (CoreRole::DoneDrop(position), "normal")
+            let (role, edge) = match edge {
+                Edge::Unwind => (CoreRole::UnwindDrop(position), "exceptional"),
+                Edge::Done => (CoreRole::DoneDrop(position), "normal"),
+                Edge::Exit => (CoreRole::ExitDrop(position), "exit"),
             };
             let drop = self.rebuild.synthesize(
                 ctx,
@@ -1473,6 +2144,11 @@ impl Normalizer {
                 CoreRole::PendingErrorExit,
                 "pending error outcome",
             ),
+            OutcomeKind::Exit(_) => (
+                CoreRole::PendingExit,
+                CoreRole::PendingExitExit,
+                "pending exit outcome",
+            ),
         };
         let outcome = self.rebuild.synthesize(
             ctx,
@@ -1501,6 +2177,19 @@ impl Normalizer {
             reason,
         );
     }
+}
+
+/// Which edge of a try a cleanup drop belongs to.
+#[derive(Clone, Copy)]
+enum Edge {
+    Unwind,
+    Done,
+    Exit,
+}
+
+/// The position of the effect token among `op`'s operands: the last.
+fn chain_position(ctx: &Context, op: Ptr<Operation>) -> usize {
+    op.deref(ctx).operands().count().saturating_sub(1)
 }
 
 fn record(category: BlockCategory, region: &str, block: u64, segment: u64) -> BlockRecord {
@@ -1573,9 +2262,29 @@ impl Denormalizer {
                 let Some((term, body)) = ops.split_last() else {
                     return Err(invalid(ctx, self.rebuild.func, "an empty block"));
                 };
-                for op in body {
+                let synthesized = match &segment.link {
+                    Link::End(End::Return { synthesized } | End::Escape { synthesized }) => {
+                        *synthesized
+                    }
+                    _ => 0,
+                };
+                let kept = body.len() - synthesized;
+                for op in &body[..kept] {
                     let copy = self.rebuild.copy(ctx, *op, None, &[])?;
                     copy.insert_at_back(*target, ctx);
+                }
+                // An exit's synthesized drops are not copied; the effect
+                // token flows through where they stood.
+                let mut owed = Vec::new();
+                for op in &body[kept..] {
+                    let operands: Vec<Value> = op.deref(ctx).operands().collect();
+                    let chain = self.rebuild.value(ctx, *op, operands[operands.len() - 1])?;
+                    self.rebuild
+                        .values
+                        .insert(op.deref(ctx).get_result(0), chain);
+                    if let Some(lifecycle) = attr::<LifecycleAttr>(ctx, *op, &KEY_LIFECYCLE) {
+                        owed.push(lifecycle.owner);
+                    }
                 }
                 let copy = match &segment.link {
                     Link::Invoke => {
@@ -1618,6 +2327,30 @@ impl Denormalizer {
                             ));
                         }
                         exit
+                    }
+                    Link::End(End::Return { .. }) => {
+                        let kind = (CoreOpKind::of(ctx, *term) == Some(CoreOpKind::Br))
+                            .then_some((CoreOpKind::Return, vec![]));
+                        let copy = self.rebuild.copy(ctx, *term, kind, &[])?;
+                        copy.deref_mut(ctx).attributes.0.remove(&*KEY_EXIT_SITE);
+                        copy
+                    }
+                    Link::End(End::Escape { .. }) => {
+                        let escape = self.rebuild.copy(
+                            ctx,
+                            *term,
+                            Some((CoreOpKind::Escape, vec![])),
+                            &[],
+                        )?;
+                        let own = attr::<CleanupAttr>(ctx, *term, &KEY_CLEANUP)
+                            .and_then(|cleanup| usize::try_from(cleanup.0).ok())
+                            .ok_or_else(|| invalid(ctx, *term, "an escape counts its cleanup"))?;
+                        for (position, var) in owed.iter().take(own).enumerate() {
+                            let slot = self.rebuild.variable(ctx, *term, *var)?;
+                            Operation::insert_operand(escape, ctx, position, slot);
+                        }
+                        escape.deref_mut(ctx).attributes.0.remove(&*KEY_EXIT_SITE);
+                        escape
                     }
                     Link::End(End::Own) => {
                         let raise = CoreOpKind::of(ctx, *term) == Some(CoreOpKind::Raise);

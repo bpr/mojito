@@ -54,6 +54,13 @@ impl A1Error {
         self.function.get_or_insert_with(|| function.to_string());
         self
     }
+
+    /// The same diagnostic under the census class it counts in.
+    #[must_use]
+    pub fn classified(mut self, class: &str) -> Self {
+        self.message = format!("{class}: {}", self.message);
+        self
+    }
 }
 
 impl fmt::Display for A1Error {

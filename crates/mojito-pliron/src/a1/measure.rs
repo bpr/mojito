@@ -55,16 +55,8 @@ pub fn shadow(
     };
 
     let started = Instant::now();
-    let specialized =
-        mojito_native::native::mono::specialize(program, entries).map_err(|error| {
-            A1Error::new(
-                A1ErrorKind::UnsupportedForm,
-                format!("specialization refuses the program: {}", error.construct),
-            )
-        })?;
+    let (specialized, entry_map) = specialized(program, entries)?;
     timed("specialize", started);
-    let mut entry_map: Vec<(String, String)> = specialized.entries.into_iter().collect();
-    entry_map.sort();
 
     let started = Instant::now();
     let mut ctx = new_context();
@@ -151,6 +143,68 @@ pub fn shadow(
         attributes,
         removed,
     })
+}
+
+/// The print of `program`'s bridge module as imported, before any
+/// verification: the text a verifier panic or diagnostic is read against.
+pub fn bridge_print(program: &MirProgram, entries: &[String]) -> Result<String, A1Error> {
+    let (specialized, entry_map) = specialized(program, entries)?;
+    let mut ctx = new_context();
+    let module = import_program(&mut ctx, &specialized.program, &entry_map)?;
+    Ok(super::ir_framework::print(&ctx, module))
+}
+
+/// The verdict of each function verified on its own, by stage and symbol.
+pub type Verdicts = Vec<(String, Result<(), A1Error>)>;
+
+/// Verify each function of `program`'s module on its own.
+///
+/// Each is verified at the bridge stage and then, normalized, at the
+/// executable core, and named through `report` first, so a verifier
+/// panic names the function and stage it died in. The normalized
+/// module's text goes to `dump` before the core stage is verified.
+pub fn verify_each_function(
+    program: &MirProgram,
+    entries: &[String],
+    mut report: impl FnMut(&str),
+    dump: impl FnOnce(&str),
+) -> Result<Verdicts, A1Error> {
+    let (specialized, entry_map) = specialized(program, entries)?;
+    let mut ctx = new_context();
+    let module = import_program(&mut ctx, &specialized.program, &entry_map)?;
+    let mut verdicts = Vec::new();
+    let mut each = |ctx: &pliron::context::Context, stage: &str, verdicts: &mut Verdicts| {
+        for func in super::outcomes::functions(ctx, module) {
+            let symbol = super::verify::attr::<super::attrs::SignatureAttr>(
+                ctx,
+                func,
+                &super::ops::KEY_SIGNATURE,
+            )
+            .map_or_else(String::new, |signature| signature.symbol.0);
+            report(&format!("{stage} `{symbol}`"));
+            let verdict = super::verify::verify_tree(ctx, func);
+            verdicts.push((format!("{stage} `{symbol}`"), verdict));
+        }
+    };
+    each(&ctx, "bridge", &mut verdicts);
+    normalize(&mut ctx, module)?;
+    dump(&super::ir_framework::print(&ctx, module));
+    each(&ctx, "core", &mut verdicts);
+    Ok(verdicts)
+}
+
+/// The first print of `program`'s executable core, before the parse that
+/// canonicalizes it: the text a parse diagnostic's line and column name.
+pub fn first_print(program: &MirProgram, entries: &[String]) -> Result<String, A1Error> {
+    let (specialized, entry_map) = specialized(program, entries)?;
+    let mut ctx = new_context();
+    let module = import_program(&mut ctx, &specialized.program, &entry_map)?;
+    verify_module(&ctx, module, Stage::Bridge)?;
+    normalize(&mut ctx, module)?;
+    verify_module(&ctx, module, Stage::ExecutableCore)?;
+    super::provenance::stamp_locations(&ctx, module)?;
+    pliron::builtin::given_names::erase_given_names(&mut ctx, module);
+    Ok(super::ir_framework::print(&ctx, module))
 }
 
 /// One measured child process.
@@ -376,4 +430,31 @@ fn middle(sorted: &[f64]) -> Option<f64> {
         _ if count % 2 == 1 => Some(sorted[count / 2]),
         _ => Some(f64::midpoint(sorted[count / 2 - 1], sorted[count / 2])),
     }
+}
+
+/// The specialized closure of `entries` and its sorted entry map.
+fn specialized(
+    program: &MirProgram,
+    entries: &[String],
+) -> Result<
+    (
+        mojito_native::native::mono::SpecializedProgram,
+        Vec<(String, String)>,
+    ),
+    A1Error,
+> {
+    let specialized =
+        mojito_native::native::mono::specialize(program, entries).map_err(|error| {
+            A1Error::new(
+                A1ErrorKind::UnsupportedForm,
+                format!("specialization refuses the program: {}", error.construct),
+            )
+        })?;
+    let mut entry_map: Vec<(String, String)> = specialized
+        .entries
+        .iter()
+        .map(|(requested, concrete)| (requested.clone(), concrete.clone()))
+        .collect();
+    entry_map.sort();
+    Ok((specialized, entry_map))
 }

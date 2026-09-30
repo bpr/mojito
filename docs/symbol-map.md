@@ -733,12 +733,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   A1 shadow core, a removable experiment recorded in
   `docs/notes/pliron-a1.md`. It moves no waist: the backends still consume
   MIR. `inventory::CoreOpKind` is the closed registry; `import`/`export`
-  convert MIR to and from the bridge stage, and `import::refusals` counts
-  everything the importer refuses in a program; `outcomes::{normalize,
+  convert MIR to and from the bridge stage, and `import::refusals` runs the
+  same importer in collect mode and counts everything it, the per-operation
+  verifier, and the legality rules refuse in a program; `outcomes::{normalize,
   denormalize}` and `lifecycle::check_contract` own the executable stage;
-  `text::canonical_text` and `provenance` own text and locations; `params`
-  re-homes `ParamExpr`; `measure` and `examples/pliron_a1.rs` are the
-  measurement harness.
+  `verify::verify_tree` is Pliron's verification with `verify::verify_dominance`
+  in place of Pliron's own dominance walk (which panics on a block nothing
+  reaches); `verify::{BUILTIN_CALLEES, BUILTIN_METHODS, TRAIT_DISPATCH_PREFIX}`
+  re-export `mojito_vm::builtins`; `text::canonical_text` and `provenance`
+  own text and locations; `params` re-homes `ParamExpr`; `measure` and
+  `examples/pliron_a1.rs` (with its `--emit-core`, `--emit-bridge`, and
+  `--emit-specialized` diagnostics) are the measurement harness.
 - `backend/pliron.rs` (feature `backend-pliron`) owns the supported native
   backend: `compile` orchestration (reachable closure, verify, mem2reg/DCE,
   canonical text), `NativeModule` emission/JIT entry points,
@@ -814,6 +819,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `backend/vm/dispatch.rs` owns named-call dispatch (`print` with its
   `sep`/`end`/`flush`/`file` keywords through `descriptor_value` and
   `libc.rs`'s `host_write_bytes`), drops, slice bounds, and value formatting.
+- `builtins.rs` (`mojito_vm::builtins`) names what that dispatch answers
+  without a program function: `BUILTIN_CALLEES`, `INTRINSIC_METHODS`, and
+  `TRAIT_DISPATCH_PREFIX`; its tests pin each name to the dispatch source. A
+  consumer deciding whether a call target resolves (the A1 legality rule)
+  reads these tables.
 - `backend/vm/libc.rs` owns the `external_call` libc table: `HostState`
   (descriptors, directory streams, the `errno` allocation, the environment
   overlay) and the per-callee marshaling between VM values and Rust's

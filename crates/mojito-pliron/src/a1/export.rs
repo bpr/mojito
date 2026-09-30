@@ -13,29 +13,32 @@ use pliron::value::Value;
 
 use mojito_checked::checked::{CheckedIteratorCall, CheckedResultAdapter, IterationMode};
 use mojito_mir::mir::{
-    FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirLoan,
-    MirParamArg, MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg, MirSubscriptCall,
-    MirTerm, Proj, Reg, SpanTable,
+    FuncRef, MirBlock, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
+    MirInstr, MirLoan, MirParamArg, MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg,
+    MirSubscriptCall, MirTerm, Proj, Reg, SpanTable,
 };
 use mojito_types::param_expr::ParamContext;
 use mojito_types::types::Ty;
 
 use super::attrs::{
-    CallAttr, CleanupAttr, ConstAttr, CoreCallKind, CoreIntrinsic, CoreIterationMode,
-    CoreLifecycle, CoreParamArg, CorePointerAccess, CoreResultAdapter, CoreRole, CoreStepKind,
-    CoreStorage, CoreSubscriptCall, DeadTermAttr, DeclarationAttr, IdentityAttr, IndexAttr,
-    InfixAttr, InvalidateAttr, IterInitAttr, IterNextAttr, LifecycleAttr, LoansAttr, ModuleAttr,
-    MultiSetAttr, OrphansAttr, PointerStorageAttr, PrefixAttr, ProjectionAttr, ProvenanceAttr,
-    RegAttr, ResolvedAttr, SignatureAttr, SimdConvertAttr, SlotAttr, StoreAttr, TryAttr,
-    UseModeAttr,
+    CallAttr, CleanupAttr, ClosureAttr, ConstAttr, CoreCallKind, CoreIntrinsic, CoreIterationMode,
+    CoreLifecycle, CoreParamArg, CorePointerAccess, CoreResultAdapter, CoreRole,
+    CoreSimdConversion, CoreStepKind, CoreStorage, CoreSubscriptArg, CoreSubscriptCall,
+    CoreUninitAccess, CoreVariantAccess, DeadTermAttr, DeclarationAttr, EscapeAttr, FieldAttr,
+    IdentityAttr, IndexAttr, InfixAttr, InvalidateAttr, IterInitAttr, IterNextAttr, LifecycleAttr,
+    LoansAttr, ModuleAttr, MultiIndexAttr, MultiSetAttr, OrphansAttr, PointerStorageAttr,
+    PrefixAttr, ProjectionAttr, ProvenanceAttr, RegAttr, ResolvedAttr, ShuffleAttr, SignatureAttr,
+    SimdConvertAttr, SimdMakeAttr, SizeOfAttr, SliceAttr, SlotAttr, StoreAttr, TryAttr, UninitAttr,
+    UseModeAttr, VariantAttr,
 };
 use super::inventory::CoreOpKind;
 use super::ops::{
-    KEY_CALL, KEY_CLEANUP, KEY_CONSTANT, KEY_DEAD_TERM, KEY_DECLARATION, KEY_IDENTITY, KEY_INFIX,
-    KEY_INVALIDATION, KEY_ITER_INIT, KEY_ITER_NEXT, KEY_LIFECYCLE, KEY_LOANS, KEY_MULTI_SET,
-    KEY_ORPHANS, KEY_POINTER_STORAGE, KEY_PREFIX, KEY_PROJECTION, KEY_PROVENANCE, KEY_REG,
-    KEY_RESOLVED, KEY_SIGNATURE, KEY_SIMD_CONVERT, KEY_SLOT, KEY_STORE, KEY_SUBSCRIPT, KEY_TABLES,
-    KEY_TRY, KEY_USE_MODE,
+    KEY_CALL, KEY_CLEANUP, KEY_CLOSURE, KEY_CONSTANT, KEY_DEAD_TERM, KEY_DECLARATION, KEY_ESCAPE,
+    KEY_FIELD, KEY_IDENTITY, KEY_INFIX, KEY_INVALIDATION, KEY_ITER_INIT, KEY_ITER_NEXT,
+    KEY_LIFECYCLE, KEY_LOANS, KEY_MULTI_INDEX, KEY_MULTI_SET, KEY_ORPHANS, KEY_POINTER_STORAGE,
+    KEY_PREFIX, KEY_PROJECTION, KEY_PROVENANCE, KEY_REG, KEY_RESOLVED, KEY_SHUFFLE, KEY_SIGNATURE,
+    KEY_SIMD_CONVERT, KEY_SIMD_MAKE, KEY_SIZE_OF, KEY_SLICE, KEY_SLOT, KEY_STORE, KEY_SUBSCRIPT,
+    KEY_TABLES, KEY_TRY, KEY_UNINIT, KEY_USE_MODE, KEY_VARIANT,
 };
 use super::params::{PayloadBinder, export_param};
 use super::types::export_type;
@@ -352,17 +355,12 @@ impl<'a> FnExport<'a> {
             }
             CoreOpKind::SimdMake => {
                 let dest = self.dest(op)?;
-                let Ty::Simd { dtype, width } = &self.reg_types[&dest.0] else {
-                    return Err(malformed(ctx, op, "a SIMD construction of another type"));
-                };
-                let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                    return Err(malformed(ctx, op, "a SIMD construction of an open type"));
-                };
+                let declared: SimdMakeAttr = required(ctx, op, &KEY_SIMD_MAKE)?;
                 instrs.push(MirInstr::MakeSimd {
                     dest,
-                    dtype,
-                    width: usize::try_from(width)
-                        .map_err(|_| malformed(ctx, op, "a negative SIMD width"))?,
+                    dtype: declared.dtype.dtype(),
+                    width: usize::try_from(declared.width)
+                        .map_err(|_| malformed(ctx, op, "a SIMD width beyond the host"))?,
                     elems: operands
                         .iter()
                         .map(|value| self.reg(op, *value))
@@ -418,23 +416,18 @@ impl<'a> FnExport<'a> {
             CoreOpKind::SimdConvert => {
                 let conversion: SimdConvertAttr = required(ctx, op, &KEY_SIMD_CONVERT)?;
                 let dest = self.dest(op)?;
-                let Ty::Simd { dtype, width } = &self.reg_types[&dest.0] else {
-                    return Err(malformed(ctx, op, "a SIMD conversion to another type"));
-                };
-                let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                    return Err(malformed(ctx, op, "a SIMD conversion to an open type"));
-                };
-                let width = usize::try_from(width)
-                    .map_err(|_| malformed(ctx, op, "a negative SIMD width"))?;
+                let dtype = conversion.dtype.dtype();
+                let width = usize::try_from(conversion.width)
+                    .map_err(|_| malformed(ctx, op, "a SIMD width beyond the host"))?;
                 let value = self.reg(op, operands[0])?;
-                instrs.push(match conversion {
-                    SimdConvertAttr::Cast => MirInstr::SimdCast {
+                instrs.push(match conversion.conversion {
+                    CoreSimdConversion::Cast => MirInstr::SimdCast {
                         dest,
                         value,
                         dtype,
                         width,
                     },
-                    SimdConvertAttr::Bits => MirInstr::SimdBitcast {
+                    CoreSimdConversion::Bits => MirInstr::SimdBitcast {
                         dest,
                         value,
                         dtype,
@@ -454,6 +447,25 @@ impl<'a> FnExport<'a> {
                 dest: self.dest(op)?,
                 place: self.place(op, operands[0])?,
             }),
+            CoreOpKind::ClosureMake => {
+                let closure: ClosureAttr = required(ctx, op, &KEY_CLOSURE)?;
+                let captures = closure
+                    .modes
+                    .iter()
+                    .zip(operands)
+                    .map(|(mode, value)| {
+                        Ok(MirClosureCapture {
+                            place: self.place(op, value)?,
+                            mode: mode.mode(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, A1Error>>()?;
+                instrs.push(MirInstr::MakeClosure {
+                    dest: self.dest(op)?,
+                    function: closure.function.0,
+                    captures,
+                });
+            }
             CoreOpKind::KeepAlive => instrs.push(MirInstr::KeepAlive {
                 var: self.variable(op, operands[0])?,
             }),
@@ -587,11 +599,255 @@ impl<'a> FnExport<'a> {
                 });
             }
             CoreOpKind::Call => instrs.push(self.call(op, &operands)?),
+            CoreOpKind::FieldGet => {
+                let field: FieldAttr = required(ctx, op, &KEY_FIELD)?;
+                instrs.push(MirInstr::GetField {
+                    dest: self.dest(op)?,
+                    base: self.reg(op, operands[0])?,
+                    field: field.name.0,
+                });
+            }
+            CoreOpKind::SizeOf => {
+                let measured: SizeOfAttr = required(ctx, op, &KEY_SIZE_OF)?;
+                instrs.push(MirInstr::SizeOf {
+                    dest: self.dest(op)?,
+                    ty: export_type(ctx, measured.ty)?,
+                });
+            }
+            CoreOpKind::RefWrite => instrs.push(MirInstr::WriteRef {
+                reference: self.reg(op, operands[0])?,
+                value: self.reg(op, operands[1])?,
+            }),
+            CoreOpKind::MultiIndex => {
+                let subscript: MultiIndexAttr = required(ctx, op, &KEY_MULTI_INDEX)?;
+                let mut rest = operands[1..operands.len() - 1].iter().copied();
+                let mut args = Vec::with_capacity(subscript.args.len());
+                for shape in &subscript.args {
+                    args.push(self.subscript_arg(op, shape, &mut rest)?);
+                }
+                let mut kwargs = Vec::with_capacity(subscript.kwargs.len());
+                for keyword in &subscript.kwargs {
+                    kwargs.push((
+                        keyword.name.0.clone(),
+                        self.subscript_arg(op, &keyword.arg, &mut rest)?,
+                    ));
+                }
+                let call = subscript
+                    .call
+                    .as_ref()
+                    .map(|call| self.subscript_call(op, call, &mut rest))
+                    .transpose()?;
+                let mut place = |retained: bool| {
+                    retained
+                        .then(|| rest.next())
+                        .flatten()
+                        .map(|value| self.place(op, value))
+                        .transpose()
+                };
+                let object_place = place(subscript.object_place)?;
+                let arg_places = subscript
+                    .arg_places
+                    .iter()
+                    .map(|retained| place(*retained))
+                    .collect::<Result<Vec<_>, A1Error>>()?;
+                let kwarg_places = subscript
+                    .kwarg_places
+                    .iter()
+                    .map(|retained| place(*retained))
+                    .collect::<Result<Vec<_>, A1Error>>()?;
+                instrs.push(MirInstr::MultiIndex {
+                    dest: self.dest(op)?,
+                    object: self.reg(op, operands[0])?,
+                    args,
+                    object_place,
+                    arg_places,
+                    kwargs,
+                    kwarg_places,
+                    call,
+                });
+            }
+            CoreOpKind::Slice => {
+                let slice: SliceAttr = required(ctx, op, &KEY_SLICE)?;
+                let mut rest = operands[1..operands.len() - 1].iter().copied();
+                let mut bound = |present: bool| {
+                    present
+                        .then(|| rest.next())
+                        .flatten()
+                        .map(|value| self.reg(op, value))
+                        .transpose()
+                };
+                let lower = bound(slice.bounds.lower)?;
+                let upper = bound(slice.bounds.upper)?;
+                let step = bound(slice.bounds.step)?;
+                let call = slice
+                    .call
+                    .as_ref()
+                    .map(|call| self.subscript_call(op, call, &mut rest))
+                    .transpose()?;
+                let mut place = |retained: bool| {
+                    retained
+                        .then(|| rest.next())
+                        .flatten()
+                        .map(|value| self.place(op, value))
+                        .transpose()
+                };
+                let object_place = place(slice.object_place)?;
+                let arg_places = slice
+                    .arg_places
+                    .iter()
+                    .map(|retained| place(*retained))
+                    .collect::<Result<Vec<_>, A1Error>>()?;
+                instrs.push(MirInstr::Slice {
+                    dest: self.dest(op)?,
+                    object: self.reg(op, operands[0])?,
+                    kind: slice.bounds.kind.kind(),
+                    lower,
+                    upper,
+                    step,
+                    object_place,
+                    arg_places,
+                    call,
+                    intrinsic: slice.intrinsic.map(CoreIntrinsic::intrinsic),
+                });
+            }
+            CoreOpKind::SimdShuffle => {
+                let shuffle: ShuffleAttr = required(ctx, op, &KEY_SHUFFLE)?;
+                instrs.push(MirInstr::SimdShuffle {
+                    dest: self.dest(op)?,
+                    value: self.reg(op, operands[0])?,
+                    other: shuffle
+                        .other
+                        .then(|| self.reg(op, operands[1]))
+                        .transpose()?,
+                    mask: shuffle
+                        .mask
+                        .iter()
+                        .map(|lane| {
+                            usize::try_from(*lane)
+                                .map_err(|_| malformed(ctx, op, "a lane beyond the host"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                });
+            }
+            CoreOpKind::PackHasNext => instrs.push(MirInstr::HasNext {
+                dest: self.dest(op)?,
+                iter: self.variable(op, operands[0])?,
+            }),
+            CoreOpKind::PackNext => instrs.push(MirInstr::Next {
+                dest: self.dest(op)?,
+                iter: self.variable(op, operands[0])?,
+            }),
+            CoreOpKind::UninitStorage => {
+                let uninit: UninitAttr = required(ctx, op, &KEY_UNINIT)?;
+                let dest = self.dest(op)?;
+                let element = |element: Option<TypeHandle>| {
+                    element
+                        .ok_or_else(|| malformed(ctx, op, "a storage access without its element"))
+                        .and_then(|ty| export_type(ctx, ty))
+                };
+                instrs.push(match uninit.access {
+                    CoreUninitAccess::Make => MirInstr::UninitStorage {
+                        dest,
+                        init: uninit.init.then(|| self.reg(op, operands[0])).transpose()?,
+                    },
+                    CoreUninitAccess::Take => MirInstr::UninitStorageTake {
+                        dest,
+                        storage: self.reg(op, operands[0])?,
+                        element: element(uninit.element)?,
+                    },
+                    CoreUninitAccess::Destroy => MirInstr::UninitStorageDestroy {
+                        dest,
+                        storage: self.reg(op, operands[0])?,
+                        element: element(uninit.element)?,
+                    },
+                });
+            }
+            CoreOpKind::VariantMake
+            | CoreOpKind::VariantTest
+            | CoreOpKind::VariantGet
+            | CoreOpKind::VariantSet
+            | CoreOpKind::VariantDeinitWith => {
+                let access: VariantAttr = required(ctx, op, &KEY_VARIANT)?;
+                let dest = self.dest(op)?;
+                let index = |index: u64| {
+                    usize::try_from(index)
+                        .map_err(|_| malformed(ctx, op, "an alternative beyond the host"))
+                };
+                let value = |position: usize| self.reg(op, operands[position]);
+                instrs.push(match access.access {
+                    CoreVariantAccess::Make(at) => {
+                        let Ty::Variant(alternatives) = &self.reg_types[&dest.0] else {
+                            return Err(malformed(
+                                ctx,
+                                op,
+                                "a variant construction of another type",
+                            ));
+                        };
+                        MirInstr::MakeVariant {
+                            dest,
+                            alternatives: alternatives.clone(),
+                            index: index(at)?,
+                            value: value(0)?,
+                        }
+                    }
+                    CoreVariantAccess::Test(at) => MirInstr::VariantIs {
+                        dest,
+                        variant: value(0)?,
+                        index: index(at)?,
+                    },
+                    CoreVariantAccess::Get(at) => MirInstr::VariantGet {
+                        dest,
+                        variant: value(0)?,
+                        index: index(at)?,
+                    },
+                    CoreVariantAccess::Take(at, checked) => MirInstr::VariantTake {
+                        dest,
+                        variant: value(0)?,
+                        index: index(at)?,
+                        checked,
+                    },
+                    CoreVariantAccess::Set(at) => MirInstr::VariantSet {
+                        dest,
+                        place: self.place(op, operands[0])?,
+                        index: index(at)?,
+                        value: value(1)?,
+                    },
+                    CoreVariantAccess::Replace(input, output, checked) => {
+                        MirInstr::VariantReplace {
+                            dest,
+                            place: self.place(op, operands[0])?,
+                            input_index: index(input)?,
+                            output_index: index(output)?,
+                            value: value(1)?,
+                            checked,
+                        }
+                    }
+                    CoreVariantAccess::SetInitWith(at) => MirInstr::VariantSetInitWith {
+                        dest,
+                        place: self.place(op, operands[0])?,
+                        index: index(at)?,
+                        factory: value(1)?,
+                    },
+                    CoreVariantAccess::DeinitWith(at) => MirInstr::VariantDeinitWith {
+                        dest,
+                        variant: value(0)?,
+                        handler: value(1)?,
+                        index: index(at)?,
+                    },
+                });
+            }
             CoreOpKind::Drop | CoreOpKind::Consume => {
                 let lifecycle: LifecycleAttr = required(ctx, op, &KEY_LIFECYCLE)?;
                 if lifecycle.kind == CoreLifecycle::DropPlace {
                     instrs.push(MirInstr::DropPlace {
                         place: self.place(op, operands[0])?,
+                    });
+                    return Ok(None);
+                }
+                if lifecycle.kind == CoreLifecycle::ConsumePlace {
+                    instrs.push(MirInstr::ConsumePlace {
+                        place: self.place(op, operands[0])?,
+                        marker: self.reg(op, operands[1])?,
                     });
                     return Ok(None);
                 }
@@ -720,6 +976,18 @@ impl<'a> FnExport<'a> {
                 }));
             }
             CoreOpKind::RegionExit => return Ok(Some(MirTerm::FallOff)),
+            CoreOpKind::Escape => {
+                let escape: EscapeAttr = required(ctx, op, &KEY_ESCAPE)?;
+                let cleanup = operands[..operands.len() - 1]
+                    .iter()
+                    .map(|slot| self.variable(op, *slot))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Some(MirTerm::EscapeJump {
+                    target: usize::try_from(escape.target)
+                        .map_err(|_| malformed(ctx, op, "a block index beyond usize"))?,
+                    cleanup,
+                }));
+            }
             CoreOpKind::Func
             | CoreOpKind::Slot
             | CoreOpKind::Invoke
@@ -770,6 +1038,38 @@ impl<'a> FnExport<'a> {
             .collect()
     }
 
+    /// One subscript argument rebuilt from its shape and the value operands
+    /// it takes.
+    fn subscript_arg(
+        &self,
+        op: Ptr<Operation>,
+        shape: &CoreSubscriptArg,
+        operands: &mut impl Iterator<Item = Value>,
+    ) -> Result<MirSubscriptArg, A1Error> {
+        let ctx = self.ctx;
+        let mut next = |present: bool| {
+            present
+                .then(|| {
+                    operands
+                        .next()
+                        .ok_or_else(|| malformed(ctx, op, "a subscript short of its arguments"))
+                        .and_then(|value| self.reg(op, value))
+                })
+                .transpose()
+        };
+        Ok(match shape {
+            CoreSubscriptArg::Index => MirSubscriptArg::Index(
+                next(true)?.ok_or_else(|| malformed(ctx, op, "an index without its value"))?,
+            ),
+            CoreSubscriptArg::Slice(bounds) => MirSubscriptArg::Slice {
+                kind: bounds.kind.kind(),
+                lower: next(bounds.lower)?,
+                upper: next(bounds.upper)?,
+                step: next(bounds.step)?,
+            },
+        })
+    }
+
     fn subscript_call(
         &self,
         op: Ptr<Operation>,
@@ -794,7 +1094,11 @@ impl<'a> FnExport<'a> {
                 .iter()
                 .map(|argument| argument.argument(ctx))
                 .collect::<Result<Vec<_>, _>>()?,
-            capture_accesses: Vec::new(),
+            capture_accesses: call
+                .captures
+                .iter()
+                .map(super::attrs::CoreCaptureAccess::access)
+                .collect(),
             reference_result: call.reference_result.map(reference).transpose()?,
             param_arg_regs: self.param_args(op, &call.params, operands)?,
             param_decls: Vec::new(),
@@ -844,6 +1148,19 @@ impl<'a> FnExport<'a> {
         let raises = call.raises.map(|ty| export_type(ctx, ty)).transpose()?;
         let param_arg_regs = self.param_args(op, &call.params, &mut params)?;
         let dest = self.dest(op)?;
+        let reference_result = call
+            .reference_result
+            .map(|ty| match export_type(ctx, ty)? {
+                Ty::Ref(reference) => Ok(reference),
+                _ => Err(malformed(ctx, op, "a reference result of another type")),
+            })
+            .transpose()?;
+        let capture_accesses = || {
+            call.captures
+                .iter()
+                .map(super::attrs::CoreCaptureAccess::access)
+                .collect()
+        };
         Ok(match call.kind {
             CoreCallKind::Direct => MirInstr::Call {
                 dest,
@@ -853,8 +1170,31 @@ impl<'a> FnExport<'a> {
                 kwargs,
                 arg_places,
                 kwarg_places,
-                capture_accesses: Vec::new(),
+                capture_accesses: capture_accesses(),
                 param_arg_regs,
+            },
+            CoreCallKind::Indirect => MirInstr::CallIndirect {
+                dest,
+                callee: self.reg(op, recv[0])?,
+                resolved: call.resolved.as_ref().map(|symbol| symbol.0.clone()),
+                raises,
+                args,
+                kwargs,
+                callee_place: recv_place
+                    .first()
+                    .map(|value| self.place(op, *value))
+                    .transpose()?,
+                arg_places,
+                kwarg_places,
+                capture_accesses: capture_accesses(),
+                param_arg_regs,
+                param_decls: Vec::new(),
+                instantiated_contract: call.contract.map(|ty| export_type(ctx, ty)).transpose()?,
+                instantiated_args: call
+                    .instantiated
+                    .iter()
+                    .map(|argument| super::types::export_arg(ctx, argument))
+                    .collect::<Result<Vec<_>, _>>()?,
             },
             CoreCallKind::Method => MirInstr::MethodCall {
                 dest,
@@ -862,8 +1202,12 @@ impl<'a> FnExport<'a> {
                 method: call.target.0.clone(),
                 resolved: call.resolved.as_ref().map(|symbol| symbol.0.clone()),
                 raises,
-                reference_result: None,
-                result_adapter: None,
+                reference_result,
+                result_adapter: call.adapter.map(|adapter| match adapter {
+                    CoreResultAdapter::CopyIteratorReference => {
+                        CheckedResultAdapter::CopyIteratorReference
+                    }
+                }),
                 args,
                 kwargs,
                 recv_place: recv_place
@@ -873,7 +1217,7 @@ impl<'a> FnExport<'a> {
                 recv_writes: call.recv_writes,
                 arg_places,
                 kwarg_places,
-                capture_accesses: Vec::new(),
+                capture_accesses: capture_accesses(),
                 param_arg_regs,
                 param_decls: Vec::new(),
             },

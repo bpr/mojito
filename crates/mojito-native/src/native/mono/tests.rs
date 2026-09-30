@@ -607,8 +607,8 @@ fn variadic_arity_joins_the_instance_identity_and_reifies_the_pack() {
     assert!(
         one.var_tys
             .values()
-            .any(|ty| matches!(ty, Ty::RuntimePack(elements) if elements == &[Ty::Int])),
-        "the pack parameter reifies to a one-element runtime pack: {:?}",
+            .any(|ty| matches!(ty, Ty::Tuple(elements) if elements == &[Ty::Int])),
+        "the pack parameter reifies to a one-element tuple: {:?}",
         one.var_tys
     );
 }

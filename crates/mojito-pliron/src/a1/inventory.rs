@@ -64,6 +64,21 @@ pub enum CoreOpKind {
     IterInit,
     IterNext,
     Call,
+    ClosureMake,
+    FieldGet,
+    SizeOf,
+    RefWrite,
+    MultiIndex,
+    Slice,
+    SimdShuffle,
+    PackHasNext,
+    PackNext,
+    UninitStorage,
+    VariantMake,
+    VariantTest,
+    VariantGet,
+    VariantSet,
+    VariantDeinitWith,
     Invoke,
     Drop,
     Consume,
@@ -77,10 +92,11 @@ pub enum CoreOpKind {
     Resume,
     TryBridge,
     RegionExit,
+    Escape,
 }
 
 impl CoreOpKind {
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 53] = [
         Self::Func,
         Self::Slot,
         Self::Const,
@@ -105,6 +121,21 @@ impl CoreOpKind {
         Self::IterInit,
         Self::IterNext,
         Self::Call,
+        Self::ClosureMake,
+        Self::FieldGet,
+        Self::SizeOf,
+        Self::RefWrite,
+        Self::MultiIndex,
+        Self::Slice,
+        Self::SimdShuffle,
+        Self::PackHasNext,
+        Self::PackNext,
+        Self::UninitStorage,
+        Self::VariantMake,
+        Self::VariantTest,
+        Self::VariantGet,
+        Self::VariantSet,
+        Self::VariantDeinitWith,
         Self::Invoke,
         Self::Drop,
         Self::Consume,
@@ -118,6 +149,7 @@ impl CoreOpKind {
         Self::Resume,
         Self::TryBridge,
         Self::RegionExit,
+        Self::Escape,
     ];
 
     /// The operation's name within the `mojito_core` dialect.
@@ -147,6 +179,21 @@ impl CoreOpKind {
             Self::IterInit => "iter_init",
             Self::IterNext => "iter_next",
             Self::Call => "call",
+            Self::ClosureMake => "closure_make",
+            Self::FieldGet => "field_get",
+            Self::SizeOf => "size_of",
+            Self::RefWrite => "ref_write",
+            Self::MultiIndex => "multi_index",
+            Self::Slice => "slice",
+            Self::SimdShuffle => "simd_shuffle",
+            Self::PackHasNext => "pack_has_next",
+            Self::PackNext => "pack_next",
+            Self::UninitStorage => "uninit_storage",
+            Self::VariantMake => "variant_make",
+            Self::VariantTest => "variant_test",
+            Self::VariantGet => "variant_get",
+            Self::VariantSet => "variant_set",
+            Self::VariantDeinitWith => "variant_deinit_with",
             Self::Invoke => "invoke",
             Self::Drop => "drop",
             Self::Consume => "consume",
@@ -160,6 +207,7 @@ impl CoreOpKind {
             Self::Resume => "resume",
             Self::TryBridge => "try_bridge",
             Self::RegionExit => "region_exit",
+            Self::Escape => "escape",
         }
     }
 
@@ -172,7 +220,11 @@ impl CoreOpKind {
             | Self::SimdMake
             | Self::Unary
             | Self::SimdConvert
-            | Self::RefMake => EffectClass::Pure,
+            | Self::RefMake
+            | Self::FieldGet
+            | Self::SizeOf
+            | Self::SimdShuffle
+            | Self::VariantTest => EffectClass::Pure,
             Self::Use
             | Self::RefRead
             | Self::Copy
@@ -187,6 +239,17 @@ impl CoreOpKind {
             | Self::Load
             | Self::RefStore
             | Self::Call
+            | Self::ClosureMake
+            | Self::RefWrite
+            | Self::MultiIndex
+            | Self::Slice
+            | Self::PackHasNext
+            | Self::PackNext
+            | Self::UninitStorage
+            | Self::VariantMake
+            | Self::VariantGet
+            | Self::VariantSet
+            | Self::VariantDeinitWith
             | Self::Drop
             | Self::Consume
             | Self::Loans
@@ -199,14 +262,15 @@ impl CoreOpKind {
             | Self::Return
             | Self::Raise
             | Self::Resume
-            | Self::RegionExit => EffectClass::Terminator,
+            | Self::RegionExit
+            | Self::Escape => EffectClass::Terminator,
         }
     }
 
     /// Whether the operation may remain at `stage`.
     pub const fn legal_at(self, stage: Stage) -> bool {
         match self {
-            Self::TryBridge | Self::RegionExit => matches!(stage, Stage::Bridge),
+            Self::TryBridge | Self::RegionExit | Self::Escape => matches!(stage, Stage::Bridge),
             Self::Invoke | Self::Outcome | Self::Resume => matches!(stage, Stage::ExecutableCore),
             _ => true,
         }
@@ -236,9 +300,24 @@ impl CoreOpKind {
             Self::Load => &["place.load"],
             Self::RefMake => &["ref.make"],
             Self::RefStore => &["place.store_ref"],
-            Self::Call => &["call", "call.method"],
+            Self::Call => &["call", "call.method", "call.indirect"],
+            Self::ClosureMake => &["closure.make"],
+            Self::FieldGet => &["field.get"],
+            Self::SizeOf => &["layout.size_of"],
+            Self::RefWrite => &["ref.write"],
+            Self::MultiIndex => &["index.multi"],
+            Self::Slice => &["slice.get"],
+            Self::SimdShuffle => &["simd.shuffle"],
+            Self::PackHasNext => &["iter.has_next"],
+            Self::PackNext => &["iter.next"],
+            Self::UninitStorage => &["uninit.make", "uninit.take", "uninit.destroy"],
+            Self::VariantMake => &["variant.make"],
+            Self::VariantTest => &["variant.is"],
+            Self::VariantGet => &["variant.get", "variant.take"],
+            Self::VariantSet => &["variant.set", "variant.replace", "variant.set_init_with"],
+            Self::VariantDeinitWith => &["variant.deinit_with"],
             Self::Drop => &["drop.var", "drop.place"],
-            Self::Consume => &["consume.var"],
+            Self::Consume => &["consume.var", "consume.place"],
             Self::Loans => &["loans.establish"],
             Self::Invalidate => &["interiors.invalidate"],
             Self::Br => &["jump"],
@@ -247,6 +326,7 @@ impl CoreOpKind {
             Self::Raise => &["raise"],
             Self::TryBridge => &["try"],
             Self::RegionExit => &["falloff"],
+            Self::Escape => &["escape"],
             Self::Func
             | Self::Slot
             | Self::Project
@@ -282,14 +362,32 @@ impl CoreOpKind {
             | Self::RefMake
             | Self::RefStore
             | Self::Call
+            | Self::ClosureMake
+            | Self::FieldGet
+            | Self::SizeOf
+            | Self::RefWrite
+            | Self::MultiIndex
+            | Self::Slice
+            | Self::SimdShuffle
+            | Self::PackHasNext
+            | Self::PackNext
+            | Self::UninitStorage
+            | Self::VariantMake
+            | Self::VariantTest
+            | Self::VariantGet
+            | Self::VariantSet
+            | Self::VariantDeinitWith
             | Self::Drop
             | Self::Consume
             | Self::Loans
             | Self::Invalidate
             | Self::TryBridge => ExportRule::Instruction,
-            Self::Br | Self::CondBr | Self::Return | Self::Raise | Self::RegionExit => {
-                ExportRule::Terminator
-            }
+            Self::Br
+            | Self::CondBr
+            | Self::Return
+            | Self::Raise
+            | Self::RegionExit
+            | Self::Escape => ExportRule::Terminator,
             Self::Invoke | Self::Outcome | Self::Resume => ExportRule::Denormalized,
         }
     }
@@ -326,6 +424,21 @@ impl CoreOpKind {
             Self::IterInit => ops::IterInitOp::get_concrete_op_info(),
             Self::IterNext => ops::IterNextOp::get_concrete_op_info(),
             Self::Call => ops::CallOp::get_concrete_op_info(),
+            Self::ClosureMake => ops::ClosureMakeOp::get_concrete_op_info(),
+            Self::FieldGet => ops::FieldGetOp::get_concrete_op_info(),
+            Self::SizeOf => ops::SizeOfOp::get_concrete_op_info(),
+            Self::RefWrite => ops::RefWriteOp::get_concrete_op_info(),
+            Self::MultiIndex => ops::MultiIndexOp::get_concrete_op_info(),
+            Self::Slice => ops::SliceOp::get_concrete_op_info(),
+            Self::SimdShuffle => ops::SimdShuffleOp::get_concrete_op_info(),
+            Self::PackHasNext => ops::PackHasNextOp::get_concrete_op_info(),
+            Self::PackNext => ops::PackNextOp::get_concrete_op_info(),
+            Self::UninitStorage => ops::UninitStorageOp::get_concrete_op_info(),
+            Self::VariantMake => ops::VariantMakeOp::get_concrete_op_info(),
+            Self::VariantTest => ops::VariantTestOp::get_concrete_op_info(),
+            Self::VariantGet => ops::VariantGetOp::get_concrete_op_info(),
+            Self::VariantSet => ops::VariantSetOp::get_concrete_op_info(),
+            Self::VariantDeinitWith => ops::VariantDeinitWithOp::get_concrete_op_info(),
             Self::Invoke => ops::InvokeOp::get_concrete_op_info(),
             Self::Drop => ops::DropOp::get_concrete_op_info(),
             Self::Consume => ops::ConsumeOp::get_concrete_op_info(),
@@ -339,6 +452,7 @@ impl CoreOpKind {
             Self::Resume => ops::ResumeOp::get_concrete_op_info(),
             Self::TryBridge => ops::TryBridgeOp::get_concrete_op_info(),
             Self::RegionExit => ops::RegionExitOp::get_concrete_op_info(),
+            Self::Escape => ops::EscapeOp::get_concrete_op_info(),
         }
     }
 

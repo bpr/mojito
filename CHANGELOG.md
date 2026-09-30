@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The A1 shadow core (feature `pliron-a1`) now converts 887 of the 893
+  inputs of its decision corpus, where it converted the ten focused
+  inputs: floats, `DType`, function types, closures, indirect calls,
+  reference results, field reads, reference writes, slices, lane shuffles,
+  pack iteration, uninitialized storage, variants, and returns and escapes
+  crossing a try region, with or without a `finally`, all have core forms
+  (`docs/notes/pliron-a1.md` §Coverage). Its census counts every rule the
+  importer, the verifier, and legality apply, and its call-target rule
+  reads the VM's own builtin tables (`mojito_vm::builtins`).
+- Native monomorphization reifies an arity-specialized variadic collector
+  as a tuple rather than the ABI-only runtime pack, and a method call it
+  retargets to an instance sheds the instance's compile-time parameter
+  declarations, so such specialized programs verify.
+
 - `print` with a call result as a keyword (`print(x, sep=String("-"))`,
   `print(x, file=FileDescriptor(1))`) in a method or a runtime `def` now
   reuses the template's checked facts

@@ -629,8 +629,10 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             let element = substitute_ty(v, bindings)?;
             match bindings.variadic_arity {
                 // An unspecialized variadic callee instantiates at its
-                // call-site arity: the pack becomes a concrete tuple shape.
-                Some(arity) => Ty::RuntimePack(vec![element; arity]),
+                // call-site arity: the pack becomes the concrete tuple shape
+                // the body sees once the arguments are matched. The runtime
+                // pack stays the declaration's variadic ABI root alone.
+                Some(arity) => Ty::Tuple(vec![element; arity]),
                 None => Ty::VariadicPack(Box::new(element)),
             }
         }

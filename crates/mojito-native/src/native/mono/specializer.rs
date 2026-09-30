@@ -792,6 +792,7 @@ impl<'a> Specializer<'a> {
                         args,
                         kwargs,
                         param_arg_regs,
+                        param_decls,
                         ..
                     } => {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -905,6 +906,9 @@ impl<'a> Specializer<'a> {
                         for param_arg in param_arg_regs.iter_mut() {
                             param_arg.value = None;
                         }
+                        // The instance's declaration keeps no compile-time
+                        // parameters, so the call to it keeps none either.
+                        param_decls.clear();
                     }
                     // An indirect call whose callee is a nominal callable
                     // struct devirtualizes into a direct `__call__` method

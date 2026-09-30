@@ -38,29 +38,7 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
 
-- [ ] **1.1 The A1 shadow core has never been run over the decision
-  corpus**
-
-  Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
-  and nobody knows how many of the 848 inputs of Stage A1's decision corpus
-  it refuses, so the bulk measurement lane cannot run.
-  - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md) §Coverage.
-  - 25 MIR forms are still rejected by name. Variants, closures, slices,
-    tuple construction, and uninitialized storage are among them.
-  - A `return` inside a `try` region, a floating constant or default, and a
-    call with captured-owner effects are refused by name too.
-  - Run `examples/pliron_a1.rs` over `target/pliron-a1/corpus-inputs.tsv`
-    first. A refused input ends its diagnostic with every refusal, counted
-    (`import::refusals`).
-  - The inventory is closed on purpose: each new form needs an operation, a
-    verifier rule, an import and export rule, and positive and negative
-    cases (`inventory::CoreOpKind`).
-  - This entry and 1.2 to 1.4 are the ones in this section that do
-    not move the check order. They shadow MIR below `CheckedProgram`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.1 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -71,10 +49,14 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
   - The budget is one working day. A needed fork rejects the model.
   - The 0.17 to `477e6b0` upgrade in `docs/notes/pliron-promotion.md` is
     historical evidence, not this rehearsal.
+  - Raise upstream while there: the pinned Pliron's dominance check
+    panics on a block nothing reaches (`graph/dominance.rs`), which A1
+    works around with its own `verify::verify_dominance`
+    (`docs/notes/pliron-a1.md`, finding 13).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 A1 core text is about three times the v1 text**
+- [ ] **1.2 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -89,6 +71,29 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **1.3 Six decision-corpus inputs still refuse the A1 shadow, so the
+  bulk lane exits nonzero**
+
+  Problem: `scripts/cover-pliron-a1` converts 887 of 893 inputs, and
+  `scripts/bench-pliron-a1` refuses a verdict while any input fails, so
+  the six residues stand between the shadow and its overhead measurement.
+  - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md)
+    §Coverage, which names each input.
+  - Three are monomorphization defects (2.6) and one is its `Tuple`
+    argument spelled two ways across one instance (2.7). Both stand
+    without the shadow.
+  - One is a `return` inside a `finally` body
+    (`assets/ok/pliron_finally_overrides.mojo`), refused by name. Admitting
+    it needs a pending-outcome resolution at the override site, as the
+    native lowering's `emit_pending_resolution` does, and the same for a
+    return carrying cleanup across a finally, which no input reaches.
+  - One fails in the front end under `Compiler::default()`
+    (`assets/ok/comptime_shadowed_locals.mojo`: `expected Ts[i], found
+    Ts[40]`), on `mojito run` as well; the corpus gate decides whether the
+    fixture or the checker moved.
+  - Depends on 2.6 and 2.7.
+  - Model: Fable, Planned.
+
 - [ ] **1.4 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
@@ -101,13 +106,14 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
     deviations of margin.
   - `scripts/bench-pliron-a1` collects the samples. The note lists the
     commands.
-  - The bulk run is its own lane: ten pairs over 848 inputs, alone, on a
+  - The bulk run is its own lane: ten pairs over 893 inputs, alone, on a
     quiet machine.
   - Decide from the measurements: plan A2, or record the rejection in
     [`docs/non-goals.md`](non-goals.md) and remove the experiment as the
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
-  - The focused lane needs nothing more: all ten focused inputs convert.
+  - The focused lane needs nothing more: all ten focused inputs convert,
+    and 887 of the 893 corpus inputs.
   - Depends on 1.1, 1.2, and 1.3.
   - Model: Fable, Planned.
 
@@ -221,6 +227,49 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing. Every later change that needs an ABI bump joins this
     entry instead of waiting on it.
   - Model: Fable, Planned.
+
+- [ ] **2.6 The specialized MIR of three corpus inputs does not verify**
+
+  Problem: monomorphization emits programs `mir::verify` rejects, and the
+  native backend never verifies its specialized input, so nothing reports
+  them until the A1 shadow does.
+  - `assets/extensions/ok/container_owning_family_apis.mojo`: an
+    indirect-call target (`__trait_dispatch.__call__$ov$T$AnyType`) does
+    not match its callable contract's instance.
+  - `assets/extensions/ok/reference_list_write_through_method.mojo`: a
+    store of `ref Int` into `Int` storage in `List$mono$Tref$Int`.
+  - `assets/ok/capturing_lambda_array_display.mojo`: a subscript's
+    reference-result referent keeps a capturing environment its
+    declaration does not.
+  - Two sibling defects were fixed on the way: an arity-specialized
+    variadic instance kept the ABI-only `RuntimePack` in its slots, and a
+    retargeted method call kept the compile-time parameter declarations
+    its instance had shed.
+  - Run `mir::verify` on the specialized program in the native backend so
+    the next such defect surfaces where it is made.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **2.7 A specialized program is not VM-transparent where it slices, and
+  spells one `Tuple` argument two ways**
+
+  Problem: the exported A1 program of some inputs runs on the VM no
+  better than the specialized one does, and one instance's field
+  projection names no declared field.
+  - The VM's slice bounds construct the nominal `Optional` through its
+    template declaration (`dispatch.rs`, `slice_bound_optional`), which
+    specialization drops; `assets/ok/keyword_slice_subscripts.mojo`,
+    `assets/ok/with_statement.mojo`, and `assets/ok/path_operations.mojo`
+    stop with `Slice bound access requires the nominal Optional
+    declaration`. Keep the template and its positional constructor when a
+    slice with bounds survives, as the nominal `String`'s lifecycle
+    members are kept.
+  - `assets/ok/tuple_hashable_dict_key.mojo`: `Set$mono$TTuple…` declares
+    its `items` field over `List$mono$TTuple…$Int$String[Tuple$t2[…][Int,
+    String]]` while the projection spells `List$mono$TTuple…[Tuple$t2[…]]`,
+    the argument without its element types. One spelling per instance.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### 3. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 

@@ -180,6 +180,8 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "closure.make",
     "lifetime.keep_alive",
     "const",
+    "layout.size_of",
+    "type.construct",
     "literal.materialize",
     "var.use",
     "place.move",

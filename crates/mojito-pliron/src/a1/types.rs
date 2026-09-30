@@ -8,12 +8,14 @@ use pliron::r#type::{TypeHandle, Typed};
 
 use mojito_ast::ast::Dtype;
 use mojito_types::origin::{
-    Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
+    CallableEnvironment, CaptureOrigin, CaptureOriginSet, CaptureSetParamId, Mutability, Origin,
+    OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefSig, RefTy, SigMutability,
+    SigOrigin,
 };
-use mojito_types::types::{SimdDtype, SimdWidth, Ty, TyArg};
+use mojito_types::types::{SimdDtype, SimdWidth, TransferEffect, TransferSet, Ty, TyArg};
 
 use super::A1Error;
-use super::attrs::Text;
+use super::attrs::{CoreConvention, Text};
 use super::params::{NodeKey, PayloadBinder, export_constant, import_constant};
 
 #[pliron_type(
@@ -24,6 +26,36 @@ use super::params::{NodeKey, PayloadBinder, export_constant, import_constant};
 )]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct IntType;
+
+/// The machine `Float64`.
+#[pliron_type(
+    name = "mojito_core.float64",
+    generate_get = true,
+    format,
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub struct Float64Type;
+
+/// An exact floating literal not yet materialized into a machine float.
+#[pliron_type(
+    name = "mojito_core.float_literal",
+    generate_get = true,
+    format,
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub struct FloatLiteralType;
+
+/// The compile-time `DType` value type.
+#[pliron_type(
+    name = "mojito_core.dtype",
+    generate_get = true,
+    format,
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub struct DtypeType;
 
 #[pliron_type(
     name = "mojito_core.uint",
@@ -161,6 +193,18 @@ pub struct PointerType {
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct TupleType {
     pub elements: Vec<TypeHandle>,
+}
+
+/// A sum of alternatives, tagged by position.
+#[pliron_type(
+    name = "mojito_core.variant",
+    generate_get = true,
+    format = "`<[` vec($alternatives, CharSpace(`,`)) `]>`",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub struct VariantType {
+    pub alternatives: Vec<TypeHandle>,
 }
 
 /// The collector storage of a specialized heterogeneous parameter pack.
@@ -328,6 +372,8 @@ pub enum CoreOrigin {
     Static,
     Untracked(bool),
     Unbound,
+    #[format("`[` vec($0, CharSpace(`,`)) `]`")]
+    Union(Vec<Self>),
 }
 
 impl CoreOrigin {
@@ -339,7 +385,12 @@ impl CoreOrigin {
             Origin::Static => Ok(Self::Static),
             Origin::Untracked { mutable } => Ok(Self::Untracked(*mutable)),
             Origin::Unbound => Ok(Self::Unbound),
-            Origin::Union(_) => Err(A1Error::unsupported_type("a union origin")),
+            Origin::Union(origins) => Ok(Self::Union(
+                origins
+                    .iter()
+                    .map(Self::from_origin)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
         }
     }
 
@@ -351,6 +402,7 @@ impl CoreOrigin {
             Self::Static => Origin::Static,
             Self::Untracked(mutable) => Origin::Untracked { mutable: *mutable },
             Self::Unbound => Origin::Unbound,
+            Self::Union(origins) => Origin::Union(origins.iter().map(Self::origin).collect()),
         }
     }
 }
@@ -489,6 +541,9 @@ pub fn import_type(ctx: &mut Context, ty: &Ty) -> Result<TypeHandle, A1Error> {
         Ty::IntLiteral => IntLiteralType::get(ctx).into(),
         Ty::StringLiteral => StringLiteralType::get(ctx).into(),
         Ty::Error => ErrorType::get(ctx).into(),
+        Ty::Float64 => Float64Type::get(ctx).into(),
+        Ty::FloatLiteral => FloatLiteralType::get(ctx).into(),
+        Ty::Dtype => DtypeType::get(ctx).into(),
         Ty::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(width),
@@ -500,13 +555,96 @@ pub fn import_type(ctx: &mut Context, ty: &Ty) -> Result<TypeHandle, A1Error> {
         Ty::Struct(name, arguments) => {
             let args = arguments
                 .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => import_type(ctx, ty).map(CoreArg::Type),
-                    TyArg::Origin(origin) => CoreOrigin::from_origin(origin).map(CoreArg::Origin),
-                    TyArg::Val(value) => import_constant(ctx, value).map(CoreArg::Value),
-                })
+                .map(|argument| import_arg(ctx, argument))
                 .collect::<Result<Vec<_>, _>>()?;
             NominalType::get(ctx, name.into(), args).into()
+        }
+        Ty::Func {
+            environment,
+            params,
+            names,
+            ret,
+            required,
+            variadic,
+            kw_variadic,
+            positional_only,
+            keyword_only,
+            raises,
+            error,
+            conventions,
+            ref_params,
+            ref_return,
+            transfers,
+        } => {
+            let aligned = [
+                names.len(),
+                required.len(),
+                conventions.len(),
+                ref_params.len(),
+            ]
+            .iter()
+            .all(|length| *length == params.len());
+            if !aligned {
+                return Err(A1Error::unsupported_type(
+                    "a function type whose parameter tables misalign",
+                ));
+            }
+            let params = (0..params.len())
+                .map(|index| {
+                    Ok(CoreFuncParam {
+                        name: Text::from(&names[index]),
+                        ty: import_type(ctx, &params[index])?,
+                        required: required[index],
+                        convention: conventions[index].map(CoreConvention::from_convention),
+                        ref_sig: ref_params[index]
+                            .as_ref()
+                            .map(CoreRefSig::from_sig)
+                            .transpose()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, A1Error>>()?;
+            let environment = CoreEnvironment::from_environment(environment)?;
+            let ret = import_type(ctx, ret)?;
+            let variadic = variadic
+                .as_deref()
+                .map(|ty| import_type(ctx, ty))
+                .transpose()?;
+            let kw_variadic = kw_variadic
+                .as_deref()
+                .map(|ty| import_type(ctx, ty))
+                .transpose()?;
+            let error = error
+                .as_deref()
+                .map(|ty| import_type(ctx, ty))
+                .transpose()?;
+            let ref_return = ref_return
+                .as_deref()
+                .map(CoreRefSig::from_sig)
+                .transpose()?;
+            let transfers = transfers
+                .0
+                .iter()
+                .map(CoreTransfer::from_effect)
+                .collect::<Result<Vec<_>, _>>()?;
+            FuncType::get(
+                ctx,
+                environment,
+                CoreFuncSignature {
+                    params,
+                    ret,
+                    variadic,
+                    kw_variadic,
+                    positional_only: positional_only.map(|index| index as u64),
+                    keyword_only: keyword_only.map(|index| index as u64),
+                },
+                CoreFuncEffects {
+                    raises: *raises,
+                    error,
+                    ref_return,
+                    transfers,
+                },
+            )
+            .into()
         }
         Ty::Ref(reference) => {
             let referent = import_type(ctx, &reference.referent)?;
@@ -533,6 +671,13 @@ pub fn import_type(ctx: &mut Context, ty: &Ty) -> Result<TypeHandle, A1Error> {
                 .collect::<Result<Vec<_>, _>>()?;
             RuntimePackType::get(ctx, elements).into()
         }
+        Ty::Variant(alternatives) => {
+            let alternatives = alternatives
+                .iter()
+                .map(|alternative| import_type(ctx, alternative))
+                .collect::<Result<Vec<_>, _>>()?;
+            VariantType::get(ctx, alternatives).into()
+        }
         Ty::Param {
             binder,
             bounds,
@@ -543,6 +688,24 @@ pub fn import_type(ctx: &mut Context, ty: &Ty) -> Result<TypeHandle, A1Error> {
         }
         other => return Err(A1Error::unsupported_type(format!("`{other:?}`"))),
     })
+}
+
+/// The core spelling of one type argument.
+pub fn import_arg(ctx: &mut Context, argument: &TyArg) -> Result<CoreArg, A1Error> {
+    match argument {
+        TyArg::Ty(ty) => import_type(ctx, ty).map(CoreArg::Type),
+        TyArg::Origin(origin) => CoreOrigin::from_origin(origin).map(CoreArg::Origin),
+        TyArg::Val(value) => import_constant(ctx, value).map(CoreArg::Value),
+    }
+}
+
+/// The checked type argument a core argument stands for.
+pub fn export_arg(ctx: &Context, argument: &CoreArg) -> Result<TyArg, A1Error> {
+    match argument {
+        CoreArg::Type(ty) => export_type(ctx, *ty).map(TyArg::Ty),
+        CoreArg::Origin(origin) => Ok(TyArg::Origin(origin.origin())),
+        CoreArg::Value(value) => export_constant(ctx, *value).map(TyArg::Val),
+    }
 }
 
 /// The checked type a core value type stands for. Place, effect, and
@@ -570,6 +733,15 @@ pub fn export_type(ctx: &Context, ty: TypeHandle) -> Result<Ty, A1Error> {
     if object.is::<ErrorType>() {
         return Ok(Ty::Error);
     }
+    if object.is::<Float64Type>() {
+        return Ok(Ty::Float64);
+    }
+    if object.is::<FloatLiteralType>() {
+        return Ok(Ty::FloatLiteral);
+    }
+    if object.is::<DtypeType>() {
+        return Ok(Ty::Dtype);
+    }
     if let Some(simd) = object.downcast_ref::<SimdType>() {
         let width = i64::try_from(simd.width)
             .map_err(|_| A1Error::unsupported_type("a SIMD width beyond Int"))?;
@@ -582,13 +754,71 @@ pub fn export_type(ctx: &Context, ty: TypeHandle) -> Result<Ty, A1Error> {
         let arguments = nominal
             .args
             .iter()
-            .map(|argument| match argument {
-                CoreArg::Type(ty) => export_type(ctx, *ty).map(TyArg::Ty),
-                CoreArg::Origin(origin) => Ok(TyArg::Origin(origin.origin())),
-                CoreArg::Value(value) => export_constant(ctx, *value).map(TyArg::Val),
-            })
+            .map(|argument| export_arg(ctx, argument))
             .collect::<Result<Vec<_>, _>>()?;
         return Ok(Ty::Struct(nominal.name.0.clone(), arguments));
+    }
+    if let Some(func) = object.downcast_ref::<FuncType>() {
+        let (signature, effects) = (&func.signature, &func.effects);
+        let index = |value: Option<u64>| {
+            value
+                .map(|value| {
+                    usize::try_from(value)
+                        .map_err(|_| A1Error::unsupported_type("a parameter marker beyond usize"))
+                })
+                .transpose()
+        };
+        let boxed =
+            |ty: Option<TypeHandle>| ty.map(|ty| export_type(ctx, ty).map(Box::new)).transpose();
+        return Ok(Ty::Func {
+            environment: func.environment.environment(),
+            params: signature
+                .params
+                .iter()
+                .map(|param| export_type(ctx, param.ty))
+                .collect::<Result<Vec<_>, _>>()?,
+            names: signature
+                .params
+                .iter()
+                .map(|param| param.name.0.clone())
+                .collect(),
+            ret: Box::new(export_type(ctx, signature.ret)?),
+            required: signature
+                .params
+                .iter()
+                .map(|param| param.required)
+                .collect(),
+            variadic: boxed(signature.variadic)?,
+            kw_variadic: boxed(signature.kw_variadic)?,
+            positional_only: index(signature.positional_only)?,
+            keyword_only: index(signature.keyword_only)?,
+            raises: effects.raises,
+            error: boxed(effects.error)?,
+            conventions: signature
+                .params
+                .iter()
+                .map(|param| param.convention.map(CoreConvention::convention))
+                .collect(),
+            ref_params: Box::new(
+                signature
+                    .params
+                    .iter()
+                    .map(|param| param.ref_sig.as_ref().map(CoreRefSig::sig).transpose())
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            ref_return: effects
+                .ref_return
+                .as_ref()
+                .map(|sig| sig.sig().map(Box::new))
+                .transpose()?,
+            transfers: TransferSet(
+                effects
+                    .transfers
+                    .iter()
+                    .map(CoreTransfer::effect)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        });
     }
     if let Some(reference) = object.downcast_ref::<RefType>() {
         return Ok(Ty::Ref(RefTy {
@@ -604,6 +834,14 @@ pub fn export_type(ctx: &Context, ty: TypeHandle) -> Result<Ty, A1Error> {
             .map(|element| export_type(ctx, *element))
             .collect::<Result<Vec<_>, _>>()?;
         return Ok(Ty::Tuple(elements));
+    }
+    if let Some(variant) = object.downcast_ref::<VariantType>() {
+        let alternatives = variant
+            .alternatives
+            .iter()
+            .map(|alternative| export_type(ctx, *alternative))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(Ty::Variant(alternatives));
     }
     if let Some(pack) = object.downcast_ref::<RuntimePackType>() {
         let elements = pack
@@ -629,6 +867,316 @@ pub fn export_type(ctx: &Context, ty: TypeHandle) -> Result<Ty, A1Error> {
     Err(A1Error::unsupported_type(
         "a place, effect, or outcome type where a value type is required",
     ))
+}
+
+/// A function value's type.
+///
+/// Its environment, its signature, and the effects a call through it
+/// replays. `transfers` are part of the identity, as the v1 text prints
+/// them, where checked types ignore them: two checked-equal function types
+/// may be two handles.
+#[pliron_type(
+    name = "mojito_core.func",
+    generate_get = true,
+    format = "`<` $environment ` ` $signature ` ` $effects `>`",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub struct FuncType {
+    pub environment: CoreEnvironment,
+    pub signature: CoreFuncSignature,
+    pub effects: CoreFuncEffects,
+}
+
+/// A function type's parameters, result, collectors, and markers.
+#[format(
+    "`(` vec($params, CharSpace(`,`)) `) -> ` $ret ` variadic` opt($variadic, delimiters(`(`, `)`)) ` kw_variadic` opt($kw_variadic, delimiters(`(`, `)`)) ` positional_only` opt($positional_only, delimiters(`(`, `)`)) ` keyword_only` opt($keyword_only, delimiters(`(`, `)`))"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreFuncSignature {
+    pub params: Vec<CoreFuncParam>,
+    pub ret: TypeHandle,
+    pub variadic: Option<TypeHandle>,
+    pub kw_variadic: Option<TypeHandle>,
+    pub positional_only: Option<u64>,
+    pub keyword_only: Option<u64>,
+}
+
+/// What a call through a function type may raise, return by reference,
+/// and transfer.
+#[format(
+    "`raises ` $raises ` error` opt($error, delimiters(`(`, `)`)) ` ref_return` opt($ref_return, delimiters(`(`, `)`)) ` transfers [` vec($transfers, CharSpace(`,`)) `]`"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreFuncEffects {
+    pub raises: bool,
+    pub error: Option<TypeHandle>,
+    pub ref_return: Option<CoreRefSig>,
+    pub transfers: Vec<CoreTransfer>,
+}
+
+/// One regular parameter of a function type.
+#[format(
+    "$name ` : ` $ty ` ` $required ` convention` opt($convention, delimiters(`(`, `)`)) ` ref` opt($ref_sig, delimiters(`(`, `)`))"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreFuncParam {
+    pub name: Text,
+    pub ty: TypeHandle,
+    pub required: bool,
+    pub convention: Option<CoreConvention>,
+    pub ref_sig: Option<CoreRefSig>,
+}
+
+/// The environment a callable closes over: none, a thin one, or a capture
+/// set, inferred, bound to a binder, or concrete.
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub enum CoreEnvironment {
+    Default,
+    Thin,
+    Capturing(CoreCaptureSet),
+}
+
+impl CoreEnvironment {
+    pub fn from_environment(environment: &CallableEnvironment) -> Result<Self, A1Error> {
+        Ok(match environment {
+            CallableEnvironment::Default => Self::Default,
+            CallableEnvironment::Thin => Self::Thin,
+            CallableEnvironment::Capturing(set) => Self::Capturing(match set {
+                CaptureOriginSet::Infer => CoreCaptureSet::Infer,
+                CaptureOriginSet::Param(id) => CoreCaptureSet::Param(id.0),
+                CaptureOriginSet::Concrete(captures) => CoreCaptureSet::Concrete(
+                    captures
+                        .iter()
+                        .map(|capture| {
+                            Ok(CoreCapture {
+                                origin: CoreOrigin::from_origin(&capture.origin)?,
+                                write: capture.access == mojito_types::origin::CaptureAccess::Write,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, A1Error>>()?,
+                ),
+            }),
+        })
+    }
+
+    pub fn environment(&self) -> CallableEnvironment {
+        match self {
+            Self::Default => CallableEnvironment::Default,
+            Self::Thin => CallableEnvironment::Thin,
+            Self::Capturing(set) => CallableEnvironment::Capturing(match set {
+                CoreCaptureSet::Infer => CaptureOriginSet::Infer,
+                CoreCaptureSet::Param(id) => CaptureOriginSet::Param(CaptureSetParamId(*id)),
+                CoreCaptureSet::Concrete(captures) => CaptureOriginSet::Concrete(
+                    captures
+                        .iter()
+                        .map(|capture| CaptureOrigin {
+                            origin: capture.origin.origin(),
+                            access: if capture.write {
+                                mojito_types::origin::CaptureAccess::Write
+                            } else {
+                                mojito_types::origin::CaptureAccess::Read
+                            },
+                        })
+                        .collect(),
+                ),
+            }),
+        }
+    }
+}
+
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub enum CoreCaptureSet {
+    Infer,
+    Param(u32),
+    #[format("`[` vec($0, CharSpace(`,`)) `]`")]
+    Concrete(Vec<CoreCapture>),
+}
+
+/// One concrete dependency of a capturing environment.
+#[format("$origin ` ` $write")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreCapture {
+    pub origin: CoreOrigin,
+    pub write: bool,
+}
+
+/// An origin as a callable signature names it: relative to the receiver
+/// or a parameter slot, bound to a concrete origin, static, or untracked.
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub enum CoreSigOrigin {
+    Receiver,
+    Param(u64),
+    Bound(CoreOrigin),
+    Static,
+    Untracked(bool),
+    UnsafeAny(bool),
+    /// A projection of one base origin, held in a one-element list as the
+    /// text format has no box.
+    #[format("`(` vec($0, CharSpace(`,`)) ` [` vec($1, CharSpace(`,`)) `])`")]
+    Projected(Vec<Self>, Vec<CoreSeg>),
+    #[format("`[` vec($0, CharSpace(`,`)) `]`")]
+    Union(Vec<Self>),
+    Infer,
+}
+
+impl CoreSigOrigin {
+    pub fn from_origin(origin: &SigOrigin) -> Result<Self, A1Error> {
+        Ok(match origin {
+            SigOrigin::Self_ => Self::Receiver,
+            SigOrigin::Param(index) => Self::Param(*index as u64),
+            SigOrigin::Bound(origin) => Self::Bound(CoreOrigin::from_origin(origin)?),
+            SigOrigin::Static => Self::Static,
+            SigOrigin::Untracked { mutable } => Self::Untracked(*mutable),
+            SigOrigin::UnsafeAny { mutable } => Self::UnsafeAny(*mutable),
+            SigOrigin::Projected(base, path) => Self::Projected(
+                vec![Self::from_origin(base)?],
+                path.iter().map(CoreSeg::from_seg).collect(),
+            ),
+            SigOrigin::Union(origins) => Self::Union(
+                origins
+                    .iter()
+                    .map(Self::from_origin)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            SigOrigin::Infer => Self::Infer,
+        })
+    }
+
+    pub fn origin(&self) -> Result<SigOrigin, A1Error> {
+        Ok(match self {
+            Self::Receiver => SigOrigin::Self_,
+            Self::Param(index) => SigOrigin::Param(usize::try_from(*index).map_err(|_| {
+                A1Error::new(super::A1ErrorKind::Export, "a parameter index beyond usize")
+            })?),
+            Self::Bound(origin) => SigOrigin::Bound(origin.origin()),
+            Self::Static => SigOrigin::Static,
+            Self::Untracked(mutable) => SigOrigin::Untracked { mutable: *mutable },
+            Self::UnsafeAny(mutable) => SigOrigin::UnsafeAny { mutable: *mutable },
+            Self::Projected(base, path) => {
+                let [base] = base.as_slice() else {
+                    return Err(A1Error::new(
+                        super::A1ErrorKind::Export,
+                        "a projected signature origin has one base",
+                    ));
+                };
+                SigOrigin::Projected(
+                    Box::new(base.origin()?),
+                    path.iter().map(CoreSeg::seg).collect(),
+                )
+            }
+            Self::Union(origins) => SigOrigin::Union(
+                origins
+                    .iter()
+                    .map(Self::origin)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Self::Infer => SigOrigin::Infer,
+        })
+    }
+}
+
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum CoreSigMutability {
+    Immutable,
+    Mutable,
+    BoolParam(u64),
+    Infer,
+}
+
+impl CoreSigMutability {
+    pub const fn from_mutability(mutability: &SigMutability) -> Self {
+        match *mutability {
+            SigMutability::Immutable => Self::Immutable,
+            SigMutability::Mutable => Self::Mutable,
+            SigMutability::BoolParam(index) => Self::BoolParam(index as u64),
+            SigMutability::Infer => Self::Infer,
+        }
+    }
+
+    pub fn mutability(self) -> Result<SigMutability, A1Error> {
+        Ok(match self {
+            Self::Immutable => SigMutability::Immutable,
+            Self::Mutable => SigMutability::Mutable,
+            Self::BoolParam(index) => {
+                SigMutability::BoolParam(usize::try_from(index).map_err(|_| {
+                    A1Error::new(super::A1ErrorKind::Export, "a binder index beyond usize")
+                })?)
+            }
+            Self::Infer => SigMutability::Infer,
+        })
+    }
+}
+
+/// A reference contract a callable signature retains for a parameter or
+/// its result.
+#[format("$origin ` ` $mutability")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreRefSig {
+    pub origin: CoreSigOrigin,
+    pub mutability: CoreSigMutability,
+}
+
+impl CoreRefSig {
+    pub fn from_sig(sig: &RefSig) -> Result<Self, A1Error> {
+        Ok(Self {
+            origin: CoreSigOrigin::from_origin(&sig.origin)?,
+            mutability: CoreSigMutability::from_mutability(&sig.mutability),
+        })
+    }
+
+    pub fn sig(&self) -> Result<RefSig, A1Error> {
+        Ok(RefSig {
+            origin: self.origin.origin()?,
+            mutability: self.mutability.mutability()?,
+        })
+    }
+}
+
+/// One inferred transfer effect a call through the function replays.
+#[format("$dest ` <- ` $src ` ` $src_is_place ` ` $mutable")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreTransfer {
+    pub dest: CoreSigOrigin,
+    pub src: CoreSigOrigin,
+    pub src_is_place: bool,
+    pub mutable: bool,
+}
+
+impl CoreTransfer {
+    pub fn from_effect(effect: &TransferEffect) -> Result<Self, A1Error> {
+        Ok(Self {
+            dest: CoreSigOrigin::from_origin(&effect.dest)?,
+            src: CoreSigOrigin::from_origin(&effect.src)?,
+            src_is_place: effect.src_is_place,
+            mutable: effect.mutable,
+        })
+    }
+
+    pub fn effect(&self) -> Result<TransferEffect, A1Error> {
+        Ok(TransferEffect {
+            dest: self.dest.origin()?,
+            src: self.src.origin()?,
+            src_is_place: self.src_is_place,
+            mutable: self.mutable,
+        })
+    }
+}
+
+/// The scalar type a one-lane vector of `dtype` is spelled as when the
+/// checker names it by its alias (`Int` for `Scalar[DType.int]`), or none
+/// when the lane type has no alias.
+pub fn scalar_alias(ctx: &mut Context, dtype: CoreDtype) -> Option<TypeHandle> {
+    Some(match dtype {
+        CoreDtype::Int => IntType::get(ctx).into(),
+        CoreDtype::Bool => BoolType::get(ctx).into(),
+        CoreDtype::Float64 => Float64Type::get(ctx).into(),
+        _ => return None,
+    })
 }
 
 /// The type of `value`'s place target, when `value` is a place.

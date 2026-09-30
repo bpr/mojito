@@ -17,14 +17,13 @@ use pliron::uniqued_any::{self, UniquedKey};
 
 use mojito_common::literal::IntLiteral;
 use mojito_types::ct::CtValue;
-use mojito_types::origin::{CallableEnvironment, SigOrigin};
 use mojito_types::param_expr::{
     HoleKind, MetaTy, PackQuery, ParamContext, ParamExpr, ParamId, ParamKind, ParamOp, ParamRef,
     ReflectQuery,
 };
-use mojito_types::types::{TransferEffect, TransferSet, TrivialLifecycle, Ty};
+use mojito_types::types::{TrivialLifecycle, Ty};
 
-use super::attrs::{CoreConvention, Text};
+use super::attrs::{Signed, Text, parse_float_literal};
 use super::types::{CoreDtype, export_type, import_type};
 use super::{A1Error, A1ErrorKind};
 
@@ -139,58 +138,19 @@ pub enum PayloadTy {
         binder: PayloadBinder,
         bounds: Vec<Text>,
     },
-    Callable(PayloadCallable),
-}
-
-#[format("$name ` : ` $ty ` ` $required ` convention` opt($convention, delimiters(`(`, `)`))")]
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
-pub struct PayloadParam {
-    pub name: Text,
-    pub ty: PayloadTy,
-    pub required: bool,
-    pub convention: Option<CoreConvention>,
-}
-
-#[format]
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
-pub enum PayloadSigOrigin {
-    Receiver,
-    Param(u64),
-    Static,
-}
-
-/// One inferred transfer effect of a callable occurrence.
-#[format("$dest ` <- ` $src ` ` $src_is_place ` ` $mutable")]
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
-pub struct PayloadTransfer {
-    pub dest: PayloadSigOrigin,
-    pub src: PayloadSigOrigin,
-    pub src_is_place: bool,
-    pub mutable: bool,
-}
-
-/// A callable type occurrence. Type identity ignores `transfers`; the
-/// payload does not, so two occurrences that differ only by their effects
-/// are two nodes and neither inherits the other's.
-#[format(
-    "`(` vec($params, CharSpace(`,`)) `) -> [` vec($ret, CharSpace(`,`)) `] ` $raises ` effects [` vec($transfers, CharSpace(`,`)) `]`"
-)]
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
-pub struct PayloadCallable {
-    pub params: Vec<PayloadParam>,
-    /// The one result type.
-    pub ret: Vec<PayloadTy>,
-    pub raises: bool,
-    pub transfers: Vec<PayloadTransfer>,
 }
 
 #[format]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub enum PayloadValue {
-    Int(i64),
+    Int(Signed),
     UInt(u64),
+    /// The bits of a machine `Float64`.
+    Float(u64),
     /// An exact integer literal in decimal.
     IntLiteral(Text),
+    /// An exact floating literal in its own spelling.
+    FloatLiteral(Text),
     Bool(bool),
     Str(Text),
     Dtype(CoreDtype),
@@ -786,48 +746,6 @@ fn import_payload_type(ctx: &mut Context, ty: &Ty) -> Result<PayloadTy, A1Error>
             binder: PayloadBinder::from_ref(binder),
             bounds: bounds.iter().map(Text::from).collect(),
         }),
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic: None,
-            kw_variadic: None,
-            positional_only: None,
-            keyword_only: None,
-            raises,
-            error: None,
-            conventions,
-            ref_params,
-            ref_return: None,
-            transfers,
-        } if *environment == CallableEnvironment::default()
-            && ref_params.iter().all(Option::is_none)
-            && [names.len(), required.len(), conventions.len()]
-                .iter()
-                .all(|length| *length == params.len()) =>
-        {
-            let params = (0..params.len())
-                .map(|index| {
-                    Ok(PayloadParam {
-                        name: Text::from(&names[index]),
-                        ty: import_payload_type(ctx, &params[index])?,
-                        required: required[index],
-                        convention: conventions[index].map(CoreConvention::from_convention),
-                    })
-                })
-                .collect::<Result<Vec<_>, A1Error>>()?;
-            Ok(PayloadTy::Callable(PayloadCallable {
-                params,
-                ret: vec![import_payload_type(ctx, ret)?],
-                raises: *raises,
-                transfers: transfers
-                    .iter()
-                    .map(import_transfer)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }))
-        }
         other => import_type(ctx, other).map(PayloadTy::Core),
     }
 }
@@ -840,44 +758,6 @@ fn export_payload_type(ctx: &Context, ty: &PayloadTy) -> Result<Ty, A1Error> {
             bounds: bounds.iter().map(|bound| bound.0.clone()).collect(),
             callable_bound: None,
         }),
-        PayloadTy::Callable(callable) => {
-            let [ret] = callable.ret.as_slice() else {
-                return Err(A1Error::new(
-                    A1ErrorKind::Export,
-                    "a callable has one result type",
-                ));
-            };
-            let params = &callable.params;
-            Ok(Ty::Func {
-                environment: CallableEnvironment::default(),
-                params: params
-                    .iter()
-                    .map(|param| export_payload_type(ctx, &param.ty))
-                    .collect::<Result<Vec<_>, _>>()?,
-                names: params.iter().map(|param| param.name.0.clone()).collect(),
-                ret: Box::new(export_payload_type(ctx, ret)?),
-                required: params.iter().map(|param| param.required).collect(),
-                variadic: None,
-                kw_variadic: None,
-                positional_only: None,
-                keyword_only: None,
-                raises: callable.raises,
-                error: None,
-                conventions: params
-                    .iter()
-                    .map(|param| param.convention.map(CoreConvention::convention))
-                    .collect(),
-                ref_params: Box::new(params.iter().map(|_| None).collect()),
-                ref_return: None,
-                transfers: TransferSet(
-                    callable
-                        .transfers
-                        .iter()
-                        .map(export_transfer)
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-            })
-        }
     }
 }
 
@@ -895,37 +775,18 @@ fn clone_type(
             binder: binder.clone(),
             bounds: bounds.clone(),
         },
-        PayloadTy::Callable(callable) => PayloadTy::Callable(PayloadCallable {
-            params: callable
-                .params
-                .iter()
-                .map(|param| {
-                    Ok(PayloadParam {
-                        name: param.name.clone(),
-                        ty: clone_type(source, &param.ty, target)?,
-                        required: param.required,
-                        convention: param.convention,
-                    })
-                })
-                .collect::<Result<Vec<_>, A1Error>>()?,
-            ret: callable
-                .ret
-                .iter()
-                .map(|ty| clone_type(source, ty, target))
-                .collect::<Result<Vec<_>, _>>()?,
-            raises: callable.raises,
-            transfers: callable.transfers.clone(),
-        }),
     })
 }
 
 fn import_value(ctx: &mut Context, value: &CtValue) -> Result<PayloadValue, A1Error> {
     Ok(match value {
-        CtValue::Int(value) => PayloadValue::Int(*value),
+        CtValue::Int(value) => PayloadValue::Int(Signed(*value)),
         CtValue::UInt(value) => PayloadValue::UInt(*value),
+        CtValue::Float(bits) => PayloadValue::Float(*bits),
         CtValue::IntLiteral(literal) => {
             PayloadValue::IntLiteral(literal.as_bigint().to_string().into())
         }
+        CtValue::FloatLiteral(literal) => PayloadValue::FloatLiteral(literal.to_string().into()),
         CtValue::Bool(value) => PayloadValue::Bool(*value),
         CtValue::Str(value) => PayloadValue::Str(value.into()),
         CtValue::Dtype(dtype) => PayloadValue::Dtype(CoreDtype::from_dtype(*dtype)),
@@ -936,8 +797,10 @@ fn import_value(ctx: &mut Context, value: &CtValue) -> Result<PayloadValue, A1Er
 
 fn export_value(ctx: &Context, value: &PayloadValue) -> Result<CtValue, A1Error> {
     Ok(match value {
-        PayloadValue::Int(value) => CtValue::Int(*value),
+        PayloadValue::Int(value) => CtValue::Int(value.0),
         PayloadValue::UInt(value) => CtValue::UInt(*value),
+        PayloadValue::Float(bits) => CtValue::Float(*bits),
+        PayloadValue::FloatLiteral(text) => CtValue::FloatLiteral(parse_float_literal(text)?),
         PayloadValue::IntLiteral(digits) => {
             CtValue::IntLiteral(IntLiteral::parse_radix(digits.as_str(), 10).ok_or_else(|| {
                 A1Error::new(
@@ -961,43 +824,5 @@ fn clone_value(
     Ok(match value {
         PayloadValue::Type(ty) => PayloadValue::Type(clone_type(source, ty, target)?),
         other => other.clone(),
-    })
-}
-
-fn import_transfer(effect: &TransferEffect) -> Result<PayloadTransfer, A1Error> {
-    Ok(PayloadTransfer {
-        dest: import_sig_origin(&effect.dest)?,
-        src: import_sig_origin(&effect.src)?,
-        src_is_place: effect.src_is_place,
-        mutable: effect.mutable,
-    })
-}
-
-fn export_transfer(effect: &PayloadTransfer) -> Result<TransferEffect, A1Error> {
-    Ok(TransferEffect {
-        dest: export_sig_origin(effect.dest)?,
-        src: export_sig_origin(effect.src)?,
-        src_is_place: effect.src_is_place,
-        mutable: effect.mutable,
-    })
-}
-
-fn import_sig_origin(origin: &SigOrigin) -> Result<PayloadSigOrigin, A1Error> {
-    match origin {
-        SigOrigin::Self_ => Ok(PayloadSigOrigin::Receiver),
-        SigOrigin::Param(index) => Ok(PayloadSigOrigin::Param(*index as u64)),
-        SigOrigin::Static => Ok(PayloadSigOrigin::Static),
-        other => Err(outside(&format!("the signature origin `{other:?}`"))),
-    }
-}
-
-fn export_sig_origin(origin: PayloadSigOrigin) -> Result<SigOrigin, A1Error> {
-    Ok(match origin {
-        PayloadSigOrigin::Receiver => SigOrigin::Self_,
-        PayloadSigOrigin::Param(index) => SigOrigin::Param(
-            usize::try_from(index)
-                .map_err(|_| A1Error::new(A1ErrorKind::Export, "a parameter index beyond usize"))?,
-        ),
-        PayloadSigOrigin::Static => SigOrigin::Static,
     })
 }

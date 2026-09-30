@@ -567,10 +567,33 @@ fn import_at(specialized: &mono::SpecializedProgram, stage: Stage) -> a1::text::
     }
 }
 
+/// Corpus fixtures holding the operations the gate and the benchmark
+/// lack: floats and `DType`, closures and indirect calls, pack iteration,
+/// slices, lane shuffles, uninitialized storage, place consumption,
+/// variants, reference results, and exits crossing a try region.
+const HOLDERS: [&str; 13] = [
+    "assets/ok/float16_semantics.mojo",
+    "assets/ok/closures.mojo",
+    "assets/ok/variadic_args.mojo",
+    "assets/ok/list_contiguous_slice_strict.mojo",
+    "assets/ok/simd_shuffle.mojo",
+    "assets/ok/maybe_uninit_roundtrip.mojo",
+    "assets/ok/allocation_tracked_unsafe_ptr.mojo",
+    "assets/ok/variant_owning_api.mojo",
+    "assets/ok/variant_hash_dict_key.mojo",
+    "assets/ok/pliron_try_nested_reraise.mojo",
+    "assets/ok/template_def_try_unpack.mojo",
+    "assets/ok/dtype_runtime_value.mojo",
+    "assets/extensions/ok/copyable_iterator_reference_aggregate.mojo",
+];
+
 /// The closures that give every registry entry a positive case: the gate,
-/// then the benchmark holding the operations the gate's closure lacks.
-fn positive_sources() -> [mono::SpecializedProgram; 2] {
-    [specialized_gate().1, specialized_input(WIDE).1]
+/// the benchmark holding the operations the gate's closure lacks, then the
+/// corpus fixtures holding the rest.
+fn positive_sources() -> Vec<mono::SpecializedProgram> {
+    let mut sources = vec![specialized_gate().1, specialized_input(WIDE).1];
+    sources.extend(HOLDERS.iter().map(|path| specialized_input(path).1));
+    sources
 }
 
 /// The operations `specialized` holds at `stage`.
@@ -705,8 +728,16 @@ fn a1_malformed_ops_are_diagnostics() {
                     .expect("the entry takes the effect token")
                     .set_type(ctx, int);
             } else {
+                // A stray slot where a value or the token belongs; where a
+                // slot belongs (an escape's cleanup), the token instead.
                 let (_, stray) = enclosing(ctx, op);
-                Operation::replace_operand(op, ctx, 0, stray);
+                let first = op.deref(ctx).get_operand(0);
+                let replacement = if first.get_type(ctx).deref(ctx).is::<a1::types::PlaceType>() {
+                    op.deref(ctx).operands().last().expect("an effect token")
+                } else {
+                    stray
+                };
+                Operation::replace_operand(op, ctx, 0, replacement);
             }
         }),
         ("control flow", |ctx, op| {
@@ -1117,8 +1148,11 @@ fn a1_conversion_is_total() {
         }
     }
 
-    let wide = specialized_input(WIDE).1;
-    let gate_kinds = kinds_at(&specialized, Stage::Bridge);
+    let sources = positive_sources();
+    let holders: Vec<std::collections::BTreeSet<CoreOpKind>> = sources
+        .iter()
+        .map(|source| kinds_at(source, Stage::Bridge))
+        .collect();
     for kind in CoreOpKind::ALL
         .into_iter()
         .filter(|kind| !kind.mir_forms().is_empty())
@@ -1126,11 +1160,14 @@ fn a1_conversion_is_total() {
         let config = a1::import::ImportConfig {
             disabled: vec![kind],
         };
-        let source = if gate_kinds.contains(&kind) {
-            &specialized
-        } else {
-            &wide
-        };
+        let source = sources
+            .iter()
+            .zip(&holders)
+            .find(|(_, kinds)| kinds.contains(&kind))
+            .map_or_else(
+                || panic!("{kind:?} has a positive case"),
+                |(source, _)| source,
+            );
         let mut ctx = a1::ir_framework::new_context();
         let refused = a1::import::import_program_with(&mut ctx, &source.program, &[], &config)
             .expect_err("a disabled rule refuses the program");
@@ -1312,7 +1349,7 @@ fn instrument(ctx: &mut Context, module: Ptr<Operation>) {
                 ctx,
                 op,
                 &a1::ops::KEY_CONSTANT,
-                a1::attrs::ConstAttr::Int(value),
+                a1::attrs::ConstAttr::Int(a1::attrs::Signed(value)),
             );
         }
     };

@@ -1,6 +1,7 @@
 //! Import: verified, drop-elaborated, specialized MIR to the bridge stage
 //! of `mojito_core`. Every MIR form has a rule or an explicit rejection.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use pliron::basic_block::BasicBlock;
@@ -14,25 +15,31 @@ use pliron::r#type::TypeHandle;
 use pliron::value::Value;
 
 use mojito_checked::checked::{CheckedCallArgumentSource, CheckedResultAdapter, IterationMode};
-use mojito_mir::mir::text::{instruction_mnemonic, terminator_mnemonic, type_spelling};
+use mojito_mir::mir::text::{instruction_mnemonic, terminator_mnemonic};
 use mojito_mir::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use mojito_mir::mir::{
-    MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirProgram,
-    MirStructDeclaration, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Reg,
+    MirBlock, MirCaptureAccess, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
+    MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj,
+    Reg,
 };
+use mojito_types::types::{Ty, TyArg};
 
 use super::attrs::{
-    CallAttr, ConstAttr, CoreCallKind, CoreCollector, CoreConvention, CoreDefault, CoreDestructor,
-    CoreEntry, CoreField, CoreInterior, CoreLifecycle, CoreLoan, CoreOrphan, CoreOrphanSpan,
-    CoreParam, CoreRole, CoreSpan, CoreStep, CoreStepKind, CoreStorage, CoreStruct, DeadTermAttr,
-    DeclarationAttr, ExitAttr, IdentityAttr, InfixAttr, InvalidateAttr, LifecycleAttr, LoansAttr,
-    ModuleAttr, OrphansAttr, ProjectionAttr, ProvenanceAttr, RegAttr, ResolvedAttr, SCHEMA,
-    SignatureAttr, SlotAttr, StoreAttr, Text, TryAttr, UseModeAttr, var_name,
+    CallAttr, ClosureAttr, ConstAttr, CoreCallKind, CoreCaptureAccess, CoreCaptureMode,
+    CoreCollector, CoreConvention, CoreDefault, CoreDestructor, CoreEntry, CoreField, CoreInterior,
+    CoreLifecycle, CoreLoan, CoreOrphan, CoreOrphanSpan, CoreParam, CoreRole, CoreSpan, CoreStep,
+    CoreStepKind, CoreStorage, CoreStruct, DeadTermAttr, DeclarationAttr, ExitAttr, IdentityAttr,
+    InfixAttr, InvalidateAttr, LifecycleAttr, LoansAttr, ModuleAttr, OrphansAttr, ProjectionAttr,
+    ProvenanceAttr, RegAttr, ResolvedAttr, SCHEMA, SignatureAttr, SlotAttr, StoreAttr, Text,
+    TryAttr, UseModeAttr, var_name,
 };
 use super::attrs::{
-    CleanupAttr, CoreArgSource, CoreCallArgument, CoreIntrinsic, CoreIterationMode, CoreParamArg,
-    CorePointerAccess, CoreResultAdapter, CoreSubscriptCall, IndexAttr, IterInitAttr, IterNextAttr,
-    MultiSetAttr, PointerStorageAttr, PrefixAttr, SimdConvertAttr,
+    CleanupAttr, CoreArgSource, CoreCallArgument, CoreIntrinsic, CoreIterationMode, CoreKeywordArg,
+    CoreParamArg, CorePointerAccess, CoreResultAdapter, CoreSimdConversion, CoreSliceBounds,
+    CoreSliceKind, CoreSubscriptArg, CoreSubscriptCall, CoreUninitAccess, CoreVariantAccess,
+    EscapeAttr, FieldAttr, IndexAttr, IterInitAttr, IterNextAttr, MultiIndexAttr, MultiSetAttr,
+    PointerStorageAttr, PrefixAttr, ShuffleAttr, SimdConvertAttr, SimdMakeAttr, SizeOfAttr,
+    SliceAttr, UninitAttr, VariantAttr,
 };
 use super::inventory::{CoreOpKind, importing_op, try_path};
 use super::ops::{
@@ -42,11 +49,14 @@ use super::ops::{
     KEY_USE_MODE,
 };
 use super::ops::{
-    KEY_CLEANUP, KEY_ITER_INIT, KEY_ITER_NEXT, KEY_MULTI_SET, KEY_POINTER_STORAGE, KEY_PREFIX,
-    KEY_SIMD_CONVERT, KEY_SUBSCRIPT,
+    KEY_CLEANUP, KEY_CLOSURE, KEY_ESCAPE, KEY_FIELD, KEY_ITER_INIT, KEY_ITER_NEXT, KEY_MULTI_INDEX,
+    KEY_MULTI_SET, KEY_POINTER_STORAGE, KEY_PREFIX, KEY_SHUFFLE, KEY_SIMD_CONVERT, KEY_SIMD_MAKE,
+    KEY_SIZE_OF, KEY_SLICE, KEY_SUBSCRIPT, KEY_UNINIT, KEY_VARIANT,
 };
 use super::params::{PayloadBinder, import_param};
-use super::types::{EffectType, NoneType, PlaceType, import_type};
+use super::types::{
+    CoreDtype, EffectType, NoneType, PlaceType, import_arg, import_type, scalar_alias,
+};
 use super::{A1Error, A1ErrorKind};
 
 /// What the importer may convert.
@@ -74,7 +84,77 @@ pub fn import_program_with(
     entries: &[(String, String)],
     config: &ImportConfig,
 ) -> Result<Ptr<Operation>, A1Error> {
-    for (name, function) in &program.functions {
+    import_program_in(ctx, program, entries, config, &Sink::default())
+}
+
+/// Every refusal the importer has for `program`, counted by what is refused.
+///
+/// The classes are a form, a type, a constant, a call facet, a
+/// declaration, a struct, a positional shape, a per-operation verifier
+/// rule, and a legality rule. The importer runs to the end of the input
+/// instead of stopping at the first; the module it builds is discarded.
+pub fn refusals(program: &MirProgram) -> BTreeMap<String, usize> {
+    let mut ctx = super::ir_framework::new_context();
+    let sink = Sink {
+        collect: true,
+        found: RefCell::default(),
+    };
+    let _ = import_program_in(&mut ctx, program, &[], &ImportConfig::default(), &sink);
+    let mut found = BTreeMap::new();
+    for message in sink.found.into_inner() {
+        // A refused instruction defines nothing, so the reads of its
+        // registers are its consequence, not a refusal of their own.
+        if message.starts_with("a read of undefined register") {
+            continue;
+        }
+        for key in refusal_keys(&message) {
+            *found.entry(key).or_default() += 1;
+        }
+    }
+    found
+}
+
+/// Where a refusal goes: back to the caller at once, or into the census
+/// of a run that continues past it.
+#[derive(Default)]
+struct Sink {
+    collect: bool,
+    found: RefCell<Vec<String>>,
+}
+
+impl Sink {
+    /// Pass `result` through, or in a census record its refusal and
+    /// continue with `placeholder`.
+    fn admit<T>(
+        &self,
+        result: Result<T, A1Error>,
+        placeholder: impl FnOnce() -> T,
+    ) -> Result<T, A1Error> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) if self.collect => {
+                self.record(error.message);
+                Ok(placeholder())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn record(&self, message: String) {
+        self.found.borrow_mut().push(message);
+    }
+}
+
+fn import_program_in(
+    ctx: &mut Context,
+    program: &MirProgram,
+    entries: &[(String, String)],
+    config: &ImportConfig,
+    sink: &Sink,
+) -> Result<Ptr<Operation>, A1Error> {
+    // A census counts each occurrence of a rejected form where it stands
+    // instead of stopping at the first form the scan finds.
+    for (name, function) in program.functions.iter().filter(|_| !sink.collect) {
         let mut forms = Vec::new();
         collect_forms(&function.blocks, &mut forms);
         for form in forms {
@@ -101,24 +181,27 @@ pub fn import_program_with(
         }
     }
     if !program.invariant_errors.is_empty() {
-        return Err(A1Error::new(
+        let violated = Err(A1Error::new(
             A1ErrorKind::UnsupportedForm,
             format!(
                 "the input violates the checked-program contract: {}",
                 program.invariant_errors.join("; ")
             ),
         ));
+        sink.admit(violated, || ())?;
     }
     let name = "a1"
         .try_into()
         .map_err(|_| A1Error::new(A1ErrorKind::UnsupportedForm, "module name"))?;
     let module = ModuleOp::new(ctx, name);
-    let structs = program
-        .declarations
-        .structs
-        .iter()
-        .map(|decl| import_struct(ctx, decl))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut structs = Vec::new();
+    for decl in &program.declarations.structs {
+        let imported = import_struct(ctx, decl).map(Some);
+        let imported = sink.admit(imported.map_err(|error| error.classified("struct")), || {
+            None
+        })?;
+        structs.extend(imported);
+    }
     let tables = ModuleAttr {
         schema: SCHEMA.into(),
         sources: sources(program).into_iter().map(Text::from).collect(),
@@ -137,7 +220,7 @@ pub fn import_program_with(
             .map(|decl| Text::from(&decl.lowered_name))
             .collect(),
     };
-    set(ctx, module.get_operation(), &KEY_TABLES, tables);
+    set(ctx, module.get_operation(), &KEY_TABLES, tables.clone());
     annotate(
         ctx,
         module.get_operation(),
@@ -172,19 +255,64 @@ pub fn import_program_with(
             .iter()
             .any(|(name, _)| *name == decl.lowered_name)
         {
-            return Err(A1Error::new(
+            let bodiless = Err(A1Error::new(
                 A1ErrorKind::UnsupportedForm,
-                "a declaration without a body has no core form",
+                "declaration: a declaration without a body has no core form",
             )
             .in_function(&decl.lowered_name));
+            sink.admit(bodiless, || ())?;
         }
     }
+    let symbols: Vec<Text> = program
+        .functions
+        .iter()
+        .map(|(name, _)| Text::from(name))
+        .collect();
     for (index, (name, function)) in program.functions.iter().enumerate() {
-        let func = FnImport::run(ctx, index, name, function, declarations.get(name.as_str()))
-            .map_err(|error| error.in_function(name))?;
+        let func = FnImport::run(
+            ctx,
+            index,
+            name,
+            function,
+            declarations.get(name.as_str()),
+            sink,
+        )
+        .map_err(|error| error.in_function(name));
+        let Some(func) = sink.admit(func.map(Some), || None)? else {
+            continue;
+        };
+        if sink.collect {
+            collect_legality(ctx, func, &tables, &symbols, sink);
+        }
         func.insert_at_back(body, ctx);
     }
     Ok(module.get_operation())
+}
+
+/// Record the legality violations of `func`'s operations: the projection
+/// and call-target rules `verify::legality_violations` applies to a whole
+/// module, applied here to a function of a census.
+fn collect_legality(
+    ctx: &Context,
+    func: Ptr<Operation>,
+    tables: &ModuleAttr,
+    symbols: &[Text],
+    sink: &Sink,
+) {
+    for op in super::verify::walk(ctx, func) {
+        if let Err(error) = super::verify::check_projection(ctx, op, tables) {
+            sink.record(format!("legality: {}", error.message));
+        }
+        let call = op.deref(ctx).attributes.get::<CallAttr>(&KEY_CALL).cloned();
+        if let Some(call) = call
+            && !super::verify::call_target_known(&call, symbols, &tables.structs)
+        {
+            sink.record(format!(
+                "legality: call target `{}` resolves to no function, struct, or builtin",
+                super::verify::call_target(&call)
+            ));
+        }
+    }
 }
 
 /// The v1 mnemonic of every instruction and terminator of `blocks`,
@@ -270,121 +398,6 @@ pub fn slot_registers(function: &MirFunction) -> Result<BTreeSet<u32>, A1Error> 
             .map(|(reg, _)| *reg),
     );
     Ok(slots)
-}
-
-/// Every refusal the importer has for `program`, counted by what is
-/// refused: a form, a type, a constant, a call facet, a declaration, or a
-/// struct. The importer itself stops at the first.
-pub fn refusals(program: &MirProgram) -> BTreeMap<String, usize> {
-    let mut found = BTreeMap::new();
-    let mut count = |what: String| *found.entry(what).or_default() += 1;
-    let mut ctx = super::ir_framework::new_context();
-    for decl in &program.declarations.structs {
-        if let Err(error) = import_struct(&mut ctx, decl) {
-            count(format!("struct: {}", error.message));
-        }
-    }
-    for decl in &program.declarations.functions {
-        if let Err(error) = import_declaration(&mut ctx, decl) {
-            count(format!("declaration: {}", error.message));
-        }
-    }
-    for (_, function) in &program.functions {
-        let types = function
-            .param_types
-            .iter()
-            .chain(&function.ret_ty)
-            .chain(&function.error_ty)
-            .chain(function.var_tys.values())
-            .chain(function.reg_types.values());
-        for ty in types {
-            if let Err(error) = import_type(&mut ctx, ty) {
-                count(format!("type: {}", refusal_head(&error.message)));
-            }
-        }
-        let mut instructions = Vec::new();
-        collect_instructions(&function.blocks, &mut instructions);
-        for instruction in instructions {
-            let form = instruction_mnemonic(instruction);
-            if importing_op(form).is_none() {
-                count(format!("form: {form}"));
-            }
-            for facet in refused_call_facets(instruction) {
-                count(format!("call: {facet}"));
-            }
-            let callee = match instruction {
-                MirInstr::Call { func, .. } => Some((CoreCallKind::Direct, func.0.as_str())),
-                MirInstr::MethodCall {
-                    method,
-                    resolved: None,
-                    ..
-                } => Some((CoreCallKind::Method, method.as_str())),
-                MirInstr::MethodCall {
-                    resolved: Some(resolved),
-                    ..
-                } => Some((CoreCallKind::Direct, resolved.as_str())),
-                _ => None,
-            };
-            let declared = |callee: &str| {
-                program.functions.iter().any(|(name, _)| name == callee)
-                    || program
-                        .declarations
-                        .structs
-                        .iter()
-                        .any(|decl| decl.name == callee)
-            };
-            match callee {
-                Some((CoreCallKind::Method, method))
-                    if !super::verify::BUILTIN_METHODS.contains(&method) =>
-                {
-                    count(format!("method: {method}"));
-                }
-                Some((CoreCallKind::Direct, callee))
-                    if !declared(callee) && !super::verify::BUILTIN_CALLEES.contains(&callee) =>
-                {
-                    count(format!("callee: {callee}"));
-                }
-                _ => {}
-            }
-            for place in mojito_mir::mir::verify::instruction_places(instruction) {
-                let last = place.projection_tys.last().or(place.root_ty.as_ref());
-                let through = match last {
-                    Some(mojito_types::types::Ty::Ref(reference)) => Some(&*reference.referent),
-                    _ => None,
-                };
-                if ![last, through].contains(&place.ty.as_ref()) {
-                    count(format!(
-                        "place: a {} step designated as {}",
-                        last.map_or("untyped", type_spelling),
-                        place.ty.as_ref().map_or("untyped", type_spelling)
-                    ));
-                }
-            }
-            let subscript = match instruction {
-                MirInstr::Index { call, .. } => call.as_ref(),
-                MirInstr::MultiSet { call, .. } => Some(call),
-                _ => None,
-            };
-            for facet in subscript.into_iter().flat_map(refused_subscript_facets) {
-                count(format!("subscript: {facet}"));
-            }
-            if let MirInstr::Const { k, .. } = instruction
-                && let Err(error) = ConstAttr::from_const(k)
-            {
-                count(format!("constant: {}", refusal_head(&error.message)));
-            }
-        }
-        let mut forms = Vec::new();
-        collect_forms(&function.blocks, &mut forms);
-        for form in forms {
-            if mojito_mir::mir::text::TERMINATOR_MNEMONICS.contains(&form)
-                && importing_op(form).is_none()
-            {
-                count(format!("form: {form}"));
-            }
-        }
-    }
-    found
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -476,6 +489,7 @@ struct FnImport<'a> {
     /// Register loads emitted for the instruction being imported.
     loads: u64,
     places: u64,
+    sink: &'a Sink,
 }
 
 impl<'a> FnImport<'a> {
@@ -485,13 +499,14 @@ impl<'a> FnImport<'a> {
         name: &'a str,
         function: &'a MirFunction,
         declaration: Option<&&MirFunctionDeclaration>,
+        sink: &'a Sink,
     ) -> Result<Ptr<Operation>, A1Error> {
         let effect: TypeHandle = EffectType::get(ctx).into();
-        let params = function
-            .param_types
-            .iter()
-            .map(|ty| import_type(ctx, ty))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut params = Vec::with_capacity(function.param_types.len());
+        for ty in &function.param_types {
+            let imported = import_type(ctx, ty);
+            params.push(sink.admit(imported, || NoneType::get(ctx).into())?);
+        }
         if params.len() != function.n_params {
             return Err(A1Error::new(
                 A1ErrorKind::UnsupportedForm,
@@ -508,12 +523,14 @@ impl<'a> FnImport<'a> {
             .ret_ty
             .as_ref()
             .map(|ty| import_type(ctx, ty))
-            .transpose()?;
+            .transpose();
+        let ret = sink.admit(ret, || None)?;
         let error = function
             .error_ty
             .as_ref()
             .map(|ty| import_type(ctx, ty))
-            .transpose()?;
+            .transpose();
+        let error = sink.admit(error, || None)?;
         set(
             ctx,
             func,
@@ -529,8 +546,12 @@ impl<'a> FnImport<'a> {
             },
         );
         if let Some(declaration) = declaration {
-            let declaration = import_declaration(ctx, declaration)?;
-            set(ctx, func, &KEY_DECLARATION, declaration);
+            let imported = import_declaration(ctx, declaration)
+                .map(Some)
+                .map_err(|error| error.classified("declaration"));
+            if let Some(declaration) = sink.admit(imported, || None)? {
+                set(ctx, func, &KEY_DECLARATION, declaration);
+            }
         }
         annotate(
             ctx,
@@ -555,10 +576,11 @@ impl<'a> FnImport<'a> {
         let entry = BasicBlock::new(ctx, None, arguments);
         entry.insert_at_back(region, ctx);
         let token = entry.deref(ctx).get_argument(function.n_params);
+        let slot_regs = sink.admit(slot_registers(function), BTreeSet::new)?;
         let mut import = Self {
             name,
             function,
-            slot_regs: slot_registers(function)?,
+            slot_regs,
             var_slots: Vec::new(),
             reg_slots: HashMap::new(),
             values: HashMap::new(),
@@ -570,10 +592,13 @@ impl<'a> FnImport<'a> {
             ordinal: 0,
             loads: 0,
             places: 0,
+            sink,
         };
         import.declare_slots(ctx, entry)?;
-        import.region_blocks(ctx, region, "", &function.blocks, entry)?;
-        let orphans = import.orphans(ctx)?;
+        let filled = import.region_blocks(ctx, region, "", &function.blocks, entry);
+        sink.admit(filled, || ())?;
+        let orphans = import.orphans(ctx);
+        let orphans = sink.admit(orphans, Vec::new)?;
         set(ctx, func, &KEY_ORPHANS, OrphansAttr(orphans));
         Ok(func)
     }
@@ -593,7 +618,8 @@ impl<'a> FnImport<'a> {
                     ),
                 )
             })?;
-            let target = import_type(ctx, ty)?;
+            let imported = import_type(ctx, ty);
+            let target = self.sink.admit(imported, || NoneType::get(ctx).into())?;
             let param = (var < function.n_params).then_some(id);
             let flag = |flags: &[bool]| flags.get(var).copied().unwrap_or(false);
             let operands = param
@@ -618,7 +644,8 @@ impl<'a> FnImport<'a> {
             ordinal += 1;
         }
         for reg in self.slot_regs.clone() {
-            let target = import_type(ctx, self.reg_type(Reg(reg))?)?;
+            let imported = self.reg_type(Reg(reg)).and_then(|ty| import_type(ctx, ty));
+            let target = self.sink.admit(imported, || NoneType::get(ctx).into())?;
             let slot = self.slot(
                 ctx,
                 target,
@@ -725,7 +752,8 @@ impl<'a> FnImport<'a> {
             self.token = targets[index].deref(ctx).get_argument(0);
             self.mir_block = index;
             self.values.clear();
-            self.block_contents(ctx, contents, &targets, &mut tries)?;
+            let filled = self.block_contents(ctx, contents, &targets, &mut tries);
+            self.sink.admit(filled, || ())?;
         }
         (
             self.block,
@@ -749,39 +777,54 @@ impl<'a> FnImport<'a> {
             self.loads = 0;
             self.places = 0;
             if let MirInstr::Raise { src } = instruction {
-                if ordinal + 1 != contents.instrs.len() {
-                    return Err(self.unsupported("instructions after a `raise` in its block"));
-                }
-                let dead = match &contents.term {
-                    MirTerm::Jump(target) => DeadTermAttr::Jump(*target as u64),
-                    MirTerm::Return(None) => DeadTermAttr::Return,
-                    MirTerm::FallOff => DeadTermAttr::FallOff,
-                    other => {
-                        return Err(self.unsupported(format!(
-                            "a `raise` cutting off `{}`",
-                            terminator_mnemonic(other)
-                        )));
-                    }
-                };
-                let error = self.value(ctx, *src)?;
-                let op = ops::build(
-                    ctx,
-                    CoreOpKind::Raise,
-                    vec![],
-                    vec![error, self.token],
-                    vec![],
-                    0,
-                );
-                set(ctx, op, &KEY_DEAD_TERM, dead);
-                self.finish(ctx, op, CoreRole::Primary, None, "no-source-record");
-                return Ok(());
+                let raised = self.raise(ctx, *src, ordinal, contents);
+                return self.sink.admit(raised, || ());
             }
-            self.instruction(ctx, instruction, tries)?;
+            let imported = self.instruction(ctx, instruction, tries);
+            self.sink.admit(imported, || ())?;
         }
         self.ordinal = contents.instrs.len();
         self.loads = 0;
         self.places = 0;
-        self.terminator(ctx, &contents.term, targets)
+        let ended = self.terminator(ctx, &contents.term, targets);
+        self.sink.admit(ended, || ())
+    }
+
+    /// A `raise` ends its block: the terminator after it is dead and is
+    /// recorded on the operation.
+    fn raise(
+        &mut self,
+        ctx: &mut Context,
+        src: Reg,
+        ordinal: usize,
+        contents: &MirBlock,
+    ) -> Result<(), A1Error> {
+        if ordinal + 1 != contents.instrs.len() {
+            return Err(self.unsupported("instructions after a `raise` in its block"));
+        }
+        let dead = match &contents.term {
+            MirTerm::Jump(target) => DeadTermAttr::Jump(*target as u64),
+            MirTerm::Return(None) => DeadTermAttr::Return,
+            MirTerm::FallOff => DeadTermAttr::FallOff,
+            other => {
+                return Err(self.unsupported(format!(
+                    "a `raise` cutting off `{}`",
+                    terminator_mnemonic(other)
+                )));
+            }
+        };
+        let error = self.value(ctx, src)?;
+        let op = ops::build(
+            ctx,
+            CoreOpKind::Raise,
+            vec![],
+            vec![error, self.token],
+            vec![],
+            0,
+        );
+        set(ctx, op, &KEY_DEAD_TERM, dead);
+        self.finish(ctx, op, CoreRole::Primary, None, "no-source-record");
+        Ok(())
     }
 
     fn terminator(
@@ -827,9 +870,6 @@ impl<'a> FnImport<'a> {
                 )
             }
             MirTerm::Return(value) => {
-                if !self.region.is_empty() {
-                    return Err(self.unsupported("a `return` crossing out of a try region"));
-                }
                 let mut operands = Vec::new();
                 if let Some(value) = value {
                     operands.push(self.value(ctx, *value)?);
@@ -853,9 +893,6 @@ impl<'a> FnImport<'a> {
                 op
             }
             MirTerm::ReturnWithCleanup { value, cleanup } => {
-                if !self.region.is_empty() {
-                    return Err(self.unsupported("a `return` crossing out of a try region"));
-                }
                 let mut operands = Vec::new();
                 if let Some(value) = value {
                     operands.push(self.value(ctx, *value)?);
@@ -868,8 +905,26 @@ impl<'a> FnImport<'a> {
                 set(ctx, op, &KEY_CLEANUP, CleanupAttr(cleanup.len() as u64));
                 op
             }
-            MirTerm::EscapeJump { .. } => {
-                return Err(self.unsupported(format!("terminator `{}`", terminator_mnemonic(term))));
+            MirTerm::EscapeJump { target, cleanup } => {
+                if self.region.is_empty() {
+                    return Err(self.unsupported("an `escape` outside a try region"));
+                }
+                let mut operands = cleanup
+                    .iter()
+                    .map(|var| self.var_slot(*var))
+                    .collect::<Result<Vec<_>, _>>()?;
+                operands.push(self.token);
+                let op = ops::build(ctx, CoreOpKind::Escape, vec![], operands, vec![], 0);
+                set(
+                    ctx,
+                    op,
+                    &KEY_ESCAPE,
+                    EscapeAttr {
+                        target: *target as u64,
+                    },
+                );
+                set(ctx, op, &KEY_CLEANUP, CleanupAttr(cleanup.len() as u64));
+                op
             }
         };
         self.finish(ctx, op, CoreRole::Primary, None, "no-source-record");
@@ -941,6 +996,7 @@ impl<'a> FnImport<'a> {
                 elems,
             } => {
                 let ty = self.result_type(ctx, *dest)?;
+                let lane = CoreDtype::from_dtype(*dtype);
                 let declared = import_type(
                     ctx,
                     &mojito_types::types::Ty::Simd {
@@ -948,7 +1004,8 @@ impl<'a> FnImport<'a> {
                         width: mojito_types::types::SimdWidth::Known(*width as i64),
                     },
                 )?;
-                if declared != ty {
+                let aliased = *width == 1 && scalar_alias(ctx, lane) == Some(ty);
+                if declared != ty && !aliased {
                     return Err(
                         self.unsupported("a SIMD construction at a type other than its register's")
                     );
@@ -958,6 +1015,15 @@ impl<'a> FnImport<'a> {
                     .map(|reg| self.value(ctx, *reg))
                     .collect::<Result<Vec<_>, _>>()?;
                 let op = ops::build(ctx, CoreOpKind::SimdMake, vec![ty], operands, vec![], 0);
+                set(
+                    ctx,
+                    op,
+                    &KEY_SIMD_MAKE,
+                    SimdMakeAttr {
+                        dtype: lane,
+                        width: *width as u64,
+                    },
+                );
                 self.define(ctx, op, *dest, false);
             }
             MirInstr::UseVar { dest, var, mode } => {
@@ -1031,7 +1097,6 @@ impl<'a> FnImport<'a> {
                 capture_accesses,
                 param_arg_regs,
             } => {
-                let _ = capture_accesses;
                 self.admit_call(instruction)?;
                 let facts = CallFacts {
                     kind: CoreCallKind::Direct,
@@ -1046,8 +1111,71 @@ impl<'a> FnImport<'a> {
                     arg_places,
                     kwarg_places,
                     params: param_arg_regs,
+                    captures: capture_accesses,
+                    contract: None,
+                    instantiated: &[],
+                    reference_result: None,
+                    adapter: None,
                 };
                 self.call(ctx, *dest, &facts)?;
+            }
+            MirInstr::CallIndirect {
+                dest,
+                callee,
+                resolved,
+                raises,
+                args,
+                kwargs,
+                callee_place,
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                param_arg_regs,
+                param_decls: _,
+                instantiated_contract,
+                instantiated_args,
+            } => {
+                self.admit_call(instruction)?;
+                let facts = CallFacts {
+                    kind: CoreCallKind::Indirect,
+                    target: String::new(),
+                    resolved: resolved.clone(),
+                    raises: raises.as_ref(),
+                    recv: Some(*callee),
+                    recv_place: callee_place.as_ref(),
+                    recv_writes: false,
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                    params: param_arg_regs,
+                    captures: capture_accesses,
+                    contract: instantiated_contract.as_ref(),
+                    instantiated: instantiated_args,
+                    reference_result: None,
+                    adapter: None,
+                };
+                self.call(ctx, *dest, &facts)?;
+            }
+            MirInstr::MakeClosure {
+                dest,
+                function,
+                captures,
+            } => {
+                let mut operands = Vec::with_capacity(captures.len());
+                for capture in captures {
+                    operands.push(self.place(ctx, &capture.place)?);
+                }
+                let facts = ClosureAttr {
+                    function: Text::from(function),
+                    modes: captures
+                        .iter()
+                        .map(|capture| CoreCaptureMode::from_mode(capture.mode))
+                        .collect(),
+                };
+                self.effectful_value(ctx, CoreOpKind::ClosureMake, operands, *dest, |ctx, op| {
+                    set(ctx, op, &KEY_CLOSURE, facts);
+                })?;
             }
             MirInstr::MethodCall {
                 dest,
@@ -1067,12 +1195,7 @@ impl<'a> FnImport<'a> {
                 param_arg_regs,
                 param_decls,
             } => {
-                let _ = (
-                    reference_result,
-                    result_adapter,
-                    capture_accesses,
-                    param_decls,
-                );
+                let _ = param_decls;
                 self.admit_call(instruction)?;
                 let facts = CallFacts {
                     kind: CoreCallKind::Method,
@@ -1087,6 +1210,11 @@ impl<'a> FnImport<'a> {
                     arg_places,
                     kwarg_places,
                     params: param_arg_regs,
+                    captures: capture_accesses,
+                    contract: None,
+                    instantiated: &[],
+                    reference_result: reference_result.as_ref(),
+                    adapter: *result_adapter,
                 };
                 self.call(ctx, *dest, &facts)?;
             }
@@ -1114,6 +1242,7 @@ impl<'a> FnImport<'a> {
                 width,
             } => {
                 let ty = self.result_type(ctx, *dest)?;
+                let lane = CoreDtype::from_dtype(*dtype);
                 let declared = import_type(
                     ctx,
                     &mojito_types::types::Ty::Simd {
@@ -1121,14 +1250,15 @@ impl<'a> FnImport<'a> {
                         width: mojito_types::types::SimdWidth::Known(*width as i64),
                     },
                 )?;
-                if declared != ty {
+                let aliased = *width == 1 && scalar_alias(ctx, lane) == Some(ty);
+                if declared != ty && !aliased {
                     return Err(
                         self.unsupported("a SIMD conversion to a type other than its register's")
                     );
                 }
                 let conversion = match instruction {
-                    MirInstr::SimdCast { .. } => SimdConvertAttr::Cast,
-                    _ => SimdConvertAttr::Bits,
+                    MirInstr::SimdCast { .. } => CoreSimdConversion::Cast,
+                    _ => CoreSimdConversion::Bits,
                 };
                 let operand = self.value(ctx, *value)?;
                 let op = ops::build(
@@ -1139,7 +1269,16 @@ impl<'a> FnImport<'a> {
                     vec![],
                     0,
                 );
-                set(ctx, op, &KEY_SIMD_CONVERT, conversion);
+                set(
+                    ctx,
+                    op,
+                    &KEY_SIMD_CONVERT,
+                    SimdConvertAttr {
+                        conversion,
+                        dtype: lane,
+                        width: *width as u64,
+                    },
+                );
                 self.define(ctx, op, *dest, false);
             }
             MirInstr::ReadRef { dest, reference } => {
@@ -1330,6 +1469,314 @@ impl<'a> FnImport<'a> {
                 self.bind_as(ctx, *dest, element, CoreRole::RegisterStore);
                 self.bind_as(ctx, *yielded, has_element, CoreRole::YieldStore);
             }
+            MirInstr::GetField { dest, base, field } => {
+                let ty = self.result_type(ctx, *dest)?;
+                let base = self.value(ctx, *base)?;
+                let op = ops::build(ctx, CoreOpKind::FieldGet, vec![ty], vec![base], vec![], 0);
+                set(ctx, op, &KEY_FIELD, FieldAttr { name: field.into() });
+                self.define(ctx, op, *dest, false);
+            }
+            MirInstr::SizeOf { dest, ty: measured } => {
+                let ty = self.result_type(ctx, *dest)?;
+                let measured = import_type(ctx, measured)?;
+                let op = ops::build(ctx, CoreOpKind::SizeOf, vec![ty], vec![], vec![], 0);
+                set(ctx, op, &KEY_SIZE_OF, SizeOfAttr { ty: measured });
+                self.define(ctx, op, *dest, false);
+            }
+            MirInstr::WriteRef { reference, value } => {
+                let operands = vec![self.value(ctx, *reference)?, self.value(ctx, *value)?];
+                self.effectful(ctx, CoreOpKind::RefWrite, operands, |_, _| {});
+            }
+            MirInstr::MultiIndex {
+                dest,
+                object,
+                args,
+                object_place,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                call,
+            } => {
+                let aligned = |places: &[Option<MirPlace>], count: usize| {
+                    places.is_empty() || places.len() == count
+                };
+                if !aligned(arg_places, args.len()) || !aligned(kwarg_places, kwargs.len()) {
+                    return Err(self.unsupported("a subscript whose places misalign its arguments"));
+                }
+                let mut operands = vec![self.value(ctx, *object)?];
+                let mut shapes = Vec::with_capacity(args.len());
+                for argument in args {
+                    shapes.push(self.subscript_arg(ctx, argument, &mut operands)?);
+                }
+                let mut keywords = Vec::with_capacity(kwargs.len());
+                for (name, argument) in kwargs {
+                    keywords.push(CoreKeywordArg {
+                        name: Text::from(name),
+                        arg: self.subscript_arg(ctx, argument, &mut operands)?,
+                    });
+                }
+                let call = call
+                    .as_ref()
+                    .map(|call| self.subscript_call(ctx, call, &mut operands))
+                    .transpose()?;
+                let places = object_place
+                    .iter()
+                    .chain(arg_places.iter().flatten())
+                    .chain(kwarg_places.iter().flatten());
+                for place in places {
+                    operands.push(self.place(ctx, place)?);
+                }
+                let facts = MultiIndexAttr {
+                    args: shapes,
+                    kwargs: keywords,
+                    object_place: object_place.is_some(),
+                    arg_places: arg_places.iter().map(Option::is_some).collect(),
+                    kwarg_places: kwarg_places.iter().map(Option::is_some).collect(),
+                    call,
+                };
+                self.effectful_value(ctx, CoreOpKind::MultiIndex, operands, *dest, |ctx, op| {
+                    set(ctx, op, &KEY_MULTI_INDEX, facts);
+                })?;
+            }
+            MirInstr::Slice {
+                dest,
+                object,
+                kind,
+                lower,
+                upper,
+                step,
+                object_place,
+                arg_places,
+                call,
+                intrinsic,
+            } => {
+                let mut operands = vec![self.value(ctx, *object)?];
+                for bound in [lower, upper, step].into_iter().flatten() {
+                    operands.push(self.value(ctx, *bound)?);
+                }
+                let call = call
+                    .as_ref()
+                    .map(|call| self.subscript_call(ctx, call, &mut operands))
+                    .transpose()?;
+                for place in object_place.iter().chain(arg_places.iter().flatten()) {
+                    operands.push(self.place(ctx, place)?);
+                }
+                let facts = SliceAttr {
+                    bounds: CoreSliceBounds {
+                        kind: CoreSliceKind::from_kind(*kind),
+                        lower: lower.is_some(),
+                        upper: upper.is_some(),
+                        step: step.is_some(),
+                    },
+                    object_place: object_place.is_some(),
+                    arg_places: arg_places.iter().map(Option::is_some).collect(),
+                    call,
+                    intrinsic: intrinsic.map(CoreIntrinsic::from_intrinsic),
+                };
+                self.effectful_value(ctx, CoreOpKind::Slice, operands, *dest, |ctx, op| {
+                    set(ctx, op, &KEY_SLICE, facts);
+                })?;
+            }
+            MirInstr::SimdShuffle {
+                dest,
+                value,
+                other,
+                mask,
+            } => {
+                let ty = self.result_type(ctx, *dest)?;
+                let mut operands = vec![self.value(ctx, *value)?];
+                if let Some(other) = other {
+                    operands.push(self.value(ctx, *other)?);
+                }
+                let op = ops::build(ctx, CoreOpKind::SimdShuffle, vec![ty], operands, vec![], 0);
+                set(
+                    ctx,
+                    op,
+                    &KEY_SHUFFLE,
+                    ShuffleAttr {
+                        other: other.is_some(),
+                        mask: mask.iter().map(|lane| *lane as u64).collect(),
+                    },
+                );
+                self.define(ctx, op, *dest, false);
+            }
+            MirInstr::HasNext { dest, iter } => {
+                let pack = self.var_slot(*iter)?;
+                self.effectful_value(ctx, CoreOpKind::PackHasNext, vec![pack], *dest, |_, _| {})?;
+            }
+            MirInstr::Next { dest, iter } => {
+                let pack = self.var_slot(*iter)?;
+                self.effectful_value(ctx, CoreOpKind::PackNext, vec![pack], *dest, |_, _| {})?;
+            }
+            MirInstr::ConsumePlace { place, marker } => {
+                let owner = place.root;
+                let operands = vec![self.place(ctx, place)?, self.value(ctx, *marker)?];
+                self.effectful(ctx, CoreOpKind::Consume, operands, |ctx, op| {
+                    set(
+                        ctx,
+                        op,
+                        &KEY_LIFECYCLE,
+                        LifecycleAttr {
+                            kind: CoreLifecycle::ConsumePlace,
+                            owner,
+                            path: Vec::new(),
+                        },
+                    );
+                });
+            }
+            MirInstr::UninitStorage { dest, init } => {
+                let mut operands = Vec::new();
+                if let Some(init) = init {
+                    operands.push(self.value(ctx, *init)?);
+                }
+                let facts = UninitAttr {
+                    access: CoreUninitAccess::Make,
+                    init: init.is_some(),
+                    element: None,
+                };
+                self.effectful_value(
+                    ctx,
+                    CoreOpKind::UninitStorage,
+                    operands,
+                    *dest,
+                    |ctx, op| {
+                        set(ctx, op, &KEY_UNINIT, facts);
+                    },
+                )?;
+            }
+            MirInstr::UninitStorageTake {
+                dest,
+                storage,
+                element,
+            }
+            | MirInstr::UninitStorageDestroy {
+                dest,
+                storage,
+                element,
+            } => {
+                let access = match instruction {
+                    MirInstr::UninitStorageTake { .. } => CoreUninitAccess::Take,
+                    _ => CoreUninitAccess::Destroy,
+                };
+                let facts = UninitAttr {
+                    access,
+                    init: false,
+                    element: Some(import_type(ctx, element)?),
+                };
+                let operands = vec![self.value(ctx, *storage)?];
+                self.effectful_value(
+                    ctx,
+                    CoreOpKind::UninitStorage,
+                    operands,
+                    *dest,
+                    |ctx, op| {
+                        set(ctx, op, &KEY_UNINIT, facts);
+                    },
+                )?;
+            }
+            MirInstr::MakeVariant {
+                dest,
+                alternatives,
+                index,
+                value,
+            } => {
+                let declared = import_type(ctx, &Ty::Variant(alternatives.clone()))?;
+                if declared != self.result_type(ctx, *dest)? {
+                    return Err(self.unsupported(
+                        "a variant construction at a type other than its register's",
+                    ));
+                }
+                let operands = vec![self.value(ctx, *value)?];
+                let access = CoreVariantAccess::Make(*index as u64);
+                self.variant(ctx, CoreOpKind::VariantMake, operands, *dest, access)?;
+            }
+            MirInstr::VariantIs {
+                dest,
+                variant,
+                index,
+            } => {
+                let ty = self.result_type(ctx, *dest)?;
+                let operand = self.value(ctx, *variant)?;
+                let op = ops::build(
+                    ctx,
+                    CoreOpKind::VariantTest,
+                    vec![ty],
+                    vec![operand],
+                    vec![],
+                    0,
+                );
+                set(
+                    ctx,
+                    op,
+                    &KEY_VARIANT,
+                    VariantAttr {
+                        access: CoreVariantAccess::Test(*index as u64),
+                    },
+                );
+                self.define(ctx, op, *dest, false);
+            }
+            MirInstr::VariantGet {
+                dest,
+                variant,
+                index,
+            } => {
+                let operands = vec![self.value(ctx, *variant)?];
+                let access = CoreVariantAccess::Get(*index as u64);
+                self.variant(ctx, CoreOpKind::VariantGet, operands, *dest, access)?;
+            }
+            MirInstr::VariantTake {
+                dest,
+                variant,
+                index,
+                checked,
+            } => {
+                let operands = vec![self.value(ctx, *variant)?];
+                let access = CoreVariantAccess::Take(*index as u64, *checked);
+                self.variant(ctx, CoreOpKind::VariantGet, operands, *dest, access)?;
+            }
+            MirInstr::VariantSet {
+                dest,
+                place,
+                index,
+                value,
+            } => {
+                let operands = vec![self.place(ctx, place)?, self.value(ctx, *value)?];
+                let access = CoreVariantAccess::Set(*index as u64);
+                self.variant(ctx, CoreOpKind::VariantSet, operands, *dest, access)?;
+            }
+            MirInstr::VariantReplace {
+                dest,
+                place,
+                input_index,
+                output_index,
+                value,
+                checked,
+            } => {
+                let operands = vec![self.place(ctx, place)?, self.value(ctx, *value)?];
+                let access =
+                    CoreVariantAccess::Replace(*input_index as u64, *output_index as u64, *checked);
+                self.variant(ctx, CoreOpKind::VariantSet, operands, *dest, access)?;
+            }
+            MirInstr::VariantSetInitWith {
+                dest,
+                place,
+                index,
+                factory,
+            } => {
+                let operands = vec![self.place(ctx, place)?, self.value(ctx, *factory)?];
+                let access = CoreVariantAccess::SetInitWith(*index as u64);
+                self.variant(ctx, CoreOpKind::VariantSet, operands, *dest, access)?;
+            }
+            MirInstr::VariantDeinitWith {
+                dest,
+                variant,
+                handler,
+                index,
+            } => {
+                let operands = vec![self.value(ctx, *variant)?, self.value(ctx, *handler)?];
+                let access = CoreVariantAccess::DeinitWith(*index as u64);
+                self.variant(ctx, CoreOpKind::VariantDeinitWith, operands, *dest, access)?;
+            }
             MirInstr::DropPlace { place } => {
                 let owner = place.root;
                 let place = self.place(ctx, place)?;
@@ -1471,32 +1918,10 @@ impl<'a> FnImport<'a> {
             MirInstr::Raise { .. } => {
                 return Err(self.unsupported("a `raise` outside the end of its block"));
             }
-            MirInstr::WriteRef { .. }
-            | MirInstr::MakeClosure { .. }
-            | MirInstr::ConstructTypeParam { .. }
-            | MirInstr::SizeOf { .. }
-            | MirInstr::CallIndirect { .. }
-            | MirInstr::UninitStorage { .. }
-            | MirInstr::UninitStorageTake { .. }
-            | MirInstr::UninitStorageDestroy { .. }
-            | MirInstr::GetField { .. }
-            | MirInstr::Slice { .. }
-            | MirInstr::MultiIndex { .. }
+            MirInstr::ConstructTypeParam { .. }
             | MirInstr::MakeTuple { .. }
-            | MirInstr::MakeVariant { .. }
-            | MirInstr::VariantIs { .. }
-            | MirInstr::VariantGet { .. }
-            | MirInstr::VariantSet { .. }
-            | MirInstr::VariantTake { .. }
-            | MirInstr::VariantSetInitWith { .. }
-            | MirInstr::VariantDeinitWith { .. }
-            | MirInstr::VariantReplace { .. }
-            | MirInstr::SimdShuffle { .. }
             | MirInstr::Drop { .. }
-            | MirInstr::ConsumePlace { .. }
-            | MirInstr::Unsupported(_)
-            | MirInstr::HasNext { .. }
-            | MirInstr::Next { .. } => {
+            | MirInstr::Unsupported(_) => {
                 return Err(self.unsupported(format!(
                     "instruction `{}`",
                     instruction_mnemonic(instruction)
@@ -1541,6 +1966,16 @@ impl<'a> FnImport<'a> {
         if let Some(place) = facts.recv_place {
             operands.push(self.place(ctx, place)?);
         }
+        let contract = facts.contract.map(|ty| import_type(ctx, ty)).transpose()?;
+        let instantiated = facts
+            .instantiated
+            .iter()
+            .map(|argument| import_arg(ctx, argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let reference_result = facts
+            .reference_result
+            .map(|reference| import_type(ctx, &Ty::Ref(reference.clone())))
+            .transpose()?;
         operands.push(self.token);
         let op = ops::build(
             ctx,
@@ -1570,10 +2005,55 @@ impl<'a> FnImport<'a> {
                 recv_place: facts.recv_place.is_some(),
                 recv_writes: facts.recv_writes,
                 params,
+                captures: facts
+                    .captures
+                    .iter()
+                    .map(CoreCaptureAccess::from_access)
+                    .collect(),
+                contract,
+                instantiated,
+                reference_result,
+                adapter: facts.adapter.map(|adapter| match adapter {
+                    CheckedResultAdapter::CopyIteratorReference => {
+                        CoreResultAdapter::CopyIteratorReference
+                    }
+                }),
             },
         );
         self.define(ctx, op, dest, true);
         Ok(())
+    }
+
+    /// The shape of one subscript argument, with its value operands
+    /// appended to `operands`.
+    fn subscript_arg(
+        &mut self,
+        ctx: &mut Context,
+        argument: &MirSubscriptArg,
+        operands: &mut Vec<Value>,
+    ) -> Result<CoreSubscriptArg, A1Error> {
+        Ok(match argument {
+            MirSubscriptArg::Index(reg) => {
+                operands.push(self.value(ctx, *reg)?);
+                CoreSubscriptArg::Index
+            }
+            MirSubscriptArg::Slice {
+                kind,
+                lower,
+                upper,
+                step,
+            } => {
+                for bound in [lower, upper, step].into_iter().flatten() {
+                    operands.push(self.value(ctx, *bound)?);
+                }
+                CoreSubscriptArg::Slice(CoreSliceBounds {
+                    kind: CoreSliceKind::from_kind(*kind),
+                    lower: lower.is_some(),
+                    upper: upper.is_some(),
+                    step: step.is_some(),
+                })
+            }
+        })
     }
 
     /// The facts of a subscript's nominal call, with its reified
@@ -1628,6 +2108,11 @@ impl<'a> FnImport<'a> {
                 .map(|reference| import_type(ctx, &mojito_types::types::Ty::Ref(reference.clone())))
                 .transpose()?,
             params,
+            captures: call
+                .capture_accesses
+                .iter()
+                .map(CoreCaptureAccess::from_access)
+                .collect(),
         })
     }
 
@@ -1656,6 +2141,20 @@ impl<'a> FnImport<'a> {
             });
         }
         Ok(params)
+    }
+
+    /// Append an effectful variant operation under `access`.
+    fn variant(
+        &mut self,
+        ctx: &mut Context,
+        kind: CoreOpKind,
+        operands: Vec<Value>,
+        dest: Reg,
+        access: CoreVariantAccess,
+    ) -> Result<(), A1Error> {
+        self.effectful_value(ctx, kind, operands, dest, |ctx, op| {
+            set(ctx, op, &KEY_VARIANT, VariantAttr { access });
+        })
     }
 
     /// Append an effectful operation whose value result defines `dest`.
@@ -1885,6 +2384,13 @@ impl<'a> FnImport<'a> {
         };
         annotate(ctx, op, identity, provenance);
         op.insert_at_back(self.block, ctx);
+        if self.sink.collect
+            && let Some(kind) = CoreOpKind::of(ctx, op)
+            && let Err(error) = super::verify::verify_core_op(ctx, op, kind)
+        {
+            let text = pliron::printable::Printable::disp(&error, ctx).to_string();
+            self.sink.record(format!("verify: {}", verify_rule(&text)));
+        }
     }
 
     /// The registers the tables name and no operation defines.
@@ -1964,86 +2470,108 @@ struct CallFacts<'a> {
     arg_places: &'a [Option<MirPlace>],
     kwarg_places: &'a [Option<MirPlace>],
     params: &'a [MirParamArg],
+    captures: &'a [MirCaptureAccess],
+    contract: Option<&'a Ty>,
+    instantiated: &'a [TyArg],
+    reference_result: Option<&'a mojito_types::origin::RefTy>,
+    adapter: Option<CheckedResultAdapter>,
 }
 
 /// The facets of a call instruction the core call attribute cannot carry.
 fn refused_call_facets(instruction: &MirInstr) -> Vec<&'static str> {
-    let (reference, adapter, captures, parameters) = match instruction {
-        MirInstr::Call {
-            capture_accesses, ..
-        } => (false, false, !capture_accesses.is_empty(), false),
-        MirInstr::MethodCall {
-            reference_result,
-            result_adapter,
-            capture_accesses,
-            param_decls,
-            ..
-        } => (
-            reference_result.is_some(),
-            result_adapter.is_some(),
-            !capture_accesses.is_empty(),
-            !param_decls.is_empty(),
-        ),
-        _ => return Vec::new(),
+    let parameters = match instruction {
+        MirInstr::MethodCall { param_decls, .. } | MirInstr::CallIndirect { param_decls, .. } => {
+            !param_decls.is_empty()
+        }
+        _ => false,
     };
-    [
-        (reference, "a reference result"),
-        (adapter, "a result adapter"),
-        (captures, "captured-owner effects"),
-        (parameters, "unresolved parameters"),
-    ]
-    .into_iter()
-    .filter_map(|(present, facet)| present.then_some(facet))
-    .collect()
+    parameters
+        .then_some("unresolved parameters")
+        .into_iter()
+        .collect()
 }
 
 /// The facets of a subscript's nominal call the core attribute cannot
 /// carry.
 fn refused_subscript_facets(call: &MirSubscriptCall) -> Vec<&'static str> {
-    [
-        (!call.capture_accesses.is_empty(), "captured-owner effects"),
-        (!call.param_decls.is_empty(), "unresolved parameters"),
-    ]
-    .into_iter()
-    .filter_map(|(present, facet)| present.then_some(facet))
-    .collect()
+    (!call.param_decls.is_empty())
+        .then_some("unresolved parameters")
+        .into_iter()
+        .collect()
 }
 
-/// Every instruction of `blocks`, nested regions included.
-fn collect_instructions<'a>(blocks: &'a [MirBlock], out: &mut Vec<&'a MirInstr>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        out.push(instruction);
-        if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } = instruction
+/// The census keys of one refusal: its class and what it names, without
+/// the position and the payload that would keep equal refusals apart. A
+/// call refused for several facets counts once per facet.
+fn refusal_keys(message: &str) -> Vec<String> {
+    for class in ["legality", "verify", "struct", "declaration"] {
+        if let Some(body) = message
+            .strip_prefix(class)
+            .and_then(|rest| rest.strip_prefix(": "))
         {
-            collect_instructions(body, out);
-            let parts = [
-                handler.as_ref().map(|(_, blocks)| blocks),
-                orelse.as_ref(),
-                finalbody.as_ref(),
-            ];
-            for part in parts.into_iter().flatten() {
-                collect_instructions(part, out);
-            }
+            let body = body.split(" (`").next().unwrap_or(body);
+            return vec![format!("{class}: {}", normalized(body))];
         }
     }
+    let message = message.split(" (region `").next().unwrap_or(message);
+    let message = message.strip_suffix(" has no core form").unwrap_or(message);
+    if let Some(facets) = message.strip_prefix("a call with ") {
+        return facets
+            .split(", ")
+            .map(|facet| format!("call: {facet}"))
+            .collect();
+    }
+    if let Some(facets) = message.strip_prefix("a subscript call with ") {
+        return facets
+            .split(", ")
+            .map(|facet| format!("subscript: {facet}"))
+            .collect();
+    }
+    if let Some(form) = message
+        .strip_prefix("instruction `")
+        .or_else(|| message.strip_prefix("terminator `"))
+    {
+        return vec![format!("form: {}", form.trim_end_matches('`'))];
+    }
+    if let Some(what) = message.strip_suffix(" is outside the core type vocabulary") {
+        return vec![format!("type: {}", normalized(what).trim_matches('`'))];
+    }
+    if message.starts_with("constant `") {
+        return vec![format!("constant: {}", normalized(message))];
+    }
+    if message.contains("is outside the parameter payload") {
+        return vec![format!("param: {}", normalized(message))];
+    }
+    vec![format!("shape: {}", normalized(message))]
 }
 
-/// A refusal without the payload of the type or constant it names, so
-/// that equal refusals count together.
-fn refusal_head(message: &str) -> String {
-    let Some(body) = message.strip_prefix('`') else {
-        return message.to_string();
-    };
-    let end = body
-        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(body.len());
-    body[..end].to_string()
+/// `message` with every backticked payload cut to its head: the type or
+/// constant constructor, or the whole symbol, so that equal refusals count
+/// together.
+fn normalized(message: &str) -> String {
+    let mut out = String::new();
+    let mut rest = message;
+    while let Some((before, after)) = rest.split_once('`') {
+        out.push_str(before);
+        out.push('`');
+        let Some((payload, tail)) = after.split_once('`') else {
+            out.push_str(after);
+            return out;
+        };
+        let head = payload.find([' ', '(', '{']).unwrap_or(payload.len());
+        out.push_str(&payload[..head]);
+        out.push('`');
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The rule a verifier diagnostic states, without the framing and the
+/// operation it names.
+fn verify_rule(text: &str) -> &str {
+    let rule = text.rsplit("verification failed. ").next().unwrap_or(text);
+    rule.split(" (`").next().unwrap_or(rule)
 }
 
 /// Every source label the program's records name, sorted.

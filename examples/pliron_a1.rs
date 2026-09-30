@@ -3,7 +3,9 @@
 //!
 //! ```text
 //! pliron_a1 --input PATH --mode baseline|shadow|shadow-opt
-//!           --phase compile|artifact|execute --metrics PATH [--emit-v1 PATH]
+//!           --phase compile|artifact|execute --metrics PATH
+//!           [--emit-v1 PATH] [--emit-core PATH] [--emit-bridge PATH]
+//!           [--emit-specialized PATH]
 //! pliron_a1 --summarize SAMPLES.tsv --shadow-mode shadow|shadow-opt
 //! ```
 //!
@@ -11,6 +13,11 @@
 //! and times the boundary alone; `execute` also runs the result on the VM,
 //! timed apart. A failure writes an error row and exits nonzero: an input
 //! the shadow cannot cover never reports a fast baseline in its place.
+//! `--emit-core` writes the canonical core text of a shadow run,
+//! `--emit-bridge` the unverified bridge module as imported (and then
+//! verifies each function on its own, naming it first), and
+//! `--emit-specialized` the v1 text of the specialized input, for reading
+//! a diagnostic against the text it names.
 
 use std::fmt::Write as _;
 use std::hint::black_box;
@@ -43,6 +50,9 @@ struct Options {
     phase: Phase,
     metrics: PathBuf,
     emit_v1: Option<PathBuf>,
+    emit_core: Option<PathBuf>,
+    emit_bridge: Option<PathBuf>,
+    emit_specialized: Option<PathBuf>,
 }
 
 /// What one run measured, as the fields of its metrics row.
@@ -99,6 +109,9 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
         phase,
         metrics: required("--metrics")?.into(),
         emit_v1: value_of(arguments, "--emit-v1").map(PathBuf::from),
+        emit_core: value_of(arguments, "--emit-core").map(PathBuf::from),
+        emit_bridge: value_of(arguments, "--emit-bridge").map(PathBuf::from),
+        emit_specialized: value_of(arguments, "--emit-specialized").map(PathBuf::from),
     })
 }
 
@@ -136,8 +149,45 @@ fn measure_input(options: &Options) -> Result<Metrics, String> {
         Mode::Baseline => program,
         Mode::Shadow | Mode::ShadowOpt => {
             let entries = entries(&program);
-            let shadow = measure::shadow(&program, &entries, options.mode == Mode::ShadowOpt)
-                .map_err(|error| format!("{error}{}", uncovered(&program, &entries)))?;
+            if let Some(path) = &options.emit_specialized {
+                emit_specialized(&program, &entries, path)?;
+            }
+            if let Some(path) = &options.emit_bridge {
+                let text =
+                    measure::bridge_print(&program, &entries).map_err(|error| error.to_string())?;
+                std::fs::write(path, text)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                let normalized_path = path.with_extension("normalized.txt");
+                let verdicts = measure::verify_each_function(
+                    &program,
+                    &entries,
+                    |symbol| eprintln!("verifying {symbol}"),
+                    |normalized| {
+                        if let Err(error) = std::fs::write(&normalized_path, normalized) {
+                            eprintln!("{}: {error}", normalized_path.display());
+                        }
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                for (symbol, verdict) in verdicts {
+                    if let Err(error) = verdict {
+                        eprintln!("`{symbol}`: {error}");
+                    }
+                }
+            }
+            let shadow = measure::shadow(&program, &entries, options.mode == Mode::ShadowOpt);
+            if let Some(path) = &options.emit_core {
+                let text = match &shadow {
+                    Ok(shadow) => Ok(shadow.core_text.clone()),
+                    Err(_) => measure::first_print(&program, &entries),
+                };
+                if let Ok(text) = text {
+                    std::fs::write(path, text)
+                        .map_err(|error| format!("{}: {error}", path.display()))?;
+                }
+            }
+            let shadow =
+                shadow.map_err(|error| format!("{error}{}", uncovered(&program, &entries)))?;
             drop(program);
             record(&mut metrics, shadow)
         }
@@ -170,6 +220,15 @@ fn entries(program: &MirProgram) -> Vec<String> {
         .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
         .map(str::to_string)
         .collect()
+}
+
+/// The v1 text of the specialized closure, written to `path`.
+fn emit_specialized(program: &MirProgram, entries: &[String], path: &Path) -> Result<(), String> {
+    let specialized = mojito::native::mono::specialize(program, entries)
+        .map_err(|error| format!("specialize: {error:?}"))?;
+    let text = mojito::mir::text::disassemble(&specialized.program)
+        .map_err(|error| format!("{error:?}"))?;
+    std::fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Every refusal the importer has for the specialized closure, counted,

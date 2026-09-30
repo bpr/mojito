@@ -7,13 +7,14 @@ Record of the Stage A1 vertical slice from
 ## Status and decision
 
 **`PASS-SLICE`, and `INCOMPLETE` for the pivot decision.** Recorded
-2026-09-27.
+2026-09-27; the decision corpus run 2026-09-29.
 
 - All seven proof items pass on the gate fixture, on the VM and natively.
 - F1 to F4 pass. F5 (overhead) is **not measured**.
 - The pivot is neither approved nor rejected. A2 is not started.
-- All ten focused inputs convert (§Coverage). The 848-input decision corpus
-  has not been run, so no corpus budget can be claimed.
+- All ten focused inputs convert, and 887 of the 893 inputs of the decision
+  corpus (§Coverage). The six that do not are named there; none is a form
+  the inventory lacks.
 - The scheduled measurement lane and the pin rehearsal have not run
   (§Remaining boundaries).
 
@@ -29,7 +30,7 @@ input are unchanged. A1 is optional, default off, and removable.
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
 | F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | NOT MEASURED | needs the decision corpus, 848 inputs |
+| Full canonical-artifact compatibility | 887 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the six residues in §Coverage |
 | Pin-maintenance rehearsal | NOT MEASURED | scheduled work, one working day |
 
 Core text is 2.6 to 3.4 times the v1 text of the same module. That is over
@@ -90,14 +91,14 @@ These are the decisions as built. Changing one is a reviewed change.
 
 ### Inventory
 
-37 operations, all defined through one macro over the registry
+53 operations, all defined through one macro over the registry
 (`inventory::CoreOpKind`). Each entry owns its name, effect class, legal
 stages, MIR forms, export rule, and text rule.
 
 | Stage | Operations |
 |---|---|
-| Both | `func` `slot` `const` `materialize` `binary` `simd_make` `unary` `simd_convert` `use` `store` `project` `load` `ref_make` `ref_store` `ref_read` `copy` `move` `keep_alive` `index` `multi_set` `pointer_storage` `iter_init` `iter_next` `call` `drop` `consume` `loans` `invalidate` `br` `cond_br` `return` `raise` |
-| Bridge only | `try_bridge` `region_exit` |
+| Both | `func` `slot` `const` `materialize` `binary` `simd_make` `unary` `simd_convert` `use` `store` `project` `load` `ref_make` `ref_store` `ref_read` `copy` `move` `keep_alive` `index` `multi_set` `pointer_storage` `iter_init` `iter_next` `call` `closure_make` `field_get` `size_of` `ref_write` `multi_index` `slice` `simd_shuffle` `pack_has_next` `pack_next` `uninit_storage` `variant_make` `variant_test` `variant_get` `variant_set` `variant_deinit_with` `drop` `consume` `loans` `invalidate` `br` `cond_br` `return` `raise` |
+| Bridge only | `try_bridge` `region_exit` `escape` |
 | Executable core only | `invoke` `outcome` `resume` |
 
 Differences from the plan's initial list, all from the census:
@@ -128,8 +129,29 @@ compile benchmarks:
 Two existing operations import a second form: `drop` takes `drop.place`,
 and `return` takes `return.cleanup` with its cleanup slots as operands.
 
-Of the 61 MIR forms, 36 import and 25 are rejected by name
-(`target/pliron-a1/form_decisions.tsv`). Neither match has a wildcard arm.
+The decision corpus added sixteen operations and four second forms
+(`call` takes `call.indirect`, `consume` takes `consume.place`, and the
+variant and uninitialized-storage operations take one form per access):
+
+| Operation | MIR forms | Effect |
+|---|---|---|
+| `closure_make` | `closure.make` | effectful; one `Move` lifecycle event per moved capture |
+| `field_get` | `field.get` | pure |
+| `size_of` | `layout.size_of` | pure |
+| `ref_write` | `ref.write` | effectful |
+| `multi_index` | `index.multi` | effectful, raising |
+| `slice` | `slice.get` | effectful, raising |
+| `simd_shuffle` | `simd.shuffle` | pure |
+| `pack_has_next`, `pack_next` | `iter.has_next`, `iter.next` | effectful |
+| `uninit_storage` | `uninit.make`, `uninit.take`, `uninit.destroy` | effectful |
+| `variant_make`, `variant_test`, `variant_get`, `variant_set`, `variant_deinit_with` | `variant.make`; `variant.is`; `variant.get`, `variant.take`; `variant.set`, `variant.replace`, `variant.set_init_with`; `variant.deinit_with` | effectful, but `variant_test` pure |
+| `escape` | `escape` | terminator, bridge only |
+
+Of the 63 MIR forms, 59 import and 4 are rejected by name
+(`target/pliron-a1/form_decisions.tsv`): `drop.reg` is reserved and
+unemitted, `unsupported` is lowering's own failure marker, and
+`tuple.make` and `type.construct` occur in no corpus input, so no positive
+case exists for them. Neither match has a wildcard arm.
 
 ### Types, declarations, and calls
 
@@ -138,19 +160,43 @@ The benchmarks also needed facts the gate never carried:
 - Types: compiler-private tuple storage, the runtime pack, a type
   parameter named by identity with its bounds, and a pointer origin that
   names an origin binder or the receiver's own place. Specialization
-  leaves origins symbolic.
+  leaves origins symbolic. The corpus added `float64`, `float_literal`,
+  `dtype`, `variant`, union origins, and `func`: the full checked function
+  type (environment, parameters with conventions and reference contracts,
+  variadic collectors, markers, error, reference result, and transfer
+  effects). `transfers` are part of the `func` type's identity, as the v1
+  text prints them, where checked types ignore them: two checked-equal
+  function types can be two handles.
+- Constants: `Int`, the integer literal, `Float64` as its bits, the
+  floating literal in its own exact spelling, `Bool`, string, `DType`,
+  and a function symbol. A negative machine integer prints through the
+  `Signed` newtype: Pliron's own integer parser reads digits alone.
 - Declarations: parameter defaults (a literal under its converting
-  constructors), both variadic collectors, and the positional-only and
-  keyword-only markers. A floating default is refused by name.
+  constructors, floating literals included), both variadic collectors,
+  and the positional-only and keyword-only markers.
 - Calls: the compile-time arguments of a call, each with its name, its
   reifying register as an operand, its forwarded binder, and its value
-  expression as a parameter node. A call may record no place table.
-- Callees: a direct call names a function, a struct, or one of ten
-  builtins (`verify::BUILTIN_CALLEES`). A method call without a
-  checker-selected symbol names one of seven methods of compiler-private
-  values (`verify::BUILTIN_METHODS`).
+  expression as a parameter node; the captured owner storage the call
+  reads or writes; a method's reference result and result adapter; and
+  an indirect call's callee as the receiver operand, with its
+  instantiated contract and retained generic arguments. A call may
+  record no place table.
+- Callees: a direct call names a function, a struct, a builtin the VM
+  answers itself, or the VM's dynamic trait dispatch; a method call
+  without a checker-selected symbol names a method of a compiler-private
+  value the VM implements. Both name lists live beside the dispatch that
+  answers them (`mojito_vm::builtins`) and are re-exported as
+  `verify::{BUILTIN_CALLEES, BUILTIN_METHODS}`.
 - A projection may designate the referent of its last step's reference,
-  as MIR does when it reads through a `ref` field.
+  as MIR does when it reads through a `ref` field. A field step's type is
+  compared with the declaration's modulo every origin, since a shared
+  instance spells them two ways.
+- `ref_make` and `ref_store` yield or take a reference capability: a
+  reference, or a pointer whose origin names a place, a binder, or the
+  receiver, as MIR's own verifier admits.
+- A SIMD construction or conversion of one lane may land in the scalar
+  alias the checker spells it as (`Int`, `Bool`, `Float64`); the
+  operation records its lane type and width itself.
 
 ### Values and registers
 
@@ -175,6 +221,14 @@ Normalization rebuilds each function as a flat graph:
 - A `finally` has one entry taking a pending outcome. Every way in records
   `outcome` first, and `resume` dispatches after the body.
 - An error leaving the function lands on a block that raises it.
+- A `return` or `escape` crossing out of a try region runs the drops of
+  the tries it leaves inline, innermost first (`ExitDrop(n)` roles), then
+  its terminator. A `finally` on the way makes the exit a pending outcome
+  (`outcome` kind `Exit(site)`) entering that finally; `resume` continues
+  each site after the finally's own normal and error successors
+  (`ResumeAttr`), into a continuation block holding the next drops and the
+  way out. A return carrying cleanup across a finally, and an exit from
+  inside a finally body, are refused by name.
 
 Export first rebuilds the structured regions from the current operations.
 The layout attribute records, per block, its region, MIR block, and segment.
@@ -268,6 +322,29 @@ and replacement stay with `ParamContext`.
     bridges and the VM runs. Both are now kept, native reachability still
     skips them, and the VM's display dispatch accepts a `write_to` whose
     writer specialization bound to the builtin string writer.
+13. **The pinned Pliron panics on a block nothing reaches.** Its dominance
+    check indexes a dominator map that holds only the blocks reachable
+    from the region's entry, and a `try` whose body cannot raise leaves
+    its whole error path unreachable after normalization. `verify_tree`
+    now runs Pliron's verification of everything but dominance, and
+    `verify_dominance` judges every use itself, skipping dead blocks. To
+    raise upstream at the pin rehearsal.
+14. **The census was partial.** The parallel walker behind
+    `import::refusals` mirrored seven of the importer's rules and kept a
+    second copy of the callee policy; 105 of 517 refused inputs had no
+    counted refusal. The importer now runs in collect mode instead, and
+    each finished operation is verified in place, so the census counts
+    verifier and legality rules too.
+15. **Three monomorphization defects hid behind the shadow.** An
+    arity-specialized variadic instance kept the ABI-only `RuntimePack` in
+    its slots, a retargeted method call kept the compile-time parameter
+    declarations its instance had shed, and the specialized program was
+    never verified by the native backend. Both are fixed in
+    `crates/mojito-native/src/native/mono/`; three inputs still do not
+    verify after specialization (§Coverage).
+16. **`#[format]` prints a variant's name before its own literal.** A
+    tuple variant with a custom format holding a literal word printed the
+    word twice (`Taketake`); the default tuple format is the one to use.
 
 ## Coverage
 
@@ -292,13 +369,43 @@ has no refusal, that the exported v1 text is the specialized text byte for
 byte, and that the exported program runs on the VM as the specialized one
 does, and the specialized one as the original.
 
-Still refused by name, because no focused input reaches them: a `return`
-inside a `try` region, a subscript store through a slice, a floating
-constant or default, a call with captured-owner effects, a method call
-with a reference result or a result adapter, and the 25 rejected forms.
-
 The gate count here is 13 functions because the harness also enters
 `__toplevel__`. The tests enter `main` alone and see 12.
+
+### The decision corpus
+
+`scripts/cover-pliron-a1` over the frozen 893 inputs
+(`target/pliron-a1/corpus-inputs.tsv`), release build, one process per
+input, coverage only. Run 2026-09-29 at each stage of the coverage task:
+
+| Inventory state | Convert | Refused |
+|---|---|---|
+| Ten focused inputs (2026-09-28) | 376 | 517, of which 105 with no counted refusal |
+| Defects fixed; floats, `DType`, function types, closures, indirect calls, reference results | 841 | 52 |
+| The plain forms and variants | 887 with exits crossing a try refused | 6 plus those |
+| Exits crossing a try, with and without `finally` | **887** | **6** |
+
+The six that do not convert, none a form the inventory lacks:
+
+| Input | Why |
+|---|---|
+| `assets/extensions/ok/container_owning_family_apis.mojo` | specialized MIR does not verify: an indirect-call target does not match its callable contract |
+| `assets/extensions/ok/reference_list_write_through_method.mojo` | specialized MIR does not verify: a store of `ref Int` into `Int` storage |
+| `assets/ok/capturing_lambda_array_display.mojo` | specialized MIR does not verify: a subscript's reference-result referent differs from the declaration |
+| `assets/ok/tuple_hashable_dict_key.mojo` | a `Tuple` type argument spelled with and without its element types across one instance, so a field projection names no declared field |
+| `assets/ok/comptime_shadowed_locals.mojo` | the front end refuses it under `Compiler::default()` (`expected Ts[i], found Ts[40]`) |
+| `assets/ok/pliron_finally_overrides.mojo` | a `return` inside a `finally` body, refused by name |
+
+Still refused by name, because no corpus input reaches them: a subscript
+store through a slice, a return carrying cleanup across a finally, a
+call with unresolved parameters, and the four rejected forms.
+
+Beyond conversion, the exported program of some inputs does not run on
+the VM as the specialized one does not either: the VM's slice bounds
+construct the nominal `Optional`, whose template declaration
+specialization drops. That is a VM-transparency defect of
+monomorphization, filed on the roadmap, not a shadow defect: the exported
+text is the specialized text byte for byte.
 
 ## Measurements
 
@@ -403,7 +510,10 @@ scripts/bench-pliron-a1 --bin target/release/examples/pliron_a1 --inputs target/
 The second `bench-pliron-a1` command is the bulk lane. Both exit nonzero
 while any input is refused, and write every raw sample before summarizing.
 A refused input's diagnostic ends with every refusal the importer has for
-it, counted.
+it, counted. `scripts/cover-pliron-a1 --bin BIN --inputs FILE --out DIR
+--jobs 4` is the coverage-only sweep, and the example's `--emit-core`,
+`--emit-bridge` (which also verifies each function on its own, naming it
+first), and `--emit-specialized` write the text a diagnostic names.
 
 ## Code footprint
 
@@ -411,19 +521,21 @@ Lines under `crates/mojito-pliron/src/a1/`, inline documentation included.
 
 | Part | Files | Lines |
 |---|---|---|
-| Definitions | `ops.rs`, `types.rs`, `attrs.rs`, `inventory.rs` | 2,631 |
-| Verification | `verify.rs`, `lifecycle.rs` | 1,472 |
-| Conversion | `import.rs`, `export.rs`, `outcomes.rs`, `execute.rs` | 5,071 |
-| Parameter attributes | `params.rs` | 1,003 |
+| Definitions | `ops.rs`, `types.rs`, `attrs.rs`, `inventory.rs` | 3,771 |
+| Verification | `verify.rs`, `lifecycle.rs` | 2,078 |
+| Conversion | `import.rs`, `export.rs`, `outcomes.rs`, `execute.rs` | 6,626 |
+| Parameter attributes | `params.rs` | 829 |
 | Text and locations | `text.rs`, `provenance.rs`, `ir_framework.rs` | 193 |
 | Optimization | `opt.rs` | 143 |
-| Measurement | `measure.rs` | 379 |
-| Module root | `mod.rs` | 84 |
-| **Total** | | **10,976** |
+| Measurement | `measure.rs` | 452 |
+| Module root | `mod.rs` | 91 |
+| **Total** | | **14,183** |
 
-Outside the crate: `tests/pliron_a1_test.rs` 1,947,
-`examples/pliron_a1.rs` 312, `scripts/bench-pliron-a1` 114,
-`scripts/gen-pliron-a1-inputs` 93.
+Outside the crate: `tests/pliron_a1_test.rs` 1,976,
+`examples/pliron_a1.rs` 370, `scripts/bench-pliron-a1` 114,
+`scripts/gen-pliron-a1-inputs` 93, `scripts/cover-pliron-a1` 131. The
+VM's builtin name tables (`crates/mojito-vm/src/builtins.rs`, 118) are the
+VM's own and stay whatever the verdict.
 
 A1 deletes nothing. These lines are added beside the MIR they shadow.
 
@@ -442,9 +554,8 @@ native operand fix. They stand without A1.
 
 ## Remaining boundaries
 
-- **Coverage.** The inventory covers the focused set, not the decision
-  corpus. The scope decision was the focused set. The corpus is filed on the
-  roadmap.
+- **Coverage.** 887 of 893 corpus inputs convert; the six residues are
+  named in §Coverage and filed on the roadmap by their kind.
 - **Overhead.** No release measurement exists. The debug diagnostic cannot
   stand in for one.
 - **Interpreter speed.** Both backends ran exported MIR. Nothing here says

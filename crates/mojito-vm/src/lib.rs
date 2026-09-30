@@ -3,4 +3,5 @@
 //! ownership analysis on its input (the stage-composed seam contract).
 
 pub mod backend;
+pub mod builtins;
 pub mod runtime;

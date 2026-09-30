@@ -25,7 +25,7 @@ from pathlib import Path
 
 COUNTED = re.compile(r"^(.*) x(\d+)$")
 CLASS = re.compile(
-    r", (?=(?:struct|declaration|type|form|call|callee|method|place|subscript|constant): )")
+    r", (?=(?:struct|declaration|type|form|call|subscript|constant|param|shape|verify|legality): )")
 
 
 def cover(binary, source, metrics, timeout):

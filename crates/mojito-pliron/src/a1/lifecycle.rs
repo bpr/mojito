@@ -12,11 +12,13 @@ use pliron::linked_list::ContainsLinkedList;
 use pliron::operation::Operation;
 
 use super::attrs::{
-    ContractAttr, CoreEvent, CoreLifecycle, CoreStorage, EventKind, IdentityAttr, LifecycleAttr,
-    SlotAttr, StoreAttr, UseModeAttr,
+    ClosureAttr, ContractAttr, CoreCaptureMode, CoreEvent, CoreLifecycle, CoreStorage, EventKind,
+    IdentityAttr, LifecycleAttr, SlotAttr, StoreAttr, UseModeAttr,
 };
 use super::inventory::{CoreOpKind, EffectClass};
-use super::ops::{KEY_CONTRACT, KEY_IDENTITY, KEY_LIFECYCLE, KEY_SLOT, KEY_STORE, KEY_USE_MODE};
+use super::ops::{
+    KEY_CLOSURE, KEY_CONTRACT, KEY_IDENTITY, KEY_LIFECYCLE, KEY_SLOT, KEY_STORE, KEY_USE_MODE,
+};
 use super::outcomes::function_blocks;
 use super::verify::{attr, describe, root_slot, variable_slot};
 use super::{A1Error, A1ErrorKind};
@@ -62,7 +64,7 @@ pub fn derive_contract(ctx: &Context, func: Ptr<Operation>) -> Result<ContractAt
             continue;
         };
         for op in blocks[position].deref(ctx).iter(ctx) {
-            if let Some((_, owner, after)) = transition(ctx, op) {
+            for (_, owner, after) in transition(ctx, op) {
                 state.insert(owner, after);
             }
         }
@@ -97,7 +99,7 @@ pub fn derive_contract(ctx: &Context, func: Ptr<Operation>) -> Result<ContractAt
                     EffectClass::Effectful | EffectClass::Terminator
                 )
             });
-            if let Some((kind, owner, after)) = transition(ctx, op) {
+            for (kind, owner, after) in transition(ctx, op) {
                 let identity: IdentityAttr = attr(ctx, op, &KEY_IDENTITY)
                     .ok_or_else(|| unverified(ctx, op, "an operation without identity"))?;
                 events.push(CoreEvent {
@@ -168,9 +170,36 @@ pub fn check_contract(ctx: &Context, func: Ptr<Operation>) -> Result<(), A1Error
     }
 }
 
-/// The event `op` is, the owner it concerns, and the owner's state after.
-fn transition(ctx: &Context, op: Ptr<Operation>) -> Option<(EventKind, u32, u8)> {
-    let kind = CoreOpKind::of(ctx, op)?;
+/// The events `op` is, each with the owner it concerns and the owner's
+/// state after. A closure moving several captures is several events.
+fn transition(ctx: &Context, op: Ptr<Operation>) -> Vec<(EventKind, u32, u8)> {
+    let Some(kind) = CoreOpKind::of(ctx, op) else {
+        return Vec::new();
+    };
+    if kind == CoreOpKind::ClosureMake {
+        let Some(closure) = attr::<ClosureAttr>(ctx, op, &KEY_CLOSURE) else {
+            return Vec::new();
+        };
+        return op
+            .deref(ctx)
+            .operands()
+            .zip(&closure.modes)
+            .filter(|(place, mode)| **mode == CoreCaptureMode::Move && variable_slot(ctx, *place))
+            .filter_map(|(place, _)| root_slot(ctx, place))
+            .map(|slot| (EventKind::Move, slot.id, MOVED))
+            .collect();
+    }
+    transition_of_first_operand(ctx, op, kind)
+        .into_iter()
+        .collect()
+}
+
+/// The one event an operation over its first operand's owner is.
+fn transition_of_first_operand(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    kind: CoreOpKind,
+) -> Option<(EventKind, u32, u8)> {
     let place = op.deref(ctx).operands().next()?;
     let owner = || {
         root_slot(ctx, place)

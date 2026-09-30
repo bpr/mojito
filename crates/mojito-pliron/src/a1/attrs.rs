@@ -11,12 +11,15 @@ use pliron::r#type::TypeHandle;
 
 use mojito_ast::ast::{ArgConvention, InfixOp, PrefixOp};
 use mojito_checked::checked::{CheckedCallArgument, CheckedCallArgumentSource, CheckedConst};
-use mojito_common::literal::IntLiteral;
+use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, SyntaxId};
-use mojito_mir::mir::{Const, MirInteriorOrigin, MirIntrinsicSubscript, UseMode};
+use mojito_mir::mir::{
+    Const, MirCaptureAccess, MirCaptureMode, MirInteriorOrigin, MirIntrinsicSubscript, UseMode,
+};
+use mojito_types::types::SliceKind;
 
 use super::params::{NodeKey, PayloadBinder};
-use super::types::CoreSeg;
+use super::types::{CoreArg, CoreDtype, CorePlacePath, CoreSeg};
 use super::{A1Error, A1ErrorKind};
 
 /// A string in core text: double-quoted, with only `\\` and `"` escaped,
@@ -84,6 +87,45 @@ impl Parsable for Text {
     }
 }
 
+/// A signed machine integer in core text. Pliron's own integer parser
+/// reads digits alone, so a negative value needs its sign read here.
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Default)]
+pub struct Signed(pub i64);
+
+impl Printable for Signed {
+    fn fmt(
+        &self,
+        _ctx: &Context,
+        _state: &printable::State,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Parsable for Signed {
+    type Arg = ();
+    type Parsed = Self;
+
+    fn parse<'a>(
+        state_stream: &mut StateStream<'a>,
+        _arg: Self::Arg,
+    ) -> ParseResult<'a, Self::Parsed> {
+        use pliron::combine::parser::char::{char, digit};
+        use pliron::combine::{many1, optional};
+        (optional(char('-')), many1::<String, _, _>(digit()))
+            .and_then(|(sign, digits)| {
+                let text = match sign {
+                    Some(_) => format!("-{digits}"),
+                    None => digits,
+                };
+                text.parse::<i64>().map(Signed)
+            })
+            .parse_stream(state_stream)
+            .into()
+    }
+}
+
 /// The stable identity of an operation: where its source instruction sat in
 /// the imported function, and which part of that instruction it carries.
 #[pliron_attr(
@@ -139,6 +181,9 @@ pub enum CoreRole {
     UnwindDrop(u64),
     /// The `n`th cleanup drop on a try's normal edge.
     DoneDrop(u64),
+    /// The `n`th drop an exit crossing out of a try region runs first: the
+    /// escape's own cleanup, then each enclosing try's, innermost first.
+    ExitDrop(u64),
     /// The binding of a caught error to its handler's slot.
     Caught,
     /// The branch leaving a try's error-edge cleanup.
@@ -151,6 +196,12 @@ pub enum CoreRole {
     /// The branch from a pending outcome into `finally`.
     PendingNormalExit,
     PendingErrorExit,
+    /// The pending outcome of a return or escape entering `finally`, and
+    /// the branch into it.
+    PendingExit,
+    PendingExitExit,
+    /// The terminator that ends an exit's way out after its last `finally`.
+    ExitTerminal,
     /// The branch from the single `finally` entry to its block 0.
     FinallyEntry,
     /// The raise that hands an error out of the function.
@@ -249,36 +300,42 @@ pub enum CoreStorage {
 #[pliron_attr(name = "mojito_core.constant", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub enum ConstAttr {
-    Int(i64),
+    Int(Signed),
     /// An exact integer literal in decimal, of any magnitude.
     IntLiteral(Text),
+    /// The bits of a machine `Float64`, so every value round-trips.
+    Float(u64),
+    /// An exact floating literal in its own spelling: `-0.0`, `{n}.0`, or
+    /// a reduced `{numerator}/{denominator}`.
+    FloatLiteral(Text),
     Bool(bool),
     Str(Text),
     None,
+    Dtype(CoreDtype),
+    /// A function value: the symbol of the body it names.
+    Function(Text),
 }
 
 impl ConstAttr {
     pub fn from_const(constant: &Const) -> Result<Self, A1Error> {
         match constant {
-            Const::Int(value) => Ok(Self::Int(*value)),
+            Const::Int(value) => Ok(Self::Int(Signed(*value))),
             Const::IntLiteral(literal) => {
                 Ok(Self::IntLiteral(literal.as_bigint().to_string().into()))
             }
+            Const::Float(value) => Ok(Self::Float(value.to_bits())),
+            Const::FloatLiteral(literal) => Ok(Self::FloatLiteral(literal.to_string().into())),
             Const::Bool(value) => Ok(Self::Bool(*value)),
             Const::Str(value) => Ok(Self::Str(value.into())),
             Const::None => Ok(Self::None),
-            Const::Float(_) | Const::FloatLiteral(_) | Const::Function(_) | Const::Dtype(_) => {
-                Err(A1Error::new(
-                    A1ErrorKind::UnsupportedForm,
-                    format!("constant `{constant:?}` has no core form"),
-                ))
-            }
+            Const::Dtype(dtype) => Ok(Self::Dtype(CoreDtype::from_dtype(*dtype))),
+            Const::Function(symbol) => Ok(Self::Function(symbol.into())),
         }
     }
 
     pub fn constant(&self) -> Result<Const, A1Error> {
         Ok(match self {
-            Self::Int(value) => Const::Int(*value),
+            Self::Int(value) => Const::Int(value.0),
             Self::IntLiteral(digits) => Const::IntLiteral(
                 IntLiteral::parse_radix(digits.as_str(), 10).ok_or_else(|| {
                     A1Error::new(
@@ -287,11 +344,39 @@ impl ConstAttr {
                     )
                 })?,
             ),
+            Self::Float(bits) => Const::Float(f64::from_bits(*bits)),
+            Self::FloatLiteral(text) => Const::FloatLiteral(parse_float_literal(text)?),
             Self::Bool(value) => Const::Bool(*value),
             Self::Str(value) => Const::Str(value.0.clone()),
             Self::None => Const::None,
+            Self::Dtype(dtype) => Const::Dtype(dtype.dtype()),
+            Self::Function(symbol) => Const::Function(symbol.0.clone()),
         })
     }
+}
+
+/// The exact floating literal `text` spells, in the literal's own
+/// `Display` form.
+pub fn parse_float_literal(text: &Text) -> Result<FloatLiteral, A1Error> {
+    FloatLiteral::parse_exact(text.as_str()).ok_or_else(|| {
+        A1Error::new(
+            A1ErrorKind::Export,
+            format!("`{text}` is not an exact floating literal"),
+        )
+    })
+}
+
+/// The lane type and width a SIMD construction declares. Its register
+/// holds that vector, or the scalar alias of a one-lane vector.
+#[pliron_attr(
+    name = "mojito_core.simd_shape",
+    format = "$dtype ` x ` $width",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct SimdMakeAttr {
+    pub dtype: CoreDtype,
+    pub width: u64,
 }
 
 #[pliron_attr(name = "mojito_core.infix", format, verifier = "succ")]
@@ -413,11 +498,26 @@ impl PrefixAttr {
 }
 
 /// Which lane-wise conversion a `simd_convert` is.
-#[pliron_attr(name = "mojito_core.simd_conversion", format, verifier = "succ")]
+#[format]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
-pub enum SimdConvertAttr {
+pub enum CoreSimdConversion {
     Cast,
     Bits,
+}
+
+/// A `simd_convert`: its conversion, and the lane type and width it
+/// declares. Its register holds that vector, or the scalar alias of a
+/// one-lane vector.
+#[pliron_attr(
+    name = "mojito_core.simd_conversion",
+    format = "$conversion ` ` $dtype ` x ` $width",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct SimdConvertAttr {
+    pub conversion: CoreSimdConversion,
+    pub dtype: CoreDtype,
+    pub width: u64,
 }
 
 /// A checker-selected symbol, when one was required.
@@ -510,6 +610,81 @@ pub enum CoreStepKind {
 pub enum CoreCallKind {
     Direct,
     Method,
+    /// A call through a function value, which is the first operand.
+    Indirect,
+}
+
+/// One static read or write of captured owner storage a call performs
+/// transitively.
+#[format("$place ` ` $write")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreCaptureAccess {
+    pub place: CorePlacePath,
+    pub write: bool,
+}
+
+impl CoreCaptureAccess {
+    pub fn from_access(access: &MirCaptureAccess) -> Self {
+        Self {
+            place: CorePlacePath {
+                root: access.root,
+                path: access.path.iter().map(CoreSeg::from_seg).collect(),
+            },
+            write: access.access == mojito_types::origin::CaptureAccess::Write,
+        }
+    }
+
+    pub fn access(&self) -> MirCaptureAccess {
+        MirCaptureAccess {
+            root: self.place.root,
+            path: self.place.path.iter().map(CoreSeg::seg).collect(),
+            access: if self.write {
+                mojito_types::origin::CaptureAccess::Write
+            } else {
+                mojito_types::origin::CaptureAccess::Read
+            },
+        }
+    }
+}
+
+/// How a closure takes one captured place.
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum CoreCaptureMode {
+    Reference,
+    Copy,
+    Move,
+}
+
+impl CoreCaptureMode {
+    pub const fn from_mode(mode: MirCaptureMode) -> Self {
+        match mode {
+            MirCaptureMode::Reference => Self::Reference,
+            MirCaptureMode::Copy => Self::Copy,
+            MirCaptureMode::Move => Self::Move,
+        }
+    }
+
+    pub const fn mode(self) -> MirCaptureMode {
+        match self {
+            Self::Reference => MirCaptureMode::Reference,
+            Self::Copy => MirCaptureMode::Copy,
+            Self::Move => MirCaptureMode::Move,
+        }
+    }
+}
+
+/// The lifted body a closure runs and how it takes each captured place,
+/// in operand order.
+#[pliron_attr(
+    name = "mojito_core.closure",
+    format = "$function ` [` vec($modes, CharSpace(`,`)) `]`",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct ClosureAttr {
+    pub function: Text,
+    pub modes: Vec<CoreCaptureMode>,
 }
 
 /// One compile-time argument of a call.
@@ -534,7 +709,7 @@ pub struct CoreParamArg {
 /// retained keyword places, the receiver place, and the effect token.
 #[pliron_attr(
     name = "mojito_core.call_facts",
-    format = "$kind ` ` $target ` resolved` opt($resolved, delimiters(`(`, `)`)) ` raises` opt($raises, delimiters(`(`, `)`)) ` args ` $args ` kwargs [` vec($kwargs, CharSpace(`,`)) `] places [` vec($arg_places, CharSpace(`,`)) `] kwplaces [` vec($kwarg_places, CharSpace(`,`)) `] ` $recv_place ` ` $recv_writes ` params [` vec($params, CharSpace(`,`)) `]`",
+    format = "$kind ` ` $target ` resolved` opt($resolved, delimiters(`(`, `)`)) ` raises` opt($raises, delimiters(`(`, `)`)) ` args ` $args ` kwargs [` vec($kwargs, CharSpace(`,`)) `] places [` vec($arg_places, CharSpace(`,`)) `] kwplaces [` vec($kwarg_places, CharSpace(`,`)) `] ` $recv_place ` ` $recv_writes ` params [` vec($params, CharSpace(`,`)) `] captures [` vec($captures, CharSpace(`,`)) `] contract` opt($contract, delimiters(`(`, `)`)) ` instantiated [` vec($instantiated, CharSpace(`,`)) `] reference` opt($reference_result, delimiters(`(`, `)`)) ` adapter` opt($adapter, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
@@ -551,17 +726,32 @@ pub struct CallAttr {
     /// the call records no place table.
     pub arg_places: Vec<bool>,
     pub kwarg_places: Vec<bool>,
+    /// Whether the receiver, or an indirect call's callee, retains a place.
     pub recv_place: bool,
     pub recv_writes: bool,
     pub params: Vec<CoreParamArg>,
+    /// The captured owner storage the call reads or writes transitively.
+    pub captures: Vec<CoreCaptureAccess>,
+    /// The callable contract the checker instantiated for a generic
+    /// indirect call.
+    pub contract: Option<TypeHandle>,
+    /// The retained generic arguments of that instantiation.
+    pub instantiated: Vec<CoreArg>,
+    /// The instantiated reference type of a method's reference result,
+    /// kept apart from the result register's type.
+    pub reference_result: Option<TypeHandle>,
+    /// The adapter the call site applies to an abstract result.
+    pub adapter: Option<CoreResultAdapter>,
 }
 
 impl CallAttr {
-    /// The operand count of each segment but the trailing effect token.
+    /// The operand count of each segment but the trailing effect token:
+    /// the receiver or callee, the positional and keyword arguments, the
+    /// reified compile-time arguments, then the retained places.
     pub fn segments(&self) -> [usize; 7] {
         let retained = |places: &[bool]| places.iter().filter(|place| **place).count();
         [
-            usize::from(self.kind == CoreCallKind::Method),
+            usize::from(self.kind != CoreCallKind::Direct),
             usize::try_from(self.args).unwrap_or(usize::MAX),
             self.kwargs.len(),
             self.params.iter().filter(|param| param.value).count(),
@@ -618,7 +808,7 @@ impl CoreCallArgument {
 /// The nominal call a subscript dispatches to. Its reified compile-time
 /// arguments are operands.
 #[format(
-    "$target ` raises` opt($raises, delimiters(`(`, `)`)) ` -> ` $result ` ` $receiver_requires_place ` receiver` opt($receiver_convention, delimiters(`(`, `)`)) ` arguments [` vec($arguments, CharSpace(`,`)) `] reference` opt($reference_result, delimiters(`(`, `)`)) ` params [` vec($params, CharSpace(`,`)) `]`"
+    "$target ` raises` opt($raises, delimiters(`(`, `)`)) ` -> ` $result ` ` $receiver_requires_place ` receiver` opt($receiver_convention, delimiters(`(`, `)`)) ` arguments [` vec($arguments, CharSpace(`,`)) `] reference` opt($reference_result, delimiters(`(`, `)`)) ` params [` vec($params, CharSpace(`,`)) `] captures [` vec($captures, CharSpace(`,`)) `]`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct CoreSubscriptCall {
@@ -631,6 +821,7 @@ pub struct CoreSubscriptCall {
     /// The instantiated reference type of a reference result.
     pub reference_result: Option<TypeHandle>,
     pub params: Vec<CoreParamArg>,
+    pub captures: Vec<CoreCaptureAccess>,
 }
 
 impl CoreSubscriptCall {
@@ -671,6 +862,218 @@ impl CoreIntrinsic {
             Self::ComptimeList => MirIntrinsicSubscript::ComptimeList,
         }
     }
+}
+
+/// The field a value's field read names.
+#[pliron_attr(name = "mojito_core.field", format = "$name", verifier = "succ")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct FieldAttr {
+    pub name: Text,
+}
+
+/// The type whose target-layout byte size a `size_of` yields.
+#[pliron_attr(name = "mojito_core.size_of", format = "$ty", verifier = "succ")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct SizeOfAttr {
+    pub ty: TypeHandle,
+}
+
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum CoreSliceKind {
+    Slice,
+    ContiguousSlice,
+    StridedSlice,
+}
+
+impl CoreSliceKind {
+    pub const fn from_kind(kind: SliceKind) -> Self {
+        match kind {
+            SliceKind::Slice => Self::Slice,
+            SliceKind::ContiguousSlice => Self::ContiguousSlice,
+            SliceKind::StridedSlice => Self::StridedSlice,
+        }
+    }
+
+    pub const fn kind(self) -> SliceKind {
+        match self {
+            Self::Slice => SliceKind::Slice,
+            Self::ContiguousSlice => SliceKind::ContiguousSlice,
+            Self::StridedSlice => SliceKind::StridedSlice,
+        }
+    }
+}
+
+/// A slice's kind and which of its bounds it spells, each a value operand
+/// when present.
+#[format("$kind ` ` $lower ` ` $upper ` ` $step")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreSliceBounds {
+    pub kind: CoreSliceKind,
+    pub lower: bool,
+    pub upper: bool,
+    pub step: bool,
+}
+
+impl CoreSliceBounds {
+    /// The value operands the bounds take.
+    pub fn values(&self) -> usize {
+        usize::from(self.lower) + usize::from(self.upper) + usize::from(self.step)
+    }
+}
+
+/// One argument of a multi-argument subscript: an index value, or a
+/// slice with the bounds it spells.
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub enum CoreSubscriptArg {
+    Index,
+    Slice(CoreSliceBounds),
+}
+
+impl CoreSubscriptArg {
+    /// The value operands the argument takes.
+    pub fn values(&self) -> usize {
+        match self {
+            Self::Index => 1,
+            Self::Slice(bounds) => bounds.values(),
+        }
+    }
+}
+
+/// A keyword argument of a multi-argument subscript.
+#[format("$name ` ` $arg")]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct CoreKeywordArg {
+    pub name: Text,
+    pub arg: CoreSubscriptArg,
+}
+
+/// The checked dispatch of a `multi_index`: its arguments in operand
+/// order, then which of the object and the arguments retain a place.
+#[pliron_attr(
+    name = "mojito_core.multi_subscript",
+    format = "`[` vec($args, CharSpace(`,`)) `] kwargs [` vec($kwargs, CharSpace(`,`)) `] ` $object_place ` [` vec($arg_places, CharSpace(`,`)) `] [` vec($kwarg_places, CharSpace(`,`)) `] call` opt($call, delimiters(`(`, `)`))",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct MultiIndexAttr {
+    pub args: Vec<CoreSubscriptArg>,
+    pub kwargs: Vec<CoreKeywordArg>,
+    pub object_place: bool,
+    pub arg_places: Vec<bool>,
+    pub kwarg_places: Vec<bool>,
+    pub call: Option<CoreSubscriptCall>,
+}
+
+impl MultiIndexAttr {
+    /// The value operands before the reified compile-time arguments: the
+    /// object and every argument value.
+    pub fn values(&self) -> usize {
+        1 + self
+            .args
+            .iter()
+            .map(CoreSubscriptArg::values)
+            .sum::<usize>()
+            + self
+                .kwargs
+                .iter()
+                .map(|keyword| keyword.arg.values())
+                .sum::<usize>()
+    }
+
+    pub fn places(&self) -> usize {
+        let retained = |places: &[bool]| places.iter().filter(|place| **place).count();
+        usize::from(self.object_place) + retained(&self.arg_places) + retained(&self.kwarg_places)
+    }
+}
+
+/// The checked dispatch of a `slice`: which bounds it spells, which of
+/// the object and the arguments retain a place, and its target.
+#[pliron_attr(
+    name = "mojito_core.slice_subscript",
+    format = "$bounds ` ` $object_place ` [` vec($arg_places, CharSpace(`,`)) `] call` opt($call, delimiters(`(`, `)`)) ` intrinsic` opt($intrinsic, delimiters(`(`, `)`))",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct SliceAttr {
+    pub bounds: CoreSliceBounds,
+    pub object_place: bool,
+    pub arg_places: Vec<bool>,
+    pub call: Option<CoreSubscriptCall>,
+    pub intrinsic: Option<CoreIntrinsic>,
+}
+
+impl SliceAttr {
+    pub fn values(&self) -> usize {
+        1 + self.bounds.values()
+    }
+
+    pub fn places(&self) -> usize {
+        usize::from(self.object_place) + self.arg_places.iter().filter(|place| **place).count()
+    }
+}
+
+/// The lane selection of a SIMD shuffle, over one vector or two.
+#[pliron_attr(
+    name = "mojito_core.shuffle",
+    format = "$other ` [` vec($mask, CharSpace(`,`)) `]`",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct ShuffleAttr {
+    pub other: bool,
+    pub mask: Vec<u64>,
+}
+
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum CoreUninitAccess {
+    Make,
+    Take,
+    Destroy,
+}
+
+/// What an `uninit_storage` does: builds storage, optionally from a
+/// value, or takes or destroys the payload of the element type.
+#[pliron_attr(
+    name = "mojito_core.uninit",
+    format = "$access ` ` $init ` element` opt($element, delimiters(`(`, `)`))",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct UninitAttr {
+    pub access: CoreUninitAccess,
+    pub init: bool,
+    pub element: Option<TypeHandle>,
+}
+
+/// What a variant operation does, with the alternative it names.
+///
+/// A construction, a tag test, a payload read or take, a write of a
+/// payload or of a factory's result, a replacement, or a consuming
+/// handler call.
+#[format]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub enum CoreVariantAccess {
+    Make(u64),
+    Test(u64),
+    Get(u64),
+    Take(u64, bool),
+    Set(u64),
+    Replace(u64, u64, bool),
+    SetInitWith(u64),
+    DeinitWith(u64),
+}
+
+#[pliron_attr(
+    name = "mojito_core.variant_access",
+    format = "$access",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct VariantAttr {
+    pub access: CoreVariantAccess,
 }
 
 /// The checked dispatch of an `index`.
@@ -877,6 +1280,18 @@ pub enum ExitAttr {
     FallOff,
 }
 
+/// The function-level block a `break` or `continue` inside a try region
+/// leaves for.
+#[pliron_attr(
+    name = "mojito_core.escape_target",
+    format = "$target",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub struct EscapeAttr {
+    pub target: u64,
+}
+
 /// The MIR terminator a `raise` cuts off: MIR keeps `raise` an instruction,
 /// so the block's own terminator follows it unreachably.
 #[pliron_attr(name = "mojito_core.dead_term", format, verifier = "succ")]
@@ -892,6 +1307,33 @@ pub enum DeadTermAttr {
 pub enum OutcomeKind {
     Normal,
     Error,
+    /// A return or escape crossing the `finally`, by exit site.
+    Exit(u64),
+}
+
+/// The exit sites a `resume` continues, one successor each after its
+/// normal and error successors.
+#[pliron_attr(
+    name = "mojito_core.resume_sites",
+    format = "`[` vec($sites, CharSpace(`,`)) `]`",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct ResumeAttr {
+    pub sites: Vec<u64>,
+}
+
+/// The exit site a branch into a pending exit stands for: the return or
+/// escape crossing a `finally`, and whether it carries a value.
+#[pliron_attr(
+    name = "mojito_core.exit_site",
+    format = "$site ` ` $value",
+    verifier = "succ"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
+pub struct ExitSiteAttr {
+    pub site: u64,
+    pub value: bool,
 }
 
 /// The pending outcome a `finally` body runs under.
@@ -914,6 +1356,10 @@ pub enum BlockCategory {
     BodyDone,
     PendingNormal,
     PendingError,
+    /// A return or escape entering `finally` with its outcome pending.
+    PendingExit,
+    /// Where a pending exit continues after `finally`.
+    ExitContinue,
     FinallyEntry,
     Propagate,
 }
@@ -1057,6 +1503,8 @@ impl CoreConvention {
 pub enum CoreLiteral {
     /// An exact integer in decimal, of any magnitude.
     Int(Text),
+    /// An exact floating literal in its own spelling.
+    Float(Text),
     Bool(bool),
     Str(Text),
     None,
@@ -1082,16 +1530,17 @@ impl CoreDefault {
         }
         let literal = match current {
             CheckedConst::Int(value) => CoreLiteral::Int(value.as_bigint().to_string().into()),
+            CheckedConst::Float(value) => CoreLiteral::Float(value.to_string().into()),
             CheckedConst::Bool(value) => CoreLiteral::Bool(*value),
             CheckedConst::String(value) => CoreLiteral::Str(value.into()),
             CheckedConst::None => CoreLiteral::None,
             CheckedConst::Dtype(dtype) => {
                 CoreLiteral::Dtype(super::types::CoreDtype::from_dtype(*dtype))
             }
-            CheckedConst::Float(_) | CheckedConst::Construct { .. } => {
+            CheckedConst::Construct { .. } => {
                 return Err(A1Error::new(
                     A1ErrorKind::UnsupportedForm,
-                    "a floating default has no core form",
+                    "a conversion default without a literal has no core form",
                 ));
             }
             CheckedConst::Evaluate { .. } => {
@@ -1117,6 +1566,7 @@ impl CoreDefault {
                     )
                 })?,
             ),
+            CoreLiteral::Float(text) => CheckedConst::Float(parse_float_literal(text)?),
             CoreLiteral::Bool(value) => CheckedConst::Bool(*value),
             CoreLiteral::Str(value) => CheckedConst::String(value.0.clone()),
             CoreLiteral::None => CheckedConst::None,
