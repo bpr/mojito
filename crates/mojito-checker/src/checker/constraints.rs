@@ -616,15 +616,17 @@ impl Checker {
             ExprKind::Float(value) => constant(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(value) => constant(CtValue::Bool(*value)),
             ExprKind::Str(value) => constant(CtValue::Str(value.clone())),
-            ExprKind::Identifier(name) => match self.comptimes.get(name) {
-                Some(value) => constant(CtValue::IntLiteral(value.clone())),
-                None => self.value_parameter_in_scope(name).ok_or_else(|| {
-                    if self.is_enclosing_struct_param(name) {
-                        TypeError::UnqualifiedStructParam(name.clone())
-                    } else {
-                        TypeError::NotComptime(name.clone())
+            // A value binder in scope (a `comptime for` index, a callable
+            // contract's own binder) shadows a same-named module constant.
+            ExprKind::Identifier(name) => match self.value_parameter_in_scope(name) {
+                Some(reference) => Ok(reference),
+                None => match self.comptimes.get(name) {
+                    Some(value) => constant(CtValue::IntLiteral(value.clone())),
+                    None if self.is_enclosing_struct_param(name) => {
+                        Err(TypeError::UnqualifiedStructParam(name.clone()))
                     }
-                }),
+                    None => Err(TypeError::NotComptime(name.clone())),
+                },
             },
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 match self.self_param_ct_value(field) {

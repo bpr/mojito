@@ -17,6 +17,8 @@ instruction	ref.write	partial	typed referent registers
 instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
 instruction	lifetime.keep_alive	supported	erased
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
+instruction	layout.size_of	partial	an `Int` constant from the target layout; a type without a layout rejects
+instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow
 instruction	place.move	partial	marks the root partially initialized; later whole-variable drops of it reject

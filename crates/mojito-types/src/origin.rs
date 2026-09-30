@@ -911,7 +911,7 @@ mod tests {
         );
         assert_eq!(projected.without_projection(&[], false), Some(projected));
         assert!(
-            pointer(&[element.clone()])
+            pointer(std::slice::from_ref(&element))
                 .without_projection(&[], true)
                 .is_none()
         );

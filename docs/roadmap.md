@@ -35,28 +35,10 @@ These tasks fix that order.
 Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
-to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
+to section 3, however small. The three entries that measure the
+Pliron experiment rather than move the check order, 1.1 to 1.3, sit last.
 
-- [ ] **1.1 The A1 adapter has never been rehearsed against a newer
-  Pliron**
-
-  Problem: the pivot's maintenance model assumes an upgrade stays inside the
-  adapter, and nothing has tested that since the A1 slice landed.
-  - Rehearse one recorded upstream SHA in a disposable copy of the checkout.
-  - Record the hours, the changed files, and any change that escapes
-    `crates/mojito-pliron` and its feature-gated tests.
-  - The budget is one working day. A needed fork rejects the model.
-  - The 0.17 to `477e6b0` upgrade in `docs/notes/pliron-promotion.md` is
-    historical evidence, not this rehearsal.
-  - Raise upstream while there: the pinned Pliron's dominance check
-    panics on a block nothing reaches (`graph/dominance.rs`), which A1
-    works around with its own `verify::verify_dominance`
-    (`docs/notes/pliron-a1.md`, finding 13).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.2 A1 core text is about three times the v1 text**
+- [ ] **1.1 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -71,12 +53,12 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 Six decision-corpus inputs still refuse the A1 shadow, so the
+- [ ] **1.2 Five decision-corpus inputs still refuse the A1 shadow, so the
   bulk lane exits nonzero**
 
-  Problem: `scripts/cover-pliron-a1` converts 887 of 893 inputs, and
+  Problem: `scripts/cover-pliron-a1` converts 888 of 893 inputs, and
   `scripts/bench-pliron-a1` refuses a verdict while any input fails, so
-  the six residues stand between the shadow and its overhead measurement.
+  the five residues stand between the shadow and its overhead measurement.
   - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md)
     §Coverage, which names each input.
   - Three are monomorphization defects (2.6) and one is its `Tuple`
@@ -87,14 +69,10 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
     it needs a pending-outcome resolution at the override site, as the
     native lowering's `emit_pending_resolution` does, and the same for a
     return carrying cleanup across a finally, which no input reaches.
-  - One fails in the front end under `Compiler::default()`
-    (`assets/ok/comptime_shadowed_locals.mojo`: `expected Ts[i], found
-    Ts[40]`), on `mojito run` as well; the corpus gate decides whether the
-    fixture or the checker moved.
   - Depends on 2.6 and 2.7.
   - Model: Fable, Planned.
 
-- [ ] **1.4 The Pliron pivot's overhead has never been measured**
+- [ ] **1.3 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -113,8 +91,8 @@ Pliron experiment rather than move the check order, 1.1 to 1.4, sit last.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert,
-    and 887 of the 893 corpus inputs.
-  - Depends on 1.1, 1.2, and 1.3.
+    and 888 of the 893 corpus inputs.
+  - Depends on 1.1 and 1.2.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -2027,17 +2005,6 @@ last.
       over struct methods only, where the `Hasher` protocol needs it; a free
       `def` keeps the wildcard spelling and resolves it as an annotation.
     - Found while probing the defaulted `to_bits()`.
-    - Model: Opus, Not Planned.
-  - `pointer-write-aliasing-embedded-origin`: `p.unsafe_write(Pointer(to=x))`
-    over `p = unsafe_alloc[Pointer[Int, origin_of(x)]](1)` runs in Mojito and
-    is rejected upstream ("aliasing values passed mutably to 'self' argument
-    and passed mutably to 'value' argument"). Pinned by
-    `conformance/probes/pointer_write_aliasing_embedded_origin.mojo`.
-    - The pin counts the origin the receiver's element type embeds as a
-      mutable access through `self`, which the argument's own mutable
-      `origin_of(x)` aliases.
-    - Mojito's exclusivity check reads the receiver's own provenance only.
-    - Found while fixing a `Pointer` type argument's clone identity.
     - Model: Opus, Not Planned.
   - `pointer-type-argument-uninitialized-interior`:
     `unsafe_alloc[Pointer[Int, origin_of(a)._get_owned_interior["element"]]](1)`

@@ -2389,7 +2389,9 @@ fn tuple_over_erased_views_derives() {
     // element origins the elaborator erases: the loans name no place in the
     // clone's own check either, so every member derives as it does for
     // plain-data elements, the teardowns and the `rebind`-keyed
-    // `__contains__` among them.
+    // `__contains__` among them. `StringSpan` is not `Defaultable`, so the
+    // default `__init__` is the shared unavailable-member stub, whose first
+    // copy is inferred.
     let source = "def main():\n    var text = String(\"h\u{e9}llo\")\n    var parts = text.split_at_grapheme(2)\n    print(parts[0], parts[1], len(parts))\n    var again = text.split_at_grapheme(2)\n    print(parts == again, parts != again)\n    print(parts)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2415,12 +2417,14 @@ fn tuple_over_erased_views_derives() {
         let name = format!("{instance}.{member}");
         assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
     }
+    let inferred: Vec<&String> = stats
+        .inferred_clones
+        .iter()
+        .filter(|name| name.starts_with(instance))
+        .collect();
     assert!(
-        !stats
-            .inferred_clones
-            .iter()
-            .any(|name| name.starts_with(instance)),
-        "no member of {instance} is inferred: {stats:?}"
+        inferred.len() <= 1 && inferred.iter().all(|name| name.ends_with(".__init__")),
+        "only the unavailable default `__init__` of {instance} is inferred: {stats:?}"
     );
 }
 
@@ -3910,13 +3914,32 @@ fn template_method_discarded_values_derive() {
 }
 
 #[test]
+fn module_constants_do_not_reach_bundled_compile_time_binders() {
+    // `Tuple`'s teardowns index their pack with a `comptime for` variable
+    // `i` and type their callable binder `def[index: Int](Ts[index])`: a
+    // user's module constant of either spelling is not in scope there.
+    for name in ["i", "index"] {
+        let source = format!(
+            "comptime {name} = 40\n\ndef main():\n    var t = (1, String(\"a\"))\n    print({name}, t[1])\n"
+        );
+        let compiler = Compiler::default();
+        let program = compile_entry(&compiler, &source);
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "40 a\n",
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn tuple_members_derive_from_their_templates() {
     // A `Tuple` specialized whole takes each member from its checked
     // template: the static `__len__` over its folded pack length, the
     // initializer relocating its pack whole, each unrolled element accessor
     // and its value twin, the synthesized `copy`, every per-element
-    // `__contains__` overload, and `write_repr_to`. The consuming
-    // teardowns, which take a callable binder, keep the clone check.
+    // `__contains__` overload, `write_repr_to`, and the consuming teardowns,
+    // which take a callable binder.
     let source = "def main():\n    var t = (1, String(\"a\"))\n    print(len(t), Tuple[Int, String].__len__())\n    print(t[0], t[1])\n    var c = t.copy()\n    print(c[1], 1 in t, String(\"b\") in t)\n    print(repr(t))\n";
     let owner = "Tuple$t2[y3:Inty6:String].";
     for verify in [false, true] {
@@ -3940,18 +3963,11 @@ fn tuple_members_derive_from_their_templates() {
             "copy",
             "__contains__",
             "write_repr_to",
+            "consume_elements",
+            "deinit_with",
         ] {
             assert!(derived.contains(member), "{member} derives: {stats:?}");
         }
-        let inferred: std::collections::HashSet<&str> = stats
-            .inferred_clones
-            .iter()
-            .filter_map(|name| name.strip_prefix(owner))
-            .collect();
-        assert!(
-            inferred.contains("consume_elements") && inferred.contains("deinit_with"),
-            "a callable binder keeps the clone check: {stats:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "2 2\n1 a\na True False\nTuple[SIMD[DType.int, 1], String](Int(1), 'a')\n"
@@ -4620,8 +4636,9 @@ fn bundled_def_over_loan_carrying_argument_clones() {
     // (`alloc(Layout[Span[Int, origin_of(xs)]](...))`) is cloned with the
     // argument's origin slots bound to clone binders, as a user function's
     // call is. A clone of a certified template (`dealloc`) derives from it,
-    // and the others pass their concrete clone check.
-    let source = "from std.memory import Layout, dealloc\nfrom std.algorithms import first_or\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    var a = alloc(Layout[Span[Int, origin_of(xs)]](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_offset(0).unsafe_write(Span(xs))\n    print(len(p[0]))\n    dealloc(a^)\n    var l = List[Span[Int, origin_of(xs)]]()\n    l.append(Span(xs))\n    print(first_or(l, Span(xs))[2])\n    print(xs[0])\n";
+    // and the others pass their concrete clone check. The list is a read
+    // parameter, so the pointer and the span written through it do not alias.
+    let source = "from std.memory import Layout, dealloc\nfrom std.algorithms import first_or\n\ndef run(xs: List[Int]):\n    var a = alloc(Layout[Span[Int, origin_of(xs)]](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_offset(0).unsafe_write(Span(xs))\n    print(len(p[0]))\n    dealloc(a^)\n    var l = List[Span[Int, origin_of(xs)]]()\n    l.append(Span(xs))\n    print(first_or(l, Span(xs))[2])\n    print(xs[0])\n\ndef main():\n    run([1, 2, 3])\n";
     let compiler = Compiler::default().with_template_verification(false);
     let derived = compile_entry(&compiler, source);
     assert_eq!(
@@ -4804,9 +4821,10 @@ fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     // `self.item = value^` over a symbolic `T` publishes no transfer in the
     // template, which records it as latent. The loan-carrying instance
     // publishes it, so `c` keeps the loan on `xs` its own check records, and
-    // the plain-data instance drops it.
+    // the plain-data instance drops it. The lists are read parameters, so
+    // the cell and the span put into it do not alias.
     assert_methods_derive(
-        "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    var ys: List[Int] = [4, 5, 6]\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n",
+        "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef run(xs: List[Int], ys: List[Int]):\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n\n\ndef main():\n    run([1, 2, 3], [4, 5, 6])\n",
         "3 2 2\n",
         &[("Cell.put", 2)],
     );

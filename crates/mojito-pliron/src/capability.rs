@@ -121,6 +121,16 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values",
     ),
     (
+        "layout.size_of",
+        CapabilityStatus::Partial,
+        "an `Int` constant from the target layout; a type without a layout rejects",
+    ),
+    (
+        "type.construct",
+        CapabilityStatus::Unsupported,
+        "monomorphization leaves no type parameter to construct; one that survives rejects",
+    ),
+    (
         "literal.materialize",
         CapabilityStatus::Partial,
         "scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects",

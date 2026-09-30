@@ -12,11 +12,12 @@ Record of the Stage A1 vertical slice from
 - All seven proof items pass on the gate fixture, on the VM and natively.
 - F1 to F4 pass. F5 (overhead) is **not measured**.
 - The pivot is neither approved nor rejected. A2 is not started.
-- All ten focused inputs convert, and 887 of the 893 inputs of the decision
-  corpus (§Coverage). The six that do not are named there; none is a form
+- All ten focused inputs convert, and 888 of the 893 inputs of the decision
+  corpus (§Coverage). The five that do not are named there; none is a form
   the inventory lacks.
-- The scheduled measurement lane and the pin rehearsal have not run
-  (§Remaining boundaries).
+- The pin rehearsal passed on 2026-09-30 (§Pin rehearsal): upstream
+  `81155d9` needed ten changed lines, all inside the adapter.
+- The scheduled measurement lane has not run (§Remaining boundaries).
 
 The MIR waist, the v1 `.mir` schema, the VM, and the native backend's MIR
 input are unchanged. A1 is optional, default off, and removable.
@@ -30,8 +31,8 @@ input are unchanged. A1 is optional, default off, and removable.
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
 | F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | 887 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the six residues in §Coverage |
-| Pin-maintenance rehearsal | NOT MEASURED | scheduled work, one working day |
+| Full canonical-artifact compatibility | 888 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the five residues in §Coverage |
+| Pin-maintenance rehearsal | PASS | `477e6b0` to `81155d9` in under an hour, 10 lines in 4 adapter files and 2 test files, no escape, no fork (§Pin rehearsal) |
 
 Core text is 2.6 to 3.4 times the v1 text of the same module. That is over
 the 2.0 line that makes a design review mandatory (finding 6). It is not a
@@ -327,8 +328,9 @@ and replacement stay with `ParamContext`.
     from the region's entry, and a `try` whose body cannot raise leaves
     its whole error path unreachable after normalization. `verify_tree`
     now runs Pliron's verification of everything but dominance, and
-    `verify_dominance` judges every use itself, skipping dead blocks. To
-    raise upstream at the pin rehearsal.
+    `verify_dominance` judges every use itself, skipping dead blocks. Still
+    true at upstream `81155d9` (§Pin rehearsal). A local Pliron fix is
+    ready but not submitted.
 14. **The census was partial.** The parallel walker behind
     `import::refusals` mirrored seven of the importer's rules and kept a
     second copy of the callee policy; 105 of 517 refused inputs had no
@@ -383,9 +385,10 @@ input, coverage only. Run 2026-09-29 at each stage of the coverage task:
 | Ten focused inputs (2026-09-28) | 376 | 517, of which 105 with no counted refusal |
 | Defects fixed; floats, `DType`, function types, closures, indirect calls, reference results | 841 | 52 |
 | The plain forms and variants | 887 with exits crossing a try refused | 6 plus those |
-| Exits crossing a try, with and without `finally` | **887** | **6** |
+| Exits crossing a try, with and without `finally` | 887 | 6 |
+| A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | **888** | **5** |
 
-The six that do not convert, none a form the inventory lacks:
+The five that do not convert, none a form the inventory lacks:
 
 | Input | Why |
 |---|---|
@@ -393,7 +396,6 @@ The six that do not convert, none a form the inventory lacks:
 | `assets/extensions/ok/reference_list_write_through_method.mojo` | specialized MIR does not verify: a store of `ref Int` into `Int` storage |
 | `assets/ok/capturing_lambda_array_display.mojo` | specialized MIR does not verify: a subscript's reference-result referent differs from the declaration |
 | `assets/ok/tuple_hashable_dict_key.mojo` | a `Tuple` type argument spelled with and without its element types across one instance, so a field projection names no declared field |
-| `assets/ok/comptime_shadowed_locals.mojo` | the front end refuses it under `Compiler::default()` (`expected Ts[i], found Ts[40]`) |
 | `assets/ok/pliron_finally_overrides.mojo` | a `return` inside a `finally` body, refused by name |
 
 Still refused by name, because no corpus input reaches them: a subscript
@@ -515,6 +517,68 @@ it, counted. `scripts/cover-pliron-a1 --bin BIN --inputs FILE --out DIR
 `--emit-bridge` (which also verifies each function on its own, naming it
 first), and `--emit-specialized` write the text a diagnostic names.
 
+## Pin rehearsal
+
+Run 2026-09-30, roadmap 1.1, per the A1 plan's §5.11: a disposable
+`git clone --local` of `857b929d` in a scratch directory with its own
+target directory, discarded afterward. The main tree's pin did not move.
+
+| | |
+|---|---|
+| From | `477e6b0edb18b29df4cf7b90f0f468dc8a872f22` (0.17.0) |
+| To | `81155d96b8797d149de1d88219c431a68a75ef33` (upstream `master` by `git ls-remote`, 0.18.0 plus 21 commits; 37 commits, 76 files) |
+| Toolchain | unchanged: `llvm-sys` 231, LLVM 23.1.0, Rust 1.96.1 |
+| Wall clock | 4 minutes from re-pin to a clean build of every target, about 40 minutes to the last probe |
+| Changed | 3 pins, 10 source lines, 1 lock entry |
+
+**Breaks and adaptations**, each in the adapter or its gated tests:
+
+1. Pliron itself failed to build. It uses `Hash` on `combine`'s
+   `SourcePosition`, which `combine` gained only in 4.6.8, while its
+   manifest still asks for `combine = "4"` and our lock held 4.6.7.
+   Fixed with `cargo update -p combine --precise 4.6.8`, lock only.
+2. `dict_key!` now declares a plain `static Identifier`, where it declared
+   a `LazyLock` (`7fd181d`, `7758a2f`, compile-time `ident!`). Four
+   dereferences in `a1/outcomes.rs` and three in `tests/pliron_a1_test.rs`
+   dropped their `*`.
+3. `erase_given_names` takes `&Context`, where it took `&mut Context`.
+   Clippy flagged the three calls (`a1/measure.rs`, `a1/text.rs`, the
+   production backend's `lib.rs`) and the crate tests' `canonical_text`
+   helper; each lost a `mut`.
+
+Nothing escaped `crates/mojito-pliron` and its feature-gated tests: no
+other crate, no MIR, checker, or VM change, no `src/main.rs` change, and no
+fork. Canonical text, parameter attributes, and snapshots did not move.
+
+**Probes at the new pin**, all passing: the 20 named A1 checks of §Probes
+and commands (the malformed matrix and inventory closure included),
+`a1_reference_field_arithmetic_matches_vm`, the crate's 27 tests but one
+that fails at `477e6b0` too (below), clean Clippy with `-D warnings` over
+every target, and VM and native `run` agreeing byte for byte on the gate
+fixture, `assets/ok/pliron_finally_overrides.mojo`, and
+`benchmarks/compile/stdlib_heavy.mojo`. Both default dependency graphs
+were byte-identical to the main tree's, with no `pliron` or LLVM package.
+
+**Finding 13 upstream.** Swapping `verify_dominance` for Pliron's own
+`verify_value_dominance` at `81155d9` panics on 12 of the 54 `try`-bearing
+`assets/ok` fixtures, at `graph/dominance.rs:342` (`DomTree::dominates`
+indexes a block the dominator map lacks). Upstream `b869e77` taught the
+dominance *frontier* to skip unreachable blocks; the use/def check still
+does not. A fix in the owner's local Pliron checkout (branch
+`dominance-unreachable`, not submitted) follows LLVM and MLIR: a block
+unreachable from the entry is dominated by every block and dominates only
+itself. With it, Pliron's own check accepts all 12 fixtures. `verify_dominance`
+can go once a pin carries that fix.
+
+**Found on the way.** `capability::tests::pliron_instr_capabilities_cover_the_instruction_vocabulary`
+failed at both pins: `857b929d` gave `SizeOf` and `ConstructTypeParam`
+their MIR mnemonics (`layout.size_of`, `type.construct`) without capability
+rows. Both rows are now in `capability.rs` and
+`conformance/pliron-capability.tsv`.
+
+Raw logs, the adaptation diff, and the graph captures are under
+`target/pliron-a1/rehearsal-81155d9/` (not tracked).
+
 ## Code footprint
 
 Lines under `crates/mojito-pliron/src/a1/`, inline documentation included.
@@ -554,13 +618,14 @@ native operand fix. They stand without A1.
 
 ## Remaining boundaries
 
-- **Coverage.** 887 of 893 corpus inputs convert; the six residues are
+- **Coverage.** 888 of 893 corpus inputs convert; the five residues are
   named in §Coverage and filed on the roadmap by their kind.
 - **Overhead.** No release measurement exists. The debug diagnostic cannot
   stand in for one.
 - **Interpreter speed.** Both backends ran exported MIR. Nothing here says
   how fast a VM walking core operations would be.
-- **Pin rehearsal.** Not run. The 0.17 to `477e6b0` upgrade in
-  `pliron-stage6.md` and `pliron-promotion.md` is historical evidence only.
+- **Pin rehearsal.** One of the pivot plan's two rehearsals is done
+  (§Pin rehearsal). The main tree stays at `477e6b0`; nothing needs the
+  newer pin.
 - **Broad gates.** The full suites, the corpus, the conformance sweeps, and
   the heavy Pliron lane were not run in this task.

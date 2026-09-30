@@ -3349,6 +3349,13 @@ impl Elab<'_> {
                 raises_type,
                 ..
             } => {
+                // The contract's own binders (`def[index: Int](Ts[index])`)
+                // shadow same-named outer bindings throughout its signature.
+                let mut own = env.clone();
+                for parameter in type_params.iter() {
+                    own.remove(parameter.name.trim_start_matches('*'));
+                }
+                let env = &own;
                 for parameter in type_params {
                     if let Some(value_type) = &mut parameter.value_type {
                         self.fold_pack_index_annotation(value_type, binding, elements, env)?;
