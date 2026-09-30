@@ -703,15 +703,25 @@ impl Checker {
             if declared.decls.is_empty() {
                 self.method_clone_target(owner, method, struct_arguments, declared, &substitution)
                     .ok_or("the instance's witness clone family has no member for it")?
-            } else if overloaded {
-                return Err("the instance's overloaded witness has binders and a clone family");
             } else {
-                // A witness with binders of its own keeps them in its clone,
-                // and a lone declaration's clone is a lone clone.
+                // A witness with binders of its own keeps them in its clone:
+                // a lone declaration's clone is a lone clone, and an overload
+                // set's clone family carries each member's qualifier.
                 let clone = self
                     .instance_method_clone(owner, method, struct_arguments)
                     .ok_or("the instance's witness has no clone")?;
-                format!("{owner}.{clone}")
+                if overloaded {
+                    self.clone_family_member(
+                        owner,
+                        &clone,
+                        struct_arguments,
+                        declared,
+                        &substitution,
+                    )
+                    .ok_or("the instance's clone family has no one member for the witness")?
+                } else {
+                    format!("{owner}.{clone}")
+                }
             }
         } else {
             let clone_name = mojito_symbol::symbol::instance_method_clone_name(

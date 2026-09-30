@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound (`self.item.__hash__(hasher)` over `Pair[Int]`)
+  whose witness has binders of its own and sits in an overload set of a
+  generic struct now reuses the template's checked facts, naming the
+  member of the instance's clone family that carries the witness's
+  overload qualifier. Such instances used to be checked again.
 - A float literal beside a value of a struct's symbolic lane
   (`self.pos * 0.5`, `self.pos < 0.5`, `self.pos += 0.25` over
   `Scalar[Self.dtype]`) now reuses the template's checked facts, the literal

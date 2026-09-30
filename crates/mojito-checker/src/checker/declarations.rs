@@ -1813,7 +1813,23 @@ impl Checker {
             return None;
         }
         let clone = self.instance_method_clone(name, method, arguments)?;
-        let sigs = self.structs.get(name)?.methods.get(&clone)?;
+        self.clone_family_member(name, &clone, arguments, sig, subst)
+    }
+
+    /// The lowered target of the member of `name[arguments]`'s clone family
+    /// `clone` that stands for the template signature `sig`, binders of its
+    /// own included: the clone keeps them, so the member's signature is
+    /// `sig` with only the instance's arguments substituted. `None` when no
+    /// one member matches.
+    pub(super) fn clone_family_member(
+        &self,
+        name: &str,
+        clone: &str,
+        arguments: &[TyArg],
+        sig: &MethodSig,
+        subst: &TySubst,
+    ) -> Option<String> {
+        let sigs = self.structs.get(name)?.methods.get(clone)?;
         // A lone clone is not an overload set: its definition keeps the plain
         // clone name, so naming a signature suffix here would target a symbol
         // no lowered function has.
@@ -1838,10 +1854,10 @@ impl Checker {
         // The lowered name is the comparison: it carries the variadic element
         // at its declared index and the keyword names, so two members differing
         // only there stay distinct.
-        let wanted = method_lowered_name(name, &clone, &selected, self_ty.as_ref());
+        let wanted = method_lowered_name(name, clone, &selected, self_ty.as_ref());
         let mut matches = sigs
             .iter()
-            .map(|candidate| method_lowered_name(name, &clone, candidate, self_ty.as_ref()))
+            .map(|candidate| method_lowered_name(name, clone, candidate, self_ty.as_ref()))
             .filter(|candidate| *candidate == wanted);
         let target = matches.next()?;
         matches.next().is_none().then_some(target)
