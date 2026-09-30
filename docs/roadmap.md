@@ -38,16 +38,16 @@ defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
 Pliron experiment rather than move the check order sit last, 1.2 to 1.5.
 
-- [ ] **1.1 `print` of a temporary of a struct parameter's type keeps the
-  clone check**
+- [ ] **1.1 `print` with a keyword argument keeps the clone check**
 
-  Problem: `print(self.w.copy())` or `print(self.s.echo(self.w))` over `W:
-  Writable` leaves the method outside the method grammar, so every instance
-  is checked again.
-  - `print(self.w)` of a place, or of a local, derives.
-  - The temporary's write and its drop depend on the instance's type.
-  - Found while call results typed by a requirement binder joined the
-    method grammar (2026-09-29); no bundled body is known to need it.
+  Problem: `print(self.w, sep=" ")` or `print(x, end="")` in a method or a
+  runtime `def` leaves the body outside the method grammar, so every
+  instance is checked again.
+  - The same `print` without `sep`, `end`, `flush`, or `file` derives.
+  - `infer_print` types each keyword by its own spelling, so the instance
+    only needs to see that check again.
+  - Found while `print` of a temporary of a struct parameter's type joined
+    the method grammar (2026-09-29); no bundled body is known to need it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

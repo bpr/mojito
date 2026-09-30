@@ -5353,6 +5353,28 @@ fn template_stringify_parameter_value_derives() {
 }
 
 #[test]
+fn template_print_parameter_temporary_derives() {
+    // `print` of a temporary of a struct parameter's type, a bound builtin's
+    // copy or a call through a bound typed by the requirement's binder: the
+    // temporary is unconsumed by its syntax, and each instance proves it
+    // `Writable` at its own type.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/ok/template_method_print_parameter_temporary.mojo");
+    let source = std::fs::read_to_string(path).expect("fixture");
+    assert_methods_derive(
+        &source,
+        "3\nTrue\nab\n#7\n3\nTrue\nab\n#7\nw = 3 3\nw = True True\nw = ab ab\nw = #7 #7\n3\nTrue\nab\n#7\n4 4\nFalse False\nc c\n#12 #12\n",
+        &[
+            ("Holder.copied", 4),
+            ("Holder.echoed", 4),
+            ("Holder.mixed", 4),
+            ("Holder.nested", 4),
+            ("Holder.parameter", 4),
+        ],
+    );
+}
+
+#[test]
 fn template_bound_display_argument_derives() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed

@@ -14439,9 +14439,10 @@ impl BodyShape<'_> {
     }
 
     /// `print(...)` as a statement: a checker builtin that selects no
-    /// callee, over closed scalars, pack elements, string literals, and
+    /// callee, over closed scalars, pack elements, string literals,
     /// arguments it reads where they lie, as `repr` does
-    /// ([`Self::sink_argument`], under `STRING_BUILTINS`).
+    /// ([`Self::sink_argument`], under `STRING_BUILTINS`), and call results
+    /// of any type ([`Self::call_result`]), which it leaves unconsumed.
     ///
     /// What the builtin records at an argument its syntax decides (an
     /// unconsumed temporary, a literal's materialization); what it proves,
@@ -14479,6 +14480,7 @@ impl BodyShape<'_> {
             };
             closed || {
                 let sink = self.sink_argument(argument)
+                    || self.call_result(argument)
                     || (self.element_construction(argument)
                         && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS));
                 sinks |= sink;

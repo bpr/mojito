@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `print` of a temporary of a struct parameter's type
+  (`print(self.w.copy())`, or `print(self.s.echo(self.w))` through a bound
+  whose result is the requirement's binder) now reuses the template's
+  checked facts, each instance proving the temporary `Writable` at its own
+  type (`assets/ok/template_method_print_parameter_temporary.mojo`). Such
+  methods used to be checked again per instance.
 - `String(value)` of a named value of a struct parameter's type
   (`String(self.w)` over `W: Writable`, or of a local or parameter of that
   type) now reuses the template's checked facts, each instance writing a
