@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a bound into an overload set no longer ranks the set on
+  the argument types when no single member witnesses the requirement: the
+  instance takes the requirement's witness, as the pinned Mojo binds the
+  call, or is checked again. The ranking that fell back to the clone
+  check's rules is gone.
 - A call through a bound (`self.item.__hash__(hasher)` over `Pair[Int]`)
   whose witness has binders of its own and sits in an overload set of a
   generic struct now reuses the template's checked facts, naming the

@@ -705,18 +705,12 @@ only `Movable` records nothing there, and its `Int` clone would.
     types under `Self`, the struct's arguments, and the witness's own
     binders, and the call parameters the abstract call recorded empty. A
     literal the requirement's closed parameter materialized keeps its
-    materialization. Of an overload set, the member the clone check's ranking
-    selects on the recorded argument types is taken, under its overload
-    symbol (`method_lowered_name`), and must fit: a lone member of the
-    arity (`takes_arity`) unranked, otherwise the fewest-ranked one
-    (`ranked_member`) — conversions, a `**kwargs` bit, the member's own
-    binders and generic bit, and a `var` parameter's copy of a place, scored
-    by `member_rank` as `score_method_call` scores them — then the fewest
-    `SIMD`-pattern erasures and the receiver convention the call's `^`
-    selects. An argument whose type may come from the parameter (a
-    collection or tuple display, a leading-dot member, an explicit
-    application), a variadic or static rival, a reference-typed parameter,
-    and a rival binder not named whole by one parameter refuse. A binder of the witness
+    materialization. Of an overload set, the one member witnessing the
+    requirement in the struct's conformance
+    (`traits.rs:requirement_witnesses`) and fitting the call is taken, under
+    its overload symbol (`method_lowered_name`), as the pin binds the call
+    to the requirement; the set is never ranked again, and where no single
+    member witnesses the requirement the instance keeps the clone check. A binder of the witness
     (`String.__hash__[H]`) is admitted where exactly one parameter is that
     binder: a bare parameter argument keeps it symbolic, and the per-call
     request it records (`MethodInstantiations`) is one discovery leaves
@@ -1474,7 +1468,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A pack element's default construction handed to `print` or bound to a
   local where two of the pack's elements share a type, so the element's
-  type names no single loop index (roadmap 1.4).
+  type names no single loop index (roadmap 1.2).
 
 - A method body beyond `MethodBody`: a receiver origin naming anything but
   one of the method's own origin binders, a copy or move

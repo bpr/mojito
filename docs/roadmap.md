@@ -36,30 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
+Pliron experiment rather than move the check order sit last, 1.3 to 1.6.
 
-- [ ] **1.1 A call through a bound whose requirement names no single
-  witness still ranks the overload set on the recorded types**
-
-  Problem: where no one member witnesses the requirement, `bound_witness`
-  falls back to the clone check's ranking
-  (`template_facts/bound_dispatch.rs:ranked_member`), which refuses rivals
-  it cannot rank.
-  - It cannot rank a rival with a reference parameter, a variadic rival, a
-    binder nested in a parameter type over a caller binder the instance
-    keeps, or an argument whose type comes from the parameter.
-  - Declared traits and `Hashable`, `Writable`, `Hasher`, `Writer`, and
-    the rounding traits name their witness
-    (`traits.rs:requirement_witnesses`), so the fallback serves only a
-    witness whose own availability condition the conformance condition
-    does not imply, or a built-in trait's requirement Mojito spells
-    nowhere.
-  - Found while built-in traits' requirements joined witness selection
-    (2026-09-29); no bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 A call through a bound whose result is typed by the
+- [ ] **1.1 A call through a bound whose result is typed by the
   requirement's own binder keeps the clone check**
 
   Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
@@ -77,7 +56,7 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A pack element's default construction keeps the clone check
+- [ ] **1.2 A pack element's default construction keeps the clone check
   where two elements share a type**
 
   Problem: `print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, or `var value
@@ -96,7 +75,7 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 The A1 shadow core has never been run over the decision
+- [ ] **1.3 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -113,12 +92,12 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.5 to 1.7 are the ones in this section that do
+  - This entry and 1.4 to 1.6 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.5 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.4 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -132,7 +111,7 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.6 A1 core text is about three times the v1 text**
+- [ ] **1.5 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -147,7 +126,7 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.7 The Pliron pivot's overhead has never been measured**
+- [ ] **1.6 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -166,7 +145,7 @@ Pliron experiment rather than move the check order sit last, 1.4 to 1.7.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.4, 1.5, and 1.6.
+  - Depends on 1.3, 1.4, and 1.5.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -2417,6 +2396,29 @@ last.
   - Upstream's `List` declares `Defaultable`. The bundled one declares an
     empty initializer and not the conformance.
   - `Dict` and `Set` are to be checked against the pin with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.106 A `Writable` conformance whose only `write_to` witness is
+  conditional compiles**
+
+  Problem: `struct Box[T](Writable)` whose `write_to(self, mut writer:
+  Some[Writer])` carries `where conforms_to(Self.T, Writable)` is accepted,
+  where the pin rejects it ("does not implement all requirements for
+  'Writable'").
+  - `verify_builtin_conformance` accepts any struct for `Writable`, because
+    a struct without a `Writer`-fed `write_to` writes through the reflective
+    default.
+  - The pin also reports the conditional witness ambiguous beside its
+    generated default.
+  - Beside a rival `write_to(self, mut writer: String)`, printing the
+    struct through a `T: Writable` bound fails in the VM ("unknown method
+    'Box.write_to'").
+  - This is the one case left where a call through a bound finds no member
+    witnessing its requirement (`traits.rs:requirement_witnesses`), so the
+    instance is checked again.
+  - Found while the ranking fallback of bound-witness selection was removed
+    (2026-09-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

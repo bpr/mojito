@@ -4351,10 +4351,9 @@ fn template_method_bound_witness_shapes_derive() {
 
 #[test]
 fn template_method_same_arity_witness_overloads_derive() {
-    // Two `total` members take one argument each, and the instance ranks
-    // them on the recorded argument types as its clone check would: a
-    // `String` member never takes an `Int`, and a `Float64` one takes it
-    // only through a conversion the `Int` member does not need.
+    // Two `total` members take one argument each, and the instance selects
+    // the one witnessing the requirement, never ranking the set: a
+    // `String` or `Float64` rival does not compete.
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n",
         "3\n",
@@ -4369,11 +4368,9 @@ fn template_method_same_arity_witness_overloads_derive() {
 
 #[test]
 fn template_method_ranked_witness_overloads_derive() {
-    // Each instance ranks every `total` member of the arguments' arity on
-    // the recorded types with the clone check's later terms: an operator's
-    // or a call's type is its own, a defaulted `Float64` member needs a
-    // conversion, a generic member ties on conversions and loses on its
-    // binder, and a `var` one also copies a place argument.
+    // Each instance selects the `total` member witnessing the requirement,
+    // whatever the argument (an operator, a call, a field): a defaulted
+    // `Float64` rival, a generic one, and a `var` one do not compete.
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n    var name: String\n\n    def __init__(out self, count: Int):\n        self.count = count\n        self.name = String(\"n\")\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -1\n\n    def total(self, by: Float64, scale: Int = 3) -> Int:\n        return -2\n\n    def total[U: Copyable & Deinitable & Intable](self, var by: U) -> Int:\n        return -4\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def doubled(self) -> Int:\n        return self.step * 2\n\n    def called(self) -> Int:\n        return self.entry.total(self.doubled())\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.plain(), ledger.called())\n",
         "5 4 6\n",
@@ -4383,10 +4380,9 @@ fn template_method_ranked_witness_overloads_derive() {
 
 #[test]
 fn template_method_generic_witness_rivals_derive() {
-    // Each rival's own binders are inferred from the recorded argument types
-    // as the clone check infers them: a binder inside `List[U]` and a
-    // `DType` binder of `Scalar[dt]` take no `Int`, and a literal handed to
-    // a bare binder ranks below the closed `Int` member on its generic bit.
+    // Rivals with binders of their own — inside `List[U]`, a `DType`
+    // binder of `Scalar[dt]`, a bare binder a literal could bind — do not
+    // compete with the member witnessing the requirement.
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n    def total[dt: DType](self, by: Scalar[dt], scale: Int = 2) -> Int:\n        return -2\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -3\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
         "4 7\n",

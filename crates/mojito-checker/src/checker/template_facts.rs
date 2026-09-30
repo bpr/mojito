@@ -233,8 +233,9 @@ struct Occurrence {
     declared: Option<SyntaxId>,
     /// Whether this is a `^` transfer.
     transfer: bool,
-    /// How the clone check ranks an overload member it is handed to.
-    ranking: ArgumentRanking,
+    /// Whether, as an argument, it hands over a value the callee may own
+    /// rather than a place the callee borrows or copies.
+    owned: bool,
     /// The value of an integer or `Bool` literal, which may be a folded
     /// compile-time value.
     literal: Option<mojito_types::ct::CtValue>,
@@ -288,18 +289,6 @@ impl LiteralKind {
             Self::Bool => Ty::Bool,
         }
     }
-}
-
-/// What the clone check's overload ranking reads of an argument's
-/// expression, beside its type.
-#[derive(Clone, Copy, Default)]
-struct ArgumentRanking {
-    /// Whether its checked type is the same under any expected type
-    /// ([`context_free`]).
-    context_free: bool,
-    /// Whether it hands over a value the callee may own rather than a place
-    /// the callee borrows or copies.
-    owned: bool,
 }
 
 /// What an instance's arguments stand for in its template's facts.
@@ -5736,7 +5725,7 @@ impl Checker {
                     augmented: None,
                     declared: None,
                     transfer: false,
-                    ranking: ArgumentRanking::default(),
+                    owned: false,
                     literal: None,
                     float_literal: None,
                     folded_index: None,
@@ -5868,10 +5857,7 @@ impl Checker {
                     augmented: None,
                     declared: None,
                     transfer: matches!(expr.kind, ExprKind::Transfer(_)),
-                    ranking: ArgumentRanking {
-                        context_free: context_free(expr),
-                        owned: super::overload_support::argument_is_owned(expr),
-                    },
+                    owned: super::overload_support::argument_is_owned(expr),
                     literal: match &expr.kind {
                         ExprKind::Int(value) => Some(value.to_i64().map_or_else(
                             || mojito_types::ct::CtValue::IntLiteral(value.clone()),
@@ -8820,34 +8806,6 @@ fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(Occur
         },
         method,
     ))
-}
-
-/// Whether an expression checks to one type under any expected type other
-/// than a reference: everything `infer_with_expected` types without the
-/// expected type. A collection or tuple display, a leading-dot member chain,
-/// or an explicit application may take its type from the parameter it is
-/// handed to.
-fn context_free(expr: &Expr) -> bool {
-    if matches!(
-        expr.kind,
-        ExprKind::ListLit(_)
-            | ExprKind::BraceLit(_)
-            | ExprKind::TupleLit(_)
-            | ExprKind::TypeApply { .. }
-    ) {
-        return false;
-    }
-    let mut current = expr;
-    loop {
-        match &current.kind {
-            ExprKind::Identifier(name) => return name != mojito_ast::ast::CONTEXTUAL_SENTINEL,
-            ExprKind::Member { object, .. }
-            | ExprKind::MethodCall { object, .. }
-            | ExprKind::Index { object, .. } => current = object,
-            ExprKind::Invoke { callee, .. } => current = callee,
-            _ => return true,
-        }
-    }
 }
 
 /// Whether an overload family's members differ only in closed parameter

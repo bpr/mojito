@@ -448,9 +448,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bound for an instance: `bound_witness` is the by-types resolver from a
   receiver type, its convention, a method name, and the recorded argument
   types to the requirement's witness (a place read, a hashed leaf, or a
-  struct's own method with its binders bound, chosen from an overload set
-  by the clone check's ranking on the recorded types (`ranked_member`,
-  scoring each member with `member_rank`), and retargeted to a baked binder's per-call clone, keyed by the
+  struct's own method with its binders bound, of an overload set the one
+  member witnessing the requirement (`traits.rs:requirement_witnesses`),
+  and retargeted to a baked binder's per-call clone, keyed by the
   instance too when the struct is generic), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
   abstract contract with it (a receiver typed by a binder the instance keeps

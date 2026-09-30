@@ -71,9 +71,6 @@ struct DispatchedArgument {
     parameter_ty: Ty,
     convention: Option<ArgConvention>,
     requires_place: bool,
-    /// Whether the clone check would rank a member on the recorded type: a
-    /// positional argument whose type no expected type changes.
-    ranked: bool,
     /// Whether it hands over a value the callee may own, which a `var`
     /// parameter takes without a copy.
     owned: bool,
@@ -121,9 +118,6 @@ impl Checker {
             }
             return Ok(());
         }
-        let receiver_transferred = occurrences
-            .iter()
-            .any(|occurrence| occurrence.id == receiver && occurrence.transfer);
         let call =
             fact_at(&facts.selected_calls, id).ok_or("a bound dispatch lost its contract")?;
         let receiver_convention = call.contract.receiver_convention;
@@ -143,7 +137,6 @@ impl Checker {
                         parameter_ty: parameter.parameter_ty.clone(),
                         convention: parameter.convention,
                         requires_place: parameter.requires_place,
-                        ranked: false,
                         owned: false,
                     });
                 }
@@ -164,20 +157,11 @@ impl Checker {
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
                     requires_place: parameter.requires_place,
-                    ranked: matches!(parameter.source, CheckedCallArgumentSource::Positional(_))
-                        && occurrence.is_some_and(|occurrence| occurrence.ranking.context_free),
-                    owned: occurrence.is_some_and(|occurrence| occurrence.ranking.owned),
+                    owned: occurrence.is_some_and(|occurrence| occurrence.owned),
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        match self.bound_witness(
-            &ty,
-            receiver_convention,
-            receiver_transferred,
-            false,
-            &method,
-            &arguments,
-        )? {
+        match self.bound_witness(&ty, receiver_convention, false, &method, &arguments)? {
             BoundWitness::CopyRead => {
                 if !self.is_copyable(&ty) {
                     return Err("the instance's type is not copyable");
@@ -273,7 +257,6 @@ impl Checker {
                     parameter_ty: parameter.parameter_ty.clone(),
                     convention: parameter.convention,
                     requires_place: parameter.requires_place,
-                    ranked: false,
                     owned: false,
                 })
             })
@@ -281,7 +264,6 @@ impl Checker {
         let witness = self.bound_witness(
             receiver,
             call.contract.receiver_convention,
-            false,
             call.contract.raises.is_some(),
             &method,
             &arguments,
@@ -389,10 +371,9 @@ impl Checker {
                 ty: writer_ty,
                 convention: Some(ArgConvention::Mut),
                 requires_place: true,
-                ranked: false,
                 owned: false,
             }];
-            let witness = self.bound_witness(&ty, None, false, false, method, &arguments)?;
+            let witness = self.bound_witness(&ty, None, false, method, &arguments)?;
             let BoundWitness::Method { .. } = &witness else {
                 return Err("an inverted write's receiver selects no method");
             };
@@ -514,16 +495,14 @@ impl Checker {
     /// A nominal struct's witness is the declaration of that name that binds
     /// the recorded arguments ([`Self::witness_binders`]). Of an overload
     /// set, it is the one member that witnesses the requirement in the
-    /// struct's conformance and binds them, as the pin binds a call through
-    /// a bound to the requirement and never ranks the set again: a rival
-    /// the recorded types could not rank does not compete. Where no one
-    /// member does, it is the member the clone check's ranking selects
-    /// ([`Self::ranked_member`]). Either is named by its overload symbol.
+    /// struct's conformance and binds them, named by its overload symbol, as
+    /// the pin binds a call through a bound to the requirement and never
+    /// ranks the set again. Where no one member does, the selection is the
+    /// clone check's.
     fn bound_witness<'a>(
         &'a self,
         receiver: &'a Ty,
         receiver_convention: Option<ArgConvention>,
-        receiver_transferred: bool,
         raising: bool,
         method: &str,
         arguments: &[DispatchedArgument],
@@ -567,46 +546,36 @@ impl Checker {
             )
         } else {
             // The call is bound to the requirement, so the member that
-            // witnesses it is selected whatever its rivals are. Where no one
-            // member does, the member the clone check's ranking selects on
-            // the recorded types must fit the recorded arguments.
-            let fits = |member: &&MethodSig| {
-                self.witness_binders(
-                    member,
-                    receiver,
-                    receiver_convention,
-                    raising,
-                    &substitution,
-                    arguments,
-                )
-                .is_ok()
-            };
+            // witnesses it is selected whatever its rivals are.
             let witnesses: Vec<&MethodSig> = self
                 .requirement_witnesses(owner, method)
                 .into_iter()
-                .filter(fits)
+                .filter(|member| {
+                    self.witness_binders(
+                        member,
+                        receiver,
+                        receiver_convention,
+                        raising,
+                        &substitution,
+                        arguments,
+                    )
+                    .is_ok()
+                })
                 .collect();
-            let selected = match witnesses.as_slice() {
-                [witness] => witness,
-                _ => self.ranked_member(
-                    candidates,
-                    receiver,
-                    receiver_transferred,
-                    &substitution,
-                    arguments,
-                )?,
+            let [selected] = witnesses.as_slice() else {
+                return Err(
+                    "no one member of the instance's overload set witnesses the requirement",
+                );
             };
-            let binders = self
-                .witness_binders(
-                    selected,
-                    receiver,
-                    receiver_convention,
-                    raising,
-                    &substitution,
-                    arguments,
-                )
-                .map_err(|_| "the clone check's ranking selects a member that is no witness")?;
-            (selected, binders)
+            let binders = self.witness_binders(
+                selected,
+                receiver,
+                receiver_convention,
+                raising,
+                &substitution,
+                arguments,
+            )?;
+            (*selected, binders)
         };
         let overloaded = candidates.len() > 1;
         let request = (!declared.decls.is_empty()).then(|| {
@@ -879,275 +848,6 @@ impl Checker {
         Ok(binders)
     }
 
-    /// The member of an overload set the clone check's ranking selects on
-    /// the recorded argument types, as `select_method_overload` selects it:
-    /// the fewest-ranked member among those that take the arguments
-    /// ([`Self::member_rank`]), then the fewest `SIMD`-pattern erasures, then
-    /// the one whose receiver convention matches the call's transfer. A lone
-    /// member of the arguments' arity is selected unranked, and a static
-    /// member never competes beside the instance members, as the clone check
-    /// drops it.
-    /// Arguments or members the recorded types cannot rank, and a tie those
-    /// terms leave, are the clone check's to judge.
-    fn ranked_member<'a>(
-        &self,
-        candidates: &'a [MethodSig],
-        receiver: &Ty,
-        receiver_transferred: bool,
-        substitution: &TySubst,
-        arguments: &[DispatchedArgument],
-    ) -> Result<&'a MethodSig, &'static str> {
-        let taking: Vec<&MethodSig> = candidates
-            .iter()
-            .filter(|member| member.has_self && takes_arity(member, arguments.len()))
-            .collect();
-        if let [member] = taking.as_slice() {
-            return Ok(member);
-        }
-        let ranked = self.best_members(taking, receiver, substitution, arguments)?;
-        if let [member] = ranked.as_slice() {
-            return Ok(member);
-        }
-        let mut consuming = ranked.iter().filter(|member| {
-            matches!(
-                member.self_convention,
-                Some(ArgConvention::Var | ArgConvention::Deinit)
-            ) == receiver_transferred
-        });
-        match (consuming.next(), consuming.next()) {
-            (Some(member), None) => Ok(member),
-            _ => Err("the clone check's ranking leaves the instance's overloaded witness tied"),
-        }
-    }
-
-    /// The members of `taking` the clone check's ranking leaves best on the
-    /// recorded argument types: the fewest-ranked ([`Self::member_rank`]),
-    /// then the fewest `SIMD`-pattern erasures. An argument whose type an
-    /// expected type may change is the clone check's to rank.
-    fn best_members<'a>(
-        &self,
-        taking: Vec<&'a MethodSig>,
-        receiver: &Ty,
-        substitution: &TySubst,
-        arguments: &[DispatchedArgument],
-    ) -> Result<Vec<&'a MethodSig>, &'static str> {
-        if !arguments.iter().all(|argument| argument.ranked) {
-            return Err("an argument's type may come from the member parameter it is handed to");
-        }
-        let mut ranked = Vec::new();
-        for member in taking {
-            if let Some(rank) = self.member_rank(member, receiver, substitution, arguments)? {
-                ranked.push((member, rank));
-            }
-        }
-        let best = ranked
-            .iter()
-            .map(|(_, (rank, _))| *rank)
-            .min()
-            .ok_or("no member of the instance's overload set takes the arguments")?;
-        ranked.retain(|(_, (rank, _))| *rank == best);
-        let fewest_erasures = ranked
-            .iter()
-            .map(|(_, (_, erasures))| *erasures)
-            .min()
-            .unwrap_or(0);
-        Ok(ranked
-            .into_iter()
-            .filter(|(_, (_, erasures))| *erasures == fewest_erasures)
-            .map(|(member, _)| member)
-            .collect())
-    }
-
-    /// A member's rank and `SIMD`-pattern erasures on the recorded argument
-    /// types, as `score_method_call` scores it, or `None` where some
-    /// argument reaches no parameter of it or its availability condition
-    /// fails at the instance: the conversions, the `**kwargs` bit, its own
-    /// binders' count and generic bit, and the copies a `var` parameter
-    /// makes of a place. A defaulted parameter past the arguments is not
-    /// scored. A variadic member, a reference parameter, a parameter left
-    /// symbolic, and binders [`Self::member_parameters`] cannot infer are
-    /// the clone check's to rank.
-    fn member_rank(
-        &self,
-        member: &MethodSig,
-        receiver: &Ty,
-        substitution: &TySubst,
-        arguments: &[DispatchedArgument],
-    ) -> Result<Option<(usize, usize)>, &'static str> {
-        if member.variadic.is_some() {
-            return Err("a member of the instance's overloaded witness is variadic");
-        }
-        let Some(parameters) = self.member_parameters(member, receiver, substitution, arguments)?
-        else {
-            return Ok(None);
-        };
-        let mut conversions = 0;
-        let mut simd_erasures = 0;
-        let mut binding = crate::checker::overload_support::ArgumentBinding::new(None);
-        for (index, (argument, parameter)) in arguments.iter().zip(&parameters).enumerate() {
-            if matches!(parameter, Ty::Ref(_))
-                || (*parameter != argument.ty && mojito_types::types::is_symbolic(parameter))
-            {
-                return Err(
-                    "a member of the instance's overloaded witness has a parameter \
-                     the recorded types cannot rank",
-                );
-            }
-            let reaches = self.value_coerces(&argument.ty, parameter)
-                || self
-                    .implicit_conversion_target(&argument.ty, parameter)
-                    .is_ok_and(|target| target.is_some());
-            if !reaches {
-                return Ok(None);
-            }
-            conversions +=
-                crate::checker::overload_support::conversion_count(&argument.ty, parameter);
-            simd_erasures += usize::from(
-                matches!(member.params[index], Ty::Param { .. })
-                    && mojito_types::types::simd_shape(&argument.ty).is_some(),
-            );
-            binding.bind_value(member.conventions[index], false, argument.owned, false);
-        }
-        let baked = crate::checker::declarations::baked_decl_count(&member.decls);
-        let rank = crate::checker::overload_support::overload_rank(
-            conversions,
-            member.kw_variadic.is_some(),
-            baked,
-            baked > 0,
-        ) + binding.rank();
-        Ok(Some((rank, simd_erasures)))
-    }
-
-    /// A member's parameter types at the recorded arguments, under the
-    /// receiver and the member's own binders as the clone check binds them,
-    /// or `None` where the member does not take the arguments.
-    ///
-    /// Over closed argument types the binders are inferred as
-    /// `instantiate_method_generics` infers them, from the argument types
-    /// alone — inside a parameter type (`List[U]`), a value or `DType`
-    /// binder, a literal's own type — and the availability condition is
-    /// judged at the inferred arguments; a member that fails either takes
-    /// nothing, as the clone check drops it. Over a caller binder the
-    /// instance keeps, each binder must be a plain type binder only one
-    /// parameter names, as that parameter's whole type, bound to the
-    /// argument's type when that carries its bounds; any other binder is
-    /// the clone check's to infer.
-    fn member_parameters(
-        &self,
-        member: &MethodSig,
-        receiver: &Ty,
-        substitution: &TySubst,
-        arguments: &[DispatchedArgument],
-    ) -> Result<Option<Vec<Ty>>, &'static str> {
-        const UNINFERRED: &str = "a member's own binder is not inferred from one argument's type";
-        let Ty::Struct(owner, struct_arguments) = receiver else {
-            return Err("a dispatched receiver is not a struct");
-        };
-        let info = self
-            .structs
-            .get(owner)
-            .ok_or("a dispatched receiver's struct is not declared")?;
-        if arguments
-            .iter()
-            .all(|argument| !mojito_types::types::is_symbolic(&argument.ty))
-        {
-            let patterns: Vec<Ty> = member.params[..arguments.len()]
-                .iter()
-                .map(|ty| crate::checker::generics::substitute_at(ty, info, struct_arguments))
-                .collect();
-            let actuals: Vec<Ty> = arguments
-                .iter()
-                .map(|argument| argument.ty.clone())
-                .collect();
-            let Ok((binders, method_arguments)) =
-                self.resolve_use_params(owner, &member.decls, &[], &patterns, &actuals)
-            else {
-                return Ok(None);
-            };
-            if !self.method_constraints_apply(
-                member,
-                &method_arguments,
-                &info.decls,
-                struct_arguments,
-            ) {
-                return Ok(None);
-            }
-            let values = Self::value_argument_environment(&member.decls, &method_arguments);
-            return Ok(patterns
-                .iter()
-                .map(|ty| {
-                    let substituted =
-                        self.resolve_assoc_ty(&mojito_types::types::substitute(ty, &binders));
-                    self.resolve_dependent_ty(&substituted, &values)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .ok());
-        }
-        let mut binders = HashMap::new();
-        for decl in &member.decls {
-            let ParamDecl::Type {
-                bounds,
-                callable_bound: None,
-                default: None,
-                variadic: false,
-                ..
-            } = decl
-            else {
-                return Err(UNINFERRED);
-            };
-            let names = |ty: &Ty| matches!(ty, Ty::Param { binder, .. } if binder.id == *decl.id());
-            let mut mentioning = member
-                .params
-                .iter()
-                .enumerate()
-                .filter(|(_, ty)| mojito_types::types::mentions(ty, &names));
-            let (Some((index, parameter)), None) = (mentioning.next(), mentioning.next()) else {
-                return Err(UNINFERRED);
-            };
-            let argument = arguments.get(index).ok_or(UNINFERRED)?;
-            if !names(parameter) {
-                return Err(UNINFERRED);
-            }
-            let carried = match &argument.ty {
-                Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral => return Err(UNINFERRED),
-                Ty::Param { bounds: given, .. } => {
-                    if !bounds.iter().all(|bound| {
-                        given
-                            .iter()
-                            .any(|carried| carried == bound || self.trait_refines(carried, bound))
-                    }) {
-                        return Err(UNINFERRED);
-                    }
-                    true
-                }
-                closed if !mojito_types::types::is_symbolic(closed) => {
-                    bounds.iter().all(|bound| self.conforms_to(closed, bound))
-                }
-                _ => return Err(UNINFERRED),
-            };
-            if !carried {
-                return Ok(None);
-            }
-            binders.insert(decl.id().clone(), argument.ty.clone());
-        }
-        let method_arguments: Vec<TyArg> = member
-            .decls
-            .iter()
-            .filter_map(|decl| binders.get(decl.id()).cloned())
-            .map(TyArg::Ty)
-            .collect();
-        if !self.method_constraints_apply(member, &method_arguments, &info.decls, struct_arguments)
-        {
-            return Ok(None);
-        }
-        Ok(Some(
-            member.params[..arguments.len()]
-                .iter()
-                .map(|ty| self.witness_parameter_ty(ty, receiver, substitution, &binders))
-                .collect(),
-        ))
-    }
-
     /// Realize `hasher.update(x)` or `hasher._update_with_simd(x)` whose
     /// receiver the instance binds to a nominal struct, as `infer_method_call`
     /// selects it there: the struct's own method, not the checker builtin
@@ -1197,8 +897,7 @@ impl Checker {
                     ty,
                     convention: None,
                     requires_place: false,
-                    ranked: false,
-                    owned: found.ranking.owned,
+                    owned: found.owned,
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
@@ -1211,14 +910,8 @@ impl Checker {
                 return Err("a hasher argument's place is unbound or overlaps the receiver");
             }
         }
-        let witness = self.bound_witness(
-            ty,
-            Some(ArgConvention::Mut),
-            false,
-            false,
-            method,
-            &arguments,
-        )?;
+        let witness =
+            self.bound_witness(ty, Some(ArgConvention::Mut), false, method, &arguments)?;
         let BoundWitness::Method { .. } = &witness else {
             return Err("a hasher receiver selects no method");
         };
@@ -1520,21 +1213,6 @@ fn nominal_writer_receiver(ty: &Ty) -> bool {
         Ty::Struct(..) => true,
         _ => false,
     }
-}
-
-/// Whether a declaration could take `count` positional arguments: its
-/// required positional parameters are no more, and its positional
-/// parameters (or a variadic) no fewer, with no keyword-only parameter
-/// required.
-fn takes_arity(declared: &MethodSig, count: usize) -> bool {
-    let positional = declared
-        .keyword_only
-        .unwrap_or(declared.params.len())
-        .min(declared.required.len());
-    let required = |range: &[bool]| range.iter().filter(|required| **required).count();
-    required(&declared.required[..positional]) <= count
-        && required(&declared.required[positional..]) == 0
-        && (count <= positional || declared.variadic.is_some())
 }
 
 /// Forget a dispatched call that selects no callee for the instance: its
