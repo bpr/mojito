@@ -8367,6 +8367,9 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     // An admitted operator's target is its reflected dunder's
     // ([`BodyShape::operator`]).
     let operators = shape.operators.borrow();
+    // The stringify builtin's overload target is chosen by the closed
+    // argument type alone ([`BodyShape::stringify`]).
+    let stringified = shape.stringified.borrow();
     if !direct_calls.is_empty() {
         shape.holds(MethodFeatures::DIRECT_CALLS);
     }
@@ -8399,7 +8402,7 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         || !facts
             .overload_targets
             .iter()
-            .all(|(id, _)| admitted_call(id) || operators.contains(id))
+            .all(|(id, _)| admitted_call(id) || operators.contains(id) || stringified.contains(id))
         || !summary_callees(facts).all(|callee| {
             targets.contains(&callee.as_str())
                 || direct_calls.iter().any(|(_, direct)| direct == callee)

@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `String(value)` of a closed value in a generic struct's method or a
+  nested `def` (`return String(k)` for `k: Int`, `return sep + String(x)`)
+  now reuses the template's checked facts, as it already did in a
+  module-level `def`. Such methods used to be checked again per instance.
 - A field read or method call on a nested `def`'s read parameter holding a
   struct (`def f(x: Int, q: Pair) -> Int: return x + q.a` inside a generic
   struct's method) now reuses the template's checked facts, the parameter

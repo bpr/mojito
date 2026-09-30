@@ -1454,6 +1454,12 @@ it produced (3828 for Hello World) were wrong and are withdrawn.
   grammar admits a non-place argument beside a named place, and at the
   native `Float64` the instance records it as a read temporary the caller
   destroys, where it borrows a place (`realize_lane_float_methods`).
+- 2026-09-29, `String(value)` in a method or a nested `def`
+  (`return String(k)`, `return sep + String(x)`): `BodyShape::stringify`
+  already admitted the call, but the method certificate's
+  `stray_method_call` counted its `"String"` overload target as a stray
+  call. It now accounts for the stringified occurrences as the function
+  certificate does (`tests/compiler_test.rs:template_stringify_scalar_parameter_derives`).
 
 ## What is not covered
 
@@ -1461,7 +1467,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
 
 - A pack element's default construction handed to `print` or bound to a
   local where two of the pack's elements share a type, so the element's
-  type names no single loop index (roadmap 1.8).
+  type names no single loop index (roadmap 1.7).
 
 - A method body beyond `MethodBody`: a receiver origin naming anything but
   one of the method's own origin binders, a copy or move

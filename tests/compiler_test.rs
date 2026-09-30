@@ -5004,6 +5004,18 @@ fn template_nested_def_struct_parameter_field_derives() {
 }
 
 #[test]
+fn template_stringify_scalar_parameter_derives() {
+    // `String(k)` of a closed-scalar parameter, in a method or a nested
+    // `def`, routes to the stringify builtin as any other closed value does.
+    let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def named(self, k: Int) -> String:\n        return String(k) + String(self.bias)\n\n    def joined(self, sep: String, k: Int) -> String:\n        def f(sep: String, x: Int) -> String:\n            return sep + String(x)\n\n        return f(sep, k)\n\n\ndef main():\n    print(Shelf[Int](1).named(3), Shelf[String](1).named(4))\n    print(Shelf[Int](1).joined(\",\", 3), Shelf[String](1).joined(\";\", 4))\n";
+    assert_methods_derive(
+        source,
+        "31 41\n,3 ;4\n",
+        &[("Shelf.named", 2), ("Shelf.joined", 2)],
+    );
+}
+
+#[test]
 fn template_generic_static_call_derives() {
     // A generic struct's static solves the struct's parameters at the
     // instance's types and records nothing naming the clone it retargets to.
