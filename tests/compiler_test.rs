@@ -4991,6 +4991,19 @@ fn template_nested_def_constructed_default_derives() {
 }
 
 #[test]
+fn template_nested_def_struct_parameter_field_derives() {
+    // A nested `def`'s read parameter holding a struct, closed or of the
+    // struct parameter's type, has its fields read and its methods called
+    // where it lies.
+    let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n    def total(self) -> Int:\n        return self.a + self.b\n\n\n@fieldwise_init\nstruct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var item: Self.T\n    var n: Int\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def summed(self, k: Int, p: Pair) -> Int:\n        def f(x: Int, q: Pair) -> Int:\n            return x + q.a + q.total()\n\n        return f(k, p) + f(k, Pair(10, 20))\n\n    def counted(self, b: Box[Self.T]) -> Int:\n        def g(c: Box[Self.T]) -> Int:\n            return c.n + 1\n\n        return g(b)\n\n\ndef main():\n    print(Shelf[Int](1).summed(3, Pair(1, 2)), Shelf[String](1).summed(4, Pair(1, 2)))\n    print(Shelf[Int](1).counted(Box[Int](5, 6)), Shelf[String](1).counted(Box[String](\"s\", 7)))\n";
+    assert_methods_derive(
+        source,
+        "50 52\n7 8\n",
+        &[("Shelf.summed", 2), ("Shelf.counted", 2)],
+    );
+}
+
+#[test]
 fn template_generic_static_call_derives() {
     // A generic struct's static solves the struct's parameters at the
     // instance's types and records nothing naming the clone it retargets to.

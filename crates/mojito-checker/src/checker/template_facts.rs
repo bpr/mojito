@@ -4559,6 +4559,7 @@ impl Checker {
                 }),
             ),
             locals: RefCell::new(Vec::new()),
+            nested_params: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
@@ -5208,6 +5209,7 @@ impl Checker {
                 features
             }),
             locals: RefCell::new(Vec::new()),
+            nested_params: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
@@ -9936,6 +9938,10 @@ struct BodyShape<'a> {
     features: std::cell::Cell<MethodFeatures>,
     /// The locals declared so far.
     locals: RefCell<Vec<(String, LocalKind)>>,
+    /// The positions in `locals` of the nested `def` read parameters holding
+    /// a whole value, each read where it lies as a method's parameter is
+    /// ([`Self::parameter_receiver`]).
+    nested_params: RefCell<Vec<usize>>,
     /// The occurrences admitted as reference handles.
     handles: RefCell<Vec<OccurrenceId>>,
     /// The calls admitted as reference-returning.
@@ -10919,7 +10925,8 @@ impl BodyShape<'_> {
     /// owes its capability again at the instance's type. Its body is judged
     /// in place with its parameters as locals: a `ref` one of a whole value
     /// a handle, a `mut` or `var` one of a whole value a `var` local, and
-    /// any other read where it lies. It returns a closed scalar or a whole
+    /// any other read where it lies, a read one holding a struct as a
+    /// method's parameter is ([`Self::parameter_receiver`]). It returns a closed scalar or a whole
     /// value, and its name is a local the body may only call.
     fn nested_def(&self, statement: &Stmt) -> bool {
         use mojito_ast::ast::ArgConvention;
@@ -10976,6 +10983,7 @@ impl BodyShape<'_> {
             return false;
         }
         let scope = self.locals.borrow().len();
+        let read_scope = self.nested_params.borrow().len();
         let kinds: Vec<_> = params
             .iter()
             .enumerate()
@@ -10991,6 +10999,10 @@ impl BodyShape<'_> {
                     Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out) if whole => {
                         LocalKind::Value
                     }
+                    None | Some(ArgConvention::Imm) if whole => {
+                        self.nested_params.borrow_mut().push(scope + index);
+                        LocalKind::Scalar
+                    }
                     _ => LocalKind::Scalar,
                 };
                 (parameter.name.clone(), kind)
@@ -11001,6 +11013,7 @@ impl BodyShape<'_> {
         let admitted = self.block(body);
         self.nested_depth.set(self.nested_depth.get() - 1);
         self.locals.borrow_mut().truncate(scope);
+        self.nested_params.borrow_mut().truncate(read_scope);
         self.locals
             .borrow_mut()
             .push((name.clone(), LocalKind::Callable));
@@ -13264,13 +13277,16 @@ impl BodyShape<'_> {
     /// Whether `expr` names a parameter holding a struct, such as `value` of a
     /// `value: Box[Self.T]` parameter: the parameter is bound to the
     /// instance's argument and read where it lies, as `self` is, and its
-    /// recorded type is the declared one under the instance's arguments.
+    /// recorded type is the declared one under the instance's arguments. A
+    /// nested `def`'s read parameter holding one is bound to its caller's
+    /// argument alike.
     fn parameter_receiver(&self, expr: &Expr) -> bool {
         !self.keyed
             && matches!(&expr.kind, ExprKind::Identifier(name)
-                if self.params.contains(&name.as_str())
+                if (self.params.contains(&name.as_str())
                     && !self.callable_params.contains(&name.as_str())
                     && self.local_kind(name).is_none())
+                    || self.nested_parameter(name))
             && self.nominal(expr)
     }
 
@@ -13298,6 +13314,16 @@ impl BodyShape<'_> {
     /// Whether `name` is a `ref` local.
     fn reference_local(&self, name: &str) -> bool {
         self.local_kind(name) == Some(LocalKind::Reference)
+    }
+
+    /// Whether the innermost local named `name` is a nested `def`'s read
+    /// parameter holding a whole value.
+    fn nested_parameter(&self, name: &str) -> bool {
+        self.locals
+            .borrow()
+            .iter()
+            .rposition(|(local, _)| local == name)
+            .is_some_and(|position| self.nested_params.borrow().contains(&position))
     }
 
     /// The innermost local of that name.

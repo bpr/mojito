@@ -36,23 +36,9 @@ Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
 to section 3, however small. The four entries that measure or rehearse the
-Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
+Pliron experiment rather than move the check order sit last, 1.9 to 1.12.
 
-- [ ] **1.1 A field read of a nested `def`'s struct parameter keeps the
-  clone check**
-
-  Problem: `def f(x: Int, p: Pair) -> Int: return x + p.a` inside a generic
-  struct's method refuses the template as outside the method grammar.
-  - `BodyShape::nested_def` binds a read parameter of a whole value as a
-    scalar local, so its field is neither a field of a parameter nor of a
-    local the grammar names.
-  - The same read of the method's own parameter (`return k + p.a`) derives.
-  - Found while constructed defaults joined nested `def`s in the method
-    grammar (2026-09-29). No bundled body is known to need it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 `String(x)` of a closed-scalar parameter keeps the clone
+- [ ] **1.1 `String(x)` of a closed-scalar parameter keeps the clone
   check**
 
   Problem: `return String(k)` for `k: Int` in a generic struct's method
@@ -66,7 +52,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 A string literal handed to a generic static's own binder
+- [ ] **1.2 A string literal handed to a generic static's own binder
   keeps the clone check**
 
   Problem: `Pair[Self.T].pick("s")`, or `Pair[Self.T].pick[String]("s")`,
@@ -83,7 +69,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 `_ArrayIter.__next__` keeps the clone check**
+- [ ] **1.3 `_ArrayIter.__next__` keeps the clone check**
 
   Problem: the borrowed `Array` iterator's `__next__` is inferred again in
   every checker pass, while the rest of `Array` and its iterators reuse
@@ -96,7 +82,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 A float literal beside a symbolic lane's value keeps the
+- [ ] **1.4 A float literal beside a symbolic lane's value keeps the
   clone check**
 
   Problem: `self.pos * 0.5` or `self.pos < 0.5` over `Scalar[Self.dtype]`
@@ -111,7 +97,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.6 An overloaded witness with binders of its own keeps the
+- [ ] **1.5 An overloaded witness with binders of its own keeps the
   clone check over a generic struct's instance**
 
   Problem: `self.item.__hash__(hasher)` over `Pair[Int]`, whose
@@ -128,7 +114,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 A call through a bound whose requirement names no single
+- [ ] **1.6 A call through a bound whose requirement names no single
   witness still ranks the overload set on the recorded types**
 
   Problem: where no one member witnesses the requirement, `bound_witness`
@@ -149,7 +135,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.8 A call through a bound whose result is typed by the
+- [ ] **1.7 A call through a bound whose result is typed by the
   requirement's own binder keeps the clone check**
 
   Problem: `self.s.echo(self.w)` over `S: Merger`, whose `echo[T:
@@ -167,7 +153,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.9 A pack element's default construction keeps the clone check
+- [ ] **1.8 A pack element's default construction keeps the clone check
   where two elements share a type**
 
   Problem: `print(Self.Ts[i]())` over `Row[Int, Int, Bool]`, or `var value
@@ -186,7 +172,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.10 The A1 shadow core has never been run over the decision
+- [ ] **1.9 The A1 shadow core has never been run over the decision
   corpus**
 
   Problem: the shadow `mojito_core` dialect converts the ten focused inputs,
@@ -203,12 +189,12 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - The inventory is closed on purpose: each new form needs an operation, a
     verifier rule, an import and export rule, and positive and negative
     cases (`inventory::CoreOpKind`).
-  - This entry and 1.11 to 1.13 are the ones in this section that do
+  - This entry and 1.10 to 1.12 are the ones in this section that do
     not move the check order. They shadow MIR below `CheckedProgram`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.11 The A1 adapter has never been rehearsed against a newer
+- [ ] **1.10 The A1 adapter has never been rehearsed against a newer
   Pliron**
 
   Problem: the pivot's maintenance model assumes an upgrade stays inside the
@@ -222,7 +208,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.12 A1 core text is about three times the v1 text**
+- [ ] **1.11 A1 core text is about three times the v1 text**
 
   Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
   text of the same module, over the 2.0 line that makes a design review
@@ -237,7 +223,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.13 The Pliron pivot's overhead has never been measured**
+- [ ] **1.12 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -256,7 +242,7 @@ Pliron experiment rather than move the check order sit last, 1.10 to 1.13.
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
   - The focused lane needs nothing more: all ten focused inputs convert.
-  - Depends on 1.10, 1.11, and 1.12.
+  - Depends on 1.9, 1.10, and 1.11.
   - Model: Fable, Planned.
 
 ### 2. Native Backend

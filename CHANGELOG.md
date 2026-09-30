@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A field read or method call on a nested `def`'s read parameter holding a
+  struct (`def f(x: Int, q: Pair) -> Int: return x + q.a` inside a generic
+  struct's method) now reuses the template's checked facts, the parameter
+  read where it lies as a method's own parameter is. Such methods used to
+  be checked again per instance.
 - A pack element's default construction handed to `print` or bound to a
   local (`print(Self.Ts[i]())` in a method, `var value = Ts[i]()` in a
   method or a pack-keyed `def`) now reuses the template's checked facts,
