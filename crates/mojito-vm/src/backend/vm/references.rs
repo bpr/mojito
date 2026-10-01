@@ -765,6 +765,21 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
         .any(|ty| matches!(ty, Ty::Ref(_)) || single_pointee_pointer(Some(ty)))
 }
 
+/// Whether a place designates one element slot of multi-element raw pointer
+/// storage (`self.data[i]`). A store there fills the slot itself even when
+/// the element type is a reference: the slot holds the handle, and may still
+/// be uninitialized, so there is no referent to write through.
+pub(super) fn pointer_element_slot(place: &MirPlace) -> bool {
+    let base_ty = match place.proj.len() {
+        0 => return false,
+        1 => place.root_ty.as_ref(),
+        length => place.projection_tys.get(length - 2),
+    };
+    matches!(place.proj.last(), Some(Proj::Index(_)))
+        && matches!(base_ty, Some(Ty::Pointer { .. }))
+        && !single_pointee_pointer(base_ty)
+}
+
 /// The reference-projection segments of a MIR place's projections. An index
 /// step whose base storage is a single-pointee pointer becomes the identity
 /// [`RefProjection::Deref`] — the stored handle already designates the

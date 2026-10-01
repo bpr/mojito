@@ -304,7 +304,7 @@ against whichever profile it reruns, interleaved with the commit before it.
 - Done: `mir::verify::verify_concrete` rejects any symbolic type or
   compile-time parameter, and `native::mono` verifies its output with it.
   The compile-time argument slots a resolved call keeps are the residue
-  (roadmap 1.3).
+  (roadmap 1.2).
 - Give the three phases of §Phases and their names their wrappers and their
   entry roots, and cache the concrete graph so the native backend does not
   specialize twice.

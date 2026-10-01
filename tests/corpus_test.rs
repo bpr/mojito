@@ -292,10 +292,7 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// The `specialized_vm` trials that do not yet hold, by the `docs/roadmap.md`
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
-const SPECIALIZED_VM_RESIDUE: &[&str] = &[
-    // A `List[ref T]` element write reads uninitialized pointer storage.
-    "extensions::reference_list_write_through_method",
-];
+const SPECIALIZED_VM_RESIDUE: &[&str] = &[];
 
 /// What running an elaborated program on the VM gives: its output, or its
 /// failure.

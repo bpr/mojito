@@ -1549,9 +1549,15 @@ impl VmBackend {
                 } else {
                     self.place_handle(frame_id, place, regs, vars)?
                 };
+                let slot = super::references::pointer_element_slot(place);
                 if let Some(handle) = handle {
-                    self.store_through_handle(frame_id, place, handle, v, vars)?;
-                } else if matches!(place.ty, Some(Ty::Ref(_))) {
+                    if slot {
+                        self.canonicalize_value_references(frame_id, vars, &mut v);
+                        self.write_reference(&handle, frame_id, vars, v)?;
+                    } else {
+                        self.store_through_handle(frame_id, place, handle, v, vars)?;
+                    }
+                } else if !slot && matches!(place.ty, Some(Ty::Ref(_))) {
                     let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
