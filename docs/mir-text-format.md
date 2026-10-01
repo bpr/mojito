@@ -12,8 +12,10 @@ verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
 are enforced byte-for-byte over the drop-elaborated MIR of every executable
 corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
-`mojito exec [FILE]` executes a verified artifact directly on the register VM
-(`artifact::run_artifact`).
+`mojito exec [FILE]` loads a verified artifact, elaborates it to concrete MIR
+from `main` and module initialization, and runs it on the register VM
+(`artifact::run_artifact`). The artifact itself stays drop-elaborated MIR,
+which may be generic; `exec --erased` runs it as serialized.
 
 ## Compatibility
 
@@ -614,5 +616,5 @@ An assembled artifact is not executable merely because it parses. The
 consumer gate is `mir::text::load_artifact`: parse plus the canonical MIR
 semantic verifier. Ownership analysis and drop elaboration are producer
 obligations the schema cannot re-check — canonical artifacts serialize only
-analyzed, drop-elaborated programs, and execution runs the serialized program
-exactly as written.
+analyzed, drop-elaborated programs. Execution elaborates the loaded program
+to concrete MIR and analyzes nothing again.

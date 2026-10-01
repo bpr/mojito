@@ -81,6 +81,12 @@ fn main() -> ExitCode {
         eprintln!("--instantiation-census is only valid with the run command on the VM backend");
         return ExitCode::FAILURE;
     }
+    if cli.vm_instantiation.is_some()
+        && (!matches!(command, Some("run" | "exec")) || cli.backend != BackendKind::Vm)
+    {
+        eprintln!("--erased is only valid with the run and exec commands on the VM backend");
+        return ExitCode::FAILURE;
+    }
     if !matches!(command, Some("compile" | "run" | "link")) && cli.runtime_lib.is_some() {
         eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
         return ExitCode::FAILURE;
@@ -116,7 +122,7 @@ fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> Exit
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("compile") => stage_compile(file, cli),
         Some("link") => stage_link(file, cli),
-        Some("exec") => stage_exec(file, cli.backend),
+        Some("exec") => stage_exec(file, cli),
         Some("-h" | "--help" | "help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -155,6 +161,10 @@ struct CliArgs {
     /// `census\t<name>\t<count>` lines to stderr saying which mechanism
     /// instantiated each generic body.
     instantiation_census: bool,
+    /// `--erased` for `run` and `exec` on the VM backend: run
+    /// drop-elaborated MIR and resolve parameters at run time, instead of
+    /// the concrete graph. `None` leaves the choice to `MOJITO_VM_ERASED`.
+    vm_instantiation: Option<mojito::VmInstantiation>,
     /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
     /// by the backend; raw here so the default build carries no backend
     /// types).
@@ -177,6 +187,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut print_toolchain = false;
     let mut timings = false;
     let mut instantiation_census = false;
+    let mut vm_instantiation = None;
     let mut native_debug = None;
     let mut runtime_lib = None;
     let mut iter = raw.into_iter();
@@ -223,6 +234,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             timings = true;
         } else if arg == "--instantiation-census" {
             instantiation_census = true;
+        } else if arg == "--erased" {
+            vm_instantiation = Some(mojito::VmInstantiation::Erased);
         } else if let Some(level) = arg.strip_prefix("--native-debug=") {
             native_debug = Some(level.to_string());
         } else if arg == "--native-debug" {
@@ -251,6 +264,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         print_toolchain,
         timings,
         instantiation_census,
+        vm_instantiation,
         native_debug,
         runtime_lib,
     })
@@ -398,6 +412,10 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
 
 fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
     let compiler = Compiler::new(cli.link_options.clone(), backend);
+    let compiler = match cli.vm_instantiation {
+        Some(instantiation) => compiler.with_vm_instantiation(instantiation),
+        None => compiler,
+    };
     let compiled = {
         let _frontend = mojito::timing::span("frontend");
         compile_input(&compiler, file)?
@@ -590,24 +608,29 @@ fn compile_native_module(
             _ => error.to_string(),
         })
     })?;
-    // `elaborated_mir` computes once and caches; time that first call as its
-    // own phase, then borrow the cached result.
+    // Each phase computes once and caches; time the first call of each as
+    // its own phase, then borrow the cached concrete graph.
     cli_timing("mir-elaborate", || {
-        compiled.elaborated_mir();
+        compiled.drop_elaborated_mir();
     });
-    let mir = compiled.elaborated_mir();
-
-    let mut entries = vec!["main".to_string()];
-    if mir.functions.iter().any(|(name, _)| name == "__toplevel__") {
-        entries.push("__toplevel__".to_string());
-    }
+    let concrete = cli_timing("mir-concrete", || compiled.concrete_mir())
+        .map_err(|error| error.to_string())?;
     let options = pliron::CompileOptions {
-        entries,
+        // `main` is required: a program without one fails in the backend,
+        // by name.
+        entries: std::iter::once("main".to_string())
+            .chain(
+                concrete
+                    .entries
+                    .contains_key("__toplevel__")
+                    .then(|| "__toplevel__".to_string()),
+            )
+            .collect(),
         sources: vec![(label, source)],
         target: native_target(cli)?,
         trace_lifecycle: false,
     };
-    cli_timing("pliron-compile", || pliron::compile(mir, &options))
+    cli_timing("pliron-compile", || pliron::compile(concrete, &options))
         .map_err(|error| error.display_with_sources(&options.sources))
 }
 
@@ -716,7 +739,7 @@ fn compile_input(
 /// backend. Artifacts carry no imports, so the module-root options are
 /// irrelevant here; the loading gate (parse + canonical MIR verification) is
 /// the artifact's semantic gate.
-fn stage_exec(file: Option<&str>, backend: mojito::BackendKind) -> ExitCode {
+fn stage_exec(file: Option<&str>, cli: &CliArgs) -> ExitCode {
     let bytes = match read_bytes(file) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -725,7 +748,10 @@ fn stage_exec(file: Option<&str>, backend: mojito::BackendKind) -> ExitCode {
         }
     };
     let label = file.unwrap_or("-");
-    match mojito::run_artifact(&bytes, label, backend) {
+    let instantiation = cli
+        .vm_instantiation
+        .unwrap_or_else(mojito::VmInstantiation::from_env);
+    match mojito::run_artifact_as(&bytes, label, cli.backend, instantiation) {
         Ok(execution) => {
             // Artifacts are compiled programs: print their output verbatim and
             // never echo bindings, matching file-based `run`'s parity rationale.
@@ -798,7 +824,8 @@ fn print_usage() {
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
          \x20 --timings              print per-phase timings and counters to stderr\n\
-         \x20 --instantiation-census print which mechanism instantiated each generic body (run, VM)\n\n\
+         \x20 --instantiation-census print which mechanism instantiated each generic body (run, VM)\n\
+         \x20 --erased               run generic bodies erased, the differential oracle (run|exec, VM)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\

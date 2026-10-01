@@ -132,16 +132,13 @@ impl<'a> Specializer<'a> {
             },
             invariant_errors: self.source.invariant_errors.clone(),
         };
-        let findings = mojito_mir::mir::verify::verify_concrete(&program);
-        if !findings.is_empty() {
-            return Err(MonoError {
-                function: None,
-                construct: format!(
-                    "specialized MIR that does not verify: {}",
-                    findings.join("; ")
-                ),
-            });
-        }
+        let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
+            function: None,
+            construct: format!(
+                "specialized MIR that does not verify: {}",
+                findings.join("; ")
+            ),
+        })?;
         let parametric_bodies = parametric_bodies(self.source);
         let emitted: HashSet<&str> = program
             .functions

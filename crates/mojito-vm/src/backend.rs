@@ -35,15 +35,27 @@ impl Backend {
         }
     }
 
-    /// Run a verified, already drop-elaborated MIR program — the artifact
-    /// execution entry sitting behind `mir::text::load_artifact`. See
-    /// [`VmBackend::run_elaborated`] for the trust contract.
+    /// Run a verified, drop-elaborated MIR program that may still be generic,
+    /// resolving its parameters at run time: the erased oracle the concrete
+    /// path is compared against. See [`VmBackend::run_elaborated`] for the
+    /// trust contract.
     pub fn run_elaborated(
         &mut self,
         program: mojito_mir::mir::MirProgram,
     ) -> Result<(), RuntimeError> {
         match self {
             Self::Vm(vm) => vm.run_elaborated(program),
+        }
+    }
+
+    /// Run concrete MIR, the elaborator's verified output: the production
+    /// execution entry for source programs and artifacts alike.
+    pub fn run_concrete(
+        &mut self,
+        program: mojito_mir::mir::ConcreteMir,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Vm(vm) => vm.run_concrete(program),
         }
     }
 

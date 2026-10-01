@@ -911,10 +911,10 @@ fn compiled_program_caches_one_elaborated_backend_artifact() {
         .compile_unlinked("def main():\n    print(42)\n")
         .expect("compile");
     assert!(std::ptr::eq(
-        compiled.elaborated_mir(),
-        compiled.elaborated_mir()
+        compiled.drop_elaborated_mir(),
+        compiled.drop_elaborated_mir()
     ));
-    assert!(compiled.elaborated_mir().invariant_errors.is_empty());
+    assert!(compiled.drop_elaborated_mir().invariant_errors.is_empty());
     let emitted = compiled.emit_mir().expect("emit MIR");
     let execution = compiler.execute(&compiled).expect("execute");
     assert_eq!(execution.output, "42\n");

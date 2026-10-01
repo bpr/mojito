@@ -64,9 +64,10 @@ Three facts make the target reachable from here.
 - **Specialized MIR mostly runs on the VM already.** The A1 experiment
   specialized all 893 of its corpus inputs into MIR that verifies
   ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md) §Coverage). Those rows
-  were compilations, not runs. The `specialized_vm` corpus group measures the
-  runs: 786 of 810 `assets/ok` fixtures behave as the erased program does,
-  and the rest are filed. That is encouraging, not a parity proof.
+  were compilations, not runs. The corpus group that became `erased_vm`
+  measured the runs: 786 of 810 `assets/ok` fixtures behaved as the erased
+  program did when it landed, and the rest were filed and closed before P1
+  switched the default.
 - **The VM already executes compile-time code.** CTFE runs a helper on
   `VmBackend`. It reaches the VM through a synthesized AST subprogram and a
   checker run, so it does not yet consume generators (§P3).
@@ -166,9 +167,8 @@ against the pin's behavior. It is not a reason to check a clone.
 
 ## Phases and their names
 
-"Elaborated" already has a meaning in the code:
-`CompiledProgram::elaborated_mir` is *drop-elaborated* MIR, which may still
-be generic. This plan uses three names, and P1 makes the code use them.
+This plan uses three names, and since P1 the code uses them:
+`CompiledProgram::{mir, drop_elaborated_mir, concrete_mir}`.
 
 | Name | What it is | Who may consume it |
 |---|---|---|
@@ -297,28 +297,47 @@ against whichever profile it reruns, interleaved with the commit before it.
 
 ### P1 — One elaborator below the waist, for both backends
 
-- Done: the corpus binary's `specialized_vm` group specializes each
-  `assets/ok` program, verifies it, and compares its VM run with the erased
-  run. 786 of 810 agreed when it landed. The rest are an expected-failure
-  list, filed by kind in the roadmap.
-- Done: `mir::verify::verify_concrete` rejects any symbolic type or
-  compile-time parameter, and `native::mono` verifies its output with it.
-  The compile-time argument slots a resolved call keeps are the residue
-  (roadmap 1.2).
-- Give the three phases of §Phases and their names their wrappers and their
-  entry roots, and cache the concrete graph so the native backend does not
-  specialize twice.
-- Run the VM on concrete MIR by default. The erased path stays selectable as
-  the differential oracle until P5.
-- Parity is more than output on accepted programs. The gate compares results,
-  output, error categories, and ordered lifecycle events, with controlled
-  inputs for programs that read files or stdin. It includes artifact round
-  trips and the ownership and type-error folders, since execution parity
-  cannot see a checker that accepts more.
+Done 2026-10-01. `native::mono` is the elaborator, and both backends consume
+its output.
+
+- `mir::verify::verify_concrete` rejects any symbolic type or compile-time
+  parameter. `mir::ConcreteMir` is built only by passing it, and
+  `native::mono` returns one. The compile-time argument slots a resolved call
+  keeps are the residue (roadmap §1).
+- The three phases of §Phases and their names are
+  `CompiledProgram::{mir, drop_elaborated_mir, concrete_mir}`. The entry
+  roots are `native::mono::entry_roots`. The concrete graph is cached, and
+  the native backend takes it and elaborates nothing.
+- The VM runs concrete MIR by default, for source programs and for loaded
+  artifacts. The erased path is selectable as the differential oracle until
+  P5: `--erased`, `MOJITO_VM_ERASED=1`, or
+  `Compiler::with_vm_instantiation`.
+- CTFE and the stage-composed `Backend::run(&CheckedProgram)` seam still run
+  erased bodies. `mojito-vm` sits above `mojito-native` and cannot call the
+  elaborator. CTFE moves at P4.
+- The parity gate is the corpus binary's `erased_vm` group: for each
+  `assets/ok` and `assets/runtime_error` program, the concrete run and the
+  erased run agree on output or error text and on the ordered lifecycle
+  events, with fixed stdin for the programs that read it, and the serialized
+  artifact, loaded and elaborated, reaches the same outcome. The type-error
+  and ownership-error folders keep their own groups: P1 changes nothing
+  above the waist, so no program is accepted that was rejected.
 - The erased VM is a migration comparator. Where it and the pin disagree, the
   pin decides.
-- Exit: one instantiation mechanism below the waist. `native::mono` is the
-  elaborator, and both backends consume its output.
+
+Measured against decision D4 on the same binary, erased and concrete
+interleaved, debug profile, `total` from `--timings`, median of three:
+
+| Program | Erased | Concrete | Ratio | Elaboration | Concrete functions | Peak RSS, erased → concrete |
+|---|---:|---:|---:|---:|---:|---:|
+| `hello.mojo` | 8.662 s | 8.628 s | 0.996 | 0.004 s | 5 of 911 | 293 MB → 232 MB |
+| `generic.mojo` | 9.200 s | 9.143 s | 0.994 | 0.016 s | 29 of 1,001 | 311 MB → 248 MB |
+| `stdlib_heavy.mojo` | 12.081 s | 12.165 s | 1.007 | 0.273 s | 182 of 1,338 | 407 MB → 348 MB |
+
+- Every row is inside the 1.20 alarm, so concrete is the default.
+- Elaboration costs what it instantiates. The VM then builds its registries
+  from, and clones, only the reachable graph, which is where the time and the
+  memory come back.
 
 ### P2 — Stop cloning what the elaborator can already instantiate
 

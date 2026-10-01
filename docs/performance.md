@@ -451,6 +451,40 @@ range, rustc 1.96.1.
 Absolute times drift between sessions, so a stage reruns the commit before it
 interleaved with its own, as the measurements above do.
 
+### The VM on concrete MIR (2026-10-01)
+
+Since stage P1 the VM runs the elaborator's concrete graph instead of erased
+generic bodies. Same binary (`d840d827` plus the change), `--erased` against
+the default, interleaved, debug profile, `total` from `--timings`, median of
+three with the range:
+
+| Program | Erased | Concrete | Ratio |
+|---|---:|---:|---:|
+| `hello.mojo` | 8.662 s (8.646–8.776) | 8.628 s (8.606–8.685) | 0.996 |
+| `generic.mojo` | 9.200 s (9.191–9.325) | 9.143 s (9.142–9.334) | 0.994 |
+| `stdlib_heavy.mojo` | 12.081 s (11.979–12.085) | 12.165 s (12.163–12.277) | 1.007 |
+
+The backend phases of `stdlib_heavy.mojo`, the program that instantiates
+most:
+
+| Phase | Erased | Concrete |
+|---|---:|---:|
+| `backend` | 1.294 s | 1.469 s |
+| `backend.prepare.drops.elaborate` | 1.078 s | 1.079 s |
+| `backend.prepare.elaborate` | — | 0.273 s |
+| `backend.prepare.mir_clone` | 0.060 s | 0.008 s |
+| `backend.vm` | 0.095 s | 0.041 s |
+
+- Elaboration is the only new cost: 0.004 s, 0.016 s, and 0.273 s for the
+  three programs, which reach 5, 29, and 182 concrete functions out of 911,
+  1,001, and 1,338 in MIR (`concrete_functions` beside `mir_functions` in
+  `--timings`).
+- The VM clones and indexes only the reachable graph, so `mir_clone` and
+  `vm` shrink.
+- Peak RSS falls: 293 → 232 MB, 311 → 248 MB, and 407 → 348 MB.
+- The instance row of the census for `stdlib_heavy.mojo` is now 96, not 98: a
+  lone static called on a spelled instance names that instance's clone.
+
 ### Parameter-expression attributes (2026-09-20)
 
 Value arguments, value defaults, and dependent types became typed canonical
@@ -595,7 +629,7 @@ items 1–3 are cheap today).
    registry construction all operate on the entire linked program. These are
    less likely than the source/checker multiplication to explain a double-digit
    Hello World compile time, but they are easy to isolate. In particular,
-   `CompiledProgram::elaborated_mir` clones pre-drop MIR once and
+   `CompiledProgram::drop_elaborated_mir` clones pre-drop MIR once and
    `Compiler::execute` clones the elaborated MIR again. Remove or share those
    copies only if their measured cost matters.
 

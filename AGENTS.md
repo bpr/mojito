@@ -74,7 +74,7 @@ mojito-checker     semantic checking (+ explicit_destroy)
 mojito-mir         MIR lowering, verifier, textual round-trip
 mojito-analysis    ownership/liveness + drop elaboration
 mojito-vm          register VM + Backend enum (re-checks: seam contract)
-mojito-native      monomorphization + mangling (above the waist)
+mojito-native      the elaborator (mono, for both backends) + mangling
 mojito-pliron      Pliron/LLVM backend (only crate that may need LLVM)
 mojito-comptime    elaboration + CTFE (ABOVE the VM: CTFE runs VmBackend)
 mojito (root)      facade: compiler driver, CLI, re-exports, tests/
@@ -113,14 +113,16 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    ```text
    source -> lex -> parse -> link -> source validation -> comptime elaboration
           -> CheckedProgram -> HIR CFG -> MIR -> ownership/liveness
-          -> drop elaboration -> VM
+          -> drop elaboration -> concrete MIR (native::mono) -> VM
    ```
 
 4. `CheckedProgram` is the semantic handoff. Later phases consume checked facts;
    they do not silently re-check or recover unchecked execution.
 5. MIR is the stable waist. Backends consume register-typed MIR that has passed
    `mir::verify` plus ownership analysis, with checked declaration metadata,
-   rather than rediscovering language rules from AST syntax. Moving that waist
+   rather than rediscovering language rules from AST syntax. The VM and the
+   native backend both run the concrete MIR `native::mono` elaborates from
+   it; the erased VM path (`--erased`) is a differential oracle only. Moving that waist
    is a staged decision recorded in `docs/pliron-future.md` and
    `docs/pliron-backend-pivot-plan.md`, never an incidental consequence of
    another change.
@@ -226,7 +228,7 @@ compiler-and-VM execution path.
 Files under `assets/<outcome>/` run through the whole pipeline as one
 generated test per fixture in the `tests/corpus_test.rs` binary
 (`harness = false`, libtest-mimic), grouped as `assets_*`, `vm_ok`,
-`specialized_vm`, `verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
+`erased_vm`, `verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
 pipeline entry path; the phase-grouped files keep only targeted tests. The
 outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.

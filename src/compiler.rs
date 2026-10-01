@@ -19,6 +19,7 @@ use crate::mir::text::{DisassembleError, disassemble};
 use crate::module::{
     LinkOptions, ModuleError, inject_prelude, link_source_with_options, link_with_options,
 };
+use crate::native::mono::{MonoError, SpecializedProgram};
 use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 use crate::timing;
@@ -30,26 +31,32 @@ use std::path::Path;
 use std::sync::OnceLock;
 /// A program that has passed linking, comptime elaboration, semantic checking,
 /// and ownership analysis and is therefore ready for any backend.
+///
+/// It holds the three MIR phases apart: parametric MIR ([`Self::mir`]),
+/// drop-elaborated MIR ([`Self::drop_elaborated_mir`]), and concrete MIR
+/// ([`Self::concrete_mir`]). The last two are computed once, on first use.
 #[derive(Debug, Clone)]
 pub struct CompiledProgram {
     checked: CheckedProgram,
     mir: MirProgram,
     elaborated: OnceLock<MirProgram>,
+    concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     template_stats: crate::templates::TemplateStats,
     clones: crate::census::CloneCensus,
 }
 impl CompiledProgram {
     /// Which mechanism instantiated each generic body of this compilation.
-    /// Monomorphizes the program from `main` to count what its erased bodies
-    /// serve, so it costs a native specialization.
+    /// Reads the concrete graph to count what the parametric bodies serve,
+    /// so it elaborates the program if nothing has yet.
     pub fn instantiation_census(&self) -> crate::census::InstantiationCensus {
-        let mir = self.elaborated_mir();
-        let erased_served = crate::native::mono::specialize(mir, &["main".to_string()])
-            .ok()
-            .map(|specialized| crate::census::ErasedServed {
-                bodies: specialized.parametric.reached,
-                instances: specialized.parametric.instances,
-            });
+        let mir = self.drop_elaborated_mir();
+        let erased_served =
+            self.concrete_mir()
+                .ok()
+                .map(|specialized| crate::census::ErasedServed {
+                    bodies: specialized.parametric.reached,
+                    instances: specialized.parametric.instances,
+                });
         crate::census::InstantiationCensus {
             cloned: self.clones.clone(),
             inferred: self.template_stats.inferred_instances.len(),
@@ -71,16 +78,19 @@ impl CompiledProgram {
         &self.checked
     }
 
-    /// The ownership-verified, pre-drop MIR produced by the authoritative
-    /// compiler pipeline, from which the elaborated backend artifact derives.
+    /// Parametric MIR: the ownership-verified, pre-drop MIR produced by the
+    /// authoritative compiler pipeline, whose generic bodies still name their
+    /// parameters. The later phases derive from it.
     pub const fn mir(&self) -> &MirProgram {
         &self.mir
     }
 
-    /// The drop-elaborated, re-verified MIR — the exact artifact every
-    /// backend consumes. Post-drop verification findings are folded into
+    /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
+    /// It may still be generic. It is the serialized artifact and the
+    /// elaborator's input, and the erased VM path runs it as the differential
+    /// oracle. Post-drop verification findings are folded into
     /// `invariant_errors`; consumers refuse a non-empty list.
-    pub fn elaborated_mir(&self) -> &MirProgram {
+    pub fn drop_elaborated_mir(&self) -> &MirProgram {
         self.elaborated.get_or_init(|| {
             let mut mir = {
                 let _drops = timing::span("drops.elaborate");
@@ -93,9 +103,31 @@ impl CompiledProgram {
         })
     }
 
+    /// Concrete MIR: the drop-elaborated program elaborated by
+    /// `native::mono` from its entry roots and verified concrete. Every
+    /// backend consumes this one graph; no backend elaborates again.
+    pub fn concrete_mir(&self) -> Result<&SpecializedProgram, CompilerError> {
+        self.concrete
+            .get_or_init(|| {
+                let mir = self.drop_elaborated_mir();
+                let _elaborate = timing::span("elaborate");
+                let concrete =
+                    crate::native::mono::specialize(mir, &crate::native::mono::entry_roots(mir));
+                if let Ok(concrete) = &concrete {
+                    timing::count(
+                        "concrete_functions",
+                        concrete.program.functions.len() as u64,
+                    );
+                }
+                concrete
+            })
+            .as_ref()
+            .map_err(|error| CompilerError::Elaborate(error.clone()))
+    }
+
     /// Emit this program as canonical, executable Mojito MIR assembly.
     pub fn emit_mir(&self) -> Result<String, DisassembleError> {
-        disassemble(self.elaborated_mir())
+        disassemble(self.drop_elaborated_mir())
     }
 }
 #[derive(Debug, Clone)]
@@ -125,6 +157,8 @@ pub enum CompilerError {
         rounds: usize,
         callee: String,
     },
+    /// The elaborator refused to instantiate a body the entry roots reach.
+    Elaborate(MonoError),
     Runtime(RuntimeError),
 }
 impl fmt::Display for CompilerError {
@@ -144,11 +178,33 @@ impl fmt::Display for CompilerError {
                  '{callee}' keeps requesting new instantiations (likely inferred polymorphic \
                  recursion) — supply explicit compile-time arguments or bound the recursion"
             ),
+            Self::Elaborate(error) => write!(f, "Elaboration error: {error}"),
             Self::Runtime(error) => error.fmt(f),
         }
     }
 }
 impl std::error::Error for CompilerError {}
+/// How the VM instantiates a generic body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmInstantiation {
+    /// Run concrete MIR: the elaborator instantiated every reachable body
+    /// before execution, as it does for the native backend.
+    Concrete,
+    /// Run drop-elaborated MIR and resolve parameters at run time. Kept as
+    /// the differential oracle for the concrete path.
+    Erased,
+}
+impl VmInstantiation {
+    /// `Erased` when the `MOJITO_VM_ERASED` environment variable is set and
+    /// non-empty, `Concrete` otherwise.
+    pub fn from_env() -> Self {
+        if std::env::var_os("MOJITO_VM_ERASED").is_some_and(|value| !value.is_empty()) {
+            Self::Erased
+        } else {
+            Self::Concrete
+        }
+    }
+}
 /// Owns stage ordering and backend selection for normal whole-program use.
 #[derive(Debug, Clone)]
 pub struct Compiler {
@@ -163,6 +219,9 @@ pub struct Compiler {
     /// instead of inferring it again. `None` defers to the
     /// `MOJITO_BODY_FACT_REUSE` environment variable (`0` disables).
     body_fact_reuse: Option<bool>,
+    /// Which MIR phase the VM runs. `None` defers to
+    /// [`VmInstantiation::from_env`].
+    vm_instantiation: Option<VmInstantiation>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -213,7 +272,14 @@ impl Compiler {
             allow_executable_module_scope: false,
             verify_template_facts: None,
             body_fact_reuse: None,
+            vm_instantiation: None,
         }
+    }
+    /// Choose the MIR phase the VM runs, whatever the environment says.
+    #[must_use]
+    pub const fn with_vm_instantiation(mut self, instantiation: VmInstantiation) -> Self {
+        self.vm_instantiation = Some(instantiation);
+        self
     }
     /// Turn body-fact carry-over on or off, whatever the environment says:
     /// off, every checker pass infers every body it does not derive.
@@ -603,6 +669,7 @@ impl Compiler {
             checked,
             mir,
             elaborated: OnceLock::new(),
+            concrete: OnceLock::new(),
             template_stats: templates_catalog.stats().clone(),
             clones,
         })
@@ -612,19 +679,38 @@ impl Compiler {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
             CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
         })?;
-        let mir = {
+        let elaborated = {
             let _prepare = timing::span("prepare");
-            let elaborated = program.elaborated_mir();
-            let _clone = timing::span("mir_clone");
-            elaborated.clone()
+            program.drop_elaborated_mir()
         };
-        if !mir.invariant_errors.is_empty() {
-            return Err(CompilerError::Verify(mir.invariant_errors));
+        if !elaborated.invariant_errors.is_empty() {
+            return Err(CompilerError::Verify(elaborated.invariant_errors.clone()));
         }
-        let _run = timing::span("vm");
-        backend
-            .run_elaborated(mir)
-            .map_err(CompilerError::Runtime)?;
+        match self
+            .vm_instantiation
+            .unwrap_or_else(VmInstantiation::from_env)
+        {
+            VmInstantiation::Concrete => {
+                let concrete = {
+                    let _prepare = timing::span("prepare");
+                    let concrete = program.concrete_mir()?;
+                    let _clone = timing::span("mir_clone");
+                    concrete.program.clone()
+                };
+                let _run = timing::span("vm");
+                backend.run_concrete(concrete)
+            }
+            VmInstantiation::Erased => {
+                let erased = {
+                    let _prepare = timing::span("prepare");
+                    let _clone = timing::span("mir_clone");
+                    elaborated.clone()
+                };
+                let _run = timing::span("vm");
+                backend.run_elaborated(erased)
+            }
+        }
+        .map_err(CompilerError::Runtime)?;
         Ok(Execution {
             output: backend.output(),
             bindings: backend.bindings(),

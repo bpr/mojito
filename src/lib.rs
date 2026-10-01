@@ -43,7 +43,7 @@ pub fn check_ownership(program: &[ast::Stmt]) -> Result<(), error::OwnershipErro
         .map_err(|error| error::OwnershipError::InvalidInput(error.to_string()))?;
     check_ownership_program(&prog)
 }
-pub use artifact::{ArtifactRunError, run_artifact};
+pub use artifact::{ArtifactRunError, run_artifact, run_artifact_as};
 pub use ast::{
     Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, SourceType, Stmt, Type,
     TypeParam,
@@ -55,7 +55,9 @@ pub use checked::{
     SemanticAdjustment, ValueCategory,
 };
 pub use checker::{Checker, check, check_program};
-pub use compiler::{CompiledProgram, Compiler, CompilerError, Execution, validate_module_scope};
+pub use compiler::{
+    CompiledProgram, Compiler, CompilerError, Execution, VmInstantiation, validate_module_scope,
+};
 pub use comptime::{ComptimeError, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, TypeError};

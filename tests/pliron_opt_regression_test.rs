@@ -37,7 +37,7 @@ fn assert_vm_o0_release_agree(name: &str, src: &str) {
         target: host_target(),
         trace_lifecycle: false,
     };
-    let mut module = native::compile(compiled.elaborated_mir(), &options)
+    let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
     let dir = tempfile::tempdir().expect("tempdir");
     for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
@@ -80,7 +80,7 @@ fn assert_trap_parity(name: &str, src: &str) -> i32 {
         target: host_target(),
         trace_lifecycle: false,
     };
-    let mut module = native::compile(compiled.elaborated_mir(), &options)
+    let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
     let dir = tempfile::tempdir().expect("tempdir");
     let mut outcomes = Vec::new();

@@ -51,7 +51,7 @@ fn compile_fresh() -> NativeModule {
         target: host_target(),
         trace_lifecycle: false,
     };
-    native::compile(compiled.elaborated_mir(), &options)
+    native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)))
 }
 

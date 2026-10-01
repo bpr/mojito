@@ -47,7 +47,7 @@ fn native_compile(src: &str, entries: &[&str]) -> NativeModule {
         target: host_target(),
         trace_lifecycle: false,
     };
-    native::compile(compiled.elaborated_mir(), &options)
+    native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)))
 }
 
@@ -499,7 +499,7 @@ fn executable_and_object_emission() {
         target: host_target(),
         trace_lifecycle: false,
     };
-    let mut module = native::compile(compiled.elaborated_mir(), &options)
+    let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -554,7 +554,7 @@ fn print_fixture_exes_match_vm_output() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        let mut module = native::compile(compiled.elaborated_mir(), &options)
+        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
@@ -662,7 +662,7 @@ fn a1_reference_field_arithmetic_matches_vm() {
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let mut vm = mojito::backend::VmBackend::new();
         vm.enable_lifecycle_log();
-        vm.run_elaborated(compiled.elaborated_mir().clone())
+        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
 
@@ -678,7 +678,7 @@ fn a1_reference_field_arithmetic_matches_vm() {
                 target: host_target(),
                 trace_lifecycle,
             };
-            let mut module = native::compile(compiled.elaborated_mir(), &options)
+            let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
                 .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
             let exe = dir.path().join(level);
             module
@@ -834,7 +834,7 @@ fn native_error(src: &str, entries: &[&str]) -> String {
         target: host_target(),
         trace_lifecycle: false,
     };
-    let error = native::compile(compiled.elaborated_mir(), &options)
+    let error = native::compile_mir(compiled.drop_elaborated_mir(), &options)
         .err()
         .expect("the backend must reject this fixture");
     error.display_with_sources(&options.sources)
@@ -909,13 +909,13 @@ fn lifecycle_event_traces_match_the_vm() {
             .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
         let mut vm = mojito::backend::VmBackend::new();
         vm.enable_lifecycle_log();
-        vm.run_elaborated(compiled.elaborated_mir().clone())
+        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
 
         let mut entries = vec!["main".to_string()];
         if compiled
-            .elaborated_mir()
+            .drop_elaborated_mir()
             .functions
             .iter()
             .any(|(name, _)| name == "__toplevel__")
@@ -928,7 +928,7 @@ fn lifecycle_event_traces_match_the_vm() {
             target: host_target(),
             trace_lifecycle: true,
         };
-        let mut module = native::compile(compiled.elaborated_mir(), &options)
+        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         let exe = dir.path().join("traced");
@@ -1387,8 +1387,11 @@ def main():
                 target: host_target(),
                 trace_lifecycle: false,
             };
-            let mut module = mojito::backend::pliron::compile(compiled.elaborated_mir(), &options)
-                .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
+            let mut module =
+                mojito::backend::pliron::compile_mir(compiled.drop_elaborated_mir(), &options)
+                    .unwrap_or_else(|error| {
+                        panic!("{}", error.display_with_sources(&options.sources))
+                    });
             let dir = tempfile::tempdir().expect("tempdir");
             let exe = dir.path().join("abi_inspect");
             module

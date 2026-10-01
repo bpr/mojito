@@ -52,6 +52,7 @@ Vec<Stmt>
   -> MIR
   -> ownership / borrow / liveness analysis
   -> drop elaboration
+  -> elaboration to concrete MIR (native::mono)
   -> register VM
 ```
 
@@ -64,17 +65,45 @@ let program = compiler.compile_path(path)?;
 let execution = compiler.execute(&program)?;
 ```
 
-`CompiledProgram` privately retains the `CheckedProgram`, the single
-ownership-verified, pre-drop `MirProgram` lowered by the driver, and — computed
-lazily from it exactly once — the drop-elaborated, re-verified `MirProgram`
-exposed as `CompiledProgram::elaborated_mir`. That cached post-drop program is
-the exact backend artifact: execution hands it to `Backend::run_elaborated` and
-`CompiledProgram::emit_mir` serializes it to canonical text, so both consumers
-observe one retained artifact rather than re-deriving elaboration per call.
-Post-drop verification findings fold into its `invariant_errors`, which every
-consumer refuses when non-empty. Production backends therefore never re-lower
-checked syntax. `CompilerError` identifies the failing
-stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
+`CompiledProgram` privately retains the `CheckedProgram` and three MIR phases,
+each named by its accessor and each computed once:
+
+| Phase | Accessor | What it is | Who consumes it |
+|---|---|---|---|
+| Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters | Ownership analysis |
+| Drop-elaborated MIR | `drop_elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator; `emit_mir` and the serialized artifact; the erased oracle |
+| Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
+
+`native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
+from the program's entry roots and caches the graph, so the VM, the native
+backend, and the instantiation census read one elaboration and no backend
+elaborates again. `mir::ConcreteMir` has one constructor, which runs concrete
+verification, so a holder never has to know which verifier mode ran. A body
+the elaborator refuses is `CompilerError::Elaborate`; execution never falls
+back to the erased path.
+
+The entry roots are defined once, by `native::mono::entry_roots`: `main` and
+the module initializer `__toplevel__`, each when the program defines it.
+Source execution, artifact execution, and a native executable all elaborate
+from them. A native caller that wants another root (a scalar entry under
+test) names it to `mono::specialize`, through `pliron::compile_mir`.
+
+`Compiler::execute` runs concrete MIR through `Backend::run_concrete`. The
+erased path — `Backend::run_elaborated` on drop-elaborated MIR, resolving
+parameters at run time — stays selectable as the differential oracle
+(`Compiler::with_vm_instantiation`, `MOJITO_VM_ERASED=1`, or `--erased` on
+`run` and `exec`) until the replaced mechanisms are deleted
+(`docs/parametric-mir-plan.md`, P5). The corpus binary's `erased_vm` group
+compares the two per fixture. Compile-time evaluation keeps its own VM run on
+erased bodies, as does the stage-composed `Backend::run(&CheckedProgram)`
+seam: `mojito-vm` sits above `mojito-native` in the crate order and cannot
+call the elaborator.
+
+`CompiledProgram::emit_mir` serializes the drop-elaborated program to
+canonical text. Post-drop verification findings fold into its
+`invariant_errors`, which every consumer refuses when non-empty. Production
+backends therefore never re-lower checked syntax. `CompilerError` identifies
+the failing stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
 public compatibility seams for tests and diagnostic tools; that stage-composed
 entry re-checks pre-drop ownership but is non-authoritative for whole-program
 discovery and specialization (a generic body forwarding its own `H` into
@@ -109,7 +138,10 @@ MIR  <---- stable waist
 analysis + drop elaboration
    |
    v
-register VM
+elaborator (native::mono): concrete MIR
+   |
+   v
+register VM / native backend
 ```
 
 The MIR is the important waist. Earlier phases preserve source structure,
@@ -162,7 +194,7 @@ dependency (`tests/backend_isolation_test.rs` guards the default feature
 graph). The supported backend lives in the workspace crate `crates/mojito-pliron/` behind the
 optional `backend-pliron` feature — a compile path
 (`mojito compile --backend pliron`, plus `run --backend pliron` for the
-advertised subset) consuming the cached post-drop `elaborated_mir` artifact,
+advertised subset) consuming the cached `concrete_mir` graph,
 with its own gate (`scripts/check-pliron`, which also chains the Stage 0
 spike gate) and a separate memory-heavy corpus lane
 (`scripts/check-pliron-heavy`, `tests/heavy/`). Production execution stays on the register VM. The current pin
@@ -196,12 +228,14 @@ The preferred native architecture sits entirely below the verified-MIR waist:
 ```text
 source -> Compiler -> ownership-verified, post-drop verified MIR
                             |                 |
-                            |                 +-> VM / canonical .mir artifact
+                            |                 +-> canonical .mir artifact
                             v
-              backend-private monomorphization
+                 elaboration (native::mono)
                             |
-                  mir::verify (again)
-                            |
+               mir::verify_concrete: concrete MIR
+                            |                 |
+                            |                 +-> VM
+                            v
                     Pliron lowering
                             |
              Mojito ops only where justified
@@ -2328,8 +2362,8 @@ are typed `Ty::None` by convention. Functions additionally carry their checked
 `ret_ty`, raising contract (`raises`/`error_ty`), and per-slot `var_tys`.
 
 `mir::verify` has two modes. `verify` accepts parametric MIR, the form the
-canonical artifact and the VM's erased execution use. `verify_concrete` is for
-elaborated MIR: it applies the same rules and then rejects what only
+canonical artifact and the VM's erased oracle use. `verify_concrete` is for
+concrete MIR, the form the VM and the native backend run: it applies the same rules and then rejects what only
 parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
 signature, slot, register, place, instruction, or declaration; a compile-time
 parameter a declaration or a call contract still declares; a
@@ -3672,7 +3706,11 @@ Module:
 crates/mojito-vm/src/backend/vm.rs
 ```
 
-The register VM executes verified MIR. It is structured rather than
+The register VM executes verified MIR. Production hands it concrete MIR
+(`Backend::run_concrete`), in which every call names an instance; the same
+dispatcher runs drop-elaborated MIR that is still generic
+(`Backend::run_elaborated`), resolving parameters at run time, as the erased
+oracle and for compile-time evaluation. It is structured rather than
 byte-addressable:
 
 - registers hold rich `runtime::Value`s
@@ -4039,9 +4077,11 @@ canonical `MIR function '<name>' [block <n>]` message prefixes — the one
 sanctioned consumer of that spelling. `load_artifact` bundles parse-then-verify
 as the loading gate artifact execution sits behind; verification policy itself
 never moves out of `mir::verify`. `artifact::run_artifact` composes that gate
-with `Backend::run_elaborated` (the CLI `exec` subcommand's engine): the
-loaded program executes exactly as serialized, with no re-elaboration,
-re-verification, or ownership re-analysis. The composition lives in
+with the elaborator and `Backend::run_concrete` (the CLI `exec` subcommand's
+engine): the artifact is drop-elaborated MIR, which may be generic, and the
+loaded program is elaborated to concrete MIR from its entry roots exactly as
+a compiled source program is. It is not drop-elaborated or
+ownership-analyzed again. `exec --erased` runs it as serialized instead. The composition lives in
 `src/artifact.rs`, beside rather than inside `Compiler`: the artifact path
 deliberately bypasses the source pipeline, and `mir::text` cannot host it
 without layering onto `backend`.
@@ -4060,9 +4100,9 @@ serialize to long artifacts. It must support:
 - disassembly of verified in-memory programs (implemented)
 - execution by the register VM without reconstructing source AST semantics
   (implemented: `artifact::run_artifact` composes `load_artifact` with
-  `Backend::run_elaborated`, which runs the serialized, already
-  drop-elaborated program as-is — re-running `elaborate_drops_program` is
-  unsound because elaboration is not idempotent, and the pre-drop ownership
+  `native::mono` and `Backend::run_concrete`. The serialized program is
+  already drop-elaborated — re-running `elaborate_drops_program` is unsound
+  because drop elaboration is not idempotent, and the pre-drop ownership
   analysis has no meaning post-drop; verify-at-load is the consumer gate)
 - consumption by future native backends (Pliron and Cranelift first)
 

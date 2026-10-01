@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The VM runs concrete MIR. `Compiler::execute` and `mojito exec` elaborate
+  drop-elaborated MIR with `native::mono` from `main` and module
+  initialization and run the result, as the native backend does, and the
+  driver caches that graph (`CompiledProgram::concrete_mir`) so no backend
+  elaborates twice. `mir::ConcreteMir` is the verified wrapper, and
+  `native::mono::entry_roots` defines the roots. The erased path stays as the
+  differential oracle: `--erased`, `MOJITO_VM_ERASED=1`, or
+  `Compiler::with_vm_instantiation`. A body the elaborator refuses is
+  `CompilerError::Elaborate`. Debug `run` is within 1% of the erased path on
+  the three compile benchmarks, and peak memory falls by about 60 MB.
+- The corpus binary's `specialized_vm::*` group is now `erased_vm::*`: the
+  concrete run against the erased oracle for every `assets/ok` and
+  `assets/runtime_error` program, comparing output or error text, ordered
+  lifecycle events, and the serialized artifact's outcome.
 - The native backend runs an evaluated default argument
   (`def f(s: String = String("a"))`, called as `f()`): the caller calls the
   lowered default function, a `var` parameter takes the value, and a
@@ -20,7 +34,8 @@ to evolve under the `0.x` compatibility rules.
   it rejects every symbolic type, compile-time parameter, and erased-dispatch
   result adapter that parametric MIR may carry. `native::mono` verifies its
   output in that mode, and its own concreteness scan is gone. The
-  compile-time argument slots a resolved call still lists are roadmap 1.2.
+  compile-time argument slots a resolved call still lists are filed in
+  roadmap section 1.
 - The corpus binary gains a `specialized_vm::*` group: each `assets/ok`
   program's elaborated MIR is specialized by `native::mono`, must pass
   `mir::verify`, and must run on the VM to the erased program's outcome. It
@@ -38,6 +53,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic struct's static called on a spelled instance with no argument
+  carrying the struct's parameter (`Pair[Int].count()` beside
+  `def count(*values: Self.T)`, or a body-only `List[Self.T]()`) compiles
+  natively and elaborates: the call names the instance's clone of the static,
+  from an inferred body and a derived one alike, and concrete verification
+  accepts a pack subscript over the tuple the elaborator rewrote the pack to.
+  `assets/ok/template_method_generic_static_owner_unbound.mojo` pins it on
+  both backends and the pin.
 - A specialized program builds and writes through a `List[ref T]` on the VM.
   `RefList([a])` followed by `self.values[0] += 2` stopped with `vm: read of
   uninitialized Pointer storage`: `List.append`'s `self.data[size] = value`
@@ -95,6 +118,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `CompiledProgram::elaborated_mir` is `drop_elaborated_mir`, naming the
+  phase apart from concrete MIR. `backend::pliron::compile` takes the
+  driver's `SpecializedProgram` and elaborates nothing; `compile_mir` keeps
+  the old signature for a caller that names its own entries.
+  `SpecializedProgram::program` is a `mir::ConcreteMir`.
 - `verify_instruction`, one 1,300-line match over `MirInstr` in
   `mir/verify/instr.rs`, is now the checks every instruction gets followed by
   a dispatch on the instruction's family. The loan checks move to

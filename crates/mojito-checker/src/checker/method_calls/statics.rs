@@ -452,8 +452,8 @@ impl Checker {
         {
             self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
             if let Some(clone) = self.instance_method_clone(sname, method, &tyargs) {
-                return self.infer_struct_static_method(
-                    span,
+                let ty = self.infer_struct_static_method(
+                    span.clone(),
                     sname,
                     struct_targs,
                     &clone,
@@ -464,7 +464,9 @@ impl Checker {
                         parameterized_syntax,
                         preserves_receiver_interiors: false,
                     },
-                );
+                )?;
+                self.record_static_clone_target(span, sname, &clone);
+                return Ok(ty);
             }
         }
         self.finish_static_call(

@@ -80,7 +80,7 @@ fn scalar_capability_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        match native::compile(compiled.elaborated_mir(), &options) {
+        match native::compile_mir(compiled.drop_elaborated_mir(), &options) {
             Err(error) => {
                 let detail = error.display_with_sources(&options.sources);
                 (rel, "compute".into(), "excluded".to_string(), detail)
@@ -135,7 +135,7 @@ fn scalar_capability_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        let mut module = native::compile(compiled.elaborated_mir(), &options)
+        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
@@ -244,7 +244,7 @@ fn parity_exe_manifest_and_differential() {
             );
         };
         if !compiled
-            .elaborated_mir()
+            .drop_elaborated_mir()
             .functions
             .iter()
             .any(|(name, _)| name == "main")
@@ -258,7 +258,7 @@ fn parity_exe_manifest_and_differential() {
         }
         let mut entries = vec!["main".to_string()];
         if compiled
-            .elaborated_mir()
+            .drop_elaborated_mir()
             .functions
             .iter()
             .any(|(name, _)| name == "__toplevel__")
@@ -271,7 +271,7 @@ fn parity_exe_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        match native::compile(compiled.elaborated_mir(), &options) {
+        match native::compile_mir(compiled.drop_elaborated_mir(), &options) {
             Err(error) => {
                 let detail = error.display_with_sources(&options.sources);
                 (rel, "main".into(), "excluded".to_string(), detail)
@@ -284,7 +284,7 @@ fn parity_exe_manifest_and_differential() {
                     Some(bytes) => {
                         let mut vm = mojito::backend::VmBackend::new();
                         vm.set_input_override(bytes.to_vec());
-                        vm.run_elaborated(compiled.elaborated_mir().clone())
+                        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
                             .unwrap_or_else(|error| {
                                 panic!("{rel}: fixture must run on the VM: {error}")
                             });
@@ -378,7 +378,7 @@ fn parity_exe_manifest_and_differential() {
         let vm_error = vm_error.to_string();
         let mut entries = Vec::new();
         if compiled
-            .elaborated_mir()
+            .drop_elaborated_mir()
             .functions
             .iter()
             .any(|(name, _)| name == "main")
@@ -386,7 +386,7 @@ fn parity_exe_manifest_and_differential() {
             entries.push("main".to_string());
         }
         if compiled
-            .elaborated_mir()
+            .drop_elaborated_mir()
             .functions
             .iter()
             .any(|(name, _)| name == "__toplevel__")
@@ -400,7 +400,7 @@ fn parity_exe_manifest_and_differential() {
             target: host_target(),
             trace_lifecycle: false,
         };
-        let mut module = native::compile(compiled.elaborated_mir(), &options)
+        let mut module = native::compile_mir(compiled.drop_elaborated_mir(), &options)
             .unwrap_or_else(|error| panic!("{}", error.display_with_sources(&options.sources)));
         let dir = tempfile::tempdir().expect("tempdir");
         for (level, opt) in [("O0", OptLevel::O0), ("release", OptLevel::Release)] {
@@ -486,7 +486,7 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 829,
+            differential == 830,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 810"
         );
         assert!(
@@ -554,7 +554,7 @@ fn pliron_debug_zero_degradations_across_the_corpus() {
         };
         // Ineligible for native compilation (no main); the parity manifest
         // pins which ones.
-        let module = native::compile(compiled.elaborated_mir(), &options).ok()?;
+        let module = native::compile_mir(compiled.drop_elaborated_mir(), &options).ok()?;
         let degraded = module
             .debug_degradations()
             .unwrap_or_else(|error| panic!("{rel}: debug attach: {error}"));

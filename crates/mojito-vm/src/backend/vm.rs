@@ -21,8 +21,8 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace, MirProgram,
-    MirSubscriptArg, MirTerm, Proj, Reg,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace,
+    MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamId;
@@ -452,7 +452,8 @@ impl VmBackend {
     }
 
     /// Run a verified, already drop-elaborated MIR program — what
-    /// `mir::text::load_artifact` yields. The loading gate is the artifact's
+    /// `mir::text::load_artifact` yields — resolving any parameter it still
+    /// names at run time. The loading gate is the artifact's
     /// semantic gate, so this entry re-runs neither `mir::verify` nor the
     /// pre-drop ownership analysis (meaningless on elaborated MIR), and it
     /// must not re-run drop elaboration: `elaborate_drops_program` is not
@@ -473,6 +474,12 @@ impl VmBackend {
         };
         let _run = timing::span("execute");
         self.run_prog(&prog)
+    }
+
+    /// Run concrete MIR. [`ConcreteMir`] is built only by concrete
+    /// verification, so this entry verifies nothing again.
+    pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
+        self.run_elaborated(mir.into_program())
     }
 
     /// Captured standard output.

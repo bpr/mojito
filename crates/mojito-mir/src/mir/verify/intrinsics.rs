@@ -30,6 +30,13 @@ pub(super) fn verify_intrinsic_index(
         (MirIntrinsicSubscript::VariadicStorage, Some(Ty::VariadicPack(element))) => {
             Some(vec![element.as_ref()])
         }
+        // An elaborated pack is the tuple its call site collected: the
+        // elaborator rewrites the pack's type at the instance's arity and
+        // keeps the subscript.
+        (
+            MirIntrinsicSubscript::VariadicStorage,
+            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)),
+        ) => Some(elements.iter().collect::<Vec<_>>()),
         (MirIntrinsicSubscript::Simd, Some(Ty::Simd { dtype, .. })) => {
             let scalar = simd_element_type(dtype);
             if let Some(dest) = dest

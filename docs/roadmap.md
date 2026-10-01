@@ -32,13 +32,14 @@ lifetimes on that IR, and instantiates everything in one elaborator. Mojito
 checks most bodies once
 ([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md)),
 but it still clones the AST per instance before the check, and it
-instantiates generics three ways: the AST cloner, erased dispatch in the VM,
-and `native::mono`. The staged plan that closes the gap is
+instantiates generics two ways: the AST cloner above the waist, and
+`native::mono` below it for both backends. The VM's erased dispatch remains
+for compile-time evaluation and as the differential oracle. The staged plan that closes the gap is
 [`docs/parametric-mir-plan.md`](parametric-mir-plan.md); the stage each entry
 belongs to is named in its title.
 
-Scope: only work that moves an instantiation from the AST cloner or the VM's
-erased dispatch to the elaborator, or that deletes what the move makes dead.
+Scope: only work that moves an instantiation from the AST cloner to the
+elaborator, or that deletes what the move makes dead.
 A defect found on the way is filed by its kind; a divergence from the pin
 goes to section 3, however small.
 
@@ -46,38 +47,7 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P1) The VM runs erased generic bodies, which Mojo's interpreter
-  never does**
-
-  Problem: the VM resolves a generic body's parameters at run time while the
-  native backend specializes it first, so the two backends instantiate
-  generics by different mechanisms.
-  - The driver elaborates verified MIR with `native::mono` for both backends,
-    and the VM runs the result.
-  - Name the three phases apart, as the plan's §Phases and their names does.
-    `CompiledProgram::elaborated_mir` means drop-elaborated MIR today, which
-    may still be generic. Concrete MIR gets its own wrapper or accessor.
-  - Define the entry roots once: `main`, top-level execution, artifact
-    execution, and an externally requested native entry.
-  - Cache the concrete graph. The native backend consumes it and does not
-    specialize again.
-  - The erased path stays selectable, as the differential oracle, until 1.19.
-  - The serialized artifact stays the pre-elaboration MIR, and `exec`
-    elaborates what it loads.
-  - CTFE keeps its own VM run until 1.18.
-  - The parity gate is the plan's §P1 list: output, error categories, ordered
-    lifecycle events, artifact round trips, and the error folders. Where the
-    erased VM and the pin disagree, the pin decides.
-  - Measure against the plan's P0 baseline. Its decision D4 is the budget.
-  - If the budget is missed, the erased default stays and the cost is
-    investigated. The switch is not abandoned on a first measurement.
-  - Update `docs/architecture.md` and the artifact documentation in the same
-    change.
-  - Depends on the section 2 entry for a static taking a pack of its
-    struct's parameter type, which `native::mono` refuses.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 (P2) Elaborated MIR keeps the compile-time argument slots of
+- [ ] **1.1 (P2) Elaborated MIR keeps the compile-time argument slots of
   its calls**
 
   Problem: a call `native::mono` has resolved to an instance still lists its
@@ -94,7 +64,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 (P2) No document says what a generator guarantees its instances**
+- [ ] **1.2 (P2) No document says what a generator guarantees its instances**
 
   Problem: "an instance-dependent decision is a MIR operation" has no
   inventory behind it, so removing a clone check could drop an obligation
@@ -120,7 +90,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.4 (P2) An ordinary generic struct's methods are cloned per
+- [ ] **1.3 (P2) An ordinary generic struct's methods are cloned per
   instance**
 
   Problem: `Optional[Int].get` is an AST clone checked or derived per
@@ -134,11 +104,17 @@ correctness fix to existing behavior is allowed.
     elaborator's `speculative` set goes.
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
+  - A static called on a spelled instance with no argument carrying the
+    struct's parameter (`Pair[Int].count()`) reaches the elaborator only by
+    naming that instance's clone. The MIR `Call` has no slot for a type, so
+    the call must record the receiver's arguments before the clones go. That
+    changes the serialized `Call`
+    (`assets/ok/template_method_generic_static_owner_unbound.mojo`).
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.1 and 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.5 (P2) An explicit application of a trait-bound generic `def` is
+- [ ] **1.4 (P2) An explicit application of a trait-bound generic `def` is
   cloned**
 
   Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
@@ -147,10 +123,10 @@ correctness fix to existing behavior is allowed.
   - The bound check the resolver makes for a dropped argument stays at the
     call.
   - Delete the function certificate classes that exist only for these clones.
-  - Depends on 1.4.
+  - Depends on 1.3.
   - Model: Fable, Planned.
 
-- [ ] **1.6 (P3) No benchmark program mints a `comptime if`, `comptime for`,
+- [ ] **1.5 (P3) No benchmark program mints a `comptime if`, `comptime for`,
   or pack body**
 
   Problem: the three programs the P0 census measured clone no `def` keyed by
@@ -166,7 +142,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 (P3) Nothing shows ownership can be decided on a compile-time
+- [ ] **1.6 (P3) Nothing shows ownership can be decided on a compile-time
   region**
 
   Problem: the plan says ownership analyses every arm of a `comptime if` and
@@ -193,7 +169,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.8 (P3) Compile-time evaluation has no path to the elaborator's
+- [ ] **1.7 (P3) Compile-time evaluation has no path to the elaborator's
   worklist**
 
   Problem: `comptime/ctfe.rs` builds an AST subprogram, checks a synthesized
@@ -219,10 +195,10 @@ correctness fix to existing behavior is allowed.
     as a design question (plan decision D2).
   - This entry is a design note and the owner's decisions. The code moves in
     the later entries that name it.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.9 (P3) A MIR register type cannot name a parameter expression**
+- [ ] **1.8 (P3) A MIR register type cannot name a parameter expression**
 
   Problem: a heterogeneous pack needs a type that depends on a symbolic
   index, and a `DType`-keyed body needs one over a symbolic value, and
@@ -233,10 +209,10 @@ correctness fix to existing behavior is allowed.
     well-kinded. Concrete verification rejects them.
   - Layout is asked only of a concrete type, and a compile-time layout query
     names its target.
-  - Depends on 1.1 and 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.10 (P3a) MIR cannot express a `comptime if`**
+- [ ] **1.9 (P3a) MIR cannot express a `comptime if`**
 
   Problem: a body keyed by a `comptime if` on a value parameter exists in MIR
   only as its per-value clones, so its template is a stub that traps.
@@ -252,10 +228,10 @@ correctness fix to existing behavior is allowed.
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.1, 1.6, 1.7, 1.8, and 1.9.
+  - Depends on 1.5, 1.6, 1.7, and 1.8.
   - Model: Fable, Planned.
 
-- [ ] **1.11 (P3b) MIR cannot express a `comptime for`**
+- [ ] **1.10 (P3b) MIR cannot express a `comptime for`**
 
   Problem: a `comptime for` over a compile-time range or list is unrolled in
   the AST before the check.
@@ -263,10 +239,10 @@ correctness fix to existing behavior is allowed.
     its index symbolic.
   - The elaborator unrolls it, with compile-time `break` and `continue`.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.10.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.12 (P3b) MIR cannot express a type pack**
+- [ ] **1.11 (P3b) MIR cannot express a type pack**
 
   Problem: a pack-keyed body is unrolled in the AST, per call, before the
   check.
@@ -276,10 +252,10 @@ correctness fix to existing behavior is allowed.
   - A variadic template's body is validated symbolically, which closes the
     implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.11.
+  - Depends on 1.10.
   - Model: Fable, Planned.
 
-- [ ] **1.13 (P3c) A body keyed on a `DType` or a vector width has no MIR
+- [ ] **1.12 (P3c) A body keyed on a `DType` or a vector width has no MIR
   form**
 
   Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
@@ -288,10 +264,10 @@ correctness fix to existing behavior is allowed.
   - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
     elaborator.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.10.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.14 (P3d) A value-keyed or variadic struct is specialized whole in
+- [ ] **1.13 (P3d) A value-keyed or variadic struct is specialized whole in
   the AST**
 
   Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
@@ -300,10 +276,10 @@ correctness fix to existing behavior is allowed.
   - A struct declaration is a generator in MIR, and the elaborator mints its
     instances and their members.
   - The `Tuple` and `TString` request types leave the driver.
-  - Depends on 1.12 and 1.13.
+  - Depends on 1.11 and 1.12.
   - Model: Fable, Planned.
 
-- [ ] **1.15 (P3e) A method with its own compile-time parameters is cloned per
+- [ ] **1.14 (P3e) A method with its own compile-time parameters is cloned per
   call**
 
   Problem: `isa[T]` on a specialized struct mints a per-call AST clone, 14 of
@@ -311,10 +287,10 @@ correctness fix to existing behavior is allowed.
   - The method is a generator whose binders are the struct's and its own, and
     the elaborator instantiates it per call.
   - Delete `per_call_method_clones` and the certificate class.
-  - Depends on 1.10.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.16 (P3e) A nested `def` over an enclosing compile-time parameter is
+- [ ] **1.15 (P3e) A nested `def` over an enclosing compile-time parameter is
   cloned**
 
   Problem: a nested `def` that reads its enclosing function's compile-time
@@ -323,20 +299,20 @@ correctness fix to existing behavior is allowed.
   - The nested body is a generator that names the enclosing binders, and its
     captures are part of its contract.
   - Delete the cloner's nested branch and the certificate class.
-  - Depends on 1.10.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.17 (P3e) A compile-time evaluation mints its own clones**
+- [ ] **1.16 (P3e) A compile-time evaluation mints its own clones**
 
   Problem: a generic call inside a compile-time evaluation is cloned in the
   AST subprogram that evaluation builds, outside every other instantiation
   path.
   - The evaluation requests the instance from the worklist, by the request
     path already designed.
-  - Depends on 1.10.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.18 (P4) The driver elaborates and checks to a fixpoint**
+- [ ] **1.17 (P4) The driver elaborates and checks to a fixpoint**
 
   Problem: `compile_linked` re-elaborates and re-checks for up to five
   discovery rounds, because only a check discovers the instances the next
@@ -349,24 +325,29 @@ correctness fix to existing behavior is allowed.
   - Module-scope `comptime` values follow the boundary decision D3 set.
   - The budget is plan decision D4: a stated improvement on the workloads
     repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on 1.4, 1.5, 1.14, 1.15, 1.16, and 1.17.
+  - Depends on 1.3, 1.4, 1.13, 1.14, 1.15, and 1.16.
   - Model: Fable, Planned.
 
-- [ ] **1.19 (P5) The replaced mechanisms are still in the tree**
+- [ ] **1.18 (P5) The replaced mechanisms are still in the tree**
 
-  Problem: once 1.18 lands, the AST cloner's core, template derivation, and
+  Problem: once 1.17 lands, the AST cloner's core, template derivation, and
   the VM's erased dispatch serve nothing.
   - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
     and module-scope folding need.
   - Delete what is left of `checker/template_facts` and the derivation
     vocabulary in `mojito-checked/src/templates.rs`.
   - Delete erased dispatch from the VM and its tolerances from `mir::verify`.
+  - Delete the oracle with it: `Backend::run_elaborated`, `VmInstantiation`,
+    `--erased`, `MOJITO_VM_ERASED`, and the corpus binary's `erased_vm` group.
+  - The stage-composed `Backend::run(&CheckedProgram)` seam runs erased
+    bodies, because `mojito-vm` cannot call the elaborator. Move the tests
+    that use it to the driver, or give the seam concrete MIR.
   - Make a last pass over `docs/architecture.md` and `AGENTS.md` invariant 3.
     Each earlier stage updated the pipeline it changed.
-  - Depends on 1.18.
+  - Depends on 1.17.
   - Model: Fable, Planned.
 
-- [ ] **1.20 (P6) The standard library is checked again in every
+- [ ] **1.19 (P6) The standard library is checked again in every
   compilation**
 
   Problem: Mojo imports a package without checking its source again, and
@@ -378,10 +359,10 @@ correctness fix to existing behavior is allowed.
   - Importing skips the source check. It still validates the artifact and
     checks each instance's obligations.
   - The bundled library is the first consumer, built once per compiler build.
-  - Depends on 1.19.
+  - Depends on 1.18.
   - Model: Fable, Planned.
 
-- [ ] **1.21 (P0) The census cannot tell an erased template from a clone that
+- [ ] **1.20 (P0) The census cannot tell an erased template from a clone that
   keeps a parameter**
 
   Problem: `--instantiation-census` counts every parametric body left in MIR
@@ -403,27 +384,7 @@ correctness fix to existing behavior is allowed.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A generic struct's static whose arguments do not carry the
-  struct's parameter does not compile natively**
-
-  Problem: `Pair[Int].count()`, beside `def count(*values: Self.T)`,
-  prints `0` on the VM and the pin, but the native backend stops with
-  "unsupported unresolved type parameter `T`" in `Pair.count`.
-  - A static whose body alone names the parameter (`List[Self.T]()`
-    inside `def made() -> Int`) stops the same way.
-  - Native monomorphization binds the struct's parameter by unifying the
-    static's runtime arguments and result (`infer_call` in
-    `native/mono/infer.rs`). The MIR `Call` to a static does not carry
-    the spelled receiver's type arguments, so nothing binds `T` here.
-  - The lever is a design question: the call must record the receiver
-    type, which changes the serialized MIR `Call`.
-  - A non-empty pack compiles natively
-    (`assets/ok/template_method_generic_static_parameter_pack.mojo`).
-  - Probe: `conformance/probes/static_owner_parameter_unbound_native.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.1 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -470,7 +431,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     entry instead of waiting on it.
   - Model: Fable, Planned.
 
-- [ ] **2.3 A native `**kwargs` collector holds only its count**
+- [ ] **2.2 A native `**kwargs` collector holds only its count**
 
   Problem: `return kwargs["b"]` in `def pick(var **kwargs: Int)` returns `2`
   on the VM, and `--backend pliron` stops with `vm: dereference of dangling

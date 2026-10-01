@@ -43,6 +43,11 @@ Commands:
 | `compile` | native-compile via the supported Pliron backend (requires the `backend-pliron` feature and LLVM 23.1) |
 | `exec` | execute a verified textual MIR artifact |
 
+`run` and `exec` instantiate every reachable generic body before execution,
+as the native backend does. `--erased` (or `MOJITO_VM_ERASED=1`) runs generic
+bodies erased instead, resolving their parameters at run time; it is the
+oracle the default path is compared against.
+
 `FILE` is optional. Use a path, `-`, or omit it to read from standard input:
 
 ```sh

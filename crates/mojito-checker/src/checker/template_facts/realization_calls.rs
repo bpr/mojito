@@ -568,6 +568,40 @@ impl Checker {
                 .ok_or("a static's clone family has no overloaded member for the selection")?;
             facts.overload_targets[index].1 = target;
         }
+        // A lone static records no member under the template, and the
+        // instance names its struct's clone of it.
+        for occurrence in occurrences {
+            let (Some((owner, applied)), Some((_, method))) =
+                (&occurrence.type_receiver, &occurrence.method_call)
+            else {
+                continue;
+            };
+            if applied.is_empty()
+                || fact_at(&facts.overload_targets, occurrence.id).is_some()
+                || fact_at(&facts.method_instantiations, occurrence.id).is_some()
+            {
+                continue;
+            }
+            let Some(info) = self
+                .structs
+                .get(owner)
+                .filter(|info| !info.decls.is_empty())
+            else {
+                continue;
+            };
+            let arguments = self
+                .partition_struct_origin_args(owner, &info.source_params, applied)
+                .and_then(|partitioned| {
+                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
+                })
+                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
+                .1;
+            if let Some(clone) = self.instance_method_clone(owner, method, &arguments) {
+                facts
+                    .overload_targets
+                    .push((occurrence.id, format!("{owner}.{clone}")));
+            }
+        }
         self.realize_static_instantiations(facts, occurrences)
     }
 

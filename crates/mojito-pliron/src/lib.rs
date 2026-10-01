@@ -30,6 +30,7 @@ use std::path::Path;
 
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{MirFunction, MirInstr, MirProgram, MirStructDeclaration, Reg};
+use mojito_native::native::mono::SpecializedProgram;
 use mojito_types::types::{Ty, TyArg};
 
 pub use emit::link_object;
@@ -47,38 +48,45 @@ mod lower;
 mod pipeline;
 mod toolchain;
 
-/// Compile the call-graph closure of `options.entries` to an LLVM-dialect
-/// module: verify the constructed IR, run the mem2reg/DCE cleanup pipeline,
-/// verify again, and cache the canonical Pliron text.
+/// Compile the call-graph closure of `options.entries` in a concrete
+/// program to an LLVM-dialect module.
 ///
-/// The supported-subset contract applies to the reachable set; the first
-/// construct outside it fails compilation with a contextual diagnostic.
+/// It verifies the constructed IR, runs the mem2reg/DCE cleanup pipeline,
+/// verifies again, and caches the canonical Pliron text. `specialized` is the elaborator's output, which this backend never
+/// elaborates again; every entry in `options.entries` must be one of its
+/// entry roots. The supported-subset contract applies to the reachable set;
+/// the first construct outside it fails compilation with a contextual
+/// diagnostic.
 ///
 /// # Panics
 ///
 /// Panics if the verified MIR names a register or declaration absent from the
 /// program it came from, which `mir::verify` rules out.
 pub fn compile(
-    program: &MirProgram,
+    specialized: &SpecializedProgram,
     options: &CompileOptions,
 ) -> Result<NativeModule, PlironError> {
+    let program: &MirProgram = &specialized.program;
     check_invariants(program)?;
-    let specialized =
-        mojito_native::native::mono::specialize(program, &options.entries).map_err(|error| {
-            PlironError {
-                function: error.function,
-                kind: PlironErrorKind::Unsupported {
-                    construct: error.construct,
-                },
-                location: None,
-            }
-        })?;
-    let program = &specialized.program;
     let concrete_entries = options
         .entries
         .iter()
-        .map(|entry| specialized.entries[entry].clone())
-        .collect::<Vec<_>>();
+        .map(|entry| {
+            specialized
+                .entries
+                .get(entry)
+                .cloned()
+                .ok_or_else(|| PlironError {
+                    function: None,
+                    kind: PlironErrorKind::Unsupported {
+                        construct: format!(
+                            "entry function `{entry}` (not found in the MIR program)"
+                        ),
+                    },
+                    location: None,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let reachable = reachable_set(program, &concrete_entries)?;
 
     let mut context = Context::new();
@@ -170,12 +178,34 @@ pub fn compile(
         module,
         canonical_text,
         functions,
-        entries: specialized.entries,
+        entries: specialized.entries.clone(),
         target: options.target,
         exe_wrapper_added: false,
         unhandled_error_declared: shared.declared_rt("mjrt_unhandled_error"),
         debug_table,
     })
+}
+
+/// Elaborate drop-elaborated MIR from `options.entries` and compile it.
+///
+/// This is the entry for a root a caller requests by name (a scalar entry
+/// under test), which the driver's cached concrete graph does not hold.
+pub fn compile_mir(
+    program: &MirProgram,
+    options: &CompileOptions,
+) -> Result<NativeModule, PlironError> {
+    check_invariants(program)?;
+    let specialized =
+        mojito_native::native::mono::specialize(program, &options.entries).map_err(|error| {
+            PlironError {
+                function: error.function,
+                kind: PlironErrorKind::Unsupported {
+                    construct: error.construct,
+                },
+                location: None,
+            }
+        })?;
+    compile(&specialized, options)
 }
 
 /// Render the textual LLVM declarations of the runtime ABI contract table
@@ -1492,7 +1522,7 @@ mod tests {
             target: NativeTarget::host().expect("supported host"),
             trace_lifecycle: false,
         };
-        let Err(error) = compile(&program, &options) else {
+        let Err(error) = compile_mir(&program, &options) else {
             panic!("a program with invariant errors must be refused");
         };
         assert!(matches!(

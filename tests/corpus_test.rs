@@ -11,11 +11,13 @@
 //!   `assets/README.md`).
 //! - `vm_ok::<name>` — the production `Compiler::default()` compile+execute
 //!   path over `assets/ok`.
-//! - `specialized_vm::<name>` — the elaborated program of the production
-//!   `Compiler`, specialized by `native::mono` from the entries the native
-//!   backend compiles: the specialized program must pass `mir::verify` and
-//!   run on the VM to the outcome the erased program reaches. The fixtures
-//!   that do not yet are `SPECIALIZED_VM_RESIDUE`.
+//! - `erased_vm::<name>` — the production run on concrete MIR against the
+//!   erased oracle, over `assets/ok` and `assets/runtime_error`: the same
+//!   output or error text and the same ordered lifecycle events, and the
+//!   same outcome from the serialized artifact, loaded and elaborated. The
+//!   fixtures that do not yet agree are `ERASED_VM_RESIDUE`. The type-error
+//!   and ownership-error folders are gated by `assets_*`: elaboration runs
+//!   after the checker and cannot accept a program it rejects.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
 //!   `check_program` → `lower_checked_program` → `elaborate_drops_program` →
 //!   verify) over every executable fixture category.
@@ -39,11 +41,9 @@
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
 use mojito::backend::VmBackend;
-use mojito::mir::MirProgram;
 use mojito::mir::lower_checked_program;
 use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
-use mojito::native::mono::specialize;
 use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
     link, parse,
@@ -57,7 +57,7 @@ fn main() {
     let mut trials = Vec::new();
     assets_outcome_trials(&mut trials);
     vm_ok_trials(&mut trials);
-    specialized_vm_trials(&mut trials);
+    erased_vm_trials(&mut trials);
     verify_trials(&mut trials);
     roundtrip_trials(&mut trials);
     origin_trials(&mut trials);
@@ -289,72 +289,139 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
     }
 }
 
-/// The `specialized_vm` trials that do not yet hold, by the `docs/roadmap.md`
+/// The `erased_vm` trials that do not yet hold, by the `docs/roadmap.md`
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
-const SPECIALIZED_VM_RESIDUE: &[&str] = &[];
+const ERASED_VM_RESIDUE: &[&str] = &[];
 
-/// What running an elaborated program on the VM gives: its output, or its
-/// failure.
-fn vm_outcome(program: MirProgram) -> Result<String, String> {
-    catch_unwind(AssertUnwindSafe(|| {
-        let mut vm = VmBackend::new();
-        vm.run_elaborated(program)
-            .map(|()| vm.output())
-            .map_err(|error| error.to_string())
-    }))
-    .unwrap_or_else(|_| Err("the VM panicked".to_string()))
+/// Stdin bytes for the fixtures that call `input()`, so both runs of one
+/// read the same line and neither inherits the test runner's stdin.
+fn fixture_stdin(path: &Path) -> Option<&'static [u8]> {
+    match path.file_name()?.to_str()? {
+        "input.mojo" => Some(b"World\n"),
+        "pliron_input_echo.mojo" => Some(b"echoed line\n"),
+        _ => None,
+    }
 }
 
-/// Specialize the fixture's elaborated program from the entries the native
-/// backend compiles, and require that it verifies and runs on the VM to the
-/// erased program's outcome.
-fn specialized_runs_as_erased(path: &Path) -> Result<(), Failed> {
+/// What one VM run observed: its output or its failure, and its ordered
+/// lifecycle events.
+#[derive(Debug, PartialEq, Eq)]
+struct VmRun {
+    outcome: Result<String, String>,
+    lifecycle: Vec<String>,
+}
+
+/// Run a program on a fresh VM through `run`, with `stdin` served to
+/// `input()`. A lifecycle event names the struct it destroys or consumes;
+/// an elaborated instance is reported under its template, as the erased run
+/// names it.
+fn vm_run(
+    stdin: Option<&[u8]>,
+    run: impl FnOnce(&mut VmBackend) -> Result<(), mojito::runtime::RuntimeError>,
+) -> VmRun {
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut vm = VmBackend::new();
+        vm.enable_lifecycle_log();
+        if let Some(bytes) = stdin {
+            vm.set_input_override(bytes.to_vec());
+        }
+        let outcome = run(&mut vm)
+            .map(|()| vm.output())
+            .map_err(|error| error.to_string());
+        let lifecycle = vm
+            .lifecycle_log()
+            .unwrap_or_default()
+            .iter()
+            .map(|event| match event.split_once("$mono") {
+                Some((template, _))
+                    if event.starts_with("drop ") || event.starts_with("consume ") =>
+                {
+                    template.to_string()
+                }
+                _ => event.clone(),
+            })
+            .collect();
+        VmRun { outcome, lifecycle }
+    }))
+    .unwrap_or_else(|_| VmRun {
+        outcome: Err("the VM panicked".to_string()),
+        lifecycle: Vec::new(),
+    })
+}
+
+/// Run the fixture as production does, on concrete MIR, and require the
+/// erased oracle to observe the same thing: output or error text, and the
+/// ordered lifecycle events. The program's serialized artifact, loaded and
+/// elaborated, must reach the same outcome.
+fn concrete_runs_as_erased(path: &Path) -> Result<(), Failed> {
     let compiled = Compiler::default()
         .compile_path(path)
         .map_err(|error| fail(format!("compile: {error}")))?;
-    let erased = compiled.elaborated_mir().clone();
-    let entries: Vec<String> = ["main", "__toplevel__"]
-        .into_iter()
-        .filter(|entry| erased.functions.iter().any(|(name, _)| name == entry))
-        .map(str::to_string)
-        .collect();
-    let specialized = specialize(&erased, &entries)
-        .map_err(|error| fail(format!("specialize: {}", error.construct)))?;
-    let findings = verify(&specialized.program);
-    if !findings.is_empty() {
-        return Err(fail(format!("specialized MIR: {findings:?}")));
-    }
-    let expected = vm_outcome(erased);
-    let actual = vm_outcome(specialized.program);
+    let concrete = compiled
+        .concrete_mir()
+        .map_err(|error| fail(format!("elaborate: {error}")))?
+        .program
+        .clone();
+    let stdin = fixture_stdin(path);
+    let erased = compiled.drop_elaborated_mir().clone();
+    let expected = vm_run(stdin, |vm| vm.run_elaborated(erased));
+    let actual = vm_run(stdin, |vm| vm.run_concrete(concrete));
     if actual != expected {
         return Err(fail(format!(
-            "specialized program ran to {actual:?}, erased program to {expected:?}"
+            "concrete program ran to {actual:?}, erased program to {expected:?}"
         )));
+    }
+    // `run_artifact` reads process stdin, so an `input()` fixture's artifact
+    // is covered by the round-trip group alone.
+    if stdin.is_none() {
+        let text = compiled
+            .emit_mir()
+            .map_err(|error| fail(format!("emit: {error}")))?;
+        let artifact = catch_unwind(AssertUnwindSafe(|| {
+            mojito::run_artifact_as(
+                text.as_bytes(),
+                path.display().to_string(),
+                mojito::BackendKind::Vm,
+                mojito::VmInstantiation::Concrete,
+            )
+            .map(|execution| execution.output)
+            .map_err(|error| error.to_string())
+        }))
+        .unwrap_or_else(|_| Err("the VM panicked".to_string()));
+        if artifact != actual.outcome {
+            return Err(fail(format!(
+                "artifact ran to {artifact:?}, source program to {:?}",
+                actual.outcome
+            )));
+        }
     }
     Ok(())
 }
 
-fn specialized_vm_trials(trials: &mut Vec<Trial>) {
-    let paths: Vec<(PathBuf, String)> = labeled_fixtures("ok")
+fn erased_vm_trials(trials: &mut Vec<Trial>) {
+    let paths: Vec<(PathBuf, String)> = ["ok", "runtime_error"]
         .into_iter()
-        .filter(|(path, _)| !reads_stdin(path))
-        .map(|(path, label)| {
-            let name = if label == "ok" {
-                stem(&path)
-            } else {
-                format!("extensions::{}", stem(&path))
-            };
-            (path, name)
+        .flat_map(|category| {
+            labeled_fixtures(category)
+                .into_iter()
+                .map(move |(path, label)| {
+                    let name = match (category, label == category) {
+                        ("ok", true) => stem(&path),
+                        ("ok", false) => format!("extensions::{}", stem(&path)),
+                        _ => format!("{label}::{}", stem(&path)),
+                    };
+                    (path, name)
+                })
         })
         .collect();
-    let unknown: Vec<&str> = SPECIALIZED_VM_RESIDUE
+    let unknown: Vec<&str> = ERASED_VM_RESIDUE
         .iter()
         .copied()
         .filter(|residue| !paths.iter().any(|(_, name)| name == residue))
         .collect();
     let count = paths.len();
-    trials.push(Trial::test("specialized_vm::guard_corpus", move || {
+    trials.push(Trial::test("erased_vm::guard_corpus", move || {
         if count == 0 {
             return Err(fail("expected some ok fixtures".to_string()));
         }
@@ -364,18 +431,16 @@ fn specialized_vm_trials(trials: &mut Vec<Trial>) {
         Ok(())
     }));
     for (path, name) in paths {
-        let residue = SPECIALIZED_VM_RESIDUE.contains(&name.as_str());
-        trials.push(Trial::test(
-            format!("specialized_vm::{name}"),
-            move || match (specialized_runs_as_erased(&path), residue) {
+        let residue = ERASED_VM_RESIDUE.contains(&name.as_str());
+        trials.push(Trial::test(format!("erased_vm::{name}"), move || {
+            match (concrete_runs_as_erased(&path), residue) {
                 (Ok(()), true) => Err(fail(
-                    "now runs as the erased program: remove its SPECIALIZED_VM_RESIDUE row"
-                        .to_string(),
+                    "now runs as the erased program: remove its ERASED_VM_RESIDUE row".to_string(),
                 )),
                 (Err(_), true) => Ok(()),
                 (outcome, false) => outcome,
-            },
-        ));
+            }
+        }));
     }
 }
 

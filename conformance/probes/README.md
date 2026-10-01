@@ -81,7 +81,6 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `borrowed_default_argument_destructor.mojo` | Is an evaluated default handed to a borrowing parameter destroyed when the call returns? | **differs**: the pin prints `drop dflt`, Mojito's VM and native backend never run the destructor — `docs/roadmap.md` §3 |
 | `list_literal_default_argument.mojo` | Does `xs: List[Int] = [1, 2, 3]` declare? | **differs**: the pin prints `3`, Mojito rejects the default as an `Array[Int, 3]` — `docs/roadmap.md` §3 |
-| `static_owner_parameter_unbound_native.mojo` | Does a generic struct's static compile natively when no argument carries the struct's parameter (an empty `*values: Self.T` pack, a body-only `List[Self.T]()`)? | **differs natively**: the pin and the VM print `0 0`, the native backend stops on the unresolved `T` — `docs/roadmap.md` §2 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 

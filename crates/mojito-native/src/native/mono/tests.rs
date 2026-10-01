@@ -6,7 +6,7 @@ fn specialized_main(source: &str) -> SpecializedProgram {
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile iterator program");
-    specialize(compiled.elaborated_mir(), &["main".to_string()])
+    specialize(compiled.drop_elaborated_mir(), &["main".to_string()])
         .expect("specialize iterator program")
 }
 
@@ -684,7 +684,7 @@ fn concrete_verification_separates_elaborated_from_parametric_mir() {
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile generic program");
-    let parametric = compiled.elaborated_mir();
+    let parametric = compiled.drop_elaborated_mir();
     assert_eq!(
         mojito_mir::mir::verify::verify(parametric),
         Vec::<String>::new()

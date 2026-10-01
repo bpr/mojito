@@ -1,7 +1,8 @@
-//! Backend-private MIR monomorphization.
+//! The elaborator: MIR monomorphization for every backend.
 //!
 //! This pass consumes only verified, drop-elaborated MIR and returns an owned
-//! entry-rooted concrete graph. It never mutates the canonical MIR artifact.
+//! entry-rooted concrete graph, which the VM and the native backend both
+//! consume. It never mutates the canonical MIR artifact.
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
@@ -19,7 +20,7 @@ use unify::*;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::{
-    Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, Reg,
 };
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
@@ -27,10 +28,11 @@ use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
 use mojito_types::types::{ParamDecl, Ty, TyArg};
 
-/// A fully concrete backend-private program and the concrete identity of every
-/// requested public entry.
+/// A concrete program and the concrete identity of every requested public
+/// entry.
+#[derive(Debug, Clone)]
 pub struct SpecializedProgram {
-    pub program: MirProgram,
+    pub program: ConcreteMir,
     pub entries: HashMap<String, String>,
     pub parametric: ParametricInstances,
 }
@@ -55,12 +57,37 @@ pub struct MonoError {
     pub construct: String,
 }
 
+impl std::fmt::Display for MonoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.function {
+            Some(function) => write!(f, "in `{function}`: unsupported {}", self.construct),
+            None => write!(f, "unsupported {}", self.construct),
+        }
+    }
+}
+
+impl std::error::Error for MonoError {}
+
 /// Specialize the graph reachable from `entries` without modifying `program`.
 pub fn specialize(
     program: &MirProgram,
     entries: &[String],
 ) -> Result<SpecializedProgram, MonoError> {
     Specializer::new(program).run(entries)
+}
+
+/// The entry roots of a whole program.
+///
+/// They are `main` and the module initializer `__toplevel__`, each when the
+/// program defines it. Source execution, artifact execution, and a native
+/// executable all elaborate from these; any other root is an entry a native
+/// caller requests by name.
+pub fn entry_roots(program: &MirProgram) -> Vec<String> {
+    ["main", "__toplevel__"]
+        .into_iter()
+        .filter(|entry| program.functions.iter().any(|(name, _)| name == entry))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The names of the parametric bodies of `program`: the functions whose

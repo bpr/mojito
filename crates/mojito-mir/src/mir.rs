@@ -81,6 +81,39 @@ pub struct MirProgram {
     pub invariant_errors: Vec<String>,
 }
 
+/// Concrete MIR: an elaborator's entry-rooted output, verified concrete.
+///
+/// It passed [`verify::verify_concrete`], so it names no symbolic type,
+/// compile-time parameter, or erased-dispatch contract. The only constructor
+/// runs that verification; a holder never has to know which verifier mode
+/// ran.
+#[derive(Debug, Clone)]
+pub struct ConcreteMir(MirProgram);
+
+impl ConcreteMir {
+    /// Admit `program` as concrete, or return the verifier's findings.
+    pub fn verified(program: MirProgram) -> Result<Self, Vec<String>> {
+        let findings = verify::verify_concrete(&program);
+        if findings.is_empty() {
+            Ok(Self(program))
+        } else {
+            Err(findings)
+        }
+    }
+
+    pub fn into_program(self) -> MirProgram {
+        self.0
+    }
+}
+
+impl std::ops::Deref for ConcreteMir {
+    type Target = MirProgram;
+
+    fn deref(&self) -> &MirProgram {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MirDeclarations {
     pub structs: Vec<MirStructDeclaration>,
