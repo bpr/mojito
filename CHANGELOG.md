@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `mir::verify` gains a concrete mode, `verify_concrete`, for elaborated MIR:
+  it rejects every symbolic type, compile-time parameter, and erased-dispatch
+  result adapter that parametric MIR may carry. `native::mono` verifies its
+  output in that mode, and its own concreteness scan is gone. The
+  compile-time argument slots a resolved call still lists are roadmap 1.5.
 - The corpus binary gains a `specialized_vm::*` group: each `assets/ok`
   program's elaborated MIR is specialized by `native::mono`, must pass
   `mir::verify`, and must run on the VM to the erased program's outcome. It

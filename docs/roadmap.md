@@ -91,20 +91,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.4 (P1) `mir::verify` cannot tell elaborated MIR from parametric
-  MIR**
-
-  Problem: one verifier mode accepts both, so a symbolic type left in a
-  specialized program is caught only by `native/mono/symbolic.rs`, outside
-  the verifier.
-  - Add a concrete mode that rejects every symbolic type, compile-time
-    parameter, and erased-dispatch contract.
-  - `native::mono` verifies its output in that mode, and its own
-    concreteness scan goes.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.5 (P1) The VM runs erased generic bodies, which Mojo's interpreter
+- [ ] **1.4 (P1) The VM runs erased generic bodies, which Mojo's interpreter
   never does**
 
   Problem: the VM resolves a generic body's parameters at run time while the
@@ -117,10 +104,27 @@ recipe. A body the certificates do not cover waits for its stage.
     elaborates what it loads.
   - CTFE keeps its own VM run until 1.14.
   - Measure against the plan's P0 baseline. Its decision D4 is the budget.
-  - Depends on 1.1, 1.2, 1.3, 1.4, and on the section 2 entry for a static
+  - Depends on 1.1, 1.2, 1.3, and on the section 2 entry for a static
     taking a pack of its struct's parameter type, which `native::mono`
     refuses.
   - Model: Fable, Planned.
+
+- [ ] **1.5 (P2) Elaborated MIR keeps the compile-time argument slots of
+  its calls**
+
+  Problem: a call `native::mono` has resolved to an instance still lists its
+  compile-time arguments in `param_arg_regs`, each naming the enclosing
+  binder it forwarded or the expression over value binders it computed.
+  - `native::mono` clears only the slot's register, so the stale `binder`
+    and `expr` survive on `Call`, `MethodCall`, `CallIndirect`, and nominal
+    subscript contracts.
+  - `mir::verify::verify_concrete` therefore does not reject a forwarded
+    binder on a call, the one piece of parametric residue it lets through.
+  - Drop the resolved slots in `native::mono`, check that the VM and the
+    Pliron lowering read none of them, then add the rule to
+    `verify/concrete.rs`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **1.6 (P2) An ordinary generic struct's methods are cloned per
   instance**
@@ -137,7 +141,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.5, and on the section 6 entry that splits
+  - Depends on 1.4, and on the section 6 entry that splits
     `template_facts.rs`.
   - Model: Fable, Planned.
 
@@ -182,7 +186,7 @@ recipe. A body the certificates do not cover waits for its stage.
     regions (plan decision D5).
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.5 and 1.8.
+  - Depends on 1.4 and 1.8.
   - Model: Fable, Planned.
 
 - [ ] **1.10 (P3b) MIR cannot express a `comptime for` or a type pack**

@@ -43,7 +43,17 @@ pub fn verify(program: &MirProgram) -> Vec<String> {
     errors
 }
 
+/// [`verify`] for elaborated MIR: the same structural rules, plus the
+/// rejection of every symbolic type, compile-time parameter, and
+/// erased-dispatch contract. Parametric MIR never passes this mode.
+pub fn verify_concrete(program: &MirProgram) -> Vec<String> {
+    let mut errors = verify(program);
+    verify_concrete_program(program, &mut errors);
+    errors
+}
+
 mod calls;
+mod concrete;
 mod instr;
 mod intrinsics;
 mod places;
@@ -53,6 +63,8 @@ mod types;
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use calls::*;
+pub use concrete::concrete_function_findings;
+use concrete::verify_concrete_program;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

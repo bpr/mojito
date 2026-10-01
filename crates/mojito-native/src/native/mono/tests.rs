@@ -669,3 +669,42 @@ fn specialized_programs_verify_over_erased_contracts() {
         );
     }
 }
+
+#[test]
+fn concrete_verification_separates_elaborated_from_parametric_mir() {
+    let source = "struct Box[T: Copyable & Deinitable]:\n\
+         \x20   var value: Self.T\n\
+         \x20   def __init__(out self, var value: Self.T):\n\
+         \x20       self.value = value^\n\
+         \x20   def get(self) -> Self.T:\n\
+         \x20       return self.value.copy()\n\
+         def main():\n\
+         \x20   print(Box(3).get())\n";
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile generic program");
+    let parametric = compiled.elaborated_mir();
+    assert_eq!(
+        mojito_mir::mir::verify::verify(parametric),
+        Vec::<String>::new()
+    );
+    let findings = mojito_mir::mir::verify::verify_concrete(parametric);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("keeps symbolic type `T`")),
+        "a parametric body names its binder: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("keeps compile-time parameter `T`")),
+        "a parametric declaration keeps its binder: {findings:?}"
+    );
+    let specialized = specialize(parametric, &["main".to_string()]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+}

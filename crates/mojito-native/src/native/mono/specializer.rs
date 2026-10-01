@@ -132,7 +132,7 @@ impl<'a> Specializer<'a> {
             },
             invariant_errors: self.source.invariant_errors.clone(),
         };
-        let findings = mojito_mir::mir::verify::verify(&program);
+        let findings = mojito_mir::mir::verify::verify_concrete(&program);
         if !findings.is_empty() {
             return Err(MonoError {
                 function: None,
@@ -416,7 +416,7 @@ impl<'a> Specializer<'a> {
         function.blocks = blocks;
         repair_storage_result_types(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
-        ensure_concrete_function(&key.template, &function)?;
+        ensure_concrete_function(&key.template, &name, &function)?;
 
         if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
             let mut declaration = declaration.clone();

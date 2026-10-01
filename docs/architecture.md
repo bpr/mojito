@@ -2326,6 +2326,17 @@ checker inference. Loan and consumption markers, which hold no runtime value,
 are typed `Ty::None` by convention. Functions additionally carry their checked
 `ret_ty`, raising contract (`raises`/`error_ty`), and per-slot `var_tys`.
 
+`mir::verify` has two modes. `verify` accepts parametric MIR, the form the
+canonical artifact and the VM's erased execution use. `verify_concrete` is for
+elaborated MIR: it applies the same rules and then rejects what only
+parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
+signature, slot, register, place, instruction, or declaration; a compile-time
+parameter a declaration or a call contract still declares; a
+`ConstructTypeParam`; and an erased-dispatch result adapter.
+`native::mono` verifies its output in the concrete mode, and asks
+`concrete_function_findings` per instance so that a speculative instance which
+cannot be made concrete is dropped rather than failing the program.
+
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection
 consistency, register bounds and register-type completeness, store/binding/

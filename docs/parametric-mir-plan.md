@@ -225,9 +225,10 @@ against whichever profile it reruns, interleaved with the commit before it.
 - Restore a corpus check that elaborated MIR verifies and runs on the VM as
   the erased program does. It needs no LLVM, so it belongs in the default
   lane unless its memory peak says otherwise.
-- Give `mir::verify` a concrete mode that rejects any symbolic type or
-  compile-time parameter. `native/mono/symbolic.rs` enforces that today,
-  outside the verifier.
+- Done: `mir::verify::verify_concrete` rejects any symbolic type or
+  compile-time parameter, and `native::mono` verifies its output with it.
+  The compile-time argument slots a resolved call keeps are the residue
+  (roadmap 1.5).
 - Run the VM on elaborated MIR by default. The erased path stays selectable
   as the differential oracle until P5.
 - Exit: one instantiation mechanism below the waist. `native::mono` is the

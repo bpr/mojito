@@ -174,17 +174,22 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
         }
     }
 }
+/// Reject an instance the verifier's concrete mode refuses, naming the
+/// template it came from. Materialization asks per instance, ahead of the
+/// whole-program verification, so a speculative instance can be dropped.
 pub(super) fn ensure_concrete_function(
+    template: &str,
     name: &str,
     function: &MirFunction,
 ) -> Result<(), MonoError> {
-    if let Some(ty) = function_types(function).find(|ty| is_symbolic(ty)) {
-        Err(MonoError {
-            function: Some(name.to_string()),
-            construct: format!("symbolic type `{ty}` remains after monomorphization"),
-        })
-    } else {
+    let findings = mojito_mir::mir::verify::concrete_function_findings(name, function);
+    if findings.is_empty() {
         Ok(())
+    } else {
+        Err(MonoError {
+            function: Some(template.to_string()),
+            construct: format!("{} after monomorphization", findings.join("; ")),
+        })
     }
 }
 pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
