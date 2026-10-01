@@ -928,6 +928,11 @@ impl<'a> Specializer<'a> {
                                         None,
                                     )?;
                                     self.enqueue(&write_string, bindings, arguments)?;
+                                    // Each argument is formatted through its
+                                    // own `write_to` first.
+                                    for arg in args.clone() {
+                                        self.enqueue_display_instance(owner, function, arg)?;
+                                    }
                                 }
                             }
                             continue;

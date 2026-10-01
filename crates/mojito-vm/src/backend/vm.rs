@@ -553,6 +553,24 @@ fn instance_dunder_symbol(
     prog.index_of(&symbol).is_some().then_some(symbol)
 }
 
+/// The display witness of a specialized instance struct: the instance's
+/// per-instantiation clone re-owned to it (`List$mono$TInt.write_to$y3:Int`),
+/// which is the only `method` body a specialized program keeps for the
+/// instance. `None` when the struct declares the plain method, or when the
+/// clone is not the one body of that name.
+fn specialized_witness_symbol(prog: &Prog, sname: &str, method: &str) -> Option<String> {
+    if prog.index_of(&format!("{sname}.{method}")).is_some() {
+        return None;
+    }
+    let mut witnesses = prog.mir.functions.iter().filter_map(|(name, _)| {
+        let member = name.strip_prefix(sname)?.strip_prefix('.')?;
+        (member != method && mojito_symbol::symbol::instance_clone_base(member) == method)
+            .then_some(name)
+    });
+    let witness = witnesses.next()?;
+    witnesses.next().is_none().then(|| witness.clone())
+}
+
 /// The lifecycle body a value runs: the per-instantiation clone its checked
 /// static type names (`Box.__deinit__$y3:Int`) when the program declares one,
 /// and the template's erased body otherwise.

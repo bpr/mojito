@@ -20,13 +20,13 @@ to evolve under the `0.x` compatibility rules.
   it rejects every symbolic type, compile-time parameter, and erased-dispatch
   result adapter that parametric MIR may carry. `native::mono` verifies its
   output in that mode, and its own concreteness scan is gone. The
-  compile-time argument slots a resolved call still lists are roadmap 1.5.
+  compile-time argument slots a resolved call still lists are roadmap 1.4.
 - The corpus binary gains a `specialized_vm::*` group: each `assets/ok`
   program's elaborated MIR is specialized by `native::mono`, must pass
   `mir::verify`, and must run on the VM to the erased program's outcome. It
-  needs no LLVM. 786 of 810 fixtures agree, and the 24 that differ are an
-  expected-failure list (`SPECIALIZED_VM_RESIDUE`) filed as roadmap 1.1 to
-  1.3.
+  needs no LLVM. 807 of 810 fixtures agree, and the 3 that differ are an
+  expected-failure list (`SPECIALIZED_VM_RESIDUE`) filed as roadmap 1.1 and
+  1.2.
 - `mojito run --instantiation-census FILE` reports which mechanism
   instantiates each generic body of a compilation: the bodies the AST cloner
   mints by class, the cloned bodies the checker infers and the ones it
@@ -39,6 +39,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A specialized program prints an instance through its display witness.
+  `print(xs)` on a `List[Int]` wrote
+  `List$mono$TInt(data=Pointer(…), size=2, cap=4)` on the VM where the erased
+  program writes `[1, 2]`. `native::mono` keeps the witness as the
+  per-instantiation clone re-owned to the instance
+  (`List$mono$TInt.write_to$y3:Int`), which the VM's `format_value` did not
+  look for, and it dropped the `write_to` of an argument a nominal writer's
+  `write` formats (a `String` inside a float-parse error). The 21
+  `specialized_vm` fixtures this held back now agree with their erased runs.
 - The native backend calls a callable binding through its current value once
   the binding is written again. Monomorphization treated a `var f = one` as
   the constant `one` for the whole function, so after `keep(f)` assigned `two`

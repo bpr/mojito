@@ -711,6 +711,7 @@ impl VmBackend {
         let method = if repr { "write_repr_to" } else { "write_to" };
         let source = format!("{name}.{method}");
         let symbol = super::instance_dunder_symbol(prog, &name, method, static_ty, 1)
+            .or_else(|| super::specialized_witness_symbol(prog, &name, method))
             .unwrap_or_else(|| prog.overload_name(&source, 1));
         // Monomorphization binds the protocol's writer to the builtin
         // string writer.

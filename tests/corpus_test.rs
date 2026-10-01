@@ -293,28 +293,6 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
 const SPECIALIZED_VM_RESIDUE: &[&str] = &[
-    // A printed instance's display witness is not in the specialized program.
-    "bound_generic_write_to",
-    "generic_struct_instance_bodies",
-    "generic_struct_instance_dispatch",
-    "list_contiguous_slice_strict",
-    "list_strided_slice_normalizes",
-    "native_borrowed_reads",
-    "nominal_string_atof_rounding",
-    "nominal_string_parse_errors",
-    "optional_raising_subscript",
-    "optional_value_protocols",
-    "pack_element_default_construction",
-    "pliron_slice_desc",
-    "slice",
-    "slice_descriptor_protocols",
-    "template_method_bound_dispatch",
-    "template_method_bound_witness_shapes",
-    "template_method_converting_argument",
-    "template_method_raises",
-    "template_method_string_builtins",
-    "template_raise_forms",
-    "type_receiver_instance_call",
     // The VM panics constructing a `**kwargs` collector.
     "function_typed_kwargs",
     "kwargs",
