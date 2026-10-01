@@ -45,22 +45,53 @@ goes to section 3, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage.
 
-- [ ] **1.1 (P1) No test pins that elaborated MIR runs on the VM as the
-  erased program does**
+- [ ] **1.1 (P1) A specialized program drops the display witness of an
+  instance it prints**
 
-  Problem: the A1 census showed it for its 893 corpus inputs, and that test
-  was removed with the experiment.
-  - Add a corpus group that specializes each `assets/ok` program with
-    `native::mono`, verifies the result, runs it on the VM, and compares the
-    output with the ordinary run.
-  - It needs no LLVM. Put it in the default corpus binary unless its memory
-    peak belongs in `tests/heavy`.
-  - File each input that fails as its own entry, by kind. None did at
-    `1967fe1d` (`docs/notes/pliron-a1.md` §Coverage).
+  Problem: `print(xs)` on a `List[Int]` writes `[1, 2]` from the erased
+  program and `List$mono$TInt(data=Pointer(…), size=2, cap=4)` from the
+  specialized one.
+  - `print`, `String(x)`, `repr`, and a raised error's text reach `write_to`
+    and `write_repr_to` inside the VM, not through a MIR call.
+  - `native::mono` keeps only what a call reaches, so the instance's witness
+    is absent and `format_value` falls back to the fieldwise text
+    (`crates/mojito-vm/src/backend/vm/dispatch.rs`).
+  - It shows on `List`, `Optional`, `String` inside an error, a raised
+    generic error struct, and user generic structs.
+  - The 21 fixtures are the first block of `SPECIALIZED_VM_RESIDUE` in
+    `tests/corpus_test.rs`. Remove each row as it passes.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **1.2 (P1) The VM panics on a specialized program's `**kwargs`
+  collector**
+
+  Problem: `def total(var **kwargs: Int)` runs erased, and the specialized
+  program panics with `no entry found for key` in `construct_via_init`
+  (`crates/mojito-vm/src/backend/vm/values.rs`).
+  - The VM constructs the collector under a struct name the specialized
+    program does not declare.
+  - A missing struct must be a `RuntimeError`, not an index panic, whatever
+    the fix to the name.
+  - Pinned by `kwargs` and `function_typed_kwargs` in
+    `SPECIALIZED_VM_RESIDUE`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.2 (P1) `mir::verify` cannot tell elaborated MIR from parametric
+- [ ] **1.3 (P1) A specialized `List[ref T]` element write reads
+  uninitialized pointer storage on the VM**
+
+  Problem: `self.values[0] += 2` on a `List[ref[origin] Int]` field prints
+  `6` erased, and the specialized program stops with `vm: read of
+  uninitialized Pointer storage`.
+  - The fixture is
+    `assets/extensions/ok/reference_list_write_through_method.mojo`.
+  - The cause is not diagnosed. The specialized program passes `mir::verify`.
+  - Pinned by its row in `SPECIALIZED_VM_RESIDUE`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **1.4 (P1) `mir::verify` cannot tell elaborated MIR from parametric
   MIR**
 
   Problem: one verifier mode accepts both, so a symbolic type left in a
@@ -73,7 +104,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.3 (P1) The VM runs erased generic bodies, which Mojo's interpreter
+- [ ] **1.5 (P1) The VM runs erased generic bodies, which Mojo's interpreter
   never does**
 
   Problem: the VM resolves a generic body's parameters at run time while the
@@ -81,16 +112,17 @@ recipe. A body the certificates do not cover waits for its stage.
   generics by different mechanisms.
   - The driver elaborates verified MIR with `native::mono` for both backends,
     and the VM runs the result.
-  - The erased path stays selectable, as the differential oracle, until 1.13.
+  - The erased path stays selectable, as the differential oracle, until 1.15.
   - The serialized artifact stays the pre-elaboration MIR, and `exec`
     elaborates what it loads.
-  - CTFE keeps its own VM run until 1.12.
+  - CTFE keeps its own VM run until 1.14.
   - Measure against the plan's P0 baseline. Its decision D4 is the budget.
-  - Depends on 1.1, 1.2, and on the section 2 entry for a static taking
-    a pack of its struct's parameter type, which `native::mono` refuses.
+  - Depends on 1.1, 1.2, 1.3, 1.4, and on the section 2 entry for a static
+    taking a pack of its struct's parameter type, which `native::mono`
+    refuses.
   - Model: Fable, Planned.
 
-- [ ] **1.4 (P2) An ordinary generic struct's methods are cloned per
+- [ ] **1.6 (P2) An ordinary generic struct's methods are cloned per
   instance**
 
   Problem: `Optional[Int].get` is an AST clone checked or derived per
@@ -105,11 +137,11 @@ recipe. A body the certificates do not cover waits for its stage.
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.3, and on the section 6 entry that splits
+  - Depends on 1.5, and on the section 6 entry that splits
     `template_facts.rs`.
   - Model: Fable, Planned.
 
-- [ ] **1.5 (P2) An explicit application of a trait-bound generic `def` is
+- [ ] **1.7 (P2) An explicit application of a trait-bound generic `def` is
   cloned**
 
   Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
@@ -118,10 +150,10 @@ recipe. A body the certificates do not cover waits for its stage.
   - The bound check the resolver makes for a dropped argument stays at the
     call.
   - Delete the function certificate classes that exist only for these clones.
-  - Depends on 1.4.
+  - Depends on 1.6.
   - Model: Fable, Planned.
 
-- [ ] **1.6 (P3) No benchmark program mints a `comptime if`, `comptime for`,
+- [ ] **1.8 (P3) No benchmark program mints a `comptime if`, `comptime for`,
   or pack body**
 
   Problem: the three programs the P0 census measured clone no `def` keyed by
@@ -137,7 +169,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.7 (P3a) MIR cannot express a `comptime if`**
+- [ ] **1.9 (P3a) MIR cannot express a `comptime if`**
 
   Problem: a body keyed by a `comptime if` on a value parameter exists in MIR
   only as its per-value clones, so its template is a stub that traps.
@@ -150,10 +182,10 @@ recipe. A body the certificates do not cover waits for its stage.
     regions (plan decision D5).
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.3 and 1.6.
+  - Depends on 1.5 and 1.8.
   - Model: Fable, Planned.
 
-- [ ] **1.8 (P3b) MIR cannot express a `comptime for` or a type pack**
+- [ ] **1.10 (P3b) MIR cannot express a `comptime for` or a type pack**
 
   Problem: a pack-keyed body is unrolled in the AST, per call, before the
   check.
@@ -164,10 +196,10 @@ recipe. A body the certificates do not cover waits for its stage.
   - A variadic template's body is validated symbolically, which closes the
     implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.7.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.9 (P3c) A body keyed on a `DType` or a vector width has no MIR
+- [ ] **1.11 (P3c) A body keyed on a `DType` or a vector width has no MIR
   form**
 
   Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
@@ -176,10 +208,10 @@ recipe. A body the certificates do not cover waits for its stage.
   - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
     elaborator.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.7.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.10 (P3d) A value-keyed or variadic struct is specialized whole in
+- [ ] **1.12 (P3d) A value-keyed or variadic struct is specialized whole in
   the AST**
 
   Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
@@ -188,10 +220,10 @@ recipe. A body the certificates do not cover waits for its stage.
   - A struct declaration is a generator in MIR, and the elaborator mints its
     instances and their members.
   - The `Tuple` and `TString` request types leave the driver.
-  - Depends on 1.8 and 1.9.
+  - Depends on 1.10 and 1.11.
   - Model: Fable, Planned.
 
-- [ ] **1.11 (P3e) A method's own compile-time parameters, nested defs, and
+- [ ] **1.13 (P3e) A method's own compile-time parameters, nested defs, and
   CTFE-minted clones still clone**
 
   Problem: a per-call method clone, a nested `def` over an enclosing
@@ -200,10 +232,10 @@ recipe. A body the certificates do not cover waits for its stage.
   - Each becomes a generator the elaborator instantiates.
   - Split this entry by class when its plan is written, if the classes do not
     share a lever.
-  - Depends on 1.7.
+  - Depends on 1.9.
   - Model: Fable, Planned.
 
-- [ ] **1.12 (P4) The driver elaborates and checks to a fixpoint**
+- [ ] **1.14 (P4) The driver elaborates and checks to a fixpoint**
 
   Problem: `compile_linked` re-elaborates and re-checks for up to five
   discovery rounds, because only a check discovers the instances the next
@@ -215,12 +247,12 @@ recipe. A body the certificates do not cover waits for its stage.
   - Decide module-scope `comptime` values here (plan decision D3).
   - Every `docs/performance.md` row must be faster than the plan's P0
     baseline.
-  - Depends on 1.4, 1.5, 1.8, 1.10, and 1.11.
+  - Depends on 1.6, 1.7, 1.10, 1.12, and 1.13.
   - Model: Fable, Planned.
 
-- [ ] **1.13 (P5) The replaced mechanisms are still in the tree**
+- [ ] **1.15 (P5) The replaced mechanisms are still in the tree**
 
-  Problem: once 1.12 lands, the AST cloner's core, template derivation, and
+  Problem: once 1.14 lands, the AST cloner's core, template derivation, and
   the VM's erased dispatch serve nothing.
   - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
     and module-scope folding need.
@@ -229,20 +261,20 @@ recipe. A body the certificates do not cover waits for its stage.
   - Delete erased dispatch from the VM and its tolerances from `mir::verify`.
   - Rewrite `docs/architecture.md` and `AGENTS.md` invariant 3 to the new
     pipeline in the same change.
-  - Depends on 1.12.
+  - Depends on 1.14.
   - Model: Fable, Planned.
 
-- [ ] **1.14 (P6) The standard library is checked again in every
+- [ ] **1.16 (P6) The standard library is checked again in every
   compilation**
 
   Problem: Mojo imports a package as checked parametric IR, and Mojito
   re-parses and re-checks the bundled library each time.
   - Serialize verified, drop-elaborated generators as a package artifact.
   - The bundled library is the first consumer, built once per compiler build.
-  - Depends on 1.13.
+  - Depends on 1.15.
   - Model: Fable, Planned.
 
-- [ ] **1.15 (P0) The census cannot tell an erased template from a clone that
+- [ ] **1.17 (P0) The census cannot tell an erased template from a clone that
   keeps a parameter**
 
   Problem: `--instantiation-census` counts every parametric body left in MIR

@@ -226,7 +226,7 @@ compiler-and-VM execution path.
 Files under `assets/<outcome>/` run through the whole pipeline as one
 generated test per fixture in the `tests/corpus_test.rs` binary
 (`harness = false`, libtest-mimic), grouped as `assets_*`, `vm_ok`,
-`verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
+`specialized_vm`, `verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
 pipeline entry path; the phase-grouped files keep only targeted tests. The
 outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.

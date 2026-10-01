@@ -3,9 +3,8 @@
 Assessment dated 2026-09-30, against [the plan](parametric-mir-plan.md),
 the current worktree, and Modular's compiler sources at
 `e700d92fe1ba720701d5b9d233c791590199bfb1`. This is a separate design review,
-not a replacement plan or a record of implemented changes. The worktree
-already contains census work; the plan's statement that nothing has landed
-should not be taken as a description of those uncommitted changes.
+not a replacement plan or a record of implemented changes. The assessment
+includes the P0 census and baseline added to the worktree during this review.
 
 **I support the direction, but would strengthen the design before committing
 to P2 and P3 as written.** Moving specialization onto checked parametric IR
@@ -14,6 +13,14 @@ one elaborator for the VM and native backends is a useful first step with
 independent value. Keeping the AST, `CheckedProgram`, and Rust MIR is a
 reasonable way to pursue Mojo's phase ordering without reopening the rejected
 Pliron core experiment.
+
+The new P0 census strengthens the case for P2: ordinary method clones
+account for 417 of the 666 cloned bodies in `stdlib_heavy`. It also refines
+the expected benefit: 618 of those 666 bodies already use derived facts,
+so most savings should come from removing cloning and derivation, rather
+than avoiding fresh inference. Variadic struct members dominate the
+Hello World clone count. These counts help prioritize work, but are not
+measurements of each class's cost.
 
 The weakness is that the plan treats some substantial semantic work as an
 extension of substitution. P1 has a concrete implementation to build on;
@@ -218,17 +225,19 @@ the architectural resemblance worth preserving.
 
 7. **Keep the performance discipline, but revise D4 and the stop rule.**
 
-   Requiring every historical performance row to improve is not a reliable
-   acceptance rule. The document contains several measurement generations,
-   and removing discovery rounds does not guarantee every workload speeds
-   up: eager specialization can add work and increase code size.
+   D4 still says every performance row must improve, while the new P0
+   section identifies three debug `run` baselines. Reconcile those two
+   statements and use an explicit workload set. Removing discovery rounds
+   does not guarantee every workload speeds up: eager specialization can
+   add work and increase code size.
 
-   Freeze a specific P0 revision, build configuration, machine, workload
-   set, and timing boundaries. Measure compilation separately from execution
-   and use repeated measurements with a stated noise tolerance. Track peak
+   Keep the new baseline's repeated measurements and interleaved comparisons.
+   Identify the final P0 revision and machine, add a release baseline, and
+   measure compilation separately from execution with a stated noise
+   tolerance. Track peak
    memory, instance counts, and generated IR size alongside elapsed time.
    Add compile-time branches/loops/packs and many-instantiation workloads;
-   roadmap 1.6 already identifies the missing P3 benchmark coverage.
+   roadmap 1.8 already identifies the missing P3 benchmark coverage.
 
    The 1.20 ceiling is a reasonable proposed regression alarm, not evidence
    that 20 percent is universally the right tradeoff. Set a clear required

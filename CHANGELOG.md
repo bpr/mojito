@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The corpus binary gains a `specialized_vm::*` group: each `assets/ok`
+  program's elaborated MIR is specialized by `native::mono`, must pass
+  `mir::verify`, and must run on the VM to the erased program's outcome. It
+  needs no LLVM. 786 of 810 fixtures agree, and the 24 that differ are an
+  expected-failure list (`SPECIALIZED_VM_RESIDUE`) filed as roadmap 1.1 to
+  1.3.
 - `mojito run --instantiation-census FILE` reports which mechanism
   instantiates each generic body of a compilation: the bodies the AST cloner
   mints by class, the cloned bodies the checker infers and the ones it

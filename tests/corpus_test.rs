@@ -11,6 +11,11 @@
 //!   `assets/README.md`).
 //! - `vm_ok::<name>` — the production `Compiler::default()` compile+execute
 //!   path over `assets/ok`.
+//! - `specialized_vm::<name>` — the elaborated program of the production
+//!   `Compiler`, specialized by `native::mono` from the entries the native
+//!   backend compiles: the specialized program must pass `mir::verify` and
+//!   run on the VM to the outcome the erased program reaches. The fixtures
+//!   that do not yet are `SPECIALIZED_VM_RESIDUE`.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
 //!   `check_program` → `lower_checked_program` → `elaborate_drops_program` →
 //!   verify) over every executable fixture category.
@@ -33,14 +38,18 @@
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use mojito::analysis::elaborate_drops_program;
+use mojito::backend::VmBackend;
+use mojito::mir::MirProgram;
 use mojito::mir::lower_checked_program;
 use mojito::mir::text::{disassemble, parse_artifact};
 use mojito::mir::verify::verify;
+use mojito::native::mono::specialize;
 use mojito::{
     Compiler, CompilerError, OwnershipError, check, check_ownership, check_program, elaborate,
     link, parse,
 };
 use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -48,6 +57,7 @@ fn main() {
     let mut trials = Vec::new();
     assets_outcome_trials(&mut trials);
     vm_ok_trials(&mut trials);
+    specialized_vm_trials(&mut trials);
     verify_trials(&mut trials);
     roundtrip_trials(&mut trials);
     origin_trials(&mut trials);
@@ -276,6 +286,124 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
                 .map_err(|error| fail(format!("vm failed on ok fixture: {error}")))?;
             Ok(())
         }));
+    }
+}
+
+/// The `specialized_vm` trials that do not yet hold, by the `docs/roadmap.md`
+/// entry that owns each. A listed trial passes while its fixture still
+/// differs and fails once it agrees, so a fix removes its row.
+const SPECIALIZED_VM_RESIDUE: &[&str] = &[
+    // A printed instance's display witness is not in the specialized program.
+    "bound_generic_write_to",
+    "generic_struct_instance_bodies",
+    "generic_struct_instance_dispatch",
+    "list_contiguous_slice_strict",
+    "list_strided_slice_normalizes",
+    "native_borrowed_reads",
+    "nominal_string_atof_rounding",
+    "nominal_string_parse_errors",
+    "optional_raising_subscript",
+    "optional_value_protocols",
+    "pack_element_default_construction",
+    "pliron_slice_desc",
+    "slice",
+    "slice_descriptor_protocols",
+    "template_method_bound_dispatch",
+    "template_method_bound_witness_shapes",
+    "template_method_converting_argument",
+    "template_method_raises",
+    "template_method_string_builtins",
+    "template_raise_forms",
+    "type_receiver_instance_call",
+    // The VM panics constructing a `**kwargs` collector.
+    "function_typed_kwargs",
+    "kwargs",
+    // A `List[ref T]` element write reads uninitialized pointer storage.
+    "extensions::reference_list_write_through_method",
+];
+
+/// What running an elaborated program on the VM gives: its output, or its
+/// failure.
+fn vm_outcome(program: MirProgram) -> Result<String, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut vm = VmBackend::new();
+        vm.run_elaborated(program)
+            .map(|()| vm.output())
+            .map_err(|error| error.to_string())
+    }))
+    .unwrap_or_else(|_| Err("the VM panicked".to_string()))
+}
+
+/// Specialize the fixture's elaborated program from the entries the native
+/// backend compiles, and require that it verifies and runs on the VM to the
+/// erased program's outcome.
+fn specialized_runs_as_erased(path: &Path) -> Result<(), Failed> {
+    let compiled = Compiler::default()
+        .compile_path(path)
+        .map_err(|error| fail(format!("compile: {error}")))?;
+    let erased = compiled.elaborated_mir().clone();
+    let entries: Vec<String> = ["main", "__toplevel__"]
+        .into_iter()
+        .filter(|entry| erased.functions.iter().any(|(name, _)| name == entry))
+        .map(str::to_string)
+        .collect();
+    let specialized = specialize(&erased, &entries)
+        .map_err(|error| fail(format!("specialize: {}", error.construct)))?;
+    let findings = verify(&specialized.program);
+    if !findings.is_empty() {
+        return Err(fail(format!("specialized MIR: {findings:?}")));
+    }
+    let expected = vm_outcome(erased);
+    let actual = vm_outcome(specialized.program);
+    if actual != expected {
+        return Err(fail(format!(
+            "specialized program ran to {actual:?}, erased program to {expected:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn specialized_vm_trials(trials: &mut Vec<Trial>) {
+    let paths: Vec<(PathBuf, String)> = labeled_fixtures("ok")
+        .into_iter()
+        .filter(|(path, _)| !reads_stdin(path))
+        .map(|(path, label)| {
+            let name = if label == "ok" {
+                stem(&path)
+            } else {
+                format!("extensions::{}", stem(&path))
+            };
+            (path, name)
+        })
+        .collect();
+    let unknown: Vec<&str> = SPECIALIZED_VM_RESIDUE
+        .iter()
+        .copied()
+        .filter(|residue| !paths.iter().any(|(_, name)| name == residue))
+        .collect();
+    let count = paths.len();
+    trials.push(Trial::test("specialized_vm::guard_corpus", move || {
+        if count == 0 {
+            return Err(fail("expected some ok fixtures".to_string()));
+        }
+        if !unknown.is_empty() {
+            return Err(fail(format!("residue rows name no fixture: {unknown:?}")));
+        }
+        Ok(())
+    }));
+    for (path, name) in paths {
+        let residue = SPECIALIZED_VM_RESIDUE.contains(&name.as_str());
+        trials.push(Trial::test(
+            format!("specialized_vm::{name}"),
+            move || match (specialized_runs_as_erased(&path), residue) {
+                (Ok(()), true) => Err(fail(
+                    "now runs as the erased program: remove its SPECIALIZED_VM_RESIDUE row"
+                        .to_string(),
+                )),
+                (Err(_), true) => Ok(()),
+                (outcome, false) => outcome,
+            },
+        ));
     }
 }
 
