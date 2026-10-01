@@ -25,41 +25,222 @@ and stays last.
 
 ## Ordered Work
 
-### 1. Front-End Groundwork For A Pliron-Centered Architecture
+### 1. Mojo's Pipeline Order: Parametric MIR And One Elaborator
 
-The assessment is [`docs/pliron-future.md`](pliron-future.md): Pliron cannot
-give Mojito Mojo's shape on its own, because Mojo type-checks parametric code
-before instantiating it while Mojito elaborates first and checks the clones.
-These tasks fix that order.
+Mojo checks a parametric body once, keeps it as parametric IR, checks
+lifetimes on that IR, and instantiates everything in one elaborator. Mojito
+checks most bodies once
+([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md)),
+but it still clones the AST per instance before the check, and it
+instantiates generics three ways: the AST cloner, erased dispatch in the VM,
+and `native::mono`. The staged plan that closes the gap is
+[`docs/parametric-mir-plan.md`](parametric-mir-plan.md); the stage each entry
+belongs to is named in its title.
 
-Scope: only work that moves the check order — checking a template with its
-parameters symbolic, or deriving an instantiation from a checked template. A
-defect found on the way is filed by its kind; a divergence from the pin goes
-to section 3, however small. The entry that measures the Pliron
-experiment rather than moves the check order, 1.1, sits last.
+Scope: only work that moves an instantiation from the AST cloner or the VM's
+erased dispatch to the elaborator, or that deletes what the move makes dead.
+A defect found on the way is filed by its kind; a divergence from the pin
+goes to section 3, however small.
 
-- [ ] **1.1 The Pliron pivot's overhead has never been measured**
+Frozen: `checker/template_facts.rs` gains no certificate class and no
+recipe. A body the certificates do not cover waits for its stage.
 
-  Problem: the A1 slice passes four of the plan's five falsifiers, and the
-  fifth, overhead, has no release measurement, so the pivot is neither
-  approved nor rejected.
-  - The record and the verdict table are in
-    [`docs/notes/pliron-a1.md`](notes/pliron-a1.md).
-  - The budget is a paired compile-time ratio strictly below 1.19 and a
-    peak-memory ratio strictly below 1.30, each with three median absolute
-    deviations of margin.
-  - `scripts/bench-pliron-a1` collects the samples. The note lists the
-    commands.
-  - The bulk run is its own lane: ten pairs over 893 inputs, alone, on a
-    quiet machine.
-  - Decide from the measurements: plan A2, or record the rejection in
-    [`docs/non-goals.md`](non-goals.md) and remove the experiment as the
-    note's §Removal lists.
-  - This is the decision point for MIR-as-a-dialect, not a commitment to it.
-  - Nothing is refused any more: all ten focused inputs and all 893 corpus
-    inputs convert. Re-run `scripts/cover-pliron-a1` first, since the last
-    five inputs were each confirmed alone.
+- [ ] **1.1 (P0) No count says which mechanism instantiates each generic
+  body**
+
+  Problem: the plan orders its stages by how many bodies each one moves, and
+  nothing measures that.
+  - Count, per compilation, the bodies the AST cloner mints by class: bodies
+    keyed by `comptime if` or `comptime for`, packs, `DType` and vector
+    values, value-keyed structs, variadic structs, per-instantiation method
+    clones, per-call method clones, nested defs.
+  - Count the instance bodies the checker infers, the ones it derives, and
+    the ones an erased body serves with no clone.
+  - Report them beside the existing template statistics, for Hello World,
+    `generic.mojo`, and `stdlib_heavy.mojo`.
+  - Record the table in the plan, with the `docs/performance.md` rows as the
+    budget baseline.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.2 (P1) No test pins that elaborated MIR runs on the VM as the
+  erased program does**
+
+  Problem: the A1 census showed it for its 893 corpus inputs, and that test
+  was removed with the experiment.
+  - Add a corpus group that specializes each `assets/ok` program with
+    `native::mono`, verifies the result, runs it on the VM, and compares the
+    output with the ordinary run.
+  - It needs no LLVM. Put it in the default corpus binary unless its memory
+    peak belongs in `tests/heavy`.
+  - File each input that fails as its own entry, by kind. None did at
+    `1967fe1d` (`docs/notes/pliron-a1.md` §Coverage).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.3 (P1) `mir::verify` cannot tell elaborated MIR from parametric
+  MIR**
+
+  Problem: one verifier mode accepts both, so a symbolic type left in a
+  specialized program is caught only by `native/mono/symbolic.rs`, outside
+  the verifier.
+  - Add a concrete mode that rejects every symbolic type, compile-time
+    parameter, and erased-dispatch contract.
+  - `native::mono` verifies its output in that mode, and its own
+    concreteness scan goes.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **1.4 (P1) The VM runs erased generic bodies, which Mojo's interpreter
+  never does**
+
+  Problem: the VM resolves a generic body's parameters at run time while the
+  native backend specializes it first, so the two backends instantiate
+  generics by different mechanisms.
+  - The driver elaborates verified MIR with `native::mono` for both backends,
+    and the VM runs the result.
+  - The erased path stays selectable, as the differential oracle, until 1.13.
+  - The serialized artifact stays the pre-elaboration MIR, and `exec`
+    elaborates what it loads.
+  - CTFE keeps its own VM run until 1.12.
+  - Measure against the 1.1 baseline. The plan's decision D4 is the budget.
+  - Depends on 1.1, 1.2, 1.3, and on the section 2 entry for a static taking
+    a pack of its struct's parameter type, which `native::mono` refuses.
+  - Model: Fable, Planned.
+
+- [ ] **1.5 (P2) An ordinary generic struct's methods are cloned per
+  instance**
+
+  Problem: `Optional[Int].get` is an AST clone checked or derived per
+  instance, though the template's MIR is already valid for every instance and
+  the elaborator can substitute into it.
+  - Stop minting per-instantiation method clones for a method with no
+    compile-time construct in its body. Lifecycle members are included.
+  - The instance obligations the clone check discharged move to the symbolic
+    check where the pin rejects symbolically, and to a constraint recorded on
+    the generator otherwise. The list is the instantiation note's §What an
+    instance still owes.
+  - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
+    with the clones.
+  - Delete the certificate classes that exist only to derive these clones.
+  - Depends on 1.4, and on the section 6 entry that splits
+    `template_facts.rs`.
+  - Model: Fable, Planned.
+
+- [ ] **1.6 (P2) An explicit application of a trait-bound generic `def` is
+  cloned**
+
+  Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
+  keeps the template, so one function reaches MIR in two forms.
+  - Keep the template for both, and let the elaborator instantiate it.
+  - The bound check the resolver makes for a dropped argument stays at the
+    call.
+  - Delete the function certificate classes that exist only for these clones.
+  - Depends on 1.5.
+  - Model: Fable, Planned.
+
+- [ ] **1.7 (P3a) MIR cannot express a `comptime if`**
+
+  Problem: a body keyed by a `comptime if` on a value parameter exists in MIR
+  only as its per-value clones, so its template is a stub that traps.
+  - HIR and MIR gain a structured compile-time conditional over a parameter
+    expression, as `Try` is structured today.
+  - The checker's symbolic check of every arm becomes the body's facts, and
+    ownership analyses every arm.
+  - The elaborator evaluates the condition and keeps the taken arm.
+  - Bump the MIR text schema once here, for generators and compile-time
+    regions (plan decision D5).
+  - Delete the cloner's branch for the class, its trap stubs, and its
+    certificate class.
+  - Depends on 1.4.
+  - Model: Fable, Planned.
+
+- [ ] **1.8 (P3b) MIR cannot express a `comptime for` or a type pack**
+
+  Problem: a pack-keyed body is unrolled in the AST, per call, before the
+  check.
+  - MIR gains a structured compile-time loop whose body is analysed once with
+    its index symbolic.
+  - A pack parameter and a pack-typed register stay symbolic until the
+    elaborator unrolls them.
+  - A variadic template's body is validated symbolically, which closes the
+    implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
+  - Delete the cloner's branch and the certificate class.
+  - Depends on 1.7.
+  - Model: Fable, Planned.
+
+- [ ] **1.9 (P3c) A body keyed on a `DType` or a vector width has no MIR
+  form**
+
+  Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
+  symbolic `dt` or `n` is cloned per value.
+  - Register types may hold parameter expressions before elaboration.
+  - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
+    elaborator.
+  - Delete the cloner's branch and the certificate class.
+  - Depends on 1.7.
+  - Model: Fable, Planned.
+
+- [ ] **1.10 (P3d) A value-keyed or variadic struct is specialized whole in
+  the AST**
+
+  Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
+  a value are re-declared per instance by the cloner, from requests the
+  checker records.
+  - A struct declaration is a generator in MIR, and the elaborator mints its
+    instances and their members.
+  - The `Tuple` and `TString` request types leave the driver.
+  - Depends on 1.8 and 1.9.
+  - Model: Fable, Planned.
+
+- [ ] **1.11 (P3e) A method's own compile-time parameters, nested defs, and
+  CTFE-minted clones still clone**
+
+  Problem: a per-call method clone, a nested `def` over an enclosing
+  compile-time parameter, and a clone minted while CTFE runs are the last
+  bodies the AST cloner serves.
+  - Each becomes a generator the elaborator instantiates.
+  - Split this entry by class when its plan is written, if the classes do not
+    share a lever.
+  - Depends on 1.7.
+  - Model: Fable, Planned.
+
+- [ ] **1.12 (P4) The driver elaborates and checks to a fixpoint**
+
+  Problem: `compile_linked` re-elaborates and re-checks for up to five
+  discovery rounds, because only a check discovers the instances the next
+  elaboration must clone.
+  - With no clone left, the check runs once on the linked source, and source
+    validation and the executable check are one pass.
+  - The elaborator's worklist finds instances transitively from the entries.
+  - CTFE runs on elaborated MIR inside that worklist.
+  - Decide module-scope `comptime` values here (plan decision D3).
+  - Every `docs/performance.md` row must be faster than the 1.1 baseline.
+  - Depends on 1.5, 1.6, 1.8, 1.10, and 1.11.
+  - Model: Fable, Planned.
+
+- [ ] **1.13 (P5) The replaced mechanisms are still in the tree**
+
+  Problem: once 1.12 lands, the AST cloner's core, template derivation, and
+  the VM's erased dispatch serve nothing.
+  - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
+    and module-scope folding need.
+  - Delete what is left of `checker/template_facts` and the derivation
+    vocabulary in `mojito-checked/src/templates.rs`.
+  - Delete erased dispatch from the VM and its tolerances from `mir::verify`.
+  - Rewrite `docs/architecture.md` and `AGENTS.md` invariant 3 to the new
+    pipeline in the same change.
+  - Depends on 1.12.
+  - Model: Fable, Planned.
+
+- [ ] **1.14 (P6) The standard library is checked again in every
+  compilation**
+
+  Problem: Mojo imports a package as checked parametric IR, and Mojito
+  re-parses and re-checks the bundled library each time.
+  - Serialize verified, drop-elaborated generators as a package artifact.
+  - The bundled library is the first consumer, built once per compiler build.
+  - Depends on 1.13.
   - Model: Fable, Planned.
 
 ### 2. Native Backend
@@ -2684,16 +2865,34 @@ last.
 ### 6. Code Organization Follow-Ups *(behavior-preserving)*
 
 The 2026-09 module split (`docs/symbol-map.md`) removed every file over
-3,000 lines. What remains needs semantic extraction, not line moves.
+3,000 lines but one, which has since grown to five times that. The rest
+needs semantic extraction, not line moves.
 
-- [ ] **6.1 Split `expr_unconverted`**
+- [ ] **6.1 `checker/template_facts.rs` is 16,138 lines**
+
+  Problem: one file holds capture, the certificate grammar, realization,
+  installation, and verification, and one `impl Checker` block in it is
+  about 7,000 lines.
+  - Split it along those five seams into `checker/template_facts/`, beside
+    the six submodules already there. No file stays over 3,000 lines.
+  - Split the `BodyShape` grammar, about 6,000 lines, by certificate class,
+    so a section 1 stage that retires a class deletes a file.
+  - This is a move, not a rewrite. The real reduction is section 1, which
+    deletes the mechanism stage by stage
+    ([`docs/parametric-mir-plan.md`](parametric-mir-plan.md)).
+  - From here on the tree's line count only goes down.
+  - Update `docs/symbol-map.md` with the new owners.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **6.2 Split `expr_unconverted`**
 
   `mir/lower_expr/expr.rs` (about 2,090 lines) is one match over
   `ExprKind`.
   - Extract arm groups into `Flatten` methods.
   - Depends on nothing.
 
-- [ ] **6.2 Split `infer_method_call`**
+- [ ] **6.3 Split `infer_method_call`**
 
   `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
   - Extract receiver-family branches beside `selection`, `statics`, and
@@ -2701,13 +2900,13 @@ The 2026-09 module split (`docs/symbol-map.md`) removed every file over
   - Depends on nothing. It moves code several section 3 entries name as
     their lever, so it lands between them rather than beside them.
 
-- [ ] **6.3 Split `verify_instruction`**
+- [ ] **6.4 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
   - Depends on nothing.
 
-- [ ] **6.4 Shrink the 2 kloc band**
+- [ ] **6.5 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),

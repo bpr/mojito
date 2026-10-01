@@ -6,20 +6,30 @@ Record of the Stage A1 vertical slice from
 
 ## Status and decision
 
-**`PASS-SLICE`, and `INCOMPLETE` for the pivot decision.** Recorded
-2026-09-27; the decision corpus run 2026-09-29.
+**`PASS-SLICE`, and `NO` for the pivot decision: F5 fails.** Recorded
+2026-09-27; the decision corpus run 2026-09-29; overhead measured
+2026-09-30.
 
 - All seven proof items pass on the gate fixture, on the VM and natively.
-- F1 to F4 pass. F5 (overhead) is **not measured**.
-- The pivot is neither approved nor rejected. A2 is not started.
+- F1 to F4 pass. **F5 (overhead) fails** on the predeclared stress row:
+  Gate ×64 compiles 1.62 times as slowly under the shadow (1.54 to 1.69 at
+  three median absolute deviations), against a limit of 1.20
+  (§Measurements). Peak memory is unchanged, 1.00 on every row.
+- By the plan's decision procedure that is a NO for disproportionate
+  measured overhead. What was measured is this bridge: a shadow that
+  prints and re-parses its canonical text on every compile. That round
+  trip is 79 to 85% of the added time on the failing rows.
+- A2 is not started. The experiment was removed from the tree on
+  2026-09-30 after the owner accepted the NO (§Removal).
 - All ten focused inputs convert, and all 893 inputs of the decision
   corpus (§Coverage).
 - The pin rehearsal passed on 2026-09-30 (§Pin rehearsal): upstream
   `81155d9` needed ten changed lines, all inside the adapter.
-- The scheduled measurement lane has not run (§Remaining boundaries).
+- The focused measurement lane ran. The bulk lane did not, because it
+  cannot reverse a stress row that fails alone (§Measurements).
 
 The MIR waist, the v1 `.mir` schema, the VM, and the native backend's MIR
-input are unchanged. A1 is optional, default off, and removable.
+input are unchanged. A1 was optional and default off; it is removed.
 
 ## Verdict table
 
@@ -29,8 +39,8 @@ input are unchanged. A1 is optional, default off, and removable.
 | F2: locations, lifecycle, artifact fidelity | PASS | `a1_locations_per_op`, `a1_location_mutations_name_their_op`, `a1_lifecycle_edges`, `a1_canonical_first_print`, `a1_v1_exec_roundtrip`, `a1_dead_scalar_preserves_events` |
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
-| F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | 893 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the last input re-run alone (§Coverage) |
+| F5: disproportionate overhead | **FAIL** | Gate ×64 time ratio 1.62, lower bound 1.54, limit 1.20; `stdlib_heavy` 1.45; Gate ×16 straddles the limit; memory passes everywhere (§Measurements) |
+| Full canonical-artifact compatibility | 893 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`, the full census re-run 2026-09-30 at `1967fe1d` (§Coverage) |
 | Pin-maintenance rehearsal | PASS | `477e6b0` to `81155d9` in under an hour, 10 lines in 4 adapter files and 2 test files, no escape, no fork (§Pin rehearsal) |
 
 Core text is 1.56 to 2.00 times the v1 text of the same module, under the
@@ -42,7 +52,7 @@ thresholds.
 
 | | |
 |---|---|
-| Repository | `d846604a59d8d93353cee9f2d22a6cfed767265f`, plus this task's uncommitted changes |
+| Repository | slice: `d846604a59d8d93353cee9f2d22a6cfed767265f` plus that task's changes; measurements: `1967fe1dbd0f85e940cfb32063cc4afc81e43251` plus the harness change of finding 19 |
 | Rust | 1.96.1 (31fca3adb 2026-06-26) |
 | Pliron | git `477e6b0edb18b29df4cf7b90f0f468dc8a872f22` (`pliron`, `pliron-llvm`) |
 | LLVM | 23.1.0 at `/opt/llvm-23`, `llvm-sys` 231 |
@@ -395,6 +405,15 @@ and replacement stay with `ParamContext`.
     no longer declares: the slice bound's `Optional` and a string
     literal's `String.__hash__`. The VM now takes both from the instance.
 
+19. **The harness credited the shadow a smaller output.** Each mode
+    printed and hashed its own result: the baseline the whole compiled
+    program (about 8 MB of v1 text, the bundled library included), the
+    shadow only its exported closure. That took about 150 ms off every
+    shadow sample, so small inputs measured 0.91 to 0.93. Every mode now
+    prints and hashes the compiled program before the shadow starts. The
+    first batch is kept as `focused-asymmetric-consumption/`; it fails the
+    same two rows.
+
 ## Coverage
 
 One shadow run per focused input, coverage only. Byte counts re-taken
@@ -437,11 +456,13 @@ input, coverage only. Run 2026-09-29 at each stage of the coverage task:
 | A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | 888 | 5 |
 | Specialized MIR verifies (2026-09-30; the three inputs re-run alone, debug build) | 891 | 2 |
 | A named type argument keeps a receiver's `Tuple` spelling (2026-09-30; the input re-run alone, debug build) | 892 | 1 |
-| An exit from a `finally` body is an ordinary exit (2026-09-30; the input re-run alone, debug build) | **893** | **0** |
+| An exit from a `finally` body is an ordinary exit (2026-09-30; the input re-run alone, debug build) | 893 | 0 |
+| The full census re-run at `1967fe1d` (2026-09-30, release build) | **893** | **0** |
 
 The last input, `assets/ok/pliron_finally_overrides.mojo`, is pinned by
-`a1_finally_override_converts`. The full census has not been re-run since
-the 887 row.
+`a1_finally_override_converts`. The re-run's rows are
+`target/pliron-a1/corpus-coverage-1967fe1d/coverage.tsv` (sha256
+`7516c320e0bf28c5`).
 
 Still refused by name, because no corpus input reaches them: a subscript
 store through a slice, a return carrying cleanup across a finally, a
@@ -477,15 +498,114 @@ Exclusive phase times of the shadow-opt run, in milliseconds:
 Before the size review, the dead-scalar test removed 3 of 302 operations
 and 1,340 of 169,661 bytes in 3 sweeps.
 
-### Pending
+### Focused lane, 2026-09-30
 
-| Dataset / input | Count covered / total | Baseline compile median / p90 | Shadow compile median / p90 | Ratio ± 3 MAD | Construct ms | Verify ms | Canonicalize + parse ms | Export ms | DCE ms | Baseline / shadow peak KiB | Peak ratio bound | v1 / core bytes | Verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Gate | 1 / 1 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | 69,504 / 117,895 | pending |
-| Each of seven compile benchmarks | 7 / 7 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | see §Coverage | pending |
-| Gate ×16 / ×64 | 2 / 2 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | see §Coverage | pending |
-| Full decision corpus | not counted / 848 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
-| Full canonical artifact compatibility | not counted | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
+Release build, ten alternating pairs after one warmup, one fresh process per
+sample, wall time and peak memory from `wait4`
+(`scripts/bench-pliron-a1`, `--phase compile`). The ratio is the median of
+the ten paired shadow-to-baseline ratios, and its bounds are three median
+absolute deviations either side. Limits: time strictly below 1.20, memory
+strictly below 1.30.
+
+| Input | Baseline ms, median / p90 | Shadow ms, median / p90 | Time ratio (lower to upper) | Peak KiB, baseline / shadow | Memory ratio upper | Verdict |
+|---|---|---|---|---|---|---|
+| Gate | 1,907 / 1,916 | 1,930 / 1,955 | 1.016 (0.994 to 1.039) | 288,256 / 288,476 | 1.004 | pass |
+| `empty` | 1,902 / 1,925 | 1,863 / 1,876 | 0.979 (0.952 to 1.006) | 287,112 / 287,676 | 1.002 | pass |
+| `hello` | 1,875 / 1,915 | 1,880 / 1,904 | 0.989 (0.962 to 1.015) | 287,020 / 288,036 | 1.006 | pass |
+| `add` | 1,909 / 1,934 | 1,883 / 1,912 | 0.988 (0.947 to 1.029) | 287,272 / 287,332 | 1.002 | pass |
+| `generic` | 2,030 / 2,053 | 2,131 / 2,149 | 1.046 (1.035 to 1.058) | 305,968 / 306,132 | 1.004 | pass |
+| `tuple` | 1,936 / 1,955 | 2,141 / 2,178 | 1.104 (1.084 to 1.124) | 292,436 / 292,280 | 1.001 | pass |
+| `tstring` | 1,979 / 1,986 | 2,174 / 2,195 | 1.103 (1.081 to 1.125) | 298,836 / 298,104 | 1.001 | pass |
+| `stdlib_heavy` | 2,749 / 2,778 | 3,995 / 4,026 | **1.455 (1.423 to 1.486)** | 401,468 / 401,268 | 1.002 | **time fails** |
+| Gate ×16 | 2,069 / 2,104 | 2,439 / 2,491 | 1.187 (1.143 to 1.231) | 306,652 / 306,376 | 1.002 | time inconclusive |
+| Gate ×64 | 2,605 / 2,649 | 4,192 / 4,222 | **1.617 (1.544 to 1.689)** | 363,900 / 363,808 | 1.002 | **time fails** |
+| All ten, summed per run | 20,954 / 21,008 | 24,633 / 24,796 | 1.177 (1.165 to 1.189) | 401,468 / 401,268 | 1.002 | pass |
+| Full decision corpus | not run | | | | | see below |
+
+With the dead-scalar pass (`shadow-opt`) the same rows read 1.008, 0.983,
+0.990, 0.992, 1.040, 1.111, 1.098, **1.478**, 1.183 (inconclusive),
+**1.632**, and 1.180 summed. The verdicts are the same.
+
+Median exclusive phase times of the shadow, in milliseconds
+(`metrics/*.jsonl`; verify is the bridge, core, and exported-MIR
+verifications together):
+
+| Input | Operations | Front end | Specialize | Construct | Normalize | Verify | Canonicalize + parse | Export | DCE (opt) | Added |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Gate | 360 | 1,681 | 1.0 | 1.0 | 1.2 | 3.4 | 39.0 | 2.7 | 0.1 | 48 |
+| `empty` | 67 | 1,659 | 0.5 | 0.4 | 0.2 | 0.7 | 6.8 | 0.5 | 0.0 | 9 |
+| `hello` | 201 | 1,658 | 0.7 | 0.7 | 0.7 | 1.9 | 20.9 | 1.5 | 0.1 | 26 |
+| `add` | 213 | 1,663 | 0.7 | 0.7 | 0.7 | 2.0 | 22.0 | 1.6 | 0.1 | 28 |
+| `generic` | 845 | 1,801 | 3.0 | 1.9 | 2.6 | 7.5 | 93.7 | 6.2 | 0.5 | 115 |
+| `tuple` | 1,509 | 1,715 | 4.0 | 3.1 | 5.0 | 14.7 | 178.0 | 11.7 | 0.9 | 217 |
+| `tstring` | 1,456 | 1,746 | 3.8 | 2.9 | 4.9 | 14.4 | 173.7 | 11.6 | 0.8 | 211 |
+| `stdlib_heavy` | 6,028 | 2,395 | 48.6 | 12.3 | 19.7 | 59.7 | 1,054.9 | 52.1 | 3.4 | 1,247 |
+| Gate ×16 | 2,775 | 1,821 | 7.1 | 5.2 | 8.6 | 25.3 | 317.4 | 20.4 | 0.8 | 384 |
+| Gate ×64 | 10,503 | 2,297 | 76.1 | 19.7 | 33.4 | 104.9 | 1,230.0 | 87.7 | 3.4 | 1,552 |
+
+What the numbers say:
+
+- **The text round trip dominates.** Canonicalize plus parse is 79% of the
+  added time on Gate ×64 and 85% on `stdlib_heavy`: 0.12 and 0.18 ms per
+  operation, of 0.15 and 0.21 added in all. Construction is 1%, all
+  verification 5 to 7%, export 4 to 6%, specialization 4 to 5%.
+- **The baseline is mostly fixed cost.** About 1.66 s of every compile is
+  the front end over the bundled library, whatever the program. The shadow
+  scales with the entry's specialized closure. A small program hides the
+  shadow under that floor, and a program whose closure reaches ten
+  thousand operations does not.
+- **Memory is not the problem.** The peak is the front end's, and the
+  shadow never exceeds it, though it holds both representations.
+- The remaining shadow-below-baseline medians (`empty`, `hello`, `add`) are
+  inside their own noise bounds. The wall clock includes process teardown,
+  which the phase timers do not.
+- Without the text round trip the Gate ×64 shadow would add about 320 ms
+  to 2,300, about 1.12. That is arithmetic on the phase medians, not a
+  measurement, and the plan does not let it stand in for one.
+
+**Boundary alone** (`--phase artifact`: both modes load the frozen v1 text of
+the whole compiled program, `target/pliron-a1/artifacts/`, so the front end
+is a 0.23 to 0.37 s load). Reported, never the budget:
+
+| Input | Baseline ms | Shadow ms | Time ratio (lower to upper) |
+|---|---|---|---|
+| Gate | 502 | 516 | 1.021 (0.981 to 1.062) |
+| `empty` | 493 | 466 | 0.950 (0.933 to 0.966) |
+| `hello` | 522 | 506 | 0.959 (0.841 to 1.078) |
+| `add` | 499 | 493 | 0.985 (0.973 to 0.998) |
+| `generic` | 543 | 623 | 1.149 (1.093 to 1.205) |
+| `tuple` | 516 | 718 | 1.405 (1.365 to 1.446) |
+| `tstring` | 532 | 723 | 1.348 (1.307 to 1.389) |
+| `stdlib_heavy` | 792 | 2,094 | 2.649 (2.527 to 2.770) |
+| Gate ×16 | 557 | 929 | 1.676 (1.624 to 1.729) |
+| Gate ×64 | 677 | 2,274 | 3.388 (3.223 to 3.553) |
+| All ten, summed per run | 5,705 | 9,392 | 1.654 (1.610 to 1.699) |
+
+**Why the bulk lane did not run.** The budget binds the corpus aggregate
+and each predeclared stress row. Gate ×64's lower bound is above the limit,
+so F5 fails whatever the aggregate is, and ten pairs over 893 inputs is
+about 18 hours of serial compiles that could not change the verdict. The
+corpus aggregate is therefore **unmeasured**, not passed. The census's
+single uncontrolled runs (4 jobs, 2026-09-29, before the text-size review)
+put it near 1.14, with 177 of 887 inputs at or above 1.20; that is a
+diagnostic only. Gate ×16 straddles the limit and was not repeated, for the
+same reason.
+
+**Machine record** (`target/pliron-a1/machine.txt`). Intel Core i7-10875H,
+Linux 7.1.1, AC power, governor `powersave` (unchanged), Rust 1.96.1,
+LLVM 23.1.0. Load average 1.1 to 1.3 during both lanes, package
+temperature 52 to 59 °C, no throttling. The machine was not idle: 14 GB in
+use, and 6.6 GB already in zram swap before the run, with no swap growth
+during it. The noise bounds are what that cost.
+
+| File | sha256 prefix |
+|---|---|
+| `target/release/examples/pliron_a1` | `f80df789516bf5b9` |
+| `focused/samples.tsv` (300 samples, all ok) | `a6979636a632c6e8` |
+| `focused-artifact/samples.tsv` | `ddc31bf5bb9194cc` |
+| `focused-asymmetric-consumption/samples.tsv` (finding 19, superseded) | `0a6f1f02d0be8038` |
+| `artifacts/inputs.tsv` | `fa16e7f0fa0c2ace` |
+| `corpus-inputs.tsv` (893 inputs) | `f0d9184268decc7c` |
 
 ## Probes and commands
 
@@ -531,7 +651,7 @@ Generated evidence under `target/pliron-a1/` (not tracked):
 | File | sha256 prefix |
 |---|---|
 | `focused-inputs.tsv` (10 inputs) | `71570cf26e7b9dc2` |
-| `corpus-inputs.tsv` (848 inputs) | `9786d69970e8c67e` |
+| `corpus-inputs.tsv` (893 inputs) | `f0d9184268decc7c` |
 | `op_inventory.tsv` | `ec59ff472241b113` |
 | `malformed_matrix.tsv` | `dec81bdc5a702f99` |
 | `gate.executable.txt` | `b476e999f623c79c` |
@@ -541,7 +661,7 @@ Generated evidence under `target/pliron-a1/` (not tracked):
 The same parsed module exported v1 text with sha256
 `bec647ac…fe0b9a66c` (`same_module.tsv`).
 
-### Resuming the measurement lane
+### The measurement lane
 
 Run alone, on AC power, on a quiet machine. Record governor, load, and
 temperature with the results.
@@ -557,7 +677,11 @@ scripts/bench-pliron-a1 --bin target/release/examples/pliron_a1 --inputs target/
 scripts/bench-pliron-a1 --bin target/release/examples/pliron_a1 --inputs target/pliron-a1/corpus-inputs.tsv --out target/pliron-a1/corpus --warmup 1 --runs 10 --order alternating
 ```
 
-The second `bench-pliron-a1` command is the bulk lane. Both exit nonzero
+The first `bench-pliron-a1` command is the focused lane of §Measurements.
+The second is the bulk lane, which was not run. The artifact lane first
+writes each focused input's compiled v1 text with `--mode baseline
+--emit-v1` into `target/pliron-a1/artifacts/`, lists those files with their
+hashes in `inputs.tsv`, and passes `--phase artifact`. Both exit nonzero
 while any input is refused, and write every raw sample before summarizing.
 A refused input's diagnostic ends with every refusal the importer has for
 it, counted. `scripts/cover-pliron-a1 --bin BIN --inputs FILE --out DIR
@@ -653,27 +777,33 @@ A1 deletes nothing. These lines are added beside the MIR they shadow.
 
 ## Removal
 
-If the pivot is rejected, remove exactly:
+The owner accepted the rejection and this was removed on 2026-09-30:
 
 - `crates/mojito-pliron/src/a1/` and its gated `pub mod a1` in `lib.rs`;
 - crate feature `a1-core` and root feature `pliron-a1`;
 - `examples/pliron_a1.rs` and its manifest entry;
 - `tests/pliron_a1_test.rs` and its manifest entry;
-- `scripts/bench-pliron-a1` and `scripts/gen-pliron-a1-inputs`.
+- `scripts/bench-pliron-a1`, `scripts/gen-pliron-a1-inputs`, and
+  `scripts/cover-pliron-a1`;
+- the A1 navigation entries in `docs/symbol-map.md`.
 
 Keep the gate fixture, `a1_reference_field_arithmetic_matches_vm`, and the
 native operand fix. They stand without A1.
 
 ## Remaining boundaries
 
-- **Coverage.** All 893 corpus inputs convert, the last five each re-run
-  alone; a full census run should confirm it before the bulk lane.
-- **Overhead.** No release measurement exists. The debug diagnostic cannot
-  stand in for one.
+- **Corpus aggregate.** Unmeasured. The bulk lane was skipped because a
+  stress row fails alone; nothing here says the aggregate passes.
+- **A cheaper canonical form.** The failing cost is the print and parse
+  that first-print stability needs at this pin (finding 4). A shadow
+  without it was not built or measured.
+- **Machine state.** One batch per lane, on a machine in ordinary use. The
+  failing rows clear the limit by more than twice their noise bound.
 - **Interpreter speed.** Both backends ran exported MIR. Nothing here says
   how fast a VM walking core operations would be.
 - **Pin rehearsal.** One of the pivot plan's two rehearsals is done
-  (§Pin rehearsal). The main tree stays at `477e6b0`; nothing needs the
-  newer pin.
+  (§Pin rehearsal). The main tree stays at `477e6b0`.
+- **Removal.** Not done. The experiment stays in the tree until the owner
+  has reviewed this record ([`docs/roadmap.md`](../roadmap.md) 1.1).
 - **Broad gates.** The full suites, the corpus, the conformance sweeps, and
   the heavy Pliron lane were not run in this task.

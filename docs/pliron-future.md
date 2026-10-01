@@ -1,9 +1,12 @@
 # Pliron as Mojito's Compiler IR Framework: Front-End Feasibility
 
 **Status:** assessment recorded 2026-09-11; the dialect-definition section
-added 2026-09-16, its generator recommendation revised 2026-09-17. The goal it serves — an implementation that resembles Mojo's
+added 2026-09-16, its generator recommendation revised 2026-09-17, its
+check-order statements brought up to date 2026-09-30. The goal it serves — an implementation that resembles Mojo's
 own — is settled (`docs/architecture.md`); what stays unscheduled is this
-document's particular staging of it. The scheduled consequences are the
+document's particular staging of it. The staging that is scheduled, with MIR
+rather than Pliron as the parametric IR, is
+[`docs/parametric-mir-plan.md`](parametric-mir-plan.md); its tasks are the
 checkboxes in [`docs/roadmap.md`](roadmap.md) §1.
 
 **Companion document.**
@@ -20,10 +23,18 @@ they differ in where the remaining distance to Mojo actually lies.
 Rearchitecting is technically feasible, but Pliron is not the obstacle, and
 adopting it does not by itself produce Mojo's architecture. What makes Mojo's
 pipeline Mojo-like is that it type-checks parametric code *before* instantiating
-it, and keeps that code as parametric IR. Mojito does the reverse: it elaborates
-the AST first and then checks the concrete clones. That front-end change is
-language work that has to happen with or without Pliron. Do it first, and treat
-the move to Pliron as a later, optional step.
+it, and keeps that code as parametric IR. When this was written Mojito did the
+reverse: it elaborated the AST first and then checked the concrete clones. That
+front-end change is language work that has to happen with or without Pliron. Do
+it first, and treat the move to Pliron as a later, optional step.
+
+The first half has since landed. Mojito checks a template body once with its
+parameters symbolic, and the instances a checked template covers derive their
+facts from it instead of being inferred again
+([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md)).
+The bodies that note lists as uncovered keep a per-instance check. The second
+half has not: the carrier is still the elaborator's concrete AST clone, a
+template never reaches HIR or MIR, and there is no parametric IR.
 
 ## What the source notes got wrong
 
@@ -106,10 +117,13 @@ diagnostics above; the pack-keyed remainder is [`docs/roadmap.md`](roadmap.md)
   including `comptime if`/`for`, with parameters left symbolic. That needs a
   decision procedure for parameter-expression equality, so that `SIMD[dt, n+1]`
   and `SIMD[dt, 1+n]` are the same type. That problem is the fourth section of
-  the 2025 talk. Mojito avoids it today by making everything concrete first.
-- **How far Mojito already is.** Trait-bound generics already get an abstract
-  pre-check and run through erased dispatch, so the machinery is not absent, it
-  is bypassed whenever elaboration can specialize.
+  the 2025 talk. Mojito avoided it by making everything concrete first; the
+  parameter-expression layer (`docs/notes/param-expr-attributes.md`) now
+  decides it.
+- **How far Mojito already was.** Trait-bound generics already got an abstract
+  pre-check and ran through erased dispatch, so the machinery was not absent, it
+  was bypassed whenever elaboration could specialize. Source validation and
+  checked templates have since extended it to the specialized bodies.
 
 ## Do you need a high-level dialect?
 
@@ -188,8 +202,12 @@ loop changes.
   closed `pop`/`kgen`/`lit` ops through `__mlir_op`. Pliron clones of those
   dialects still would not let Mojito compile upstream stdlib source. Mojito
   accepts only `__mlir_type.index`.
-- **Compile time.** The effect of an end-to-end Pliron pipeline on compile time
-  is unmeasured. Hello World is currently 0.8 s release.
+- **Compile time.** The A1 shadow, which adds a core module beside MIR and
+  round-trips its canonical text, adds 0.15 to 0.21 ms per operation of the
+  specialized closure in a release build: nothing visible on Hello World,
+  45% on `stdlib_heavy`, and 62% on a stress input of ten thousand
+  operations ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md)). A pipeline
+  that replaces MIR rather than shadowing it is unmeasured.
 
 ## Corpus sweep for untaken-branch type errors
 
@@ -250,7 +268,9 @@ one. Canonical text is not stable from Pliron's printer alone, because value
 names follow allocation history; A1 prints after a parse into a fresh
 context. The parametric gap is as described: A1's core is closed and
 monomorphic, and its parameter attributes carry no generic body. The
-correction is on cost: core text is 2.6 to 3.4 times the v1 text, and the
+correction is on cost: core text was 2.6 to 3.4 times the v1 text (1.56 to
+2.00 after a review), the shadow failed its compile-time budget on
+2026-09-30 because of the print and parse its canonical text needs, and the
 interpreter question is still open, because both backends ran MIR exported
 from core. §1's own entries do not gate it:
 they move the check order above `CheckedProgram`, while A1 shadows MIR below
@@ -258,7 +278,9 @@ it. The pivot entry's `Depends on` bullet carries the current numbers, which
 move as §1 closes. The rest of §2 and §3 is orthogonal to steps 1 and 2 below
 and can interleave with them.
 
-1. **Fix the check order inside the current architecture.** Type-check
+1. **Fix the check order inside the current architecture.** *Landed*
+   (`docs/notes/instantiation-from-template.md`, which also lists the bodies
+   that keep a per-instance check). Type-check
    `comptime if`/`for` bodies symbolically and reject what upstream rejects.
    Conformance needs this regardless of Pliron, and it is where the Mojo-like
    behavior users actually notice lives: errors before instantiation, rather

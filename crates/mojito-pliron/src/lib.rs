@@ -36,8 +36,6 @@ pub use emit::link_object;
 pub use mojito_native::native::target::{DebugInfo, EmitKind, NativeTarget, OptLevel};
 pub use toolchain::{check_toolchain, set_runtime_override, toolchain_report};
 
-#[cfg(feature = "a1-core")]
-pub mod a1;
 pub mod capability;
 pub mod inspect;
 

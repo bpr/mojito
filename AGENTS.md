@@ -39,6 +39,8 @@ Read these documents before changing behavior:
 - `docs/architecture.md` — pipeline invariants and phase design.
 - `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
 - `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
+- `docs/parametric-mir-plan.md` — the staged plan toward Mojo's pipeline
+  order (parametric MIR, one elaborator), behind roadmap section 1.
 - `docs/non-goals.md` — what we have decided not to do, and what would reopen it.
 - `docs/native-abi.md` — the normative native target/layout/runtime-ABI
   contract; owned in code by `crates/mojito-native-core` (target/layout/

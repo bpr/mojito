@@ -132,9 +132,10 @@ The architecture prioritizes:
 mojito does not today reproduce Mojo's production architecture, and that
 is now regarded as a mistake that must be corrected (`docs/pliron-future.md`).
 Resembling Mojo's own implementation as closely as a small compiler can is a
-goal, pursued in stages over a long horizon; the arrangements described in
-this document are where the code stands, not an argument that the distance
-from Mojo is right. Whether MLIR — or any backend IR — becomes the compiler's
+goal, pursued in stages over a long horizon
+(`docs/parametric-mir-plan.md` stages the pipeline order); the arrangements
+described in this document are where the code stands, not an argument that
+the distance from Mojo is right. Whether MLIR — or any backend IR — becomes the compiler's
 internal layer is one of those staged questions
 (`docs/pliron-backend-pivot-plan.md`), no longer a standing exclusion.
 

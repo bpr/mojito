@@ -23,6 +23,32 @@ this stays an option rather than a plan.
   target/layout/runtime ABI and the differential corpus.
 - It must not fork language semantics or become a required compiler layer.
 
+### Pliron as the required post-check IR framework (A1 rejected)
+
+Not planned: the Stage A1 shadow core passed four of its five falsifiers and
+failed the fifth, overhead. The record is
+[`docs/notes/pliron-a1.md`](notes/pliron-a1.md).
+
+- The failed condition is compile time on the predeclared stress row. Gate
+  ×64 compiles 1.62 times as slowly under the shadow, 1.54 to 1.69 at three
+  median absolute deviations, against a limit of 1.20.
+- `stdlib_heavy` fails too, at 1.45. Gate ×16 straddles the limit at 1.19.
+  Peak memory is unchanged on every row.
+- Measured 2026-09-30 at `1967fe1d`, Pliron `477e6b0`, LLVM 23.1.0, release
+  build, ten alternating pairs, on an Intel Core i7-10875H.
+- The cost is the canonical text round trip: 79 to 85% of the added time on
+  the failing rows is one print and one parse of the core module.
+- The corpus aggregate was not measured, because it could not reverse a
+  failing stress row.
+- What is rejected is this bridge as built. Representation, locations,
+  lifecycle, conversion totality, and default-build isolation all held.
+- Optional Pliron-to-LLVM emission stays the supported native backend, and
+  the parametric front-end work of roadmap section 1 does not depend on
+  this.
+- Reopen when a canonical form needs no print and parse at the pin, or the
+  pinned printer and parser are several times faster, and the same focused
+  lane then passes.
+
 ## Kept On Purpose
 
 ### Direct `ref` struct fields stay a Mojito extension
