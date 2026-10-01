@@ -29,6 +29,17 @@ to evolve under the `0.x` compatibility rules.
   `stdlib_heavy.mojo`, with the debug `run` baseline for the plan's budget,
   is in `docs/parametric-mir-plan.md` §P0.
 
+### Fixed
+
+- Native: a generic struct's static taking a pack of the struct's parameter
+  type (`def first(*values: Self.T) -> Self.T`) now gets one instance per
+  element type. `native::mono` keyed such an instance by its pack length
+  alone, so `Pair[Int].first(3, 4)` beside `Pair[String].first("x", "y")`
+  shared one body and failed IR verification. Fixture
+  `assets/ok/template_method_generic_static_parameter_pack.mojo`. A static
+  whose arguments do not carry the parameter at all (an empty pack) is
+  roadmap 2.1.
+
 ### Changed
 
 - The A1 shadow core's canonical text is 1.56 to 2.00 times the v1 text,

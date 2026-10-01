@@ -80,7 +80,7 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `constructed_default_argument.mojo` | Does a call leaving out a constructed default (`s: String = String("a")`) run? | **differs natively**: the pin and the VM print `a`, the native backend refuses the evaluated default — `docs/roadmap.md` §2 |
-| `static_parameter_pack_native.mojo` | Does a static taking `*values: Self.T` compile natively? | **differs natively**: the pin and the VM print `2 2`, the native backend stops on the unresolved `T` — `docs/roadmap.md` §2 |
+| `static_owner_parameter_unbound_native.mojo` | Does a generic struct's static compile natively when no argument carries the struct's parameter (an empty `*values: Self.T` pack, a body-only `List[Self.T]()`)? | **differs natively**: the pin and the VM print `0 0`, the native backend stops on the unresolved `T` — `docs/roadmap.md` §2 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 

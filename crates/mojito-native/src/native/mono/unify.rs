@@ -15,12 +15,14 @@ use super::*;
 /// (`bindings.self_instance`) already carries the binding it must not join
 /// again — only a `Some[..]` sugar binding does. A static path with no
 /// owner instance keeps every resolved binding in the identity.
+/// A pack's element type (`*values: Self.T`) selects a body the same way a
+/// parameter's does, so it joins beside the parameter types.
 pub(super) fn push_sugar_arguments(
     declaration: &MirFunctionDeclaration,
     bindings: &Bindings,
     arguments: &mut Vec<InstanceArg>,
 ) {
-    for ty in &declaration.param_types {
+    for ty in declaration.param_types.iter().chain(&declaration.variadic) {
         if let Ty::Param { binder, .. } = peel_refs(ty)
             && (binder.name.starts_with("Some[") || bindings.self_instance.is_none())
             && !declaration

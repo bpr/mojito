@@ -451,18 +451,23 @@ correctness fix to existing behavior is allowed.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **2.1 A generic struct's static taking a pack of its parameter type
-  does not compile natively**
+- [ ] **2.1 A generic struct's static whose arguments do not carry the
+  struct's parameter does not compile natively**
 
-  Problem: `Pair[Self.T].count(self.item, self.item)`, beside
-  `def count(*values: Self.T)`, prints `2 2` on the VM and the pin, but
-  the native backend stops with "unsupported unresolved type parameter
-  `T`" in `Pair.count`.
-  - The erased static reaches native lowering with its pack element still
-    the struct's symbolic parameter.
-  - A pack of a closed type (`*values: String`) compiles natively
-    (`assets/ok/template_method_generic_static_shapes.mojo`).
-  - Probe: `conformance/probes/static_parameter_pack_native.mojo`.
+  Problem: `Pair[Int].count()`, beside `def count(*values: Self.T)`,
+  prints `0` on the VM and the pin, but the native backend stops with
+  "unsupported unresolved type parameter `T`" in `Pair.count`.
+  - A static whose body alone names the parameter (`List[Self.T]()`
+    inside `def made() -> Int`) stops the same way.
+  - Native monomorphization binds the struct's parameter by unifying the
+    static's runtime arguments and result (`infer_call` in
+    `native/mono/infer.rs`). The MIR `Call` to a static does not carry
+    the spelled receiver's type arguments, so nothing binds `T` here.
+  - The lever is a design question: the call must record the receiver
+    type, which changes the serialized MIR `Call`.
+  - A non-empty pack compiles natively
+    (`assets/ok/template_method_generic_static_parameter_pack.mojo`).
+  - Probe: `conformance/probes/static_owner_parameter_unbound_native.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
