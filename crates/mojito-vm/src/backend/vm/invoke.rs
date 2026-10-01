@@ -238,7 +238,8 @@ impl VmBackend {
         };
         let (mut bound, slots) = bind_args(name, sig, argv, &kwargs, make_default)?;
         if let Some(index) = sig.kw_variadic_index {
-            bound[index] = self.make_kwargs_dict(prog, collected)?;
+            let collector = kwargs_collector_struct(prog, sig.kw_variadic.as_ref());
+            bound[index] = self.make_kwargs_dict(prog, &collector, collected)?;
         }
         Ok((bound, slots))
     }
@@ -246,13 +247,14 @@ impl VmBackend {
     pub(super) fn make_kwargs_dict(
         &mut self,
         prog: &Prog,
+        collector: &str,
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
         let mut dict =
-            self.construct_via_init(prog, "StringDict", None, Vec::new(), Vec::new(), &[])?;
-        let fname = prog.overload_name("StringDict.__setitem__", 2);
+            self.construct_via_init(prog, collector, None, Vec::new(), Vec::new(), &[])?;
+        let fname = prog.overload_name(&format!("{collector}.__setitem__"), 2);
         let fidx = prog.index_of(&fname).ok_or_else(|| {
-            RuntimeError::Unsupported("vm: kwargs StringDict has no __setitem__".to_string())
+            RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
         })?;
         for (key, value) in entries {
             let key = self.nominal_string_value(prog, &key)?;
@@ -275,7 +277,7 @@ impl VmBackend {
                 "`**kwargs^` requires a StringDict value".to_string(),
             ));
         };
-        if name != "StringDict" {
+        if name != KWARGS_COLLECTOR && !name.starts_with(KWARGS_COLLECTOR_INSTANCE) {
             return Err(RuntimeError::TypeError(format!(
                 "`**kwargs^` requires StringDict, got {name}"
             )));
@@ -825,5 +827,26 @@ impl VmBackend {
                 crate::runtime::type_name(other)
             ))),
         }
+    }
+}
+
+/// The struct a `**kwargs` parameter collects into.
+const KWARGS_COLLECTOR: &str = "StringDict";
+
+/// The prefix every instance of the collector carries in a specialized program.
+const KWARGS_COLLECTOR_INSTANCE: &str = "StringDict$mono$";
+
+/// The collector a callee's `**kwargs: element` binds: the template in an
+/// erased program, its instance at `element` (`StringDict$mono$TInt`) in a
+/// specialized one, which declares no template.
+fn kwargs_collector_struct(prog: &Prog, element: Option<&Ty>) -> String {
+    match element {
+        Some(element) if !prog.structs.contains_key(KWARGS_COLLECTOR) => {
+            mojito_symbol::symbol::instance_symbol(
+                KWARGS_COLLECTOR,
+                &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
+            )
+        }
+        _ => KWARGS_COLLECTOR.to_string(),
     }
 }

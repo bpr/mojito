@@ -311,7 +311,11 @@ impl VmBackend {
         kwargs: Vec<(String, Value)>,
         param_vals: &[Option<Value>],
     ) -> Result<Value, RuntimeError> {
-        let def = &prog.structs[name];
+        let def = prog.structs.get(name).ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "vm: constructed struct '{name}' is missing from MIR"
+            ))
+        })?;
         let fields = def
             .fields
             .iter()

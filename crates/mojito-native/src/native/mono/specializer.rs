@@ -428,6 +428,7 @@ impl<'a> Specializer<'a> {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
             }
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
+            self.enqueue_keyword_collector(&key.template, &declaration)?;
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
@@ -498,6 +499,32 @@ impl<'a> Specializer<'a> {
             *target = instance;
         }
         Ok(())
+    }
+
+    /// A `**kwargs: element` parameter binds a `StringDict[element]` the
+    /// caller builds without a MIR call: the VM runs the instance's empty
+    /// constructor and one `__setitem__` per collected keyword, so enqueue
+    /// both for a callee that only ever reads the collector.
+    fn enqueue_keyword_collector(
+        &mut self,
+        owner: &str,
+        declaration: &MirFunctionDeclaration,
+    ) -> Result<(), MonoError> {
+        let Some(element) = declaration.kw_variadic.as_ref() else {
+            return Ok(());
+        };
+        if is_symbolic(element) {
+            return Ok(());
+        }
+        let collector = Ty::Struct(
+            mojito_symbol::symbol::instance_symbol(
+                "StringDict",
+                &[InstanceArg::Ty(element.clone())],
+            ),
+            vec![mojito_types::types::TyArg::Ty(element.clone())],
+        );
+        self.enqueue_nominal_method_instance(owner, &collector, "__init__", 0, &[])?;
+        self.enqueue_nominal_method_instance(owner, &collector, "__setitem__", 2, &[])
     }
 
     /// The compiled constructor a default's conversion target names. The

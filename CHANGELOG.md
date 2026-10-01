@@ -20,13 +20,12 @@ to evolve under the `0.x` compatibility rules.
   it rejects every symbolic type, compile-time parameter, and erased-dispatch
   result adapter that parametric MIR may carry. `native::mono` verifies its
   output in that mode, and its own concreteness scan is gone. The
-  compile-time argument slots a resolved call still lists are roadmap 1.4.
+  compile-time argument slots a resolved call still lists are roadmap 1.3.
 - The corpus binary gains a `specialized_vm::*` group: each `assets/ok`
   program's elaborated MIR is specialized by `native::mono`, must pass
   `mir::verify`, and must run on the VM to the erased program's outcome. It
-  needs no LLVM. 807 of 810 fixtures agree, and the 3 that differ are an
-  expected-failure list (`SPECIALIZED_VM_RESIDUE`) filed as roadmap 1.1 and
-  1.2.
+  needs no LLVM. 809 of 810 fixtures agree, and the 1 that differs is an
+  expected-failure list (`SPECIALIZED_VM_RESIDUE`) filed as roadmap 1.1.
 - `mojito run --instantiation-census FILE` reports which mechanism
   instantiates each generic body of a compilation: the bodies the AST cloner
   mints by class, the cloned bodies the checker infers and the ones it
@@ -39,6 +38,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A specialized program's `**kwargs` callee runs on the VM. `total(first=1,
+  second=2, third=3)` over `def total(var **kwargs: Int)` panicked with `no
+  entry found for key`: the VM built the collector as `StringDict`, which a
+  specialized program declares only as `StringDict$mono$TInt`, and
+  `native::mono` dropped the instance's `__setitem__`, which no MIR call
+  names. The VM now names the collector's instance, the specializer keeps
+  its empty constructor and `__setitem__` for every callee with a keyword
+  pack, and constructing an undeclared struct is a `RuntimeError` rather
+  than a panic. The `kwargs` and `function_typed_kwargs` rows leave
+  `SPECIALIZED_VM_RESIDUE`. A native collector still holds only its count
+  (roadmap 2.3).
 - A specialized program prints an instance through its display witness.
   `print(xs)` on a `List[Int]` wrote
   `List$mono$TInt(data=Pointer(…), size=2, cap=4)` on the VM where the erased

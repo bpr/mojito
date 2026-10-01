@@ -237,7 +237,7 @@ the architectural resemblance worth preserving.
    tolerance. Track peak
    memory, instance counts, and generated IR size alongside elapsed time.
    Add compile-time branches/loops/packs and many-instantiation workloads;
-   roadmap 1.8 already identifies the missing P3 benchmark coverage.
+   roadmap 1.7 already identifies the missing P3 benchmark coverage.
 
    The 1.20 ceiling is a reasonable proposed regression alarm, not evidence
    that 20 percent is universally the right tradeoff. Set a clear required

@@ -293,9 +293,6 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
 const SPECIALIZED_VM_RESIDUE: &[&str] = &[
-    // The VM panics constructing a `**kwargs` collector.
-    "function_typed_kwargs",
-    "kwargs",
     // A `List[ref T]` element write reads uninitialized pointer storage.
     "extensions::reference_list_write_through_method",
 ];
