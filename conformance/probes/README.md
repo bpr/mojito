@@ -79,7 +79,8 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `pack_mixed_spread.mojo` | `Tuple[Int, *Self.Ts]`: a spread beside a fixed argument. | reject |
 | `pack_forwarding_untaken_arm.mojo` | Is a body that forwards its pack (`inner(*a)`) checked from the template? | **differs**: the pin rejects the untaken arm, Mojito reaches no verdict on that body and prints `1` `two` — `docs/roadmap.md` §1 |
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
-| `constructed_default_argument.mojo` | Does a call leaving out a constructed default (`s: String = String("a")`) run? | **differs natively**: the pin and the VM print `a`, the native backend refuses the evaluated default — `docs/roadmap.md` §2 |
+| `borrowed_default_argument_destructor.mojo` | Is an evaluated default handed to a borrowing parameter destroyed when the call returns? | **differs**: the pin prints `drop dflt`, Mojito's VM and native backend never run the destructor — `docs/roadmap.md` §3 |
+| `list_literal_default_argument.mojo` | Does `xs: List[Int] = [1, 2, 3]` declare? | **differs**: the pin prints `3`, Mojito rejects the default as an `Array[Int, 3]` — `docs/roadmap.md` §3 |
 | `static_owner_parameter_unbound_native.mojo` | Does a generic struct's static compile natively when no argument carries the struct's parameter (an empty `*values: Self.T` pack, a body-only `List[Self.T]()`)? | **differs natively**: the pin and the VM print `0 0`, the native backend stops on the unresolved `T` — `docs/roadmap.md` §2 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)

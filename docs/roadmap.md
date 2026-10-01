@@ -471,23 +471,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.2 An evaluated default argument does not compile natively**
-
-  Problem: `f()`, beside `def f(s: String = String("a"))`, prints `a` on
-  the VM and the pin, but the native backend stops with "unsupported
-  evaluated default argument of `f` is not yet lowered natively".
-  - MIR lowers such a default as the zero-parameter function
-    `$default$<owner>$<parameter>` and records it as
-    `CheckedConst::Evaluate`, which the VM runs at the call.
-  - Native lowering fills an omitted slot only from a literal or a
-    converting construction of one (`default_argument_value` in
-    `lower/calls.rs`); it needs to call the default function, and
-    reachability (`lib.rs`) needs the edge no call instruction spells.
-  - Probe: `conformance/probes/constructed_default_argument.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.3 A callable assigned to a `mut` parameter does not reach the
+- [ ] **2.2 A callable assigned to a `mut` parameter does not reach the
   caller natively**
 
   Problem: `f = two` inside `def keep(mut f: def() thin -> Int)` leaves
@@ -502,7 +486,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2714,6 +2698,35 @@ last.
   - Probe: `conformance/probes/nested_def_reads_local_comptime.mojo`.
   - Found while a local `comptime` float was made to read as `Float64`
     (2026-09-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.108 An evaluated default handed to a borrowing parameter is
+  never destroyed**
+
+  Problem: `use()`, beside `def use(r: R = R(String("dflt")))` over a
+  struct with a `__deinit__`, never runs that destructor on the VM or
+  natively, where the pin prints `drop dflt` when the call returns.
+  - An explicitly passed temporary (`use(R(String("x")))`) is destroyed
+    on both sides, and so is the default of a `var` parameter, which the
+    callee owns.
+  - The VM's `bind_for_call` runs the default function into a register
+    no drop elaboration sees. Native lowering matches it, and frees the
+    value's buffers without running the destructor.
+  - Probe: `conformance/probes/borrowed_default_argument_destructor.mojo`.
+  - Found while evaluated defaults were lowered natively (2026-09-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.109 A list literal is rejected as a `List` parameter's default**
+
+  Problem: `def lst(xs: List[Int] = [1, 2, 3])` is rejected ("type
+  mismatch for default value of 'xs': expected List[Int], found
+  Array[Int, 3]"), where the pin prints `3` for `len(xs)`.
+  - A `var xs: List[Int] = [1, 2, 3]` binding takes the same literal, so
+    the default is typed without its annotation as context.
+  - Probe: `conformance/probes/list_literal_default_argument.mojo`.
+  - Found while evaluated defaults were lowered natively (2026-09-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

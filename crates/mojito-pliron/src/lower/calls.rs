@@ -530,10 +530,9 @@ impl FnLowering<'_> {
                 };
                 self.constructed_default_value(ctx, target, arg, *layout, callee, dest)
             }
-            CheckedConst::Evaluate { .. } => Err(self.unsupported_reg(
-                format!("evaluated default argument of `{callee}` is not yet lowered natively"),
-                dest,
-            )),
+            CheckedConst::Evaluate { function } => {
+                self.evaluated_default_value(ctx, function, expected, owned, callee, dest)
+            }
             CheckedConst::Int(_)
             | CheckedConst::Float(_)
             | CheckedConst::Bool(_)
@@ -562,6 +561,60 @@ impl FnLowering<'_> {
                 )),
             },
         }
+    }
+
+    /// Call a parameter's lowered default function, as the VM's
+    /// `bind_for_call` runs it. An owned slot hands the result to the callee;
+    /// a borrowed one is the caller's temporary, released after the call.
+    fn evaluated_default_value(
+        &mut self,
+        ctx: &mut Context,
+        function: &str,
+        expected: &LowerTy,
+        owned: bool,
+        callee: &str,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let Some(signature) = self.signatures.get(function) else {
+            return Err(self.unsupported_reg(
+                format!("evaluated default `{function}` of `{callee}` has no compiled body"),
+                dest,
+            ));
+        };
+        let shape_agrees = signature.outcome.is_none()
+            && signature.params.is_empty()
+            && match expected {
+                LowerTy::Scalar(_) => signature.returns_value && signature.sret.is_none(),
+                LowerTy::Aggregate { layout, .. } => signature.sret == Some(*layout),
+                LowerTy::ZeroSized => false,
+            };
+        if !shape_agrees {
+            return Err(self.unsupported_reg(
+                format!(
+                    "evaluated default `{function}` of `{callee}` disagrees with its parameter's shape"
+                ),
+                dest,
+            ));
+        }
+        let func_ty = signature.func_ty;
+        let target: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let callable = CallOpCallable::Direct(target);
+        let LowerTy::Aggregate { ty, layout } = expected else {
+            let call = CallOp::new(ctx, callable, func_ty, Vec::new());
+            self.append(ctx, call.get_operation(), Some(dest));
+            return Ok(call.get_result(ctx));
+        };
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        let call = CallOp::new(ctx, callable, func_ty, vec![storage]);
+        self.append(ctx, call.get_operation(), Some(dest));
+        if !owned && ((self.owns_heap(ty) && self.releasable(ty)) || self.stdlib_deinit_temp(ty)) {
+            self.default_temps.push((storage, (**ty).clone()));
+        }
+        Ok(storage)
     }
 
     /// Run a parameter's recorded converting constructor (`arg: Optional[T] =

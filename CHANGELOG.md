@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The native backend runs an evaluated default argument
+  (`def f(s: String = String("a"))`, called as `f()`): the caller calls the
+  lowered default function, a `var` parameter takes the value, and a
+  borrowing parameter's value is released after the call. Monomorphization
+  and native reachability follow the edge from a declaration to its default
+  functions. `assets/ok/evaluated_default_argument.mojo` pins it on both
+  backends. A borrowed default's user destructor, which neither backend
+  runs, is roadmap 3.108, and a list-literal default is roadmap 3.109.
 - `mir::verify` gains a concrete mode, `verify_concrete`, for elaborated MIR:
   it rejects every symbolic type, compile-time parameter, and erased-dispatch
   result adapter that parametric MIR may carry. `native::mono` verifies its

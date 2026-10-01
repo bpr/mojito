@@ -857,11 +857,14 @@ fn reachable_set<'p>(
             }
         }
         // An omitted argument whose default is a recorded constructor
-        // (`dir: Optional[String] = None`) calls that constructor's instance
-        // from the caller's lowering: an edge no call instruction spells.
+        // (`dir: Optional[String] = None`) or a lowered default function
+        // (`s: String = String("a")`) calls it from the caller's lowering:
+        // an edge no call instruction spells.
         if let Some(declaration) = declarations.get(name) {
             for default in declaration.defaults.iter().flatten() {
-                if let mojito_checked::checked::CheckedConst::Construct { target, .. } = default
+                use mojito_checked::checked::CheckedConst;
+                if let CheckedConst::Construct { target, .. }
+                | CheckedConst::Evaluate { function: target } = default
                     && let Some((callee, _)) = functions.get_key_value(target.as_str())
                     && reachable.insert(*callee)
                 {

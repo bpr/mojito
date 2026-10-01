@@ -107,6 +107,9 @@ impl FnLowering<'_> {
             }
             self.emit_release_reg(ctx, reg, &ty)?;
         }
+        for (storage, ty) in std::mem::take(&mut self.default_temps) {
+            self.emit_release_temp(ctx, storage, &ty)?;
+        }
         Ok(())
     }
 
@@ -129,6 +132,16 @@ impl FnLowering<'_> {
         let Some(storage) = self.reg_values.get(&reg).copied() else {
             return Ok(());
         };
+        self.emit_release_temp(ctx, storage, ty)
+    }
+
+    /// Free the heap buffers the `ty`-typed temporary at `storage` carries.
+    pub(super) fn emit_release_temp(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        ty: &Ty,
+    ) -> Result<(), PlironError> {
         // Collection temporaries own their backing allocation through their
         // stdlib destructor; their raw pointer field is not itself a
         // separately owned Pointer value. MaybeUninit is deliberately

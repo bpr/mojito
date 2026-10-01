@@ -478,7 +478,7 @@ impl FnLowering<'_> {
                 dest,
             )),
             (CheckedConst::Evaluate { .. }, _) => Err(self.unsupported_reg(
-                "evaluated default argument is not yet lowered natively".into(),
+                "evaluated default argument where only a constant default is lowered".into(),
                 dest,
             )),
         }

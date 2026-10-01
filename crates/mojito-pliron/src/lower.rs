@@ -247,6 +247,7 @@ pub fn lower_body(
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
+        default_temps: Vec::new(),
         conditional_values: HashMap::new(),
         last_uses: HashMap::new(),
         position: (0, 0),
@@ -444,6 +445,10 @@ struct FnLowering<'a> {
     /// heap buffers free directly after the temporary's last use, and no
     /// user destructor runs.
     owned_temps: HashMap<u32, Ty>,
+    /// Evaluated default arguments handed to a borrowing parameter: storage
+    /// no register names, released once the instruction that built it is
+    /// lowered.
+    default_temps: Vec<(Value, Ty)>,
     /// Runtime presence for values produced only on one control-flow edge.
     /// `TryNext` uses this to make the following loop binding inert on the
     /// exhausted edge, including for types with observable destructors.

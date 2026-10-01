@@ -435,7 +435,9 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// A parameter defaulting to a recorded constructor over a generic
+    /// A parameter defaulting to a lowered default function
+    /// (`s: String = String("a")`) enqueues that function. One defaulting to
+    /// a recorded constructor over a generic
     /// struct instance (`dir: Optional[String] = None`, `x: Optional[Int] = 5`):
     /// the omitted-argument path runs the constructor's instance for the
     /// concrete parameter type, so enqueue it and respell the default's target
@@ -447,6 +449,14 @@ impl<'a> Specializer<'a> {
         declaration: &mut MirFunctionDeclaration,
     ) -> Result<(), MonoError> {
         for (index, default) in declaration.defaults.iter_mut().enumerate() {
+            // A lowered default function names no binder, so it has the one
+            // instance, which only this default reaches.
+            if let Some(CheckedConst::Evaluate { function }) = default {
+                if self.functions.contains_key(function.as_str()) {
+                    *function = self.enqueue(function, self.base_bindings(), Vec::new())?;
+                }
+                continue;
+            }
             let Some(CheckedConst::Construct { target, arg }) = default else {
                 continue;
             };
