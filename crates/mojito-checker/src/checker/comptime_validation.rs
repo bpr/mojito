@@ -1407,7 +1407,7 @@ pub(super) fn block_has_comptime(stmts: &[Stmt]) -> bool {
 /// Whether a block names `reflect[...]` anywhere below it. Such a body is
 /// validated symbolically like any other, but its instances keep the clone
 /// check: the field facts the elaborator evaluates are its own
-/// (`template_facts.rs:template_certificate`).
+/// (`template_facts/certificate.rs:template_certificate`).
 pub(super) fn reads_reflection(stmts: &[Stmt]) -> bool {
     let mut finder = ReflectionFinder { found: false };
     mojito_ast::visit::walk_block(&mut finder, stmts);

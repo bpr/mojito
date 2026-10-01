@@ -103,7 +103,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `$with<id>_*` names) and checks it in a block scope, recording a
   `WithDesugar` (form and statements); `with_desugar` builds the same
   statements from a statement and a form without a check, for a derived
-  instance (`template_facts.rs:instance_with_desugars`); and
+  instance (`template_facts/capture.rs:instance_with_desugars`); and
   `splice_with_desugars` replaces every checked `with` in the final tree
   before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
   `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
@@ -348,7 +348,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   private storage, counted by
   `declarations.rs:initializes_storage_elements`, and an instance derives
   the store, a `print` argument, or a local's value through
-  `template_facts.rs:element_construction_facts`, a copy with no folded
+  `template_facts/realization_folds.rs:element_construction_facts`, a copy with no folded
   index taking its loop index from `constructed_element_indices`, which
   `index_indifferent` lets pick among elements sharing the constructed type),
   `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
@@ -382,9 +382,34 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
   over the `field_types()` node, viewed through `opaque_element`). The
   elaborator's `comptime/eval.rs` answers the same queries per instance;
-  `template_facts.rs:template_certificate` keeps every reflection-reading
+  `template_facts/certificate.rs:template_certificate` keeps every reflection-reading
   body's instances on the clone check (`reads_reflection`).
-- `checker/template_facts.rs` owns checked templates on the checker side.
+- `checker/template_facts.rs` owns checked templates on the checker side:
+  the shared types (`BodySite`, `Occurrence`, `BodyShape`, `GrammarNotes`),
+  the helpers more than one seam uses, and the body entry points. The rest
+  is one file per seam under `checker/template_facts/`:
+  - `capture.rs` — `capture_body_facts`, `body_transfers`,
+    `occurrences_over`, `record_template`, `retain_template`, `span_table`.
+  - `certificate.rs` — `template_certificate`, `method_certificate`,
+    `validated_struct_binders`, `FUNCTION_FEATURES`, and the binder
+    predicates they read.
+  - `grammar.rs` — the `BodyShape` core walk (`statement`, `expression`,
+    `whole_value`, the local and receiver predicates). Each certificate
+    class's productions are a `grammar_*.rs` beside it: `grammar_calls.rs`,
+    `grammar_builtins.rs`, `grammar_constructions.rs`,
+    `grammar_control.rs`, `grammar_operators.rs`, `grammar_packs.rs`,
+    `grammar_references.rs`, `grammar_simd.rs`, `grammar_stores.rs`.
+  - `realization.rs` — `derivable_facts`, `derive`,
+    `instance_substitution`, `realize_instance_facts`, `realize_transfers`,
+    `substituted_facts`. `realization_calls.rs` holds the per-call
+    `realize_*` recipes (method, static, direct, callable, operator,
+    conversion, `print`/`repr`/`len`), and `realization_folds.rs` what the
+    elaborator folds per instance (pack elements, folded literals and
+    arithmetic, `SIMD` lanes).
+  - `install.rs` — `install_body_facts`, `replace_body_facts`,
+    `install_transfers`, `remove_occurrence_facts`.
+  - `verify.rs` — `capturable`, `census`, `transfer_residue`, and the
+    unkeyed-store and hash-leaf growth checks.
   `Checker::check_def_body` is every `def` body's entry and
   `check_method_body` every struct method's (from
   `declarations.rs:bind_and_check_method`, under `Checker::method_site`); both
@@ -546,11 +571,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `comptime.rs:rebuilt` and the identity a folded `comptime for` variable
   or pack `TypeList` use keeps (`rewrite.rs:rewrite_expr`). A pack struct's
   `__RuntimeTuple(*args^)` initializer, which each instance writes as
-  `args^`, is laid over the instance by `template_facts.rs:relocate_packs`
+  `args^`, is laid over the instance by `template_facts/realization_folds.rs:relocate_packs`
   from the template's `PackRelocation`; a user struct's or `TString`'s
   `Tuple(*args^)`, which each instance expands per element with
   `mojito-checked` `templates.rs:PackElementNode` identities, by
-  `template_facts.rs:spread_packs` from its `PackSpread`. `mojito-comptime`'s
+  `template_facts/realization_folds.rs:spread_packs` from its `PackSpread`. `mojito-comptime`'s
   `comptime.rs:instance_traces` carries one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.

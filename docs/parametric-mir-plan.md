@@ -48,8 +48,8 @@ Consequences of that arrangement:
   ([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md))
   replace that check with derived facts for the bodies their certificates
   cover, and the rest keep the clone check.
-- That derivation is `checker/template_facts.rs`: 16,138 lines, plus 2,390 in
-  its submodules. It grows by one recipe per body shape and cannot reach
+- That derivation is `checker/template_facts.rs` and its submodules: 18,823
+  lines in 24 files. It grows by one recipe per body shape and cannot reach
   every shape, because its carrier is still the clone.
 - The VM and the native backend instantiate generics by different means, so
   each new generic feature is implemented twice.
@@ -495,13 +495,12 @@ regions. Later forms may bump it again (decision D5).
 
 ## `template_facts.rs`
 
-The file is 16,138 lines: one `impl Checker` block of about 7,000 lines, a
-band of free helpers, and the `BodyShape` certificate grammar of about 6,000.
-Two things reduce it.
+The tree is 18,823 lines. It is split along its own seams — capture,
+certificate, the `BodyShape` grammar by class, realization, installation,
+verification — one file each under `checker/template_facts/`, none over
+3,000 lines, so each later deletion removes whole files
+(`docs/symbol-map.md` lists the owners).
 
-- **Now, behavior-preserving** (roadmap §6): split it along its own seams —
-  capture, certificate grammar, realization, installation, verification — so
-  no file is over 3,000 lines and each later deletion removes whole files.
 - **By stage**: P2 deletes the method and function classes, each P3 step
   deletes its class, and P5 deletes the mechanism.
 
@@ -523,7 +522,7 @@ an estimate.
 | Component | Lines | Fate |
 |---|---|---|
 | `comptime/{rewrite,specialize,mono,nested}.rs` | 10,698 | Deleted at P5; CTFE, fuel, and value crossing stay |
-| `checker/template_facts.rs` and submodules | 18,528 | Deleted by P5 |
+| `checker/template_facts.rs` and submodules | 18,823 | Deleted by P5 |
 | `mojito-checked/src/templates.rs` | 2,681 | Mostly deleted; binder and obligation vocabulary moves to the generator |
 | `checker/comptime_validation.rs` | 1,623 | Merges into the one check at P4 |
 | `native/mono` | 5,621 | Kept and extended; becomes the elaborator |

@@ -1549,7 +1549,8 @@ A generic body is inferred once, with its parameters symbolic, and the
 instances it covers inherit that result instead of being inferred again as
 clones. The vocabulary is `crates/mojito-checked/src/templates.rs`; capture,
 certification, realization, and installation are
-`checker/template_facts.rs`. The design record, with every certificate class
+`checker/template_facts.rs` and one file per seam under
+`checker/template_facts/`. The design record, with every certificate class
 and its soundness argument, is
 [`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
 

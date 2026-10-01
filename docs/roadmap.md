@@ -182,8 +182,7 @@ correctness fix to existing behavior is allowed.
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.4, 1.6, and on the section 6 entry that splits
-    `template_facts.rs`.
+  - Depends on 1.4 and 1.6.
   - Model: Fable, Planned.
 
 - [ ] **1.8 (P2) An explicit application of a trait-bound generic `def` is
@@ -3073,35 +3072,19 @@ last.
 
 ### 6. Code Organization Follow-Ups *(behavior-preserving)*
 
-The 2026-09 module split (`docs/symbol-map.md`) removed every file over
-3,000 lines but one, which has since grown to five times that. The rest
-needs semantic extraction, not line moves.
+The module splits (`docs/symbol-map.md`) removed every file over 3,000
+lines. `checker/template_facts.rs` and its submodules stay frozen: their
+line count only goes down, as section 1 deletes the mechanism stage by
+stage. The rest needs semantic extraction, not line moves.
 
-- [ ] **6.1 `checker/template_facts.rs` is 16,138 lines**
-
-  Problem: one file holds capture, the certificate grammar, realization,
-  installation, and verification, and one `impl Checker` block in it is
-  about 7,000 lines.
-  - Split it along those five seams into `checker/template_facts/`, beside
-    the six submodules already there. No file stays over 3,000 lines.
-  - Split the `BodyShape` grammar, about 6,000 lines, by certificate class,
-    so a section 1 stage that retires a class deletes a file.
-  - This is a move, not a rewrite. The real reduction is section 1, which
-    deletes the mechanism stage by stage
-    ([`docs/parametric-mir-plan.md`](parametric-mir-plan.md)).
-  - From here on the tree's line count only goes down.
-  - Update `docs/symbol-map.md` with the new owners.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **6.2 Split `expr_unconverted`**
+- [ ] **6.1 Split `expr_unconverted`**
 
   `mir/lower_expr/expr.rs` (about 2,090 lines) is one match over
   `ExprKind`.
   - Extract arm groups into `Flatten` methods.
   - Depends on nothing.
 
-- [ ] **6.3 Split `infer_method_call`**
+- [ ] **6.2 Split `infer_method_call`**
 
   `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
   - Extract receiver-family branches beside `selection`, `statics`, and
@@ -3109,13 +3092,13 @@ needs semantic extraction, not line moves.
   - Depends on nothing. It moves code several section 3 entries name as
     their lever, so it lands between them rather than beside them.
 
-- [ ] **6.4 Split `verify_instruction`**
+- [ ] **6.3 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
   - Depends on nothing.
 
-- [ ] **6.5 Shrink the 2 kloc band**
+- [ ] **6.4 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),

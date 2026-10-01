@@ -66,6 +66,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `checker/template_facts.rs`, 16,146 lines, is split along its five seams
+  into `checker/template_facts/`: `capture.rs`, `certificate.rs` with the
+  `BodyShape` grammar in `grammar.rs` and nine `grammar_*.rs` class files,
+  `realization.rs` with `realization_calls.rs` and `realization_folds.rs`,
+  `install.rs`, and `verify.rs`. The parent keeps the shared types, the
+  shared helpers, and the body entry points. No file is over 3,000 lines.
+  The move changes no behavior; `docs/symbol-map.md` lists the owners.
 - The A1 shadow core's canonical text is 1.56 to 2.00 times the v1 text,
   down from 2.6 to 3.4: the `identity` attribute is left to the location
   that already names it, locations and contract keys are local to their
