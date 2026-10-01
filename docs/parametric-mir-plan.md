@@ -302,8 +302,9 @@ its output.
 
 - `mir::verify::verify_concrete` rejects any symbolic type or compile-time
   parameter. `mir::ConcreteMir` is built only by passing it, and
-  `native::mono` returns one. The compile-time argument slots a resolved call
-  keeps are the residue (roadmap §1).
+  `native::mono` returns one. A resolved call keeps no compile-time
+  argument slot, and a slot that still forwards a binder or computes an
+  expression over one is rejected too.
 - The three phases of §Phases and their names are
   `CompiledProgram::{mir, drop_elaborated_mir, concrete_mir}`. The entry
   roots are `native::mono::entry_roots`. The concrete graph is cached, and

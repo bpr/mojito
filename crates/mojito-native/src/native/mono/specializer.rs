@@ -787,14 +787,6 @@ impl<'a> Specializer<'a> {
                                         function.reg_types.insert(dest.0, concrete.clone());
                                     }
                                     self.enqueue(&target, bindings, arguments)?;
-                                    // The instance identity now carries every
-                                    // compile-time solution; the call-site
-                                    // value registers are redundant (a body
-                                    // that still needs one fails its own
-                                    // contextual check).
-                                    for param_arg in param_arg_regs.iter_mut() {
-                                        param_arg.value = None;
-                                    }
                                 }
                                 // A generic struct's output declaration is
                                 // instance-named; respell the constructor
@@ -806,9 +798,11 @@ impl<'a> Specializer<'a> {
                                 {
                                     func.0.clone_from(concrete);
                                 }
-                                for param_arg in param_arg_regs.iter_mut() {
-                                    param_arg.value = None;
-                                }
+                                // The instance identity carries every
+                                // compile-time solution, so the call keeps
+                                // no slot for one (a body that still needs
+                                // one fails its own contextual check).
+                                param_arg_regs.clear();
                             }
                             continue;
                         }
@@ -836,9 +830,7 @@ impl<'a> Specializer<'a> {
                         bindings.runtime_callables =
                             capturing.iter().map(|(binder, _)| binder.clone()).collect();
                         func.0 = self.enqueue(&target, bindings, arguments)?;
-                        for param_arg in param_arg_regs.iter_mut() {
-                            param_arg.value = None;
-                        }
+                        param_arg_regs.clear();
                         for (_, closure) in capturing {
                             args.push(closure);
                             arg_places.push(None);
@@ -973,9 +965,7 @@ impl<'a> Specializer<'a> {
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
-                        for param_arg in param_arg_regs.iter_mut() {
-                            param_arg.value = None;
-                        }
+                        param_arg_regs.clear();
                         // The instance's declaration keeps no compile-time
                         // parameters, so the call to it keeps none either.
                         param_decls.clear();
@@ -1118,7 +1108,7 @@ impl<'a> Specializer<'a> {
                             arg_places: std::mem::take(arg_places),
                             kwarg_places: std::mem::take(kwarg_places),
                             capture_accesses: Vec::new(),
-                            param_arg_regs: std::mem::take(param_arg_regs),
+                            param_arg_regs: Vec::new(),
                             param_decls: Vec::new(),
                         };
                     }
@@ -1272,6 +1262,7 @@ impl<'a> Specializer<'a> {
                     _ => {}
                 }
             }
+            block.instrs.iter_mut().for_each(close_parameter_slots);
             for (index, prelude) in preludes.into_iter().rev() {
                 block.instrs.splice(index..index, prelude);
             }
@@ -1708,4 +1699,31 @@ fn lifecycle_clone_instance_symbol(template: &str, owner: Option<&str>) -> Optio
     let baked = method.strip_prefix(base)?;
     (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP))
         .then(|| format!("{owner}.{base}"))
+}
+
+/// Strips what only an instantiation reads from the compile-time argument
+/// slots `instruction` still carries: the enclosing binder a slot forwards
+/// and the expression over value binders it computes. A call left unresolved
+/// (`external_call`, a `Func`-typed callee) keeps the slot's register.
+fn close_parameter_slots(instruction: &mut MirInstr) {
+    let slots = match instruction {
+        MirInstr::Call { param_arg_regs, .. }
+        | MirInstr::MethodCall { param_arg_regs, .. }
+        | MirInstr::CallIndirect { param_arg_regs, .. } => param_arg_regs,
+        MirInstr::Index {
+            call: Some(call), ..
+        }
+        | MirInstr::Slice {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiIndex {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiSet { call, .. } => &mut call.param_arg_regs,
+        _ => return,
+    };
+    for slot in slots {
+        slot.binder = None;
+        slot.expr = None;
+    }
 }

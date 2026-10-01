@@ -7,13 +7,14 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::MirSubscriptCall;
+use crate::mir::{MirParamArg, MirSubscriptCall};
 
 /// The concreteness findings for one function body.
 ///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
-/// or an erased-dispatch result adapter.
+/// a compile-time argument a call still forwards or computes from one, or an
+/// erased-dispatch result adapter.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
@@ -94,6 +95,24 @@ fn require_no_parameters(head: &str, parameters: &[ParamDecl], errors: &mut Vec<
     }
 }
 
+/// A compile-time argument slot is parametric while it names the enclosing
+/// binder it forwards or the expression over value binders it computes. A
+/// slot holding only a register is runtime data an unresolved call reads.
+fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Vec<String>) {
+    for slot in slots {
+        if let Some(binder) = &slot.binder {
+            errors.push(format!(
+                "{head} keeps compile-time argument forwarding `{}` in elaborated MIR",
+                binder.name
+            ));
+        } else if slot.expr.is_some() {
+            errors.push(format!(
+                "{head} keeps a compile-time argument expression in elaborated MIR"
+            ));
+        }
+    }
+}
+
 fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
     for (index, block) in blocks.iter().enumerate() {
         let head = format!("MIR function '{name}' block {index}");
@@ -146,11 +165,18 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         | MirInstr::DefVar {
             binding_ty: Some(ty),
             ..
-        }
-        | MirInstr::Call {
-            raises: Some(ty), ..
         } => {
             require_concrete(head, "instruction", ty, errors);
+        }
+        MirInstr::Call {
+            raises,
+            param_arg_regs,
+            ..
+        } => {
+            if let Some(ty) = raises {
+                require_concrete(head, "instruction", ty, errors);
+            }
+            require_no_parameter_slots(head, param_arg_regs, errors);
         }
         MirInstr::MakeTuple { element_types, .. } => {
             for ty in element_types.iter().flatten() {
@@ -164,6 +190,7 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         }
         MirInstr::CallIndirect {
             raises,
+            param_arg_regs,
             param_decls,
             instantiated_contract,
             instantiated_args,
@@ -178,11 +205,13 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 }
             }
             require_no_parameters(head, param_decls, errors);
+            require_no_parameter_slots(head, param_arg_regs, errors);
         }
         MirInstr::MethodCall {
             method,
             raises,
             result_adapter,
+            param_arg_regs,
             param_decls,
             ..
         } => {
@@ -195,6 +224,7 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 ));
             }
             require_no_parameters(head, param_decls, errors);
+            require_no_parameter_slots(head, param_arg_regs, errors);
         }
         MirInstr::Index {
             call: Some(call), ..
@@ -215,4 +245,5 @@ fn concrete_subscript(head: &str, call: &MirSubscriptCall, errors: &mut Vec<Stri
         require_concrete(head, "subscript contract", ty, errors);
     }
     require_no_parameters(head, &call.param_decls, errors);
+    require_no_parameter_slots(head, &call.param_arg_regs, errors);
 }

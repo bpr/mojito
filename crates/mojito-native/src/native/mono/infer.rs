@@ -100,6 +100,7 @@ impl Specializer<'_> {
             arguments.push(InstanceArg::Value(value));
         }
         call.target = self.enqueue(&target, bindings, arguments)?;
+        call.param_arg_regs.clear();
         Ok(())
     }
 

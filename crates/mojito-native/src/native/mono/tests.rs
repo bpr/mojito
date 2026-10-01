@@ -671,6 +671,33 @@ fn specialized_programs_verify_over_erased_contracts() {
 }
 
 #[test]
+fn concrete_verification_rejects_a_forwarded_compile_time_argument() {
+    let source = "def same[T: Copyable](value: T) -> T:\n\
+         \x20   return value.copy()\n\
+         def forward[T: Copyable](value: T) -> T:\n\
+         \x20   return same[T](value)\n\
+         def main():\n\
+         \x20   print(forward(3))\n";
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile generic program");
+    let parametric = compiled.drop_elaborated_mir();
+    let findings = mojito_mir::mir::verify::verify_concrete(parametric);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("keeps compile-time argument forwarding `T`")),
+        "a parametric call forwards its binder: {findings:?}"
+    );
+    let specialized = specialize(parametric, &["main".to_string()]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn concrete_verification_separates_elaborated_from_parametric_mir() {
     let source = "struct Box[T: Copyable & Deinitable]:\n\
          \x20   var value: Self.T\n\
