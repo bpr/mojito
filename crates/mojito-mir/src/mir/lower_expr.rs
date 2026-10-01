@@ -10,6 +10,9 @@ mod calls;
 mod ctrl;
 mod entry;
 mod expr;
+mod expr_access;
+mod expr_call;
+mod expr_method;
 
 /// The checked inline uninit-storage method being lowered.
 enum UninitStorageOp {

@@ -722,10 +722,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   call contracts, adjustments, capture accesses).
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
   reference results, checked-call boundaries, interior-origin invalidations).
-- `mir/lower_expr.rs` (split across `lower_expr/{entry,ctrl,expr,calls}.rs`)
+- `mir/lower_expr.rs` (split across
+  `lower_expr/{entry,ctrl,expr,expr_call,expr_method,expr_access,calls}.rs`)
   owns expression lowering (the `expr_unconverted`
   dispatcher, collections/comprehensions, nested closures, the
-  field-invocation indirect-call branch), and installs merged caller-side
+  field-invocation indirect-call branch). `expr_unconverted` in `expr.rs` is
+  a dispatch table over `ExprKind`: each arm calls one `Flatten` method.
+  `expr.rs` keeps the variable-read, operator, literal-aggregate, and
+  t-string arms; `expr_call.rs` owns direct calls (`call_expr`,
+  `direct_call`) and callable-value invocations (`invoke_expr`,
+  `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
+  method calls (`method_call_expr`, its value and storage special forms,
+  `ordinary_method_call`, `type_receiver_name`); `expr_access.rs` owns
+  member, subscript, slice, and variant-projection reads. The module
+  installs merged caller-side
   `EstablishLoans` — domain-keyed for interior-precise destinations — for
   checked call-transfer records (`install_call_transfers`) after free,
   method, indirect, and nested calls.

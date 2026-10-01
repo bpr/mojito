@@ -3077,14 +3077,7 @@ lines. `checker/template_facts.rs` and its submodules stay frozen: their
 line count only goes down, as section 1 deletes the mechanism stage by
 stage. The rest needs semantic extraction, not line moves.
 
-- [ ] **6.1 Split `expr_unconverted`**
-
-  `mir/lower_expr/expr.rs` (about 2,090 lines) is one match over
-  `ExprKind`.
-  - Extract arm groups into `Flatten` methods.
-  - Depends on nothing.
-
-- [ ] **6.2 Split `infer_method_call`**
+- [ ] **6.1 Split `infer_method_call`**
 
   `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
   - Extract receiver-family branches beside `selection`, `statics`, and
@@ -3092,13 +3085,13 @@ stage. The rest needs semantic extraction, not line moves.
   - Depends on nothing. It moves code several section 3 entries name as
     their lever, so it lands between them rather than beside them.
 
-- [ ] **6.3 Split `verify_instruction`**
+- [ ] **6.2 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
   - Depends on nothing.
 
-- [ ] **6.4 Shrink the 2 kloc band**
+- [ ] **6.3 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),

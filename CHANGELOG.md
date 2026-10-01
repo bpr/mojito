@@ -66,6 +66,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `expr_unconverted`, the 2,600-line match over `ExprKind` in
+  `mir/lower_expr/expr.rs`, is now a dispatch table: each arm calls one
+  `Flatten` method. The call, method-call, and access arms move to
+  `lower_expr/expr_call.rs`, `expr_method.rs`, and `expr_access.rs`, and no
+  method needs a `too_many_lines` or `cognitive_complexity` exemption. The
+  move changes no behavior; `docs/symbol-map.md` lists the owners.
 - `checker/template_facts.rs`, 16,146 lines, is split along its five seams
   into `checker/template_facts/`: `capture.rs`, `certificate.rs` with the
   `BodyShape` grammar in `grammar.rs` and nine `grammar_*.rs` class files,
