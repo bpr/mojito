@@ -471,22 +471,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.2 A callable assigned to a `mut` parameter does not reach the
-  caller natively**
-
-  Problem: `f = two` inside `def keep(mut f: def() thin -> Int)` leaves
-  the caller's `f` calling `one` natively, printing `1`; the VM and the
-  pin print `2`.
-  - The same holds when the assigned value is a nested `def` over the
-    enclosing function's value parameter, which natively names its
-    lifted body's per-instance fold.
-  - `conformance/probes/mut_callable_parameter_write_back.mojo` pins it.
-  - Found while making a nested `def` over a value parameter `thin`
-    (2026-09-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.3 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.2 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an

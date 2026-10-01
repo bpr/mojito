@@ -97,9 +97,12 @@ pub(super) fn function_constant_values(function: &MirFunction) -> HashMap<u32, C
 /// Resolve statically named callable values through the MIR's register/variable
 /// plumbing. Generic lifted bodies are specialized at their indirect call site;
 /// the boolean records whether direct-call rewriting may erase the environment.
+/// A variable names its callable only while one definition is its sole write
+/// (see [`rebound_variables`]).
 pub(super) fn function_callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> {
     pub(super) fn visit(
         blocks: &[MirBlock],
+        rebound: &HashSet<u32>,
         registers: &mut HashMap<u32, (String, bool)>,
         variables: &mut HashMap<u32, (String, bool)>,
     ) -> bool {
@@ -132,6 +135,7 @@ pub(super) fn function_callable_targets(function: &MirFunction) -> HashMap<u32, 
                     changed = true;
                 }
                 if let MirInstr::DefVar { var, src, .. } = instruction
+                    && !rebound.contains(var)
                     && let Some(value) = registers.get(&src.0).cloned()
                     && variables.get(var) != Some(&value)
                 {
@@ -146,15 +150,15 @@ pub(super) fn function_callable_targets(function: &MirFunction) -> HashMap<u32, 
                     ..
                 } = instruction
                 {
-                    changed |= visit(body, registers, variables);
+                    changed |= visit(body, rebound, registers, variables);
                     if let Some((_, blocks)) = handler {
-                        changed |= visit(blocks, registers, variables);
+                        changed |= visit(blocks, rebound, registers, variables);
                     }
                     if let Some(blocks) = orelse {
-                        changed |= visit(blocks, registers, variables);
+                        changed |= visit(blocks, rebound, registers, variables);
                     }
                     if let Some(blocks) = finalbody {
-                        changed |= visit(blocks, registers, variables);
+                        changed |= visit(blocks, rebound, registers, variables);
                     }
                 }
             }
@@ -162,9 +166,10 @@ pub(super) fn function_callable_targets(function: &MirFunction) -> HashMap<u32, 
         changed
     }
 
+    let rebound = rebound_variables(function);
     let mut registers = HashMap::new();
     let mut variables = HashMap::new();
-    while visit(&function.blocks, &mut registers, &mut variables) {}
+    while visit(&function.blocks, &rebound, &mut registers, &mut variables) {}
     registers
 }
 
@@ -425,6 +430,73 @@ pub(super) fn reg_ty<'a>(
 }
 
 /// Every instruction of `blocks` in order, descending into `try` regions.
+/// The variables whose value is not fixed by a single definition: defined
+/// more than once, or written whole through a store, a reference, a
+/// `mut`/`ref` argument place, or a callable environment.
+fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
+    let instructions = nested_instructions(&function.blocks);
+    let written_references: HashSet<u32> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::WriteRef { reference, .. } => Some(reference.0),
+            _ => None,
+        })
+        .collect();
+    let whole = |place: &MirPlace| place.proj.is_empty().then_some(place.root);
+    let mut defined = HashSet::new();
+    let mut rebound = HashSet::new();
+    for instruction in instructions {
+        match instruction {
+            MirInstr::DefVar { var, .. } => {
+                if !defined.insert(*var) {
+                    rebound.insert(*var);
+                }
+            }
+            MirInstr::Store { place, .. } => rebound.extend(whole(place)),
+            MirInstr::MakeRef { dest, place } if written_references.contains(&dest.0) => {
+                rebound.extend(whole(place));
+            }
+            MirInstr::Call {
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                ..
+            }
+            | MirInstr::CallIndirect {
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                ..
+            }
+            | MirInstr::MethodCall {
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                ..
+            } => {
+                rebound.extend(
+                    arg_places
+                        .iter()
+                        .chain(kwarg_places)
+                        .flatten()
+                        .filter_map(whole),
+                );
+                rebound.extend(
+                    capture_accesses
+                        .iter()
+                        .filter(|access| {
+                            access.path.is_empty()
+                                && access.access == mojito_types::origin::CaptureAccess::Write
+                        })
+                        .map(|access| access.root),
+                );
+            }
+            _ => {}
+        }
+    }
+    rebound
+}
+
 fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
     let mut instructions = Vec::new();
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {

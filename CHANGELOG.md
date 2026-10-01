@@ -39,6 +39,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The native backend calls a callable binding through its current value once
+  the binding is written again. Monomorphization treated a `var f = one` as
+  the constant `one` for the whole function, so after `keep(f)` assigned `two`
+  through a `mut` parameter the caller still called `one` and printed `1`
+  where the VM and the pin print `2`, and a plain reassignment `f = two`
+  never finished compiling. A binding is now a known callable only while one
+  definition is its sole write. `assets/ok/mut_callable_parameter_write_back.mojo`
+  pins it on both backends.
+
 - A function-local `comptime` float binding (`comptime x = Float64(2.5)`,
   `comptime h = 0.25`) is now stored as a `Float64`. Its runtime reads kept
   the exact literal, so the VM printed `5/2` where the pin prints `2.5`, and

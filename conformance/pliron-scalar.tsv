@@ -222,6 +222,7 @@ assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_reference_result_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mut_callable_parameter_write_back.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_parameter_reassignment_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_parameter_reassignment_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
