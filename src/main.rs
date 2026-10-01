@@ -2,6 +2,7 @@ use mojito::{
     BackendKind, Compiler, CompilerError, LinkOptions, ModuleError, ParseError, Stmt, lex, parse,
     parse_diagnostics,
 };
+use std::fmt::Write as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -461,9 +462,10 @@ fn census_report(census: &mojito::census::InstantiationCensus) -> String {
                 .map_or_else(unreached, |served| served.instances.to_string()),
         ),
     ]);
-    rows.iter()
-        .map(|(name, count)| format!("census\t{name}\t{count}\n"))
-        .collect()
+    rows.iter().fold(String::new(), |mut text, (name, count)| {
+        let _ = writeln!(text, "census\t{name}\t{count}");
+        text
+    })
 }
 
 /// `emit-mir`: compile source through ownership analysis and print the exact
