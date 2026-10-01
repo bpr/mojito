@@ -2479,8 +2479,9 @@ impl Flatten<'_> {
                 let src = self.expr(e);
                 self.emit(MirInstr::Raise { src });
             }
-            // `comptime N = e` is an ordinary `Int` binding at runtime.
+            // `comptime N = e` is an ordinary binding at runtime.
             StmtKind::Comptime { name, value, .. } => {
+                let materialized = self.literal_materialization(value);
                 let src = self.expr(value);
                 let var = match statement_binding {
                     Some(binding) => self.declare_binding_var(binding, name),
@@ -2490,9 +2491,10 @@ impl Flatten<'_> {
                 // than `HirInstr::Bind`; copy its checked expression type when
                 // present, or the already-typed initializer register for
                 // synthetic/compatibility paths. This makes closure capture
-                // places typed without relying on an unrelated later use.
-                let binding_ty = self
-                    .checked_ty(value)
+                // places typed without relying on an unrelated later use. A
+                // materialized literal binds at its materialization target.
+                let binding_ty = materialized
+                    .or_else(|| self.checked_ty(value))
                     .or_else(|| self.f.reg_types.get(&src.0).cloned());
                 if let Some(ty) = binding_ty.clone() {
                     self.var_types.insert(var, ty);

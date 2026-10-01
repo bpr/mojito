@@ -1760,6 +1760,11 @@ impl Checker {
                 } else {
                     let ty = self.infer(value)?;
                     let declared = self.inferred_binding_ty(&ty, name)?;
+                    // The binding is read at run time as its `Float64`
+                    // storage type, so the folded literal crosses here.
+                    if matches!(ty, Ty::FloatLiteral) {
+                        self.record_literal_materializations(value, &ty, &declared)?;
+                    }
                     self.declare_immutable(name, declared)?;
                 }
                 self.record_statement_binding(stmt, name);

@@ -471,20 +471,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.2 A compile-time `Float64` printed at run time does not compile
-  natively**
-
-  Problem: `comptime x = Float64(2.5)` then `print(x)` prints `2.5` on the
-  VM and the pin, but the native backend stops with "unsupported display
-  of a runtime FloatLiteral value".
-  - The folded constant reaches native lowering as a `FloatLiteral`
-    register, which `print` has no display for.
-  - `comptime z = Int()` prints natively
-    (`assets/ok/scalar_default_construction.mojo`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.3 An evaluated default argument does not compile natively**
+- [ ] **2.2 An evaluated default argument does not compile natively**
 
   Problem: `f()`, beside `def f(s: String = String("a"))`, prints `a` on
   the VM and the pin, but the native backend stops with "unsupported
@@ -500,7 +487,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.4 A callable assigned to a `mut` parameter does not reach the
+- [ ] **2.3 A callable assigned to a `mut` parameter does not reach the
   caller natively**
 
   Problem: `f = two` inside `def keep(mut f: def() thin -> Int)` leaves
@@ -515,7 +502,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.5 Native runtime ABI bump: land every change that needs a new
+- [ ] **2.4 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
   Problem: each item below changes the native runtime ABI, so it needs an
@@ -2711,6 +2698,22 @@ last.
     instance is checked again.
   - Found while the ranking fallback of bound-witness selection was removed
     (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.107 A nested `def` cannot read an enclosing function's
+  `comptime` binding**
+
+  Problem: `comptime n = 3` in `main`, read by a nested `def inner() ->
+  Int: return n + 1`, is rejected ("Could not infer capture convention of
+  the captured value n"), where the pin prints `4`.
+  - A `comptime` float binding is rejected the same way.
+  - The binding is a compile-time value, as an enclosing function's value
+    parameter is, and a nested def already reads one of those without
+    naming it (`assets/ok/nested_def_reads_enclosing_parameter.mojo`).
+  - Probe: `conformance/probes/nested_def_reads_local_comptime.mojo`.
+  - Found while a local `comptime` float was made to read as `Float64`
+    (2026-09-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

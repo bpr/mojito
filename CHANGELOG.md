@@ -31,6 +31,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A function-local `comptime` float binding (`comptime x = Float64(2.5)`,
+  `comptime h = 0.25`) is now stored as a `Float64`. Its runtime reads kept
+  the exact literal, so the VM printed `5/2` where the pin prints `2.5`, and
+  the native backend stopped with "unsupported display of a runtime
+  FloatLiteral value". `assets/ok/local_comptime_float.mojo` pins it on both
+  backends. A nested `def` reading such a binding is still rejected (roadmap
+  3.107).
 - Native: a generic struct's static taking a pack of the struct's parameter
   type (`def first(*values: Self.T) -> Self.T`) now gets one instance per
   element type. `native::mono` keyed such an instance by its pack length

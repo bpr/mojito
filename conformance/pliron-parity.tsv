@@ -207,6 +207,7 @@ assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
+assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
