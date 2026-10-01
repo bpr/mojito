@@ -12,9 +12,8 @@ Record of the Stage A1 vertical slice from
 - All seven proof items pass on the gate fixture, on the VM and natively.
 - F1 to F4 pass. F5 (overhead) is **not measured**.
 - The pivot is neither approved nor rejected. A2 is not started.
-- All ten focused inputs convert, and 892 of the 893 inputs of the decision
-  corpus (§Coverage). The one that does not is named there; it is not a
-  form the inventory lacks.
+- All ten focused inputs convert, and all 893 inputs of the decision
+  corpus (§Coverage).
 - The pin rehearsal passed on 2026-09-30 (§Pin rehearsal): upstream
   `81155d9` needed ten changed lines, all inside the adapter.
 - The scheduled measurement lane has not run (§Remaining boundaries).
@@ -31,12 +30,13 @@ input are unchanged. A1 is optional, default off, and removable.
 | F3: conversion totality | PASS | `a1_inventory_is_closed`, `a1_conversion_is_total`, `a1_focused_inputs_convert` |
 | F4: default-lane isolation | PASS | both default graphs byte-identical to the captured ones, no `pliron`, `pliron-llvm`, or `llvm-sys` package, default build succeeds with LLVM discovery removed |
 | F5: disproportionate overhead | NOT MEASURED | harness ready; 10 of 10 focused inputs convert; neither lane is scheduled |
-| Full canonical-artifact compatibility | 892 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the residue in §Coverage |
+| Full canonical-artifact compatibility | 893 / 893 | `scripts/cover-pliron-a1` over `corpus-inputs.tsv`; the last input re-run alone (§Coverage) |
 | Pin-maintenance rehearsal | PASS | `477e6b0` to `81155d9` in under an hour, 10 lines in 4 adapter files and 2 test files, no escape, no fork (§Pin rehearsal) |
 
-Core text is 2.6 to 3.4 times the v1 text of the same module. That is over
-the 2.0 line that makes a design review mandatory (finding 6). It is not a
-substitute for the time and memory thresholds.
+Core text is 1.56 to 2.00 times the v1 text of the same module, under the
+2.0 line that makes a design review mandatory; it was 2.6 to 3.4 before the
+review (finding 6). Size is not a substitute for the time and memory
+thresholds.
 
 ## Pins and environment
 
@@ -82,8 +82,9 @@ These are the decisions as built. Changing one is a reviewed change.
 
 - `crates/mojito-pliron/src/a1/`, behind crate feature `a1-core` and root
   feature `pliron-a1`. No new dependency edge.
-- The wire namespace is `mojito_core`. Pliron identifiers admit no dot, and
-  an operation id has one separator.
+- The wire namespace is `mojito`. Pliron identifiers admit no dot, and an
+  operation id has one separator. Attribute keys carry no dialect prefix
+  (`provenance`, `reg`, `slot`).
 - Mojito symbols (`Proof.read$i1;`) are typed string attributes. A function's
   Pliron symbol is `f<index>`.
 - Input is verified, drop-elaborated MIR after `native::mono::specialize`.
@@ -228,8 +229,17 @@ Normalization rebuilds each function as a flat graph:
   (`outcome` kind `Exit(site)`) entering that finally; `resume` continues
   each site after the finally's own normal and error successors
   (`ResumeAttr`), into a continuation block holding the next drops and the
-  way out. A return carrying cleanup across a finally, and an exit from
-  inside a finally body, are refused by name.
+  way out.
+- A `return` or `escape` inside a `finally` body overrides the pending
+  outcome, as the VM's `exec_try` has it. It is an ordinary exit: that try
+  has no cleanup or `finally` left to run, the pending outcome goes unused,
+  and the exit runs the drops of the outer tries itself. A `finally` body
+  that never falls off has no `resume`, so the continuations of the exits
+  pending on it stay in the graph unreached, and export still checks them.
+- A return carrying cleanup across a finally is refused by name. Overriding
+  it would owe its roots, which needs a dispatch on the pending outcome at
+  the override site, as the native lowering's `emit_pending_resolution`
+  does. No corpus input reaches it.
 
 Export first rebuilds the structured regions from the current operations.
 The layout attribute records, per block, its region, MIR block, and segment.
@@ -249,7 +259,16 @@ A drop of an already-empty slot stays legal. The gate has several.
 - Every operation carries typed provenance: the input's source record
   exactly, or its recorded absence, or the identities it was derived from.
 - Every operation and block carries an explicit Pliron location naming its
-  stable identity, so a parse restores it.
+  stable identity, so a parse restores it. The module and each function
+  are named by the full key (`main||0|0|Function`), every other operation
+  by its key local to its function (`|0|3|Primary`).
+- Canonical text leaves out the `identity` attribute, which the location
+  already names: the canonical print strips it, and `text::parse_text`
+  restores it from the locations before verifying.
+- A source record names its source by index into the module tables'
+  `sources`, and prints only the parts it has:
+  `at(3:1521:1529) origin(4) "source"`. A contract event and a
+  `derived_from` name an operation of the same function by local key.
 - In the gate: 143 operations with a source record, 37 derived, 110 absent.
 
 ### Canonical text
@@ -259,7 +278,7 @@ Pliron names values by arena index, so text depends on allocation history.
 The parser allocates in the order of the text's structure, which no name and
 no history affects. `C(m) == C(parse(C(m)))` holds from the first parse.
 
-The wrapper's first line is `mojito-a1-core 0`. Production `exec` refuses
+The wrapper's first line is `mojito-a1-core 1`. Production `exec` refuses
 it. v1 text exported from unoptimized core is byte-identical to the input.
 
 ### Parameter attributes
@@ -291,9 +310,19 @@ and replacement stay with `ParamContext`.
    enough, as the plan expected. The fresh-context copy costs a print and a
    parse, and both are charged to the shadow.
 5. **Text dominates the boundary cost.** In the debug diagnostic below,
-   canonicalization and the fresh parse are 780 ms of 870 ms.
-6. **Core text is large.** 2.6 to 3.4 times v1. Identity and provenance
-   attributes repeat the function symbol on every operation.
+   canonicalization and the fresh parse are 780 ms of 870 ms, and 651 ms
+   after the text-size review. In a release build they are 26 and 17 ms.
+6. **Core text was large; the design review cut it to at most 2.0 times
+   v1.** It was 2.6 to 3.4 times v1. On the gate, the `identity` attribute
+   repeated what the location table already said (15% and 14% of the
+   bytes), the dialect prefix was 17.5%, attribute keys 13%, and every
+   provenance repeated an absolute source path. The cuts are in
+   §Locations: identity only in the location, function-local keys,
+   indexed sources, provenance parts printed only when present, dialect
+   `mojito`, unprefixed keys. `empty` sits at 2.00 (19,431 / 9,716),
+   because its module tables and `__toplevel__` slots are a fixed cost.
+   Text size was not what the boundary's time follows: bytes fell 41% on
+   the gate, canonicalize plus parse about 17% (debug, uncontrolled).
 7. **Export needs a constructor that does not fold.** `ParamContext::op`
    folds the closed atom `8 // 2` to `4`, and cancels a term holding a
    partial atom, where `replace` and `infix` keep both. Export rebuilds an
@@ -368,20 +397,21 @@ and replacement stay with `ParamContext`.
 
 ## Coverage
 
-One shadow run per focused input, debug build, coverage only.
+One shadow run per focused input, coverage only. Byte counts re-taken
+2026-09-30 after the text-size review, release build.
 
 | Input | Converted | Functions | Operations | v1 bytes | Core bytes | Ratio |
 |---|---|---|---|---|---|---|
-| Gate | yes | 13 | 360 | 69,504 | 199,537 | 2.87 |
-| `add` | yes | 6 | 213 | 39,172 | 119,146 | 3.04 |
-| `empty` | yes | 2 | 67 | 9,716 | 32,658 | 3.36 |
-| `hello` | yes | 5 | 201 | 36,411 | 113,377 | 3.11 |
-| `generic` | yes | 29 | 845 | 186,488 | 506,954 | 2.72 |
-| `tuple` | yes | 48 | 1,484 | 334,630 | 948,453 | 2.83 |
-| `tstring` | yes | 42 | 1,439 | 322,533 | 936,365 | 2.90 |
-| `stdlib_heavy` | yes | 172 | 6,024 | 2,092,497 | 6,558,137 | 3.13 |
-| Gate ×16 | yes | 133 | 2,775 | 578,367 | 1,529,771 | 2.64 |
-| Gate ×64 | yes | 517 | 10,503 | 2,212,971 | 5,827,648 | 2.63 |
+| Gate | yes | 13 | 360 | 69,504 | 117,895 | 1.70 |
+| `add` | yes | 6 | 213 | 39,172 | 65,493 | 1.67 |
+| `empty` | yes | 2 | 67 | 9,716 | 19,431 | 2.00 |
+| `hello` | yes | 5 | 201 | 36,411 | 61,801 | 1.70 |
+| `generic` | yes | 29 | 845 | 186,488 | 290,844 | 1.56 |
+| `tuple` | yes | 50 | 1,509 | 341,984 | 548,268 | 1.60 |
+| `tstring` | yes | 43 | 1,456 | 328,015 | 530,372 | 1.62 |
+| `stdlib_heavy` | yes | 172 | 6,028 | 2,092,497 | 3,448,285 | 1.65 |
+| Gate ×16 | yes | 133 | 2,775 | 578,367 | 987,141 | 1.71 |
+| Gate ×64 | yes | 517 | 10,503 | 2,212,971 | 3,799,826 | 1.72 |
 
 For each of the seven compile benchmarks, `a1_focused_inputs_convert`
 pins that the specialized closure passes `mir::verify`, that the importer
@@ -406,13 +436,12 @@ input, coverage only. Run 2026-09-29 at each stage of the coverage task:
 | Exits crossing a try, with and without `finally` | 887 | 6 |
 | A module constant no longer reaches a bundled `comptime for` index (2026-09-30) | 888 | 5 |
 | Specialized MIR verifies (2026-09-30; the three inputs re-run alone, debug build) | 891 | 2 |
-| A named type argument keeps a receiver's `Tuple` spelling (2026-09-30; the input re-run alone, debug build) | **892** | **1** |
+| A named type argument keeps a receiver's `Tuple` spelling (2026-09-30; the input re-run alone, debug build) | 892 | 1 |
+| An exit from a `finally` body is an ordinary exit (2026-09-30; the input re-run alone, debug build) | **893** | **0** |
 
-The one that does not convert, not a form the inventory lacks:
-
-| Input | Why |
-|---|---|
-| `assets/ok/pliron_finally_overrides.mojo` | a `return` inside a `finally` body, refused by name |
+The last input, `assets/ok/pliron_finally_overrides.mojo`, is pinned by
+`a1_finally_override_converts`. The full census has not been re-run since
+the 887 row.
 
 Still refused by name, because no corpus input reaches them: a subscript
 store through a slice, a return carrying cleanup across a finally, a
@@ -440,18 +469,19 @@ One process per mode, **debug build, uncontrolled machine**. Not a verdict.
 
 Exclusive phase times of the shadow-opt run, in milliseconds:
 
-| front end | specialize | construct | verify bridge | normalize | verify core | DCE | verify after DCE | canonicalize | parse | export | verify MIR |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 7,521 | 4.3 | 9.4 | 14.5 | 11.7 | 15.9 | 0.9 | 15.8 | 409.7 | 371.0 | 23.7 | 0.3 |
+| Text | front end | specialize | construct | verify bridge | normalize | verify core | DCE | verify after DCE | canonicalize | parse | export | verify MIR |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| before the size review | 7,521 | 4.3 | 9.4 | 14.5 | 11.7 | 15.9 | 0.9 | 15.8 | 409.7 | 371.0 | 23.7 | 0.3 |
+| after (2026-09-30) | 7,704 | 4.9 | 9.3 | 14.4 | 13.1 | 17.7 | 0.9 | 16.8 | 356.2 | 295.3 | 23.7 | 0.3 |
 
-The dead-scalar test removes 3 of 302 operations and 1,340 of 169,661 bytes
-in 3 sweeps.
+Before the size review, the dead-scalar test removed 3 of 302 operations
+and 1,340 of 169,661 bytes in 3 sweeps.
 
 ### Pending
 
 | Dataset / input | Count covered / total | Baseline compile median / p90 | Shadow compile median / p90 | Ratio ± 3 MAD | Construct ms | Verify ms | Canonicalize + parse ms | Export ms | DCE ms | Baseline / shadow peak KiB | Peak ratio bound | v1 / core bytes | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Gate | 1 / 1 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | 69,504 / 199,537 | pending |
+| Gate | 1 / 1 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | 69,504 / 117,895 | pending |
 | Each of seven compile benchmarks | 7 / 7 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | see §Coverage | pending |
 | Gate ×16 / ×64 | 2 / 2 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | see §Coverage | pending |
 | Full decision corpus | not counted / 848 | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending | pending |
@@ -475,6 +505,7 @@ Named checks, each run as
 | `a1_representation_contract` | bridge round trip, v1 byte equality, VM parity |
 | `a1_malformed_ops_are_diagnostics` | five mutations of each of 37 operations |
 | `a1_focused_inputs_convert` | the seven compile benchmarks: verified input, no refusal, v1 byte equality, VM parity with the specialized program |
+| `a1_finally_override_converts` | a `return` in a `finally` body: no refusal, v1 byte equality, VM parity; a malformed unreached continuation is a diagnostic |
 | `a1_canonical_first_print` | first-print fixpoint, second cycle, allocation perturbation |
 | `a1_locations_per_op` | per-operation records through print, two parses, export |
 | `a1_location_mutations_name_their_op` | byte end, source label, origin, absence, derivation key |
@@ -635,8 +666,8 @@ native operand fix. They stand without A1.
 
 ## Remaining boundaries
 
-- **Coverage.** 891 of 893 corpus inputs convert; the two residues are
-  named in §Coverage and filed on the roadmap by their kind.
+- **Coverage.** All 893 corpus inputs convert, the last five each re-run
+  alone; a full census run should confirm it before the bulk lane.
 - **Overhead.** No release measurement exists. The debug diagnostic cannot
   stand in for one.
 - **Interpreter speed.** Both backends ran exported MIR. Nothing here says

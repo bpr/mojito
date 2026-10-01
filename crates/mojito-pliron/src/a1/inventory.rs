@@ -1,4 +1,4 @@
-//! The closed inventory of `mojito_core`: the registry every verifier,
+//! The closed inventory of `mojito`: the registry every verifier,
 //! importer, exporter, and legality check decides from, and the census of
 //! MIR forms that fixed it.
 
@@ -37,7 +37,7 @@ pub enum EffectClass {
     Structural,
 }
 
-/// Every operation `mojito_core` registers.
+/// Every operation `mojito` registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CoreOpKind {
     Func,
@@ -152,7 +152,7 @@ impl CoreOpKind {
         Self::Escape,
     ];
 
-    /// The operation's name within the `mojito_core` dialect.
+    /// The operation's name within the `mojito` dialect.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Func => "func",
@@ -500,9 +500,9 @@ pub fn rejected_forms() -> Vec<&'static str> {
         .collect()
 }
 
-/// The wire namespace: Pliron identifiers admit no dot, so the
-/// architectural `mojito.core` is spelled `mojito_core`.
-pub const DIALECT: &str = "mojito_core";
+/// The wire namespace: Pliron identifiers admit no dot, so the dialect
+/// is a single word.
+pub const DIALECT: &str = "mojito";
 
 /// One MIR form at one position of the closure.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

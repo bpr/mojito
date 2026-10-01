@@ -28,7 +28,7 @@ use super::types::{CoreDtype, export_type, import_type};
 use super::{A1Error, A1ErrorKind};
 
 /// A parameter expression carried on an operation or a nominal type.
-#[pliron_attr(name = "mojito_core.param_expr", format = "$0", verifier = "succ")]
+#[pliron_attr(name = "mojito.param_expr", format = "$0", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct ParamExprAttr(pub NodeKey);
 

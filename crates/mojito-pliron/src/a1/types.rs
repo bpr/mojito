@@ -1,4 +1,4 @@
-//! The closed type vocabulary of `mojito_core`, and its correspondence with
+//! The closed type vocabulary of `mojito`, and its correspondence with
 //! checked [`Ty`]. A type outside the vocabulary is rejected, never carried
 //! opaquely.
 
@@ -18,18 +18,13 @@ use super::A1Error;
 use super::attrs::{CoreConvention, Text};
 use super::params::{NodeKey, PayloadBinder, export_constant, import_constant};
 
-#[pliron_type(
-    name = "mojito_core.int",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.int", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct IntType;
 
 /// The machine `Float64`.
 #[pliron_type(
-    name = "mojito_core.float64",
+    name = "mojito.float64",
     generate_get = true,
     format,
     verifier = "succ"
@@ -39,7 +34,7 @@ pub struct Float64Type;
 
 /// An exact floating literal not yet materialized into a machine float.
 #[pliron_type(
-    name = "mojito_core.float_literal",
+    name = "mojito.float_literal",
     generate_get = true,
     format,
     verifier = "succ"
@@ -48,45 +43,25 @@ pub struct Float64Type;
 pub struct FloatLiteralType;
 
 /// The compile-time `DType` value type.
-#[pliron_type(
-    name = "mojito_core.dtype",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.dtype", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct DtypeType;
 
-#[pliron_type(
-    name = "mojito_core.uint",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.uint", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct UIntType;
 
-#[pliron_type(
-    name = "mojito_core.bool",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.bool", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct BoolType;
 
-#[pliron_type(
-    name = "mojito_core.none",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.none", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct NoneType;
 
 /// An exact, arbitrary-precision integer literal before materialization.
 #[pliron_type(
-    name = "mojito_core.int_literal",
+    name = "mojito.int_literal",
     generate_get = true,
     format,
     verifier = "succ"
@@ -95,7 +70,7 @@ pub struct NoneType;
 pub struct IntLiteralType;
 
 #[pliron_type(
-    name = "mojito_core.string_literal",
+    name = "mojito.string_literal",
     generate_get = true,
     format,
     verifier = "succ"
@@ -103,28 +78,18 @@ pub struct IntLiteralType;
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct StringLiteralType;
 
-#[pliron_type(
-    name = "mojito_core.error",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.error", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct ErrorType;
 
 /// The sequencing token threaded through every effectful operation.
-#[pliron_type(
-    name = "mojito_core.effect",
-    generate_get = true,
-    format,
-    verifier = "succ"
-)]
+#[pliron_type(name = "mojito.effect", generate_get = true, format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct EffectType;
 
 /// A pending outcome held across a `finally` body.
 #[pliron_type(
-    name = "mojito_core.outcome",
+    name = "mojito.outcome",
     generate_get = true,
     format,
     verifier = "succ"
@@ -134,7 +99,7 @@ pub struct OutcomeType;
 
 /// A width-`width` vector of `dtype` lanes; width 1 is the scalar alias.
 #[pliron_type(
-    name = "mojito_core.simd",
+    name = "mojito.simd",
     generate_get = true,
     format = "`<` $dtype ` x ` $width `>`",
     verifier = "succ"
@@ -147,7 +112,7 @@ pub struct SimdType {
 
 /// A nominal struct instance with its complete argument identity.
 #[pliron_type(
-    name = "mojito_core.nominal",
+    name = "mojito.nominal",
     generate_get = true,
     format = "`<` $name ` [` vec($args, CharSpace(`,`)) `]>`",
     verifier = "succ"
@@ -159,7 +124,7 @@ pub struct NominalType {
 }
 
 #[pliron_type(
-    name = "mojito_core.ref",
+    name = "mojito.ref",
     generate_get = true,
     format = "`<` $referent `, ` $origin `, ` $mutability `>`",
     verifier = "succ"
@@ -172,7 +137,7 @@ pub struct RefType {
 }
 
 #[pliron_type(
-    name = "mojito_core.pointer",
+    name = "mojito.pointer",
     generate_get = true,
     format = "`<` $element `, ` $origin `>`",
     verifier = "succ"
@@ -185,7 +150,7 @@ pub struct PointerType {
 
 /// Compiler-private heterogeneous storage: a runtime tuple or pack.
 #[pliron_type(
-    name = "mojito_core.tuple",
+    name = "mojito.tuple",
     generate_get = true,
     format = "`<[` vec($elements, CharSpace(`,`)) `]>`",
     verifier = "succ"
@@ -197,7 +162,7 @@ pub struct TupleType {
 
 /// A sum of alternatives, tagged by position.
 #[pliron_type(
-    name = "mojito_core.variant",
+    name = "mojito.variant",
     generate_get = true,
     format = "`<[` vec($alternatives, CharSpace(`,`)) `]>`",
     verifier = "succ"
@@ -209,7 +174,7 @@ pub struct VariantType {
 
 /// The collector storage of a specialized heterogeneous parameter pack.
 #[pliron_type(
-    name = "mojito_core.runtime_pack",
+    name = "mojito.runtime_pack",
     generate_get = true,
     format = "`<[` vec($elements, CharSpace(`,`)) `]>`",
     verifier = "succ"
@@ -222,7 +187,7 @@ pub struct RuntimePackType {
 /// A type parameter a checked call contract names by identity, with the
 /// traits that bound it.
 #[pliron_type(
-    name = "mojito_core.param",
+    name = "mojito.param",
     generate_get = true,
     format = "`<` $binder ` [` vec($bounds, CharSpace(`,`)) `]>`",
     verifier = "succ"
@@ -235,7 +200,7 @@ pub struct ParamType {
 
 /// A typed storage location: a slot, or a projection below one.
 #[pliron_type(
-    name = "mojito_core.place",
+    name = "mojito.place",
     generate_get = true,
     format = "`<` $target `>`",
     verifier = "succ"
@@ -876,7 +841,7 @@ pub fn export_type(ctx: &Context, ty: TypeHandle) -> Result<Ty, A1Error> {
 /// them, where checked types ignore them: two checked-equal function types
 /// may be two handles.
 #[pliron_type(
-    name = "mojito_core.func",
+    name = "mojito.func",
     generate_get = true,
     format = "`<` $environment ` ` $signature ` ` $effects `>`",
     verifier = "succ"

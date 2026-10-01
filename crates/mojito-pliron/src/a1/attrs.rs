@@ -1,4 +1,4 @@
-//! Typed attributes of `mojito_core`: every checked fact an operation needs
+//! Typed attributes of `mojito`: every checked fact an operation needs
 //! is a field of one of these, never a rendered string of MIR.
 
 use pliron::combine::Parser;
@@ -129,7 +129,7 @@ impl Parsable for Signed {
 /// The stable identity of an operation: where its source instruction sat in
 /// the imported function, and which part of that instruction it carries.
 #[pliron_attr(
-    name = "mojito_core.identity",
+    name = "mojito.identity",
     format = "$function ` ` $region ` ` $block ` ` $ordinal ` ` $role",
     verifier = "succ"
 )]
@@ -148,10 +148,34 @@ pub struct IdentityAttr {
 impl IdentityAttr {
     /// The identity as one line of text, for derivation records and maps.
     pub fn key(&self) -> String {
+        format!("{}{}", self.function, self.local_key())
+    }
+
+    /// The identity within its function: the key without the function
+    /// symbol, which every operation of one function shares.
+    pub fn local_key(&self) -> String {
         format!(
-            "{}|{}|{}|{}|{:?}",
-            self.function, self.region, self.block, self.ordinal, self.role
+            "|{}|{}|{}|{:?}",
+            self.region, self.block, self.ordinal, self.role
         )
+    }
+
+    /// The identity a `key` spells: fields are read from the right, so a
+    /// region path may hold the separator and a function symbol may not.
+    pub fn from_key(key: &str) -> Option<Self> {
+        let (function, rest) = key.split_once('|')?;
+        let mut fields = rest.rsplitn(4, '|');
+        let role = CoreRole::from_debug(fields.next()?)?;
+        let ordinal = fields.next()?.parse().ok()?;
+        let block = fields.next()?.parse().ok()?;
+        let region = fields.next()?;
+        Some(Self {
+            function: function.into(),
+            region: region.into(),
+            block,
+            ordinal,
+            role,
+        })
     }
 }
 
@@ -210,10 +234,53 @@ pub enum CoreRole {
     Inserted(u64),
 }
 
-/// Source provenance, kept apart from Pliron's assembly positions.
+impl CoreRole {
+    /// The role its `Debug` spelling names, as an identity key carries it.
+    pub fn from_debug(text: &str) -> Option<Self> {
+        let (name, operand) = match text.strip_suffix(')') {
+            Some(applied) => {
+                let (name, operand) = applied.split_once('(')?;
+                (name, Some(operand.parse::<u64>().ok()?))
+            }
+            None => (text, None),
+        };
+        let role = match (name, operand) {
+            ("Module", None) => Self::Module,
+            ("Function", None) => Self::Function,
+            ("Primary", None) => Self::Primary,
+            ("Place", Some(n)) => Self::Place(n),
+            ("RegisterLoad", Some(n)) => Self::RegisterLoad(n),
+            ("RegisterStore", None) => Self::RegisterStore,
+            ("YieldStore", None) => Self::YieldStore,
+            ("Slot", Some(n)) => Self::Slot(n),
+            ("Entry", None) => Self::Entry,
+            ("UnwindDrop", Some(n)) => Self::UnwindDrop(n),
+            ("DoneDrop", Some(n)) => Self::DoneDrop(n),
+            ("ExitDrop", Some(n)) => Self::ExitDrop(n),
+            ("Caught", None) => Self::Caught,
+            ("UnwindExit", None) => Self::UnwindExit,
+            ("DoneExit", None) => Self::DoneExit,
+            ("PendingNormal", None) => Self::PendingNormal,
+            ("PendingError", None) => Self::PendingError,
+            ("PendingNormalExit", None) => Self::PendingNormalExit,
+            ("PendingErrorExit", None) => Self::PendingErrorExit,
+            ("PendingExit", None) => Self::PendingExit,
+            ("PendingExitExit", None) => Self::PendingExitExit,
+            ("ExitTerminal", None) => Self::ExitTerminal,
+            ("FinallyEntry", None) => Self::FinallyEntry,
+            ("Propagate", None) => Self::Propagate,
+            ("Inserted", Some(n)) => Self::Inserted(n),
+            _ => return None,
+        };
+        Some(role)
+    }
+}
+
+/// Source provenance, kept apart from Pliron's assembly positions. Each
+/// part prints only when present: `at(3:120:131) origin(4) "source"`.
 #[pliron_attr(
-    name = "mojito_core.provenance",
-    format = "`span` opt($span, delimiters(`(`, `)`)) ` origin` opt($origin, delimiters(`(`, `)`)) ` from [` vec($derived_from, CharSpace(`,`)) `] ` $reason",
+    name = "mojito.provenance",
+    format = "opt($span, delimiters(`at(`, `) `)) opt($origin, delimiters(`origin(`, `) `)) opt($derived_from, delimiters(`from(`, `) `)) $reason",
     verifier = "succ"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
@@ -222,34 +289,51 @@ pub struct ProvenanceAttr {
     /// the input carried it; `None` when the input had none.
     pub span: Option<CoreSpan>,
     pub origin: Option<u32>,
-    /// The identities this operation was synthesized from, when it has no
-    /// source record of its own.
-    pub derived_from: Vec<Text>,
+    /// The local key (`IdentityAttr::local_key`) of the operation in the
+    /// same function this one was synthesized from, when it has no source
+    /// record of its own.
+    pub derived_from: Option<Text>,
     pub reason: Text,
 }
 
-#[format(
-    "`source` opt($source, delimiters(`(`, `)`)) ` ` $start ` ` $end ` syntax` opt($syntax, delimiters(`(`, `)`))"
-)]
+/// A source record: `source:start:end`, the source an index into the
+/// module's `sources` table and omitted when the record names none, then
+/// `#syntax` when it has a syntax id.
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct CoreSpan {
-    pub source: Option<Text>,
+    pub source: Option<u32>,
     pub start: u64,
     pub end: u64,
     pub syntax: Option<u64>,
 }
 
 impl CoreSpan {
-    pub fn from_span(span: &SourceSpan) -> Self {
-        Self {
-            source: span.source.clone().map(Text::from),
+    /// The record of `span`, its source found in the sorted `sources`.
+    pub fn from_span(span: &SourceSpan, sources: &[Text]) -> Result<Self, A1Error> {
+        let source = span
+            .source
+            .as_deref()
+            .map(|label| {
+                sources
+                    .binary_search_by(|source| source.as_str().cmp(label))
+                    .map(|index| index as u32)
+                    .map_err(|_| {
+                        A1Error::new(
+                            A1ErrorKind::UnsupportedForm,
+                            format!("source `{label}` is not in the module's sources"),
+                        )
+                    })
+            })
+            .transpose()?;
+        Ok(Self {
+            source,
             start: span.span.0 as u64,
             end: span.span.1 as u64,
             syntax: span.syntax.map(|syntax| syntax.0),
-        }
+        })
     }
 
-    pub fn span(&self) -> Result<SourceSpan, A1Error> {
+    pub fn span(&self, sources: &[Text]) -> Result<SourceSpan, A1Error> {
         let offset = |value: u64| {
             usize::try_from(value).map_err(|_| {
                 A1Error::new(
@@ -258,22 +342,88 @@ impl CoreSpan {
                 )
             })
         };
+        let source = self
+            .source
+            .map(|index| {
+                sources
+                    .get(index as usize)
+                    .map(|source| source.0.clone())
+                    .ok_or_else(|| {
+                        A1Error::new(
+                            A1ErrorKind::Export,
+                            format!("source {index} is not in the module's sources"),
+                        )
+                    })
+            })
+            .transpose()?;
         Ok(SourceSpan {
-            source: self.source.clone().map(|source| source.0),
+            source,
             span: (offset(self.start)?, offset(self.end)?),
             syntax: self.syntax.map(SyntaxId),
         })
     }
 }
 
+impl Printable for CoreSpan {
+    fn fmt(
+        &self,
+        _ctx: &Context,
+        _state: &printable::State,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        if let Some(source) = self.source {
+            write!(f, "{source}:")?;
+        }
+        write!(f, "{}:{}", self.start, self.end)?;
+        if let Some(syntax) = self.syntax {
+            write!(f, "#{syntax}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Parsable for CoreSpan {
+    type Arg = ();
+    type Parsed = Self;
+
+    fn parse<'a>(
+        state_stream: &mut StateStream<'a>,
+        _arg: Self::Arg,
+    ) -> ParseResult<'a, Self::Parsed> {
+        use pliron::combine::parser::char::{char, digit};
+        use pliron::combine::{attempt, many1, optional};
+        let number = || many1::<String, _, _>(digit()).and_then(|digits| digits.parse::<u64>());
+        (
+            number(),
+            char(':').with(number()),
+            optional(attempt(char(':').with(number()))),
+            optional(char('#').with(number())),
+        )
+            .and_then(|(first, second, third, syntax)| {
+                let (source, start, end) = match third {
+                    Some(end) => (Some(u32::try_from(first)?), second, end),
+                    None => (None, first, second),
+                };
+                Ok::<_, std::num::TryFromIntError>(Self {
+                    source,
+                    start,
+                    end,
+                    syntax,
+                })
+            })
+            .parse_stream(state_stream)
+            .into()
+    }
+}
+
 /// The MIR register an operation's value result defines.
-#[pliron_attr(name = "mojito_core.reg", format = "$0", verifier = "succ")]
+#[pliron_attr(name = "mojito.reg", format = "$0", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct RegAttr(pub u32);
 
 /// A slot's storage identity and ownership flags.
 #[pliron_attr(
-    name = "mojito_core.slot_info",
+    name = "mojito.slot_info",
     format = "$storage ` ` $id ` ` $name ` param` opt($param, delimiters(`(`, `)`)) ` ` $owned ` ` $deinit ` ` $by_ref",
     verifier = "succ"
 )]
@@ -297,7 +447,7 @@ pub enum CoreStorage {
     Register,
 }
 
-#[pliron_attr(name = "mojito_core.constant", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.constant", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub enum ConstAttr {
     Int(Signed),
@@ -369,7 +519,7 @@ pub fn parse_float_literal(text: &Text) -> Result<FloatLiteral, A1Error> {
 /// The lane type and width a SIMD construction declares. Its register
 /// holds that vector, or the scalar alias of a one-lane vector.
 #[pliron_attr(
-    name = "mojito_core.simd_shape",
+    name = "mojito.simd_shape",
     format = "$dtype ` x ` $width",
     verifier = "succ"
 )]
@@ -379,7 +529,7 @@ pub struct SimdMakeAttr {
     pub width: u64,
 }
 
-#[pliron_attr(name = "mojito_core.infix", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.infix", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum InfixAttr {
     Add,
@@ -471,7 +621,7 @@ impl InfixAttr {
     }
 }
 
-#[pliron_attr(name = "mojito_core.prefix", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.prefix", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum PrefixAttr {
     Neg,
@@ -509,7 +659,7 @@ pub enum CoreSimdConversion {
 /// declares. Its register holds that vector, or the scalar alias of a
 /// one-lane vector.
 #[pliron_attr(
-    name = "mojito_core.simd_conversion",
+    name = "mojito.simd_conversion",
     format = "$conversion ` ` $dtype ` x ` $width",
     verifier = "succ"
 )]
@@ -522,14 +672,14 @@ pub struct SimdConvertAttr {
 
 /// A checker-selected symbol, when one was required.
 #[pliron_attr(
-    name = "mojito_core.resolved",
+    name = "mojito.resolved",
     format = "`resolved` opt($0, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct ResolvedAttr(pub Option<Text>);
 
-#[pliron_attr(name = "mojito_core.use_mode", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.use_mode", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum UseModeAttr {
     Copy,
@@ -560,7 +710,7 @@ impl UseModeAttr {
 
 /// What a store initializes: a variable definition with its checked
 /// binding type, a write through a place, or register transport.
-#[pliron_attr(name = "mojito_core.store_kind", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.store_kind", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub enum StoreAttr {
     #[format("`<binding` opt($binding, delimiters(`(`, `)`)) `>`")]
@@ -575,7 +725,7 @@ pub enum StoreAttr {
 
 /// The typed projection path of a place below its root slot.
 #[pliron_attr(
-    name = "mojito_core.projection",
+    name = "mojito.projection",
     format = "`root` opt($root_ty, delimiters(`(`, `)`)) ` [` vec($steps, CharSpace(`,`)) `] type` opt($ty, delimiters(`(`, `)`)) ` through` opt($through, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -677,7 +827,7 @@ impl CoreCaptureMode {
 /// The lifted body a closure runs and how it takes each captured place,
 /// in operand order.
 #[pliron_attr(
-    name = "mojito_core.closure",
+    name = "mojito.closure",
     format = "$function ` [` vec($modes, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -708,7 +858,7 @@ pub struct CoreParamArg {
 /// arguments, reified compile-time arguments, retained argument places,
 /// retained keyword places, the receiver place, and the effect token.
 #[pliron_attr(
-    name = "mojito_core.call_facts",
+    name = "mojito.call_facts",
     format = "$kind ` ` $target ` resolved` opt($resolved, delimiters(`(`, `)`)) ` raises` opt($raises, delimiters(`(`, `)`)) ` args ` $args ` kwargs [` vec($kwargs, CharSpace(`,`)) `] places [` vec($arg_places, CharSpace(`,`)) `] kwplaces [` vec($kwarg_places, CharSpace(`,`)) `] ` $recv_place ` ` $recv_writes ` params [` vec($params, CharSpace(`,`)) `] captures [` vec($captures, CharSpace(`,`)) `] contract` opt($contract, delimiters(`(`, `)`)) ` instantiated [` vec($instantiated, CharSpace(`,`)) `] reference` opt($reference_result, delimiters(`(`, `)`)) ` adapter` opt($adapter, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -865,14 +1015,14 @@ impl CoreIntrinsic {
 }
 
 /// The field a value's field read names.
-#[pliron_attr(name = "mojito_core.field", format = "$name", verifier = "succ")]
+#[pliron_attr(name = "mojito.field", format = "$name", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct FieldAttr {
     pub name: Text,
 }
 
 /// The type whose target-layout byte size a `size_of` yields.
-#[pliron_attr(name = "mojito_core.size_of", format = "$ty", verifier = "succ")]
+#[pliron_attr(name = "mojito.size_of", format = "$ty", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct SizeOfAttr {
     pub ty: TypeHandle,
@@ -952,7 +1102,7 @@ pub struct CoreKeywordArg {
 /// The checked dispatch of a `multi_index`: its arguments in operand
 /// order, then which of the object and the arguments retain a place.
 #[pliron_attr(
-    name = "mojito_core.multi_subscript",
+    name = "mojito.multi_subscript",
     format = "`[` vec($args, CharSpace(`,`)) `] kwargs [` vec($kwargs, CharSpace(`,`)) `] ` $object_place ` [` vec($arg_places, CharSpace(`,`)) `] [` vec($kwarg_places, CharSpace(`,`)) `] call` opt($call, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -991,7 +1141,7 @@ impl MultiIndexAttr {
 /// The checked dispatch of a `slice`: which bounds it spells, which of
 /// the object and the arguments retain a place, and its target.
 #[pliron_attr(
-    name = "mojito_core.slice_subscript",
+    name = "mojito.slice_subscript",
     format = "$bounds ` ` $object_place ` [` vec($arg_places, CharSpace(`,`)) `] call` opt($call, delimiters(`(`, `)`)) ` intrinsic` opt($intrinsic, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -1016,7 +1166,7 @@ impl SliceAttr {
 
 /// The lane selection of a SIMD shuffle, over one vector or two.
 #[pliron_attr(
-    name = "mojito_core.shuffle",
+    name = "mojito.shuffle",
     format = "$other ` [` vec($mask, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1037,7 +1187,7 @@ pub enum CoreUninitAccess {
 /// What an `uninit_storage` does: builds storage, optionally from a
 /// value, or takes or destroys the payload of the element type.
 #[pliron_attr(
-    name = "mojito_core.uninit",
+    name = "mojito.uninit",
     format = "$access ` ` $init ` element` opt($element, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -1066,11 +1216,7 @@ pub enum CoreVariantAccess {
     DeinitWith(u64),
 }
 
-#[pliron_attr(
-    name = "mojito_core.variant_access",
-    format = "$access",
-    verifier = "succ"
-)]
+#[pliron_attr(name = "mojito.variant_access", format = "$access", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct VariantAttr {
     pub access: CoreVariantAccess,
@@ -1081,7 +1227,7 @@ pub struct VariantAttr {
 /// Operands are the base, the index, the reified compile-time arguments,
 /// the retained base and index places, and the effect token.
 #[pliron_attr(
-    name = "mojito_core.subscript",
+    name = "mojito.subscript",
     format = "$base_place ` ` $index_place ` call` opt($call, delimiters(`(`, `)`)) ` intrinsic` opt($intrinsic, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -1099,7 +1245,7 @@ pub struct IndexAttr {
 /// reified compile-time arguments, the retained receiver, argument, and
 /// value places, and the effect token.
 #[pliron_attr(
-    name = "mojito_core.subscript_store",
+    name = "mojito.subscript_store",
     format = "$receiver_place ` places [` vec($arg_places, CharSpace(`,`)) `] ` $value_place ` ` $value_keyword ` call(` $call `)`",
     verifier = "succ"
 )]
@@ -1121,7 +1267,7 @@ pub enum CorePointerAccess {
 }
 
 #[pliron_attr(
-    name = "mojito_core.pointer_access",
+    name = "mojito.pointer_access",
     format = "$access ` (` $element `)`",
     verifier = "succ"
 )]
@@ -1139,7 +1285,7 @@ pub enum CoreIterationMode {
 }
 
 #[pliron_attr(
-    name = "mojito_core.iteration",
+    name = "mojito.iteration",
     format = "$mode `, prepare [` vec($prepare, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1158,7 +1304,7 @@ pub enum CoreResultAdapter {
 /// The selected `__next__` of an `iter_next`, and the register and source
 /// record of its second result: whether an element was yielded.
 #[pliron_attr(
-    name = "mojito_core.iterator_call",
+    name = "mojito.iterator_call",
     format = "$target ` -> ` $result ` reference` opt($reference_result, delimiters(`(`, `)`)) ` raises` opt($raises, delimiters(`(`, `)`)) ` adapter` opt($adapter, delimiters(`(`, `)`)) ` exhaustion(` $exhaustion `) yields ` $yielded ` ` $yielded_record",
     verifier = "succ"
 )]
@@ -1175,13 +1321,13 @@ pub struct IterNextAttr {
 }
 
 /// The count of cleanup slots a `return` carries out of its loops.
-#[pliron_attr(name = "mojito_core.cleanup", format = "$0", verifier = "succ")]
+#[pliron_attr(name = "mojito.cleanup", format = "$0", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct CleanupAttr(pub u64);
 
 /// A lifecycle event: what is destroyed or consumed, and its stable key.
 #[pliron_attr(
-    name = "mojito_core.lifecycle",
+    name = "mojito.lifecycle",
     format = "$kind ` ` $owner ` [` vec($path, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1237,7 +1383,7 @@ pub struct CoreLoan {
 
 /// One generation of loans: each loan's place is an operand, in order.
 #[pliron_attr(
-    name = "mojito_core.loan_set",
+    name = "mojito.loan_set",
     format = "`[` vec($loans, CharSpace(`,`)) `] dest` opt($dest_interior, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -1248,7 +1394,7 @@ pub struct LoansAttr {
 }
 
 #[pliron_attr(
-    name = "mojito_core.invalidation",
+    name = "mojito.invalidation",
     format = "$base ` except` opt($except, delimiters(`(`, `)`)) ` ` $include_base",
     verifier = "succ"
 )]
@@ -1261,7 +1407,7 @@ pub struct InvalidateAttr {
 
 /// The parts a structured `try` has, and the slot its handler binds.
 #[pliron_attr(
-    name = "mojito_core.try_parts",
+    name = "mojito.try_parts",
     format = "$handler ` error` opt($error_var, delimiters(`(`, `)`)) ` ` $orelse ` ` $finalbody",
     verifier = "succ"
 )]
@@ -1274,7 +1420,7 @@ pub struct TryAttr {
 }
 
 /// How a block of a structured region hands control out of it.
-#[pliron_attr(name = "mojito_core.exit_kind", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.exit_kind", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ExitAttr {
     FallOff,
@@ -1282,11 +1428,7 @@ pub enum ExitAttr {
 
 /// The function-level block a `break` or `continue` inside a try region
 /// leaves for.
-#[pliron_attr(
-    name = "mojito_core.escape_target",
-    format = "$target",
-    verifier = "succ"
-)]
+#[pliron_attr(name = "mojito.escape_target", format = "$target", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct EscapeAttr {
     pub target: u64,
@@ -1294,7 +1436,7 @@ pub struct EscapeAttr {
 
 /// The MIR terminator a `raise` cuts off: MIR keeps `raise` an instruction,
 /// so the block's own terminator follows it unreachably.
-#[pliron_attr(name = "mojito_core.dead_term", format, verifier = "succ")]
+#[pliron_attr(name = "mojito.dead_term", format, verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum DeadTermAttr {
     Jump(u64),
@@ -1314,7 +1456,7 @@ pub enum OutcomeKind {
 /// The exit sites a `resume` continues, one successor each after its
 /// normal and error successors.
 #[pliron_attr(
-    name = "mojito_core.resume_sites",
+    name = "mojito.resume_sites",
     format = "`[` vec($sites, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1326,7 +1468,7 @@ pub struct ResumeAttr {
 /// The exit site a branch into a pending exit stands for: the return or
 /// escape crossing a `finally`, and whether it carries a value.
 #[pliron_attr(
-    name = "mojito_core.exit_site",
+    name = "mojito.exit_site",
     format = "$site ` ` $value",
     verifier = "succ"
 )]
@@ -1337,7 +1479,7 @@ pub struct ExitSiteAttr {
 }
 
 /// The pending outcome a `finally` body runs under.
-#[pliron_attr(name = "mojito_core.outcome_kind", format = "$kind", verifier = "succ")]
+#[pliron_attr(name = "mojito.outcome_kind", format = "$kind", verifier = "succ")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Copy)]
 pub struct OutcomeAttr {
     pub kind: OutcomeKind,
@@ -1378,7 +1520,7 @@ pub struct BlockRecord {
 /// The region layout of a normalized function, one record per block in
 /// block order: membership and boundaries only, never an instruction.
 #[pliron_attr(
-    name = "mojito_core.layout",
+    name = "mojito.layout",
     format = "`[` vec($0, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1413,7 +1555,7 @@ pub struct CoreEvent {
 /// The cleanup contract of a function, derived once from verified input
 /// and rechecked against the executable operations.
 #[pliron_attr(
-    name = "mojito_core.contract",
+    name = "mojito.contract",
     format = "`[` vec($0, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1422,7 +1564,7 @@ pub struct ContractAttr(pub Vec<CoreEvent>);
 
 /// A function's checked signature and frame shape.
 #[pliron_attr(
-    name = "mojito_core.signature",
+    name = "mojito.signature",
     format = "$symbol ` registers ` $registers ` returns` opt($ret, delimiters(`(`, `)`)) ` ` $returns_reference ` ` $raises ` error` opt($error, delimiters(`(`, `)`)) ` params [` vec($params, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1447,7 +1589,7 @@ pub struct CoreOrphan {
     pub provenance: CoreOrphanSpan,
 }
 
-#[format("`span` opt($span, delimiters(`(`, `)`)) ` origin` opt($origin, delimiters(`(`, `)`))")]
+#[format("opt($span, delimiters(`at(`, `) `)) opt($origin, delimiters(`origin(`, `)`))")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct CoreOrphanSpan {
     pub span: Option<CoreSpan>,
@@ -1455,7 +1597,7 @@ pub struct CoreOrphanSpan {
 }
 
 #[pliron_attr(
-    name = "mojito_core.orphans",
+    name = "mojito.orphans",
     format = "`[` vec($0, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1617,7 +1759,7 @@ impl CoreCollector {
 
 /// A callable's checked declaration, as the module's table records it.
 #[pliron_attr(
-    name = "mojito_core.declaration",
+    name = "mojito.declaration",
     format = "$symbol ` [` vec($params, CharSpace(`,`)) `] ` $has_receiver ` receiver` opt($receiver, delimiters(`(`, `)`)) ` -> ` $ret ` ` $returns_reference ` ` $raises ` error` opt($error, delimiters(`(`, `)`)) ` variadic` opt($variadic, delimiters(`(`, `)`)) ` kw_variadic` opt($kw_variadic, delimiters(`(`, `)`)) ` positional_only` opt($positional_only, delimiters(`(`, `)`)) ` keyword_only` opt($keyword_only, delimiters(`(`, `)`))",
     verifier = "succ"
 )]
@@ -1678,7 +1820,7 @@ pub struct CoreEntry {
 /// The module's tables: schema tag, ordered sources, entry map, and the
 /// nominal declarations every core type and call resolves against.
 #[pliron_attr(
-    name = "mojito_core.module_tables",
+    name = "mojito.module_tables",
     format = "$schema ` sources [` vec($sources, CharSpace(`,`)) `] entries [` vec($entries, CharSpace(`,`)) `] structs [` vec($structs, CharSpace(`,`)) `] declarations [` vec($declaration_order, CharSpace(`,`)) `]`",
     verifier = "succ"
 )]
@@ -1694,7 +1836,7 @@ pub struct ModuleAttr {
 }
 
 /// The experimental schema tag; this is not `.mir` and `exec` never reads it.
-pub const SCHEMA: &str = "mojito-a1-core 0";
+pub const SCHEMA: &str = "mojito-a1-core 1";
 
 /// The name a variable carries in diagnostics, by slot.
 pub fn var_name(names: &[String], var: u32) -> Text {

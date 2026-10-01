@@ -23,8 +23,13 @@ pub fn print(ctx: &Context, module: Ptr<Operation>) -> String {
 
 /// Parse a module from text into `ctx` and verify it at `stage`.
 pub fn parse(ctx: &mut Context, text: &str, stage: Stage) -> Result<Ptr<Operation>, A1Error> {
-    let module = parse_from_str(spaced(Operation::top_level_parser()), ctx, text)
-        .map_err(|error| A1Error::new(A1ErrorKind::Parse, error.disp(ctx).to_string()))?;
+    let module = parse_unverified(ctx, text)?;
     verify_module(ctx, module, stage)?;
     Ok(module)
+}
+
+/// Parse a module from text into `ctx`, leaving verification to the caller.
+pub fn parse_unverified(ctx: &mut Context, text: &str) -> Result<Ptr<Operation>, A1Error> {
+    parse_from_str(spaced(Operation::top_level_parser()), ctx, text)
+        .map_err(|error| A1Error::new(A1ErrorKind::Parse, error.disp(ctx).to_string()))
 }

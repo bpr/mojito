@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The A1 shadow core's canonical text is 1.56 to 2.00 times the v1 text,
+  down from 2.6 to 3.4: the `identity` attribute is left to the location
+  that already names it, locations and contract keys are local to their
+  function, a source record names its source by index, and the dialect is
+  `mojito` (text schema `mojito-a1-core 1`).
 - The A1 shadow core (feature `pliron-a1`) now converts 887 of the 893
   inputs of its decision corpus, where it converted the ten focused
   inputs: floats, `DType`, function types, closures, indirect calls,
@@ -36,6 +41,10 @@ to evolve under the `0.x` compatibility rules.
   program declares. A type argument named by string no longer drops a
   minted `Tuple`'s elements where the receiver spells them, so the A1
   shadow core converts 892 of its 893 corpus inputs.
+- The A1 shadow core converts a `return` or escape inside a `finally` body
+  (`assets/ok/pliron_finally_overrides.mojo`), the last of its 893 corpus
+  inputs: the exit overrides the pending outcome and leaves as an ordinary
+  exit.
 
 - `print` with a call result as a keyword (`print(x, sep=String("-"))`,
   `print(x, file=FileDescriptor(1))`) in a method or a runtime `def` now

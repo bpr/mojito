@@ -238,7 +238,7 @@ struct PlanFrame {
     /// The cleanup the try runs on the way out; empty for a part whose
     /// try already ran it.
     cleanup: Vec<u32>,
-    /// Whether the try's `finally` runs on the way out.
+    /// Whether the try's `finally` still runs on the way out.
     finally: bool,
 }
 
@@ -553,12 +553,12 @@ impl PlanBuilder<'_> {
         };
         let normal = pending.map_or(after, |(normal, _, _)| normal);
         let part_error = pending.map_or(outer.error, |(_, error, _)| Some(error));
-        let frames = |cleanup: Vec<u32>| {
+        let frames = |cleanup: Vec<u32>, in_finally: bool| {
             let mut frames = outer.frames.clone();
             frames.push(PlanFrame {
                 path: path.to_string(),
                 cleanup,
-                finally: parts.finalbody,
+                finally: parts.finalbody && !in_finally,
             });
             frames
         };
@@ -571,7 +571,7 @@ impl PlanBuilder<'_> {
             normal: Some(normal),
             error: part_error,
             resume: None,
-            frames: frames(Vec::new()),
+            frames: frames(Vec::new(), false),
         };
         let body = self.region(
             &format!("{path}.body"),
@@ -579,7 +579,7 @@ impl PlanBuilder<'_> {
                 normal: Some(done),
                 error: Some(unwind),
                 resume: None,
-                frames: frames(cleanup.clone()),
+                frames: frames(cleanup.clone(), false),
             },
         )?;
         let part = |present: bool, name: &str, exits: &PlanExits| {
@@ -596,7 +596,7 @@ impl PlanBuilder<'_> {
                 normal: None,
                 error: outer.error,
                 resume: Some((after, outer.error)),
-                frames: frames(Vec::new()),
+                frames: frames(Vec::new(), true),
             },
         )?;
         let entry = |plan: &RegionPlan| plan.blocks[0].segments[0].block;
@@ -831,42 +831,50 @@ impl PlanBuilder<'_> {
         self.exit_chain(term, site, escape, &outer[next].path, &outer[..next])
     }
 
-    /// The exit sites the finally of `path` resumes, each with its
-    /// continuation as a successor; the result is the count of blocks
-    /// they synthesized for this try: each continuation, and each pending
-    /// exit entered from a site of this try's own regions.
+    /// The count of blocks exits pending on the finally of `path`
+    /// synthesized for this try: each continuation, and each pending exit
+    /// entered from a site of this try's own regions. Every resume of the
+    /// finally body continues each of those sites; a body that never falls
+    /// off resumes none, and leaves the continuations unreached.
     fn resume_sites(&self, path: &str, finalbody: &RegionPlan) -> Result<usize, A1Error> {
         let ctx = self.ctx;
-        let mut count = 0;
+        let mut continued: Vec<u64> = Vec::new();
+        let mut entered = 0;
+        for record in self.records.values().filter(|r| r.region.as_str() == path) {
+            match record.category {
+                BlockCategory::ExitContinue => continued.push(record.block),
+                BlockCategory::PendingExit => entered += 1,
+                _ => {}
+            }
+        }
+        continued.sort_unstable();
         for block in &finalbody.blocks {
             for segment in &block.segments {
                 let term = self.terminator(segment.block)?;
                 if CoreOpKind::of(ctx, term) != Some(CoreOpKind::Resume) {
                     continue;
                 }
-                let sites = attr::<ResumeAttr>(ctx, term, &KEY_RESUME)
+                let mut sites = attr::<ResumeAttr>(ctx, term, &KEY_RESUME)
                     .map_or_else(Vec::new, |resume| resume.sites);
                 let successors = self.successors(term);
                 let fixed = successors.len() - sites.len();
-                let mut blocks = 0;
-                for (site, successor) in sites.iter().zip(&successors[fixed..]) {
-                    let continuation = self.lookup(BlockCategory::ExitContinue, path, *site, 0);
-                    if continuation != Some(*successor) {
-                        return Err(invalid(
-                            ctx,
-                            term,
-                            "a resume continues each exit site it lists",
-                        ));
-                    }
-                    blocks += 1 + usize::from(
-                        self.lookup(BlockCategory::PendingExit, path, *site, 0)
-                            .is_some(),
-                    );
+                let lands = sites
+                    .iter()
+                    .zip(&successors[fixed..])
+                    .all(|(site, successor)| {
+                        self.lookup(BlockCategory::ExitContinue, path, *site, 0) == Some(*successor)
+                    });
+                sites.sort_unstable();
+                if !lands || sites != continued {
+                    return Err(invalid(
+                        ctx,
+                        term,
+                        "a resume continues each exit site pending on its finally",
+                    ));
                 }
-                count = count.max(blocks);
             }
         }
-        Ok(count)
+        Ok(continued.len() + entered)
     }
 
     /// The synthesized drops of `block` before its exit `term` and the
@@ -1222,7 +1230,7 @@ impl Rebuild {
             ProvenanceAttr {
                 span: None,
                 origin: None,
-                derived_from: vec![derived_from.key().into()],
+                derived_from: Some(derived_from.local_key().into()),
                 reason: reason.into(),
             },
         );
@@ -1274,8 +1282,6 @@ struct Frame {
     /// The entry of the `finally` that still runs between this region and
     /// the way out, when one does.
     finally: Option<Ptr<BasicBlock>>,
-    /// Whether the region is the `finally` body itself.
-    in_finally: bool,
 }
 
 /// What an exit crossing out of a try region carries to its way out.
@@ -1642,7 +1648,6 @@ impl Normalizer {
                 path: path.to_string(),
                 cleanup,
                 finally: pending.map(|(_, _, entry)| entry).filter(|_| !in_finally),
-                in_finally,
             });
             frames
         };
@@ -1815,9 +1820,10 @@ impl Normalizer {
 
     /// An exit crossing out of a try region: the drops of the tries it
     /// leaves, then its way out. A `finally` on the way makes the exit a
-    /// pending outcome of that finally, continued after it; an exit from a
-    /// `finally` body, or a return carrying cleanup across a finally, has
-    /// no core form yet.
+    /// pending outcome of that finally, continued after it. An exit from a
+    /// `finally` body owes that try nothing and leaves its pending outcome
+    /// unused. A return carrying cleanup across a finally has no core form
+    /// yet.
     fn exit(
         &mut self,
         ctx: &mut Context,
@@ -1833,9 +1839,6 @@ impl Normalizer {
                 format!("{what} has no core form ({described})"),
             )
         };
-        if exits.frames.iter().any(|frame| frame.in_finally) {
-            return Err(refuse("an exit crossing out of a finally body"));
-        }
         let identity: IdentityAttr = attr(ctx, op, &KEY_IDENTITY)
             .ok_or_else(|| invalid(ctx, op, "an operation without identity"))?;
         let escape = attr::<EscapeAttr>(ctx, op, &KEY_ESCAPE);
@@ -2453,7 +2456,7 @@ pub fn entry_annotation(function: Text, region: &str) -> (IdentityAttr, Provenan
     let provenance = ProvenanceAttr {
         span: None,
         origin: None,
-        derived_from: vec![primary.key().into()],
+        derived_from: Some(primary.local_key().into()),
         reason: "region-entry".into(),
     };
     (identity, provenance)

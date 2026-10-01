@@ -1,5 +1,5 @@
 //! Import: verified, drop-elaborated, specialized MIR to the bridge stage
-//! of `mojito_core`. Every MIR form has a rule or an explicit rejection.
+//! of `mojito`. Every MIR form has a rule or an explicit rejection.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -163,7 +163,7 @@ fn import_program_in(
                     return Err(A1Error::new(
                         A1ErrorKind::UnsupportedForm,
                         format!(
-                            "the conversion rule of `mojito_core.{}` is disabled, and `{form}` needs it",
+                            "the conversion rule of `mojito.{}` is disabled, and `{form}` needs it",
                             kind.name()
                         ),
                     )
@@ -234,7 +234,7 @@ fn import_program_in(
         ProvenanceAttr {
             span: None,
             origin: None,
-            derived_from: Vec::new(),
+            derived_from: None,
             reason: "module".into(),
         },
     );
@@ -275,6 +275,7 @@ fn import_program_in(
             name,
             function,
             declarations.get(name.as_str()),
+            &tables.sources,
             sink,
         )
         .map_err(|error| error.in_function(name));
@@ -489,6 +490,9 @@ struct FnImport<'a> {
     /// Register loads emitted for the instruction being imported.
     loads: u64,
     places: u64,
+    /// The function's source records, their sources resolved to indices
+    /// into the module's `sources`.
+    records: HashMap<u32, (CoreSpan, Option<u32>)>,
     sink: &'a Sink,
 }
 
@@ -499,6 +503,7 @@ impl<'a> FnImport<'a> {
         name: &'a str,
         function: &'a MirFunction,
         declaration: Option<&&MirFunctionDeclaration>,
+        sources: &'a [Text],
         sink: &'a Sink,
     ) -> Result<Ptr<Operation>, A1Error> {
         let effect: TypeHandle = EffectType::get(ctx).into();
@@ -513,6 +518,12 @@ impl<'a> FnImport<'a> {
                 "a parameter without a checked type",
             ));
         }
+        let records = function
+            .spans
+            .0
+            .iter()
+            .map(|(reg, (span, origin))| Ok((*reg, (CoreSpan::from_span(span, sources)?, *origin))))
+            .collect::<Result<HashMap<_, _>, A1Error>>()?;
         let func = ops::build(ctx, CoreOpKind::Func, vec![], vec![], vec![], 1);
         let symbol = format!("f{index}")
             .as_str()
@@ -566,7 +577,7 @@ impl<'a> FnImport<'a> {
             ProvenanceAttr {
                 span: None,
                 origin: None,
-                derived_from: Vec::new(),
+                derived_from: None,
                 reason: "function".into(),
             },
         );
@@ -592,6 +603,7 @@ impl<'a> FnImport<'a> {
             ordinal: 0,
             loads: 0,
             places: 0,
+            records,
             sink,
         };
         import.declare_slots(ctx, entry)?;
@@ -691,7 +703,7 @@ impl<'a> FnImport<'a> {
             ProvenanceAttr {
                 span: None,
                 origin: None,
-                derived_from: Vec::new(),
+                derived_from: None,
                 reason: "slot".into(),
             },
         );
@@ -1429,7 +1441,7 @@ impl<'a> FnImport<'a> {
                     self.result_type(ctx, *yielded)?,
                     self.effect,
                 ];
-                let record = self.function.spans.0.get(&yielded.0);
+                let record = self.records.get(&yielded.0);
                 let facts = IterNextAttr {
                     target: Text::from(&call.target),
                     result: import_type(ctx, &call.result_ty)?,
@@ -1453,7 +1465,7 @@ impl<'a> FnImport<'a> {
                     exhaustion: import_type(ctx, exhaustion)?,
                     yielded: yielded.0,
                     yielded_record: CoreOrphanSpan {
-                        span: record.map(|(span, _)| CoreSpan::from_span(span)),
+                        span: record.map(|(span, _)| span.clone()),
                         origin: record.and_then(|(_, origin)| *origin),
                     },
                 };
@@ -2366,20 +2378,20 @@ impl<'a> FnImport<'a> {
             ordinal: self.ordinal as u64,
             role,
         };
-        let record = source.and_then(|reg| self.function.spans.0.get(&reg.0));
+        let record = source.and_then(|reg| self.records.get(&reg.0));
         let derived_from = if role == CoreRole::Primary {
-            Vec::new()
+            None
         } else {
             let primary = IdentityAttr {
                 role: CoreRole::Primary,
                 ..identity.clone()
             };
-            vec![primary.key()]
+            Some(primary.local_key().into())
         };
         let provenance = ProvenanceAttr {
-            span: record.map(|(span, _)| CoreSpan::from_span(span)),
+            span: record.map(|(span, _)| span.clone()),
             origin: record.and_then(|(_, origin)| *origin),
-            derived_from: derived_from.into_iter().map(Text::from).collect(),
+            derived_from,
             reason: reason.into(),
         };
         annotate(ctx, op, identity, provenance);
@@ -2408,7 +2420,7 @@ impl<'a> FnImport<'a> {
             .into_iter()
             .filter(|reg| !sites.defs.contains_key(reg))
             .map(|reg| {
-                let record = self.function.spans.0.get(&reg);
+                let record = self.records.get(&reg);
                 Ok(CoreOrphan {
                     reg,
                     ty: self
@@ -2418,7 +2430,7 @@ impl<'a> FnImport<'a> {
                         .map(|ty| import_type(ctx, ty))
                         .transpose()?,
                     provenance: CoreOrphanSpan {
-                        span: record.map(|(span, _)| CoreSpan::from_span(span)),
+                        span: record.map(|(span, _)| span.clone()),
                         origin: record.and_then(|(_, origin)| *origin),
                     },
                 })

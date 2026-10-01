@@ -4,18 +4,22 @@
 //! allocation history. The canonical spelling is therefore printed from a
 //! fresh context the module was parsed into: the parser allocates in the
 //! order of the text's structure, which no name and no history affects.
+//!
+//! The text leaves out every operation's `identity` attribute, which its
+//! location already names; a parse restores it before verification.
 
 use pliron::builtin::given_names::erase_given_names;
 use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
 
 use super::inventory::Stage;
-use super::ir_framework::{new_context, parse, print};
-use super::provenance::stamp_locations;
+use super::ir_framework::{new_context, parse, parse_unverified, print};
+use super::provenance::{restore_identities, stamp_locations, strip_identities};
+use super::verify::verify_module;
 use super::{A1Error, A1ErrorKind};
 
 /// The wrapper's first line. This is not `.mir`, and `exec` never reads it.
-pub const HEADER: &str = "mojito-a1-core 0";
+pub const HEADER: &str = "mojito-a1-core 1";
 
 /// A module parsed from canonical text, with the context that owns it.
 pub struct ParsedModule {
@@ -34,6 +38,7 @@ pub fn canonical_text(
     let first = print(ctx, module);
     let mut fresh = new_context();
     let reparsed = parse(&mut fresh, &first, stage)?;
+    strip_identities(&mut fresh, reparsed);
     erase_given_names(&mut fresh, reparsed);
     Ok(wrap(&print(&fresh, reparsed)))
 }
@@ -50,7 +55,9 @@ pub fn parse_text(text: &str, stage: Stage) -> Result<ParsedModule, A1Error> {
             )
         })?;
     let mut ctx = new_context();
-    let module = parse(&mut ctx, body, stage)?;
+    let module = parse_unverified(&mut ctx, body)?;
+    restore_identities(&mut ctx, module)?;
+    verify_module(&ctx, module, stage)?;
     Ok(ParsedModule { ctx, module })
 }
 

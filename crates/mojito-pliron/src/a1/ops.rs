@@ -1,4 +1,4 @@
-//! The operations of `mojito_core`. Each is handwritten, printed in
+//! The operations of `mojito`. Each is handwritten, printed in
 //! Pliron's canonical syntax, and verified through the closed registry.
 
 use pliron::basic_block::BasicBlock;
@@ -21,59 +21,59 @@ use super::verify::verify_core_op;
 
 dict_key!(
     /// The stable identity every core operation carries.
-    KEY_IDENTITY, "mojito_core_identity"
+    KEY_IDENTITY, "identity"
 );
 dict_key!(
     /// The source provenance every core operation carries.
-    KEY_PROVENANCE, "mojito_core_provenance"
+    KEY_PROVENANCE, "provenance"
 );
 dict_key!(
     /// The MIR register a value result defines.
-    KEY_REG, "mojito_core_reg"
+    KEY_REG, "reg"
 );
-dict_key!(KEY_SLOT, "mojito_core_slot");
-dict_key!(KEY_CONSTANT, "mojito_core_constant");
-dict_key!(KEY_INFIX, "mojito_core_infix");
-dict_key!(KEY_RESOLVED, "mojito_core_resolved");
-dict_key!(KEY_USE_MODE, "mojito_core_use_mode");
-dict_key!(KEY_STORE, "mojito_core_store");
-dict_key!(KEY_PROJECTION, "mojito_core_projection");
-dict_key!(KEY_CALL, "mojito_core_call");
-dict_key!(KEY_LIFECYCLE, "mojito_core_lifecycle");
-dict_key!(KEY_LOANS, "mojito_core_loans");
-dict_key!(KEY_INVALIDATION, "mojito_core_invalidation");
-dict_key!(KEY_TRY, "mojito_core_try");
-dict_key!(KEY_EXIT, "mojito_core_exit");
-dict_key!(KEY_SIGNATURE, "mojito_core_signature");
-dict_key!(KEY_DECLARATION, "mojito_core_declaration");
-dict_key!(KEY_ORPHANS, "mojito_core_orphans");
-dict_key!(KEY_TABLES, "mojito_core_tables");
-dict_key!(KEY_DEAD_TERM, "mojito_core_dead_term");
-dict_key!(KEY_OUTCOME, "mojito_core_outcome");
-dict_key!(KEY_LAYOUT, "mojito_core_layout");
-dict_key!(KEY_CONTRACT, "mojito_core_contract");
-dict_key!(KEY_PREFIX, "mojito_core_prefix");
-dict_key!(KEY_SIMD_CONVERT, "mojito_core_simd_convert");
-dict_key!(KEY_SIMD_MAKE, "mojito_core_simd_make");
-dict_key!(KEY_CLOSURE, "mojito_core_closure");
-dict_key!(KEY_FIELD, "mojito_core_field");
-dict_key!(KEY_SIZE_OF, "mojito_core_size_of");
-dict_key!(KEY_MULTI_INDEX, "mojito_core_multi_index");
-dict_key!(KEY_SLICE, "mojito_core_slice");
-dict_key!(KEY_SHUFFLE, "mojito_core_shuffle");
-dict_key!(KEY_UNINIT, "mojito_core_uninit");
-dict_key!(KEY_VARIANT, "mojito_core_variant");
-dict_key!(KEY_ESCAPE, "mojito_core_escape");
-dict_key!(KEY_RESUME, "mojito_core_resume");
-dict_key!(KEY_EXIT_SITE, "mojito_core_exit_site");
-dict_key!(KEY_SUBSCRIPT, "mojito_core_subscript");
-dict_key!(KEY_MULTI_SET, "mojito_core_multi_set");
-dict_key!(KEY_POINTER_STORAGE, "mojito_core_pointer_storage");
-dict_key!(KEY_ITER_INIT, "mojito_core_iter_init");
-dict_key!(KEY_ITER_NEXT, "mojito_core_iter_next");
+dict_key!(KEY_SLOT, "slot");
+dict_key!(KEY_CONSTANT, "constant");
+dict_key!(KEY_INFIX, "infix");
+dict_key!(KEY_RESOLVED, "resolved");
+dict_key!(KEY_USE_MODE, "use_mode");
+dict_key!(KEY_STORE, "store");
+dict_key!(KEY_PROJECTION, "projection");
+dict_key!(KEY_CALL, "call");
+dict_key!(KEY_LIFECYCLE, "lifecycle");
+dict_key!(KEY_LOANS, "loans");
+dict_key!(KEY_INVALIDATION, "invalidation");
+dict_key!(KEY_TRY, "try");
+dict_key!(KEY_EXIT, "exit");
+dict_key!(KEY_SIGNATURE, "signature");
+dict_key!(KEY_DECLARATION, "declaration");
+dict_key!(KEY_ORPHANS, "orphans");
+dict_key!(KEY_TABLES, "tables");
+dict_key!(KEY_DEAD_TERM, "dead_term");
+dict_key!(KEY_OUTCOME, "outcome");
+dict_key!(KEY_LAYOUT, "layout");
+dict_key!(KEY_CONTRACT, "contract");
+dict_key!(KEY_PREFIX, "prefix");
+dict_key!(KEY_SIMD_CONVERT, "simd_convert");
+dict_key!(KEY_SIMD_MAKE, "simd_make");
+dict_key!(KEY_CLOSURE, "closure");
+dict_key!(KEY_FIELD, "field");
+dict_key!(KEY_SIZE_OF, "size_of");
+dict_key!(KEY_MULTI_INDEX, "multi_index");
+dict_key!(KEY_SLICE, "slice");
+dict_key!(KEY_SHUFFLE, "shuffle");
+dict_key!(KEY_UNINIT, "uninit");
+dict_key!(KEY_VARIANT, "variant");
+dict_key!(KEY_ESCAPE, "escape");
+dict_key!(KEY_RESUME, "resume");
+dict_key!(KEY_EXIT_SITE, "exit_site");
+dict_key!(KEY_SUBSCRIPT, "subscript");
+dict_key!(KEY_MULTI_SET, "multi_set");
+dict_key!(KEY_POINTER_STORAGE, "pointer_storage");
+dict_key!(KEY_ITER_INIT, "iter_init");
+dict_key!(KEY_ITER_NEXT, "iter_next");
 dict_key!(
     /// The count of cleanup slots a `return` carries out.
-    KEY_CLEANUP, "mojito_core_cleanup"
+    KEY_CLEANUP, "cleanup"
 );
 
 macro_rules! core_op {
@@ -93,181 +93,171 @@ macro_rules! core_op {
 core_op!(
     /// A function: one region whose entry block takes the parameters and
     /// the effect token.
-    FuncOp, "mojito_core.func", Func,
+    FuncOp, "mojito.func", Func,
     [OneRegionInterface, SymbolOpInterface, IsolatedFromAboveInterface, NOpdsInterface<0>, NResultsInterface<0>]
 );
 core_op!(
     /// A variable or register slot, allocated once at function entry.
-    SlotOp, "mojito_core.slot", Slot, []
+    SlotOp, "mojito.slot", Slot, []
 );
-core_op!(ConstOp, "mojito_core.const", Const, [NOpdsInterface<0>]);
+core_op!(ConstOp, "mojito.const", Const, [NOpdsInterface<0>]);
 core_op!(
     MaterializeOp,
-    "mojito_core.materialize",
+    "mojito.materialize",
     Materialize,
     [NOpdsInterface<1>]
 );
-core_op!(BinaryOp, "mojito_core.binary", Binary, [NOpdsInterface<2>]);
-core_op!(SimdMakeOp, "mojito_core.simd_make", SimdMake, []);
-core_op!(UnaryOp, "mojito_core.unary", Unary, [NOpdsInterface<1>]);
+core_op!(BinaryOp, "mojito.binary", Binary, [NOpdsInterface<2>]);
+core_op!(SimdMakeOp, "mojito.simd_make", SimdMake, []);
+core_op!(UnaryOp, "mojito.unary", Unary, [NOpdsInterface<1>]);
 core_op!(
     /// A lane-wise conversion or bit reinterpretation to the result type.
-    SimdConvertOp, "mojito_core.simd_convert", SimdConvert, [NOpdsInterface<1>]
+    SimdConvertOp, "mojito.simd_convert", SimdConvert, [NOpdsInterface<1>]
 );
-core_op!(UseOp, "mojito_core.use", Use, [NOpdsInterface<2>]);
-core_op!(StoreOp, "mojito_core.store", Store, [NOpdsInterface<3>]);
-core_op!(ProjectOp, "mojito_core.project", Project, []);
-core_op!(LoadOp, "mojito_core.load", Load, [NOpdsInterface<2>]);
-core_op!(
-    RefMakeOp,
-    "mojito_core.ref_make",
-    RefMake,
-    [NOpdsInterface<1>]
-);
+core_op!(UseOp, "mojito.use", Use, [NOpdsInterface<2>]);
+core_op!(StoreOp, "mojito.store", Store, [NOpdsInterface<3>]);
+core_op!(ProjectOp, "mojito.project", Project, []);
+core_op!(LoadOp, "mojito.load", Load, [NOpdsInterface<2>]);
+core_op!(RefMakeOp, "mojito.ref_make", RefMake, [NOpdsInterface<1>]);
 core_op!(
     RefStoreOp,
-    "mojito_core.ref_store",
+    "mojito.ref_store",
     RefStore,
     [NOpdsInterface<3>]
 );
-core_op!(
-    RefReadOp,
-    "mojito_core.ref_read",
-    RefRead,
-    [NOpdsInterface<2>]
-);
+core_op!(RefReadOp, "mojito.ref_read", RefRead, [NOpdsInterface<2>]);
 core_op!(
     /// An owned lifecycle copy of a value.
-    CopyOp, "mojito_core.copy", Copy, [NOpdsInterface<2>]
+    CopyOp, "mojito.copy", Copy, [NOpdsInterface<2>]
 );
-core_op!(MoveOp, "mojito_core.move", Move, [NOpdsInterface<2>]);
+core_op!(MoveOp, "mojito.move", Move, [NOpdsInterface<2>]);
 core_op!(
     /// An owner's live range extended to this point.
-    KeepAliveOp, "mojito_core.keep_alive", KeepAlive, [NOpdsInterface<2>]
+    KeepAliveOp, "mojito.keep_alive", KeepAlive, [NOpdsInterface<2>]
 );
-core_op!(IndexOp, "mojito_core.index", Index, []);
-core_op!(MultiSetOp, "mojito_core.multi_set", MultiSet, []);
+core_op!(IndexOp, "mojito.index", Index, []);
+core_op!(MultiSetOp, "mojito.multi_set", MultiSet, []);
 core_op!(
     /// An element taken from, or destroyed in, pointer collection storage.
-    PointerStorageOp, "mojito_core.pointer_storage", PointerStorage, [NOpdsInterface<3>]
+    PointerStorageOp, "mojito.pointer_storage", PointerStorage, [NOpdsInterface<3>]
 );
 core_op!(
     IterInitOp,
-    "mojito_core.iter_init",
+    "mojito.iter_init",
     IterInit,
     [NOpdsInterface<3>]
 );
 core_op!(
     /// One advance of a nominal iterator: the element, and whether there
     /// was one.
-    IterNextOp, "mojito_core.iter_next", IterNext, [NOpdsInterface<2>]
+    IterNextOp, "mojito.iter_next", IterNext, [NOpdsInterface<2>]
 );
-core_op!(CallOp, "mojito_core.call", Call, []);
+core_op!(CallOp, "mojito.call", Call, []);
 core_op!(
     /// A closure over captured places: the lifted body and how each
     /// capture is taken.
-    ClosureMakeOp, "mojito_core.closure_make", ClosureMake, []
+    ClosureMakeOp, "mojito.closure_make", ClosureMake, []
 );
 core_op!(
     /// A field read of a value, through a reference when the value is one.
-    FieldGetOp, "mojito_core.field_get", FieldGet, [NOpdsInterface<1>]
+    FieldGetOp, "mojito.field_get", FieldGet, [NOpdsInterface<1>]
 );
 core_op!(
     /// The target-layout byte size of a type.
-    SizeOfOp, "mojito_core.size_of", SizeOf, [NOpdsInterface<0>]
+    SizeOfOp, "mojito.size_of", SizeOf, [NOpdsInterface<0>]
 );
 core_op!(
     /// A write through a reference handle.
-    RefWriteOp, "mojito_core.ref_write", RefWrite, [NOpdsInterface<3>]
+    RefWriteOp, "mojito.ref_write", RefWrite, [NOpdsInterface<3>]
 );
 core_op!(
     /// A subscript read with several arguments, indices or slices.
-    MultiIndexOp, "mojito_core.multi_index", MultiIndex, []
+    MultiIndexOp, "mojito.multi_index", MultiIndex, []
 );
 core_op!(
     /// A subscript read by one slice.
-    SliceOp, "mojito_core.slice", Slice, []
+    SliceOp, "mojito.slice", Slice, []
 );
 core_op!(
     /// A lane selection over one vector or two.
-    SimdShuffleOp, "mojito_core.simd_shuffle", SimdShuffle, []
+    SimdShuffleOp, "mojito.simd_shuffle", SimdShuffle, []
 );
 core_op!(
     /// Whether a runtime pack held in a variable has an element left.
-    PackHasNextOp, "mojito_core.pack_has_next", PackHasNext, [NOpdsInterface<2>]
+    PackHasNextOp, "mojito.pack_has_next", PackHasNext, [NOpdsInterface<2>]
 );
 core_op!(
     /// The next element of a runtime pack held in a variable, removed.
-    PackNextOp, "mojito_core.pack_next", PackNext, [NOpdsInterface<2>]
+    PackNextOp, "mojito.pack_next", PackNext, [NOpdsInterface<2>]
 );
 core_op!(
     /// Uninitialized storage built, or its payload taken or destroyed.
-    UninitStorageOp, "mojito_core.uninit_storage", UninitStorage, []
+    UninitStorageOp, "mojito.uninit_storage", UninitStorage, []
 );
 core_op!(
     /// A variant built from a payload at one alternative.
-    VariantMakeOp, "mojito_core.variant_make", VariantMake, [NOpdsInterface<2>]
+    VariantMakeOp, "mojito.variant_make", VariantMake, [NOpdsInterface<2>]
 );
 core_op!(
     /// Whether a variant holds one alternative.
-    VariantTestOp, "mojito_core.variant_test", VariantTest, [NOpdsInterface<1>]
+    VariantTestOp, "mojito.variant_test", VariantTest, [NOpdsInterface<1>]
 );
 core_op!(
     /// A variant's payload read, or taken out.
-    VariantGetOp, "mojito_core.variant_get", VariantGet, [NOpdsInterface<2>]
+    VariantGetOp, "mojito.variant_get", VariantGet, [NOpdsInterface<2>]
 );
 core_op!(
     /// A variant place written with a payload, a factory's result, or a
     /// replacement returning the old payload.
-    VariantSetOp, "mojito_core.variant_set", VariantSet, [NOpdsInterface<3>]
+    VariantSetOp, "mojito.variant_set", VariantSet, [NOpdsInterface<3>]
 );
 core_op!(
     /// A variant's payload handed to a consuming handler.
-    VariantDeinitWithOp, "mojito_core.variant_deinit_with", VariantDeinitWith, [NOpdsInterface<3>]
+    VariantDeinitWithOp, "mojito.variant_deinit_with", VariantDeinitWith, [NOpdsInterface<3>]
 );
 core_op!(
     /// A raising call with explicit normal and error successors.
-    InvokeOp, "mojito_core.invoke", Invoke, [IsTerminatorInterface, NResultsInterface<0>]
+    InvokeOp, "mojito.invoke", Invoke, [IsTerminatorInterface, NResultsInterface<0>]
 );
-core_op!(DropOp, "mojito_core.drop", Drop, [NOpdsInterface<2>]);
+core_op!(DropOp, "mojito.drop", Drop, [NOpdsInterface<2>]);
 core_op!(
     /// A consumption of a variable, or of a projected place beside the
     /// marker register of the destructor call that took it.
-    ConsumeOp, "mojito_core.consume", Consume, []
+    ConsumeOp, "mojito.consume", Consume, []
 );
-core_op!(LoansOp, "mojito_core.loans", Loans, []);
+core_op!(LoansOp, "mojito.loans", Loans, []);
 core_op!(
     InvalidateOp,
-    "mojito_core.invalidate",
+    "mojito.invalidate",
     Invalidate,
     [NOpdsInterface<1>]
 );
-core_op!(BrOp, "mojito_core.br", Br, [IsTerminatorInterface, NResultsInterface<0>]);
-core_op!(CondBrOp, "mojito_core.cond_br", CondBr, [IsTerminatorInterface, NResultsInterface<0>]);
-core_op!(ReturnOp, "mojito_core.return", Return, [IsTerminatorInterface, NResultsInterface<0>]);
-core_op!(RaiseOp, "mojito_core.raise", Raise, [IsTerminatorInterface, NResultsInterface<0>]);
+core_op!(BrOp, "mojito.br", Br, [IsTerminatorInterface, NResultsInterface<0>]);
+core_op!(CondBrOp, "mojito.cond_br", CondBr, [IsTerminatorInterface, NResultsInterface<0>]);
+core_op!(ReturnOp, "mojito.return", Return, [IsTerminatorInterface, NResultsInterface<0>]);
+core_op!(RaiseOp, "mojito.raise", Raise, [IsTerminatorInterface, NResultsInterface<0>]);
 core_op!(
     /// The pending outcome a `finally` body runs under.
-    OutcomeOp, "mojito_core.outcome", Outcome, []
+    OutcomeOp, "mojito.outcome", Outcome, []
 );
 core_op!(
     /// Dispatch on a pending outcome after its `finally` body.
-    ResumeOp, "mojito_core.resume", Resume, [IsTerminatorInterface, NResultsInterface<0>]
+    ResumeOp, "mojito.resume", Resume, [IsTerminatorInterface, NResultsInterface<0>]
 );
 core_op!(
     /// A structured `try`, legal only before outcome normalization.
-    TryBridgeOp, "mojito_core.try_bridge", TryBridge, []
+    TryBridgeOp, "mojito.try_bridge", TryBridge, []
 );
 core_op!(
     /// The end of a structured region's block, legal only before outcome
     /// normalization.
-    RegionExitOp, "mojito_core.region_exit", RegionExit, [IsTerminatorInterface, NResultsInterface<0>]
+    RegionExitOp, "mojito.region_exit", RegionExit, [IsTerminatorInterface, NResultsInterface<0>]
 );
 core_op!(
     /// A `break` or `continue` leaving a structured try region for a block
     /// of the function, with the slots it drops on the way; legal only
     /// before outcome normalization.
-    EscapeOp, "mojito_core.escape", Escape, [IsTerminatorInterface, NResultsInterface<0>]
+    EscapeOp, "mojito.escape", Escape, [IsTerminatorInterface, NResultsInterface<0>]
 );
 
 /// Create an unlinked operation of `kind`.

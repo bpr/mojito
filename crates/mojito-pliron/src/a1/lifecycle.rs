@@ -103,7 +103,7 @@ pub fn derive_contract(ctx: &Context, func: Ptr<Operation>) -> Result<ContractAt
                 let identity: IdentityAttr = attr(ctx, op, &KEY_IDENTITY)
                     .ok_or_else(|| unverified(ctx, op, "an operation without identity"))?;
                 events.push(CoreEvent {
-                    key: identity.key().into(),
+                    key: identity.local_key().into(),
                     kind,
                     owner,
                     block: position as u64,
@@ -123,6 +123,9 @@ pub fn check_contract(ctx: &Context, func: Ptr<Operation>) -> Result<(), A1Error
     let recorded: ContractAttr = attr(ctx, func, &KEY_CONTRACT)
         .ok_or_else(|| unverified(ctx, func, "a normalized function carries its contract"))?;
     let derived = derive_contract(ctx, func)?;
+    let function = attr::<IdentityAttr>(ctx, func, &KEY_IDENTITY)
+        .map(|identity| identity.function.0)
+        .unwrap_or_default();
     let difference = recorded
         .0
         .iter()
@@ -133,7 +136,7 @@ pub fn check_contract(ctx: &Context, func: Ptr<Operation>) -> Result<(), A1Error
             ctx,
             func,
             &format!(
-                "lifecycle event `{}` is contracted as {:?} of owner {} at block {} position {} in states {:#06b}, but the operations hold `{}` as {:?} of owner {} at block {} position {} in states {:#06b}",
+                "lifecycle event `{function}{}` is contracted as {:?} of owner {} at block {} position {} in states {:#06b}, but the operations hold `{function}{}` as {:?} of owner {} at block {} position {} in states {:#06b}",
                 recorded.key,
                 recorded.kind,
                 recorded.owner,
@@ -155,7 +158,7 @@ pub fn check_contract(ctx: &Context, func: Ptr<Operation>) -> Result<(), A1Error
             ctx,
             func,
             &format!(
-                "lifecycle event `{}` of the contract has no operation",
+                "lifecycle event `{function}{}` of the contract has no operation",
                 recorded.0[derived.0.len()].key
             ),
         )),
@@ -163,7 +166,7 @@ pub fn check_contract(ctx: &Context, func: Ptr<Operation>) -> Result<(), A1Error
             ctx,
             func,
             &format!(
-                "lifecycle event `{}` is outside the contract",
+                "lifecycle event `{function}{}` is outside the contract",
                 derived.0[recorded.0.len()].key
             ),
         )),

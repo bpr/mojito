@@ -1,4 +1,4 @@
-//! Verification of `mojito_core`: the per-operation rules the registry
+//! Verification of `mojito`: the per-operation rules the registry
 //! dispatches to, the effect chain of each block, and the legality of a
 //! whole module at a conversion boundary.
 
@@ -811,14 +811,14 @@ pub fn legality_violations(ctx: &Context, module: Ptr<Operation>, stage: Stage) 
         }
         let Some(kind) = CoreOpKind::of(ctx, *op) else {
             violations.push(illegal(format!(
-                "operation `{}` is not registered in `mojito_core`",
+                "operation `{}` is not registered in `mojito`",
                 Operation::get_opid(*op, ctx)
             )));
             continue;
         };
         if !kind.legal_at(stage) {
             violations.push(illegal(format!(
-                "`mojito_core.{}` is illegal at {stage:?} ({context})",
+                "`mojito.{}` is illegal at {stage:?} ({context})",
                 kind.name()
             )));
         }

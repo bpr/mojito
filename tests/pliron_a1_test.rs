@@ -202,7 +202,7 @@ fn a1_representation_contract() {
     drop(imported);
 
     for symbol in ["Proof.read$i1;", "Proof.read$i2;"] {
-        assert!(text.contains(&format!("mojito_core.signature \"{symbol}\"")));
+        assert!(text.contains(&format!("mojito.signature \"{symbol}\"")));
     }
     assert!(text.contains("IntLiteral(\"9007199254740993\")"));
     assert!(
@@ -242,7 +242,7 @@ fn reparse(text: &str, stage: Stage) -> a1::text::ParsedModule {
 fn a1_canonical_first_print() {
     let (_, mut imported) = import_gate();
     let first = canonical(&mut imported, Stage::Bridge);
-    assert!(first.starts_with("mojito-a1-core 0\n"));
+    assert!(first.starts_with("mojito-a1-core 1\n"));
     assert!(first.ends_with('\n') && !first.ends_with("\n\n"));
     assert!(!first.contains('\r'));
     assert!(!first.contains("<in-memory>"), "no assembly position leaks");
@@ -311,14 +311,14 @@ fn a1_locations_per_op() {
         .count();
     let derived = stamped
         .values()
-        .filter(|record| !record.provenance.derived_from.is_empty())
+        .filter(|record| record.provenance.derived_from.is_some())
         .count();
     let absent = stamped.len() - with_span - derived;
     assert!(with_span > 0 && derived > 0 && absent > 0);
     let labels: std::collections::BTreeSet<&str> = stamped
         .values()
         .filter_map(|record| record.provenance.span.as_ref())
-        .filter_map(|span| span.source.as_ref().map(a1::attrs::Text::as_str))
+        .filter_map(|span| span.source.as_deref())
         .collect();
     for label in [
         "assets/extensions/ok/pliron_a1_gate.mojo",
@@ -441,14 +441,14 @@ fn a1_location_mutations_name_their_op() {
         .into_iter()
         .find(|op| {
             a1::verify::attr::<a1::attrs::ProvenanceAttr>(&ctx, *op, &a1::ops::KEY_PROVENANCE)
-                .is_some_and(|provenance| !provenance.derived_from.is_empty())
+                .is_some_and(|provenance| provenance.derived_from.is_some())
         })
         .expect("the gate has derived operations");
     let identity: a1::attrs::IdentityAttr =
         a1::verify::attr(&ctx, derived, &a1::ops::KEY_IDENTITY).expect("identity");
     let mut provenance: a1::attrs::ProvenanceAttr =
         a1::verify::attr(&ctx, derived, &a1::ops::KEY_PROVENANCE).expect("provenance");
-    provenance.derived_from[0] = "elsewhere".into();
+    provenance.derived_from = Some("elsewhere".into());
     a1::import::set(&ctx, derived, &a1::ops::KEY_PROVENANCE, provenance);
     let mut mutated = a1::text::ParsedModule { ctx, module };
     let text = canonical(&mut mutated, Stage::Bridge);
@@ -532,14 +532,10 @@ fn a1_normalized_outcomes_round_trip() {
     let text = canonical(&mut normalized, Stage::ExecutableCore);
     std::fs::write("target/pliron-a1/gate.executable.txt", &text).expect("written");
     drop(normalized);
-    for bridge in ["mojito_core.try_bridge", "mojito_core.region_exit"] {
+    for bridge in ["mojito.try_bridge", "mojito.region_exit"] {
         assert!(!text.contains(bridge), "{bridge} survives normalization");
     }
-    for executable in [
-        "mojito_core.invoke",
-        "mojito_core.outcome",
-        "mojito_core.resume",
-    ] {
+    for executable in ["mojito.invoke", "mojito.outcome", "mojito.resume"] {
         assert!(text.contains(executable), "{executable} is exercised");
     }
     let mut parsed = reparse(&text, Stage::ExecutableCore);
@@ -780,7 +776,7 @@ fn a1_malformed_ops_are_diagnostics() {
             .iter()
             .find(|(_, at, kinds)| *at == stage && kinds.contains(&kind))
             .map_or_else(
-                || panic!("mojito_core.{} has a positive case", kind.name()),
+                || panic!("mojito.{} has a positive case", kind.name()),
                 |(specialized, _, _)| *specialized,
             );
         for (name, mutation) in mutations {
@@ -973,6 +969,41 @@ fn a1_lifecycle_edges() {
     }
 }
 
+/// A `return` in a `finally` body overrides the pending outcome: the
+/// program converts, exports its v1 text, and runs as the VM runs it. The
+/// continuation of the return it overrides is unreached and still checked.
+#[test]
+fn a1_finally_override_converts() {
+    let path = "assets/ok/pliron_finally_overrides.mojo";
+    let (original, specialized) = specialized_input(path);
+    let refusals = a1::import::refusals(&specialized.program);
+    assert!(refusals.is_empty(), "{refusals:?}");
+    let run = a1::measure::shadow(&original, &entries_of(&original), false)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        v1_text(&run.exported.program),
+        v1_text(&specialized.program)
+    );
+    assert_eq!(vm_outcome(run.exported.program), vm_outcome(original));
+
+    let overridden = "f|try0|0|0|ExitTerminal";
+    match verdict(
+        import_executable(&specialized),
+        Stage::ExecutableCore,
+        |ctx, module| {
+            let terminal = op_with_key(ctx, module, overridden);
+            assert_eq!(CoreOpKind::of(ctx, terminal), Some(CoreOpKind::Return));
+            Operation::remove_operand(terminal, ctx, 0);
+        },
+    ) {
+        Verdict::Rejected(diagnostic) => {
+            assert!(diagnostic.contains(overridden), "{diagnostic}");
+        }
+        Verdict::Accepted => panic!("a continuation that drops its value: accepted"),
+        Verdict::Panicked => panic!("a continuation that drops its value: panicked"),
+    }
+}
+
 /// The registry is the dialect: every registered operation is a registry
 /// entry with every decision made, and every MIR form is imported by one
 /// operation or rejected by name.
@@ -980,7 +1011,7 @@ fn a1_lifecycle_edges() {
 fn a1_inventory_is_closed() {
     let source = std::fs::read_to_string("crates/mojito-pliron/src/a1/ops.rs").expect("ops.rs");
     let registered: Vec<&str> = source
-        .split("\"mojito_core.")
+        .split("\"mojito.")
         .skip(1)
         .filter_map(|rest| rest.split('"').next())
         .collect();
@@ -1014,7 +1045,7 @@ fn a1_inventory_is_closed() {
         let text = canonical(&mut module, stage);
         for kind in &present {
             assert!(kind.legal_at(stage));
-            let spelling = format!("mojito_core.{} (", kind.name());
+            let spelling = format!("mojito.{} (", kind.name());
             assert!(text.contains(&spelling), "{spelling} is canonical syntax");
         }
         spelled.extend(present);
@@ -1072,7 +1103,7 @@ fn a1_conversion_is_total() {
         a1::verify::legality_violations(&bridge.ctx, bridge.module, Stage::ExecutableCore)
             .into_iter()
             .map(|violation| violation.to_string())
-            .filter(|violation| violation.contains("mojito_core.try_bridge"))
+            .filter(|violation| violation.contains("mojito.try_bridge"))
             .collect();
     assert_eq!(survivors.len(), 2, "{survivors:?}");
     assert!(survivors[0].contains("exercise||0|4|Primary"));
@@ -1322,7 +1353,7 @@ fn insert_scalar(
         a1::attrs::ProvenanceAttr {
             span: None,
             origin: None,
-            derived_from: vec!["exercise||0|0|Primary".into()],
+            derived_from: Some("|0|0|Primary".into()),
             reason: "dead scalar instrumentation".into(),
         },
     );
@@ -1842,7 +1873,7 @@ fn a1_param_canonical_text() {
             .expect("constant"),
     ];
     let anchors = ops_of_kind(&module.ctx, module.module, CoreOpKind::Const);
-    let key: pliron::identifier::Identifier = "mojito_core_param".try_into().expect("identifier");
+    let key: pliron::identifier::Identifier = "param".try_into().expect("identifier");
     for (expr, anchor) in exprs.iter().zip(&anchors) {
         let node = save(&mut module.ctx, expr);
         a1::import::set(&module.ctx, *anchor, &key, ParamExprAttr(node));
@@ -1854,7 +1885,7 @@ fn a1_param_canonical_text() {
         .map(|anchor| key_of(&module.ctx, *anchor))
         .collect();
     drop(module);
-    assert!(text.contains("mojito_core.param_expr"));
+    assert!(text.contains("mojito.param_expr"));
 
     let mut parsed = reparse(&text, Stage::ExecutableCore);
     assert_eq!(text, canonical(&mut parsed, Stage::ExecutableCore));

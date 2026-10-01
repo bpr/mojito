@@ -1,5 +1,5 @@
 //! The A1 shadow core: verified, drop-elaborated MIR re-expressed as the
-//! `mojito_core` Pliron dialect, beside the MIR the backends consume.
+//! `mojito` Pliron dialect, beside the MIR the backends consume.
 //!
 //! Optional and removable (`a1-core`). The contract, verdict conditions, and
 //! measurements are in `docs/notes/pliron-a1.md`.

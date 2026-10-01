@@ -35,41 +35,10 @@ These tasks fix that order.
 Scope: only work that moves the check order — checking a template with its
 parameters symbolic, or deriving an instantiation from a checked template. A
 defect found on the way is filed by its kind; a divergence from the pin goes
-to section 3, however small. The three entries that measure the
-Pliron experiment rather than move the check order, 1.1 to 1.3, sit last.
+to section 3, however small. The entry that measures the Pliron
+experiment rather than moves the check order, 1.1, sits last.
 
-- [ ] **1.1 A1 core text is about three times the v1 text**
-
-  Problem: the canonical text of a core module is 2.6 to 3.4 times the v1
-  text of the same module, over the 2.0 line that makes a design review
-  mandatory.
-  - The gate is 199,537 bytes of core for 69,504 of v1, and `stdlib_heavy`
-    is 6,558,137 for 2,092,497.
-  - Identity and provenance attributes repeat the function symbol on every
-    operation (`a1/attrs.rs`, `IdentityAttr`, `ProvenanceAttr`).
-  - Text also dominates the boundary's time: printing and parsing are 780 of
-    870 ms in the debug diagnostic.
-  - A custom operation format or a per-function symbol table are the levers.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **1.2 One decision-corpus input still refuses the A1 shadow, so the
-  bulk lane exits nonzero**
-
-  Problem: `scripts/cover-pliron-a1` converts 892 of 893 inputs, and
-  `scripts/bench-pliron-a1` refuses a verdict while any input fails, so
-  the last residue stands between the shadow and its overhead measurement.
-  - The record is [`docs/notes/pliron-a1.md`](notes/pliron-a1.md)
-    §Coverage, which names the input.
-  - It is a `return` inside a `finally` body
-    (`assets/ok/pliron_finally_overrides.mojo`), refused by name. Admitting
-    it needs a pending-outcome resolution at the override site, as the
-    native lowering's `emit_pending_resolution` does, and the same for a
-    return carrying cleanup across a finally, which no input reaches.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.3 The Pliron pivot's overhead has never been measured**
+- [ ] **1.1 The Pliron pivot's overhead has never been measured**
 
   Problem: the A1 slice passes four of the plan's five falsifiers, and the
   fifth, overhead, has no release measurement, so the pivot is neither
@@ -87,9 +56,10 @@ Pliron experiment rather than move the check order, 1.1 to 1.3, sit last.
     [`docs/non-goals.md`](non-goals.md) and remove the experiment as the
     note's §Removal lists.
   - This is the decision point for MIR-as-a-dialect, not a commitment to it.
-  - The focused lane needs nothing more: all ten focused inputs convert,
-    and 892 of the 893 corpus inputs.
-  - Depends on 1.1 and 1.2.
+  - Nothing is refused any more: all ten focused inputs and all 893 corpus
+    inputs convert. Re-run `scripts/cover-pliron-a1` first, since the last
+    five inputs were each confirmed alone.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 ### 2. Native Backend

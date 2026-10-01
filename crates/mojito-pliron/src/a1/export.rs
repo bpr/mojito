@@ -1,4 +1,4 @@
-//! Export: a bridge-stage `mojito_core` module back to a `MirProgram`,
+//! Export: a bridge-stage `mojito` module back to a `MirProgram`,
 //! read from the module's current operations and typed attributes alone.
 
 use std::collections::{HashMap, HashSet};
@@ -28,8 +28,8 @@ use super::attrs::{
     IdentityAttr, IndexAttr, InfixAttr, InvalidateAttr, IterInitAttr, IterNextAttr, LifecycleAttr,
     LoansAttr, ModuleAttr, MultiIndexAttr, MultiSetAttr, OrphansAttr, PointerStorageAttr,
     PrefixAttr, ProjectionAttr, ProvenanceAttr, RegAttr, ResolvedAttr, ShuffleAttr, SignatureAttr,
-    SimdConvertAttr, SimdMakeAttr, SizeOfAttr, SliceAttr, SlotAttr, StoreAttr, TryAttr, UninitAttr,
-    UseModeAttr, VariantAttr,
+    SimdConvertAttr, SimdMakeAttr, SizeOfAttr, SliceAttr, SlotAttr, StoreAttr, Text, TryAttr,
+    UninitAttr, UseModeAttr, VariantAttr,
 };
 use super::inventory::CoreOpKind;
 use super::ops::{
@@ -95,7 +95,7 @@ pub fn export_program(ctx: &Context, module: Ptr<Operation>) -> Result<Exported,
             if CoreOpKind::of(ctx, func) != Some(CoreOpKind::Func) {
                 return Err(malformed(ctx, func, "only functions sit in the module"));
             }
-            let (name, function) = FnExport::run(ctx, func)?;
+            let (name, function) = FnExport::run(ctx, func, &tables.sources)?;
             if let Some(declaration) = attr::<DeclarationAttr>(ctx, func, &KEY_DECLARATION) {
                 declared.insert(name.clone(), export_declaration(ctx, &declaration)?);
             }
@@ -155,17 +155,24 @@ fn malformed(ctx: &Context, op: Ptr<Operation>, message: &str) -> A1Error {
 /// The export of one function.
 struct FnExport<'a> {
     ctx: &'a Context,
+    /// The module's sources, which a span names by index.
+    sources: &'a [Text],
     reg_types: HashMap<u32, Ty>,
     spans: SpanTable,
 }
 
 impl<'a> FnExport<'a> {
-    fn run(ctx: &'a Context, func: Ptr<Operation>) -> Result<(String, MirFunction), A1Error> {
+    fn run(
+        ctx: &'a Context,
+        func: Ptr<Operation>,
+        sources: &'a [Text],
+    ) -> Result<(String, MirFunction), A1Error> {
         let signature: SignatureAttr = required(ctx, func, &KEY_SIGNATURE)?;
         let orphans: OrphansAttr = required(ctx, func, &KEY_ORPHANS)?;
         let name = signature.symbol.0.clone();
         let mut export = Self {
             ctx,
+            sources,
             reg_types: HashMap::new(),
             spans: SpanTable::default(),
         };
@@ -209,7 +216,7 @@ impl<'a> FnExport<'a> {
                 export
                     .spans
                     .0
-                    .insert(orphan.reg, (span.span()?, orphan.provenance.origin));
+                    .insert(orphan.reg, (span.span(sources)?, orphan.provenance.origin));
             }
         }
         let function = MirFunction {
@@ -572,9 +579,10 @@ impl<'a> FnExport<'a> {
                 let yielded_ty = export_type(ctx, op.deref(ctx).get_type(1))?;
                 self.reg_types.insert(next.yielded, yielded_ty);
                 if let Some(span) = &next.yielded_record.span {
-                    self.spans
-                        .0
-                        .insert(next.yielded, (span.span()?, next.yielded_record.origin));
+                    self.spans.0.insert(
+                        next.yielded,
+                        (span.span(self.sources)?, next.yielded_record.origin),
+                    );
                 }
                 let reference = |ty: TypeHandle| match export_type(ctx, ty)? {
                     Ty::Ref(reference) => Ok(reference),
@@ -1234,7 +1242,7 @@ impl<'a> FnExport<'a> {
         if let Some(span) = &provenance.span {
             self.spans
                 .0
-                .insert(reg.0, (span.span()?, provenance.origin));
+                .insert(reg.0, (span.span(self.sources)?, provenance.origin));
         }
         Ok(Reg(reg.0))
     }
