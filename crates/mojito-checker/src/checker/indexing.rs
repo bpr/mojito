@@ -783,7 +783,7 @@ impl Checker {
         } else {
             MethodCallArguments::ordinary(&arguments, &kwargs)
         };
-        self.infer_method_call(target.source_span(), object, "__setitem__", call)?;
+        self.infer_method_call(&target.source_span(), object, "__setitem__", call)?;
         let contract = self
             .selected_calls
             .borrow()
@@ -1069,7 +1069,7 @@ impl Checker {
             Ty::Struct(..) | Ty::Param { .. } => {
                 let descriptor = self.synthetic_slice_descriptor(&span, 0, kind);
                 self.infer_method_call(
-                    span.clone(),
+                    &span,
                     object,
                     "__getitem__",
                     MethodCallArguments::ordinary(std::slice::from_ref(&descriptor), &[]),
@@ -1198,7 +1198,7 @@ impl Checker {
             }
         }
         let result = self.infer_method_call(
-            span.clone(),
+            &span,
             object,
             "__getitem__",
             MethodCallArguments::ordinary(&actual_arguments, &keyword_arguments),
@@ -1427,7 +1427,7 @@ impl Checker {
                 })
             })) {
                 return self.infer_method_call(
-                    span,
+                    &span,
                     object,
                     "__getitem__",
                     MethodCallArguments::ordinary(&[], &[]),
@@ -1592,7 +1592,7 @@ impl Checker {
         {
             let parameter_arguments = [mojito_ast::ast::ParamArg::Value(index.clone())];
             let result = self.infer_method_call(
-                span,
+                &span,
                 object,
                 "__getitem_param__",
                 MethodCallArguments::parameterized(&parameter_arguments, &[], &[]),
@@ -1639,7 +1639,7 @@ impl Checker {
                 format!("{}${k}", family.place)
             };
             let ret = self.infer_method_call(
-                span.clone(),
+                &span,
                 object,
                 &method,
                 MethodCallArguments::ordinary(&[], &[]),
@@ -1794,7 +1794,7 @@ impl Checker {
         // projecting only its parameter/result types.
         if matches!(obj_ty, Ty::Param { .. }) {
             return self.infer_method_call(
-                span,
+                &span,
                 object,
                 "__getitem__",
                 MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
@@ -1831,7 +1831,7 @@ impl Checker {
         obj_ty: &Ty,
     ) -> Result<Ty, TypeError> {
         let result = self.infer_method_call(
-            span.clone(),
+            &span,
             object,
             "__getitem__",
             MethodCallArguments::ordinary(indices, &[]),

@@ -344,7 +344,7 @@ impl Checker {
         }
         let args = std::slice::from_ref(value);
         let ret = self.infer_method_call(
-            span.clone(),
+            span,
             receiver,
             dunder,
             MethodCallArguments::ordinary(args, &[]),

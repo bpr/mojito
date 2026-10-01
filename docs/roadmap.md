@@ -713,7 +713,7 @@ last.
   - Upstream also replaced the pointer-and-length `hash()` overload with
     `hash_bytes(ImmSpan[Byte])`, which lands in the same pass.
   - The levers are `checker/traits.rs` (the `Hasher` requirement set and its
-    shape message), `checker/method_calls/mc_infer.rs` (the intrinsic arms),
+    shape message), `checker/method_calls/intrinsic_receivers.rs` (the intrinsic arms),
     and `stdlib/std/hashlib/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
     plus every `hasher.update(...)` call site).
   - It changes a compiler-known trait's contract.
@@ -1057,7 +1057,7 @@ last.
     on `var t = Tuple(1, "x")`.
   - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
     lookup reports the missing member before the builtin tuple path
-    (`infer_tuple_method`, reached from `method_calls/mc_infer.rs`) or a
+    (`infer_tuple_method`, reached from `method_calls/intrinsic_receivers.rs`) or a
     `TupleTransformRequest` for the clone is ever considered.
   - Found in the 2026-09-17 gate triage; no fixture pins it yet.
   - The plan decides whether the annotation should keep the public `Tuple`
@@ -1254,7 +1254,7 @@ last.
   - The inferred spelling `P.plain(4)` works.
   - The explicit spelling parses as `Invoke` over `Member(P, plain)`. The
     error is raised before the non-parametric static path in
-    `checker/method_calls/mc_infer.rs` sees the call.
+    `checker/method_calls/type_receivers.rs` sees the call.
   - The plan must first find which pass infers the bare type name as a value.
   - Depends on nothing.
   - Model: Opus, Planned.
@@ -1755,7 +1755,7 @@ last.
   - The same borrow is why verification disagrees with the derived bodies
     of `Bag.get` in `assets/ok/loan_carrying_instance_clone.mojo` and of
     `List._get_copy`: the template records no borrow.
-  - The rule is the `BorrowViewResult` condition in `mc_infer.rs`: any
+  - The rule is the `BorrowViewResult` condition in `method_calls/call_contract.rs`: any
     loan-carrying struct result of a non-consuming method.
   - Dropping the borrow when the declared return names only the struct's own
     origin binders was tried. It lost the only link from `c.get()`'s result
@@ -2552,7 +2552,7 @@ last.
   - Once it binds, the method's collected elements also need judging by
     argument exclusivity, as a free call's are: the method path passes no
     `CollectedArguments` (`check_argument_origin_exclusivity` in
-    `method_calls/mc_infer.rs`), and the pin rejects
+    `method_calls/receiver_effects.rs`), and the pin rejects
     `S().show(Span(xs), Span(xs))` over a `var xs`.
   - `conformance/probes/method_pack_span_argument.mojo` pins it.
   - Found while judging variadic elements in argument exclusivity
@@ -2931,7 +2931,7 @@ last.
   `type 'Float64' has no method 'ne'`, though the pin accepts it.
   - Upstream's scalars are width-1 `SIMD`, so `lt`/`le`/`gt`/`ge`/`eq`/`ne`
     exist on them too. Mojito resolves those methods only on a multi-lane
-    `Ty::Simd` receiver (`crates/mojito-checker/src/checker/method_calls/mc_infer.rs`).
+    `Ty::Simd` receiver (`crates/mojito-checker/src/checker/method_calls/simd_receivers.rs`).
   - The methods must keep the multi-lane semantics: the pin's scalar
     `s.ne(s)` is `False` for a NaN (ordered), while infix `s != s` is `True`.
   - Not a wrong answer, only a missing spelling. Until then, `x < y or x > y`
@@ -3077,21 +3077,13 @@ lines. `checker/template_facts.rs` and its submodules stay frozen: their
 line count only goes down, as section 1 deletes the mechanism stage by
 stage. The rest needs semantic extraction, not line moves.
 
-- [ ] **6.1 Split `infer_method_call`**
-
-  `checker/method_calls/mc_infer.rs` (about 1,530 lines) is one method.
-  - Extract receiver-family branches beside `selection`, `statics`, and
-    `builtin_types`.
-  - Depends on nothing. It moves code several section 3 entries name as
-    their lever, so it lands between them rather than beside them.
-
-- [ ] **6.2 Split `verify_instruction`**
+- [ ] **6.1 Split `verify_instruction`**
 
   `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
   - Extract per-family check helpers.
   - Depends on nothing.
 
-- [ ] **6.3 Shrink the 2 kloc band**
+- [ ] **6.2 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),

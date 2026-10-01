@@ -49,7 +49,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage and the elaborator's `check_default_effects` (`comptime/ctfe.rs`) one that does I/O | The VM's `bind_for_call` runs the function per call; pliron calls it from the caller (`evaluated_default_value` in `lower/calls.rs`), releasing a borrowed slot's value through `default_temps`. `native::mono` (`instantiate_constructed_defaults`) and pliron's `reachable_set` carry the edge no call instruction spells. |
 | Narrow float lanes (`Float16`, `Float32`) | `ast::Dtype::{is_narrow_float, round_lane, float_literal_lane}` over `common::float::{f16, round_f16, f16_bits}` and `literal::FloatLiteral::{to_f16, to_f32}` (crate `mojito-common`) | The VM's lane rounding, literal materialization, `to_bits`, and `__fma__` (`runtime.rs`); `CtLane::from_value` (`mojito-types/ct.rs`); pliron's `widen_float_lane`/`round_float_lane` (`lower/arith.rs`), `lower_narrow_float_binop` (`lower/binops.rs`), `narrow_float_constant` (`lower/emit.rs`), and `simd_round_float_vector` (`lower/simd.rs`). |
-| `DType` values | `ast::Dtype::{code, is_integral, is_floating_point, is_signed, is_unsigned, is_numeric, is_float8, is_half_float, predicate, float_query}` with `DTYPE_PREDICATES`, `DTYPE_FLOAT_QUERIES`, the `DTYPE_*_MASK` bits, and `UPSTREAM_ONLY_DTYPE_NAMES` (crate `mojito-ast`) | The checker's `dtype_constant` (`checker/indexing.rs`, recording `SemanticAdjustment::DtypeConstant` for `DType.<name>` and a `SIMD` type operand's `dtype` via `member_type_operand`; `infer_member` records it for a value's `dtype` beside `length`), its `dtype_float_query` (recording `SemanticAdjustment::DtypeFloatQuery`), and its `Ty::Dtype` method arm (`method_calls/mc_infer.rs`); MIR's `Const::Dtype` and `CheckedConst::Dtype`; the elaborator's predicate and float-query folds (`comptime/eval.rs`), a `SIMD` type's `dtype` in `associated_value` (`comptime/elab.rs`), and dtype equality (`compare_numeric_values`); the VM's `Value::Dtype` (display, `scalar_repr`, `hash_leaf_value`, the receiver arm in `invoke.rs`); pliron's `ScalarTy::Dtype` (`dtype_constant`, `dtype_text`, `lower_dtype_predicate`). A `DType` hashes as its `UInt8` code through `types::hash_leaf_ty`. |
+| `DType` values | `ast::Dtype::{code, is_integral, is_floating_point, is_signed, is_unsigned, is_numeric, is_float8, is_half_float, predicate, float_query}` with `DTYPE_PREDICATES`, `DTYPE_FLOAT_QUERIES`, the `DTYPE_*_MASK` bits, and `UPSTREAM_ONLY_DTYPE_NAMES` (crate `mojito-ast`) | The checker's `dtype_constant` (`checker/indexing.rs`, recording `SemanticAdjustment::DtypeConstant` for `DType.<name>` and a `SIMD` type operand's `dtype` via `member_type_operand`; `infer_member` records it for a value's `dtype` beside `length`), its `dtype_float_query` (recording `SemanticAdjustment::DtypeFloatQuery`), and its `Ty::Dtype` method arm (`infer_dtype_predicate` in `method_calls/simd_receivers.rs`); MIR's `Const::Dtype` and `CheckedConst::Dtype`; the elaborator's predicate and float-query folds (`comptime/eval.rs`), a `SIMD` type's `dtype` in `associated_value` (`comptime/elab.rs`), and dtype equality (`compare_numeric_values`); the VM's `Value::Dtype` (display, `scalar_repr`, `hash_leaf_value`, the receiver arm in `invoke.rs`); pliron's `ScalarTy::Dtype` (`dtype_constant`, `dtype_text`, `lower_dtype_predicate`). A `DType` hashes as its `UInt8` code through `types::hash_leaf_ty`. |
 | Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first parameter argument; the result type is the destination register's checked type. |
 | Compiler-called Mojo bodies | `stdlib/std/_intrinsics.mojo` (`_pow_int`, `_int_digits`, `_uint_digits`), named by `mojito_symbol::symbol::{POW_INT_SYMBOL, INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL, DIGITS_BUFFER_BYTES, calls_pow_int}` | The Mojo implementations behind `**` on `Int`/`UInt` and integer display, which the builtin has no struct to hang a method on. `std.prelude` imports the module so every linked program carries them, and they stay out of `PRELUDE_EXPORTS`. Callers: the VM's `apply_binop`/`format_value`, the native monomorphizer's roots, and pliron's `reachable_set` plus `lower_pow`/`format_scalar`. |
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
@@ -110,7 +110,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_stmt.rs` lowers to `KeepAlive`.
 - `checker/bound_defaults.rs` owns the requirement defaults bound at a call
   through a trait bound: `record_bound_default_arguments` (called from the
-  bound branch of `method_calls/mc_infer.rs`) records, by the call's
+  bound branch, `resolve_bound_method` in `method_calls/resolution.rs`)
+  records, by the call's
   origin, each omitted requirement default some conformer's witness
   declares otherwise (`witnesses_default_alike`), the catalog keeps them
   across discovery rounds (`TemplateCatalog::bound_default_arguments`,
@@ -155,9 +156,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   contract and `materialize_temporary_holder` gives a call-result holder
   its hidden slot), the positional
   String-slice rejection hint, and member access.
-- `checker/method_calls.rs` (split across
-  `method_calls/{mc_infer,selection,statics,builtin_types}.rs`) owns
-  method-call inference (including the `Writer.write` intrinsic and its
+- `checker/method_calls.rs` (split across `method_calls/`) owns method-call
+  inference. `mc_infer.rs` keeps `infer_method_call` as a sequence of stages
+  over one `MethodCallSite`: `type_receivers.rs` types a receiver that
+  spells a type, `intrinsic_receivers.rs` and `simd_receivers.rs` the
+  receivers that answer without a declared signature, `resolution.rs`
+  selects a signature per receiver family (struct, bound, builtin) and
+  retargets to a minted clone, `receiver_effects.rs` checks the receiver
+  and argument conventions and builds the reference result, and
+  `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
+  `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
+  pointer/List/Tuple helpers. Together they own method-call inference (including the `Writer.write` intrinsic and its
   inverse: `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
   `mir/lower_expr/expr.rs` lowers as `writer.write(x)`, and
@@ -330,7 +339,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   through `constraints::self_param_value`) to a `SimdDtype::Expr`/
   `SimdWidth::Expr` slot, `annotations::simd_of` builds the type through
   `types::simd_ty_from_slots`, and the SIMD sites in `operators.rs`,
-  `method_calls/mc_infer.rs`, `indexing.rs`, and `builtins.rs` gate on
+  `method_calls/simd_receivers.rs`, `indexing.rs`, and `builtins.rs` gate on
   `SimdDtype::licenses` and record lane facts only for known slots. `checker.rs`
   re-exports `validates_body` as `validates_comptime_body`, the body gate
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`

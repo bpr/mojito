@@ -585,7 +585,7 @@ impl Checker {
             && matches!(rt, Ty::Struct(name, _) if self.structs.contains_key(name))
         {
             let ret = self.infer_method_call(
-                span,
+                &span,
                 right,
                 "__contains__",
                 MethodCallArguments::ordinary(std::slice::from_ref(left), &[]),

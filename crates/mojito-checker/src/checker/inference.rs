@@ -894,14 +894,14 @@ impl Checker {
                         .dependent_index_accessor_method(object, field, param_args, args, kwargs)?
                     {
                         return self.infer_method_call(
-                            expr.source_span(),
+                            &expr.source_span(),
                             object,
                             &accessor,
                             MethodCallArguments::parameterized(&[], &[], &[]),
                         );
                     }
                     match self.infer_method_call(
-                        expr.source_span(),
+                        &expr.source_span(),
                         object,
                         field,
                         MethodCallArguments::parameterized(param_args, args, kwargs),
@@ -1110,7 +1110,7 @@ impl Checker {
                 args,
                 kwargs,
             } => self.infer_method_call(
-                expr.source_span(),
+                &expr.source_span(),
                 object,
                 method,
                 MethodCallArguments::ordinary(args, kwargs),
@@ -1143,7 +1143,7 @@ impl Checker {
                     && self.type_keyed_accessor_receiver(vname)
                 {
                     return self.infer_method_call(
-                        expr.source_span(),
+                        &expr.source_span(),
                         object,
                         "__getitem_param__",
                         MethodCallArguments::parameterized(std::slice::from_ref(&arg), &[], &[]),

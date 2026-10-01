@@ -150,7 +150,7 @@ impl Checker {
             });
         }
         let ty = self.infer_method_call(
-            span.clone(),
+            &span,
             receiver,
             method,
             MethodCallArguments {

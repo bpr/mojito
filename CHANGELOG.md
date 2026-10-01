@@ -66,6 +66,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `infer_method_call`, one 2,400-line method in
+  `checker/method_calls/mc_infer.rs`, is now a short sequence of stages over
+  one `MethodCallSite`. The receiver families move beside `selection`,
+  `statics`, and `builtin_types`: `type_receivers.rs`,
+  `intrinsic_receivers.rs`, `simd_receivers.rs`, `resolution.rs`,
+  `receiver_effects.rs`, and `call_contract.rs`. No method needs a
+  `too_many_lines` or `cognitive_complexity` exemption, and
+  `infer_method_call` borrows its span. The move changes no behavior;
+  `docs/symbol-map.md` lists the owners.
 - `expr_unconverted`, the 2,600-line match over `ExprKind` in
   `mir/lower_expr/expr.rs`, is now a dispatch table: each arm calls one
   `Flatten` method. The call, method-call, and access arms move to
