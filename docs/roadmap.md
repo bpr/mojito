@@ -45,25 +45,7 @@ goes to section 3, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage.
 
-- [ ] **1.1 (P0) No count says which mechanism instantiates each generic
-  body**
-
-  Problem: the plan orders its stages by how many bodies each one moves, and
-  nothing measures that.
-  - Count, per compilation, the bodies the AST cloner mints by class: bodies
-    keyed by `comptime if` or `comptime for`, packs, `DType` and vector
-    values, value-keyed structs, variadic structs, per-instantiation method
-    clones, per-call method clones, nested defs.
-  - Count the instance bodies the checker infers, the ones it derives, and
-    the ones an erased body serves with no clone.
-  - Report them beside the existing template statistics, for Hello World,
-    `generic.mojo`, and `stdlib_heavy.mojo`.
-  - Record the table in the plan, with the `docs/performance.md` rows as the
-    budget baseline.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.2 (P1) No test pins that elaborated MIR runs on the VM as the
+- [ ] **1.1 (P1) No test pins that elaborated MIR runs on the VM as the
   erased program does**
 
   Problem: the A1 census showed it for its 893 corpus inputs, and that test
@@ -78,7 +60,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 (P1) `mir::verify` cannot tell elaborated MIR from parametric
+- [ ] **1.2 (P1) `mir::verify` cannot tell elaborated MIR from parametric
   MIR**
 
   Problem: one verifier mode accepts both, so a symbolic type left in a
@@ -91,7 +73,7 @@ recipe. A body the certificates do not cover waits for its stage.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **1.4 (P1) The VM runs erased generic bodies, which Mojo's interpreter
+- [ ] **1.3 (P1) The VM runs erased generic bodies, which Mojo's interpreter
   never does**
 
   Problem: the VM resolves a generic body's parameters at run time while the
@@ -103,12 +85,12 @@ recipe. A body the certificates do not cover waits for its stage.
   - The serialized artifact stays the pre-elaboration MIR, and `exec`
     elaborates what it loads.
   - CTFE keeps its own VM run until 1.12.
-  - Measure against the 1.1 baseline. The plan's decision D4 is the budget.
-  - Depends on 1.1, 1.2, 1.3, and on the section 2 entry for a static taking
+  - Measure against the plan's P0 baseline. Its decision D4 is the budget.
+  - Depends on 1.1, 1.2, and on the section 2 entry for a static taking
     a pack of its struct's parameter type, which `native::mono` refuses.
   - Model: Fable, Planned.
 
-- [ ] **1.5 (P2) An ordinary generic struct's methods are cloned per
+- [ ] **1.4 (P2) An ordinary generic struct's methods are cloned per
   instance**
 
   Problem: `Optional[Int].get` is an AST clone checked or derived per
@@ -123,11 +105,11 @@ recipe. A body the certificates do not cover waits for its stage.
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.4, and on the section 6 entry that splits
+  - Depends on 1.3, and on the section 6 entry that splits
     `template_facts.rs`.
   - Model: Fable, Planned.
 
-- [ ] **1.6 (P2) An explicit application of a trait-bound generic `def` is
+- [ ] **1.5 (P2) An explicit application of a trait-bound generic `def` is
   cloned**
 
   Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
@@ -136,8 +118,24 @@ recipe. A body the certificates do not cover waits for its stage.
   - The bound check the resolver makes for a dropped argument stays at the
     call.
   - Delete the function certificate classes that exist only for these clones.
-  - Depends on 1.5.
+  - Depends on 1.4.
   - Model: Fable, Planned.
+
+- [ ] **1.6 (P3) No benchmark program mints a `comptime if`, `comptime for`,
+  or pack body**
+
+  Problem: the three programs the P0 census measured clone no `def` keyed by
+  a `comptime if`, a `comptime for`, or a type pack, so stages P3a and P3b
+  move no body that decision D4's budget rows time.
+  - The census table is `docs/parametric-mir-plan.md` §P0. Those three
+    classes read zero for Hello World, `generic.mojo`, and
+    `stdlib_heavy.mojo`.
+  - Add one `benchmarks/compile` program that calls keyed and variadic
+    `def`s, user and bundled, at several instantiations.
+  - Record its census and its `docs/performance.md` row beside the P0
+    baseline before P3a starts.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **1.7 (P3a) MIR cannot express a `comptime if`**
 
@@ -152,7 +150,7 @@ recipe. A body the certificates do not cover waits for its stage.
     regions (plan decision D5).
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.4.
+  - Depends on 1.3 and 1.6.
   - Model: Fable, Planned.
 
 - [ ] **1.8 (P3b) MIR cannot express a `comptime for` or a type pack**
@@ -215,8 +213,9 @@ recipe. A body the certificates do not cover waits for its stage.
   - The elaborator's worklist finds instances transitively from the entries.
   - CTFE runs on elaborated MIR inside that worklist.
   - Decide module-scope `comptime` values here (plan decision D3).
-  - Every `docs/performance.md` row must be faster than the 1.1 baseline.
-  - Depends on 1.5, 1.6, 1.8, 1.10, and 1.11.
+  - Every `docs/performance.md` row must be faster than the plan's P0
+    baseline.
+  - Depends on 1.4, 1.5, 1.8, 1.10, and 1.11.
   - Model: Fable, Planned.
 
 - [ ] **1.13 (P5) The replaced mechanisms are still in the tree**
@@ -242,6 +241,23 @@ recipe. A body the certificates do not cover waits for its stage.
   - The bundled library is the first consumer, built once per compiler build.
   - Depends on 1.13.
   - Model: Fable, Planned.
+
+- [ ] **1.15 (P0) The census cannot tell an erased template from a clone that
+  keeps a parameter**
+
+  Problem: `--instantiation-census` counts every parametric body left in MIR
+  as erased, and a cloned body that still declares a parameter is one of
+  them.
+  - `Tuple$t2[…].write_to` is a clone, and it is still generic in its writer.
+    It is counted once as cloned and once as an erased body.
+  - The MIR function carries no mark saying the cloner minted it, and the
+    census does not match clone names against lowered symbols.
+  - Report the two apart, so the erased rows count only bodies no clone
+    replaces.
+  - Nothing blocks on it. The cloned rows and the checker rows are exact.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 
 ### 2. Native Backend
 

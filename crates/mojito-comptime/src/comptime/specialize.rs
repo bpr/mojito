@@ -57,6 +57,7 @@ impl Elab<'_> {
                 method_traces: Vec::new(),
                 generated: super::GeneratedDeclarations::default(),
                 ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
+                clones: mojito_checked::census::CloneCensus::default(),
             });
         }
         if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
@@ -396,6 +397,7 @@ impl Elab<'_> {
             method_traces: Vec::new(),
             generated: super::GeneratedDeclarations::default(),
             ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
+            clones: mojito_checked::census::CloneCensus::default(),
         })
     }
 

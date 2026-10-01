@@ -2475,6 +2475,10 @@ pub struct TemplateStats {
     /// Pack-keyed bodies source validation left to the per-instantiation
     /// check, each with the use of the unbound pack it has no rule for.
     pub no_verdict: Vec<(String, String)>,
+    /// The generated bodies that were inferred at least once, by identity.
+    pub inferred_instances: std::collections::HashSet<InstanceName>,
+    /// The generated bodies served from a template at least once.
+    pub derived_instances: std::collections::HashSet<InstanceName>,
 }
 
 impl TemplateStats {
@@ -2489,6 +2493,15 @@ impl TemplateStats {
         self.verified.extend(other.verified);
         self.refused.extend(other.refused);
         self.no_verdict.extend(other.no_verdict);
+        self.inferred_instances.extend(other.inferred_instances);
+        self.derived_instances.extend(other.derived_instances);
+    }
+
+    /// The generated bodies served from a template and never inferred.
+    pub fn derived_only_instances(&self) -> usize {
+        self.derived_instances
+            .difference(&self.inferred_instances)
+            .count()
     }
 }
 

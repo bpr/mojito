@@ -1523,6 +1523,7 @@ impl Elab<'_> {
                 mojito_ast::ast::stamp_source(&mut clone.body, &tag);
                 generated.methods.push((name.clone(), clone.name.clone()));
             }
+            self.ctfe_clones.set(self.ctfe_clones.get() + clones.len());
             methods.extend(clones);
         }
         // Evaluating the aliases registers the vector-keyed specializations
@@ -1541,8 +1542,9 @@ impl Elab<'_> {
             let Ok(spec) = self.generate_value_struct_spec(&orig, &vals) else {
                 continue;
             };
-            if let StmtKind::Struct { name, .. } = &spec.kind {
+            if let StmtKind::Struct { name, methods, .. } = &spec.kind {
                 generated.structs.push(name.clone());
+                self.ctfe_clones.set(self.ctfe_clones.get() + methods.len());
             }
             // The clone sits where its template was declared, so a retained
             // declaration that names it resolves in order at the boundary.

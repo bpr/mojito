@@ -36,8 +36,29 @@ pub struct CompiledProgram {
     mir: MirProgram,
     elaborated: OnceLock<MirProgram>,
     template_stats: crate::templates::TemplateStats,
+    clones: crate::census::CloneCensus,
 }
 impl CompiledProgram {
+    /// Which mechanism instantiated each generic body of this compilation.
+    /// Monomorphizes the program from `main` to count what its erased bodies
+    /// serve, so it costs a native specialization.
+    pub fn instantiation_census(&self) -> crate::census::InstantiationCensus {
+        let mir = self.elaborated_mir();
+        let erased_served = crate::native::mono::specialize(mir, &["main".to_string()])
+            .ok()
+            .map(|specialized| crate::census::ErasedServed {
+                bodies: specialized.parametric.reached,
+                instances: specialized.parametric.instances,
+            });
+        crate::census::InstantiationCensus {
+            cloned: self.clones.clone(),
+            inferred: self.template_stats.inferred_instances.len(),
+            derived: self.template_stats.derived_only_instances(),
+            erased_bodies: crate::native::mono::parametric_bodies(mir).len(),
+            erased_served,
+        }
+    }
+
     /// Which generic bodies this compilation inferred, and which clones it
     /// served from a checked template instead.
     pub const fn template_stats(&self) -> &crate::templates::TemplateStats {
@@ -310,6 +331,8 @@ impl Compiler {
         // a compile-time-keyed stub.
         let mut unserved_template_uses;
         let mut stub_reaching_structs;
+        // What the elaboration `checked` was checked from minted.
+        let mut clones;
         let mut checked = {
             let Elaborated {
                 program: discovery,
@@ -320,6 +343,7 @@ impl Compiler {
                 method_traces,
                 generated,
                 ctfe_template_stats,
+                clones: minted_clones,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
                 elaborate_prepared(
@@ -332,6 +356,7 @@ impl Compiler {
                 .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
+            clones = minted_clones;
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
             if !self.allow_executable_module_scope {
@@ -481,6 +506,7 @@ impl Compiler {
                 method_traces,
                 generated,
                 ctfe_template_stats,
+                clones: minted_clones,
             } = {
                 let _elaborate = timing::span("elaborate");
                 elaborate_prepared(
@@ -499,6 +525,7 @@ impl Compiler {
             };
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
+            clones = minted_clones;
             // Instances the specializer minted on its own (closed applications
             // reached from user code and from other clones) are already
             // served; the checker's recordings of them are not new work.
@@ -550,6 +577,21 @@ impl Compiler {
         timing::count("param_expr.constant_folds", param_stats.constant_folds);
         timing::count("param_expr.replacements", param_stats.replacements);
         timing::count("param_expr.contexts", param_stats.contexts);
+        for class in crate::census::CloneClass::ALL {
+            let bodies = clones.count(class);
+            if bodies > 0 {
+                timing::count(class.counter(), bodies as u64);
+            }
+        }
+        let template_stats = templates_catalog.stats();
+        timing::count(
+            "instantiation.checked.inferred",
+            template_stats.inferred_instances.len() as u64,
+        );
+        timing::count(
+            "instantiation.checked.derived",
+            template_stats.derived_only_instances() as u64,
+        );
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
@@ -562,6 +604,7 @@ impl Compiler {
             mir,
             elaborated: OnceLock::new(),
             template_stats: templates_catalog.stats().clone(),
+            clones,
         })
     }
     /// Execute an ownership-verified program using the configured backend.

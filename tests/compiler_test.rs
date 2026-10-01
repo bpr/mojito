@@ -1058,6 +1058,61 @@ fn certified_count(stats: &mojito::templates::TemplateStats, name: &str) -> usiz
         .count()
 }
 
+const CENSUS_BASELINE: &str = "def main():\n    pass\n";
+
+const CENSUS_CLASSES: &str = r"
+def pick[n: Int](x: Int) -> Int:
+    comptime if n > 1:
+        return x * n
+    else:
+        return x
+
+def total[*Ts: Intable](*args: *Ts) -> Int:
+    var s = 0
+    comptime for i in range(len(args)):
+        s += Int(args[i])
+    return s
+
+@fieldwise_init
+struct Box[T: Copyable & Movable & Deinitable]:
+    var v: Self.T
+    def get(self) -> Self.T:
+        return self.v.copy()
+
+def main():
+    print(pick[3](2))
+    print(total(1, 2, 3))
+    var b = Box[Int](4)
+    print(b.get())
+";
+
+#[test]
+fn instantiation_census_counts_each_cloned_class() {
+    use mojito::census::CloneClass;
+    let census = |source: &str| {
+        Compiler::default()
+            .compile_source(source, std::path::Path::new("census.mojo"))
+            .expect("compile")
+            .instantiation_census()
+    };
+    let baseline = census(CENSUS_BASELINE);
+    let classes = census(CENSUS_CLASSES);
+    let minted = |class: CloneClass| classes.cloned.count(class) - baseline.cloned.count(class);
+    assert_eq!(minted(CloneClass::ComptimeIfDef), 1, "pick[3]");
+    assert_eq!(minted(CloneClass::PackDef), 1, "total(1, 2, 3)");
+    assert_eq!(minted(CloneClass::InstanceMethod), 1, "Box[Int].get");
+    assert_eq!(minted(CloneClass::NestedDef), 0);
+    for census in [&baseline, &classes] {
+        assert_eq!(
+            census.inferred + census.derived,
+            census.cloned.total(),
+            "every cloned body is inferred or derived"
+        );
+    }
+    let served = classes.erased_served.expect("main specializes");
+    assert!(served.instances >= served.bodies);
+}
+
 #[test]
 fn template_two_types_infers_the_template_once() {
     let compiler = Compiler::default();

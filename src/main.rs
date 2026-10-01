@@ -76,6 +76,10 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if cli.instantiation_census && (command != Some("run") || cli.backend == BackendKind::Pliron) {
+        eprintln!("--instantiation-census is only valid with the run command on the VM backend");
+        return ExitCode::FAILURE;
+    }
     if !matches!(command, Some("compile" | "run" | "link")) && cli.runtime_lib.is_some() {
         eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
         return ExitCode::FAILURE;
@@ -146,6 +150,10 @@ struct CliArgs {
     /// each pipeline phase (see `mojito_common::timing`) —
     /// the bench driver's channel.
     timings: bool,
+    /// `--instantiation-census` for `run` on the VM backend: print
+    /// `census\t<name>\t<count>` lines to stderr saying which mechanism
+    /// instantiated each generic body.
+    instantiation_census: bool,
     /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
     /// by the backend; raw here so the default build carries no backend
     /// types).
@@ -167,6 +175,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut target = None;
     let mut print_toolchain = false;
     let mut timings = false;
+    let mut instantiation_census = false;
     let mut native_debug = None;
     let mut runtime_lib = None;
     let mut iter = raw.into_iter();
@@ -211,6 +220,8 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             print_toolchain = true;
         } else if arg == "--timings" {
             timings = true;
+        } else if arg == "--instantiation-census" {
+            instantiation_census = true;
         } else if let Some(level) = arg.strip_prefix("--native-debug=") {
             native_debug = Some(level.to_string());
         } else if arg == "--native-debug" {
@@ -238,6 +249,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         target,
         print_toolchain,
         timings,
+        instantiation_census,
         native_debug,
         runtime_lib,
     })
@@ -297,7 +309,7 @@ fn program_stage(
 fn stage_run(file: Option<&str>, cli: &CliArgs) -> ExitCode {
     let result = match cli.backend {
         BackendKind::Pliron => run_program_native(file, cli),
-        backend => run_program(file, backend, &cli.link_options),
+        backend => run_program(file, backend, cli),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -383,12 +395,8 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
     )
 }
 
-fn run_program(
-    file: Option<&str>,
-    backend: BackendKind,
-    link_options: &LinkOptions,
-) -> Result<(), String> {
-    let compiler = Compiler::new(link_options.clone(), backend);
+fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
+    let compiler = Compiler::new(cli.link_options.clone(), backend);
     let compiled = {
         let _frontend = mojito::timing::span("frontend");
         compile_input(&compiler, file)?
@@ -411,7 +419,51 @@ fn run_program(
             println!("{n} = {v}");
         }
     }
+    if cli.instantiation_census {
+        eprint!("{}", census_report(&compiled.instantiation_census()));
+    }
     Ok(())
+}
+
+/// The `--instantiation-census` lines: the bodies the AST cloner minted by
+/// class, the ones the checker inferred and derived, and what the erased
+/// bodies serve.
+fn census_report(census: &mojito::census::InstantiationCensus) -> String {
+    let unreached = || "unavailable".to_string();
+    let mut rows: Vec<(&str, String)> = mojito::census::CloneClass::ALL
+        .iter()
+        .map(|class| (class.counter(), census.cloned.count(*class).to_string()))
+        .collect();
+    rows.extend([
+        (
+            "instantiation.cloned.total",
+            census.cloned.total().to_string(),
+        ),
+        (
+            "instantiation.checked.inferred",
+            census.inferred.to_string(),
+        ),
+        ("instantiation.checked.derived", census.derived.to_string()),
+        (
+            "instantiation.erased.bodies",
+            census.erased_bodies.to_string(),
+        ),
+        (
+            "instantiation.erased.bodies_reached",
+            census
+                .erased_served
+                .map_or_else(unreached, |served| served.bodies.to_string()),
+        ),
+        (
+            "instantiation.erased.instances",
+            census
+                .erased_served
+                .map_or_else(unreached, |served| served.instances.to_string()),
+        ),
+    ]);
+    rows.iter()
+        .map(|(name, count)| format!("census\t{name}\t{count}\n"))
+        .collect()
 }
 
 /// `emit-mir`: compile source through ownership analysis and print the exact
@@ -743,7 +795,8 @@ fn print_usage() {
          \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
-         \x20 --timings              print per-phase timings and counters to stderr\n\n\
+         \x20 --timings              print per-phase timings and counters to stderr\n\
+         \x20 --instantiation-census print which mechanism instantiated each generic body (run, VM)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\

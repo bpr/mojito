@@ -422,6 +422,35 @@ ordinary bundled structs. The figures below replace it.
   either benchmark. The shapes derive in user structs
   (`template_method_subscript_store.mojo`).
 
+### Instantiation census and the P0 baseline (2026-09-30)
+
+`mojito run --instantiation-census FILE` counts which mechanism instantiates
+each generic body. The full table and its reading are in
+[`docs/parametric-mir-plan.md`](parametric-mir-plan.md) §P0. Taken at
+`86a25b67` plus the census itself:
+
+| Program | Cloned | Inferred | Derived | Parametric in MIR | Reached from `main` | Instances served |
+|---|---:|---:|---:|---:|---:|---:|
+| `hello.mojo` | 244 | 21 | 223 | 345 | 0 | 0 |
+| `generic.mojo` | 329 | 26 | 303 | 357 | 10 | 10 |
+| `stdlib_heavy.mojo` | 666 | 48 | 618 | 385 | 36 | 98 |
+
+These count distinct bodies. The table under "Body inference by kind" counts
+visits, one per check pass, so the two do not compare.
+
+The plan's decision D4 measures each stage against this baseline: `total`
+from `--timings`, debug profile, `run` on the VM, median of three with the
+range, rustc 1.96.1.
+
+| Program | Debug `run` |
+|---|---:|
+| `hello.mojo` | 11.56 s (10.82–11.66) |
+| `generic.mojo` | 11.54 s (11.50–11.72) |
+| `stdlib_heavy.mojo` | 15.55 s (15.32–15.82) |
+
+Absolute times drift between sessions, so a stage reruns the commit before it
+interleaved with its own, as the measurements above do.
+
 ### Parameter-expression attributes (2026-09-20)
 
 Value arguments, value defaults, and dependent types became typed canonical

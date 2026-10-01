@@ -1,0 +1,141 @@
+//! The instantiation census: which mechanism instantiates each generic body
+//! of one compilation.
+//!
+//! The AST cloner reports the bodies it mints by class, the checker reports
+//! which of those it inferred and which it derived from a checked template,
+//! and the driver adds what the parametric bodies kept in MIR serve with no
+//! clone. `docs/parametric-mir-plan.md` orders its stages by these counts.
+
+/// Why the AST cloner minted a body, as one class per body.
+///
+/// A body that several classes describe takes the one whose stage of the
+/// plan lands last, since the cloner keeps it until then: a `def` clone is
+/// tested in the order `DTypeVectorDef`, `PackDef`, `ComptimeForDef`,
+/// `ComptimeIfDef`, `ValueDef`, `TypeDef`, and a member of a struct
+/// specialized whole takes its struct's class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CloneClass {
+    /// A `def` clone with only type arguments baked in and no compile-time
+    /// control flow in its template: an explicit application.
+    TypeDef,
+    /// A `def` clone whose template holds a `comptime if`.
+    ComptimeIfDef,
+    /// A `def` clone whose template holds a `comptime for`, with no pack.
+    ComptimeForDef,
+    /// A `def` clone that expands a type pack.
+    PackDef,
+    /// A `def` clone keyed by a `DType` or vector value.
+    DTypeVectorDef,
+    /// A `def` clone keyed by any other value, with no compile-time control
+    /// flow in its template.
+    ValueDef,
+    /// A member of a struct specialized whole for a `DType` or vector value.
+    DTypeVectorStruct,
+    /// A member of a struct specialized whole for any other value.
+    ValueStruct,
+    /// A member of a variadic struct specialized whole (`Tuple$…`).
+    VariadicStruct,
+    /// A per-instantiation method clone whose template body holds no
+    /// compile-time control flow.
+    InstanceMethod,
+    /// A per-instantiation method clone whose template body holds a
+    /// `comptime if` or a `comptime for`.
+    InstanceMethodComptime,
+    /// A per-call method clone, for the method's own compile-time parameters.
+    PerCallMethod,
+    /// A clone of a `def` nested in another body.
+    NestedDef,
+    /// A method clone or a member of a struct specialized whole, minted for
+    /// a compile-time evaluation's own subprogram.
+    Ctfe,
+}
+
+impl CloneClass {
+    pub const ALL: [Self; 14] = [
+        Self::TypeDef,
+        Self::ComptimeIfDef,
+        Self::ComptimeForDef,
+        Self::PackDef,
+        Self::DTypeVectorDef,
+        Self::ValueDef,
+        Self::DTypeVectorStruct,
+        Self::ValueStruct,
+        Self::VariadicStruct,
+        Self::InstanceMethod,
+        Self::InstanceMethodComptime,
+        Self::PerCallMethod,
+        Self::NestedDef,
+        Self::Ctfe,
+    ];
+
+    /// The class's `--timings` counter.
+    pub const fn counter(self) -> &'static str {
+        match self {
+            Self::TypeDef => "instantiation.cloned.def_type_arguments",
+            Self::ComptimeIfDef => "instantiation.cloned.def_comptime_if",
+            Self::ComptimeForDef => "instantiation.cloned.def_comptime_for",
+            Self::PackDef => "instantiation.cloned.def_pack",
+            Self::DTypeVectorDef => "instantiation.cloned.def_dtype_vector",
+            Self::ValueDef => "instantiation.cloned.def_value",
+            Self::DTypeVectorStruct => "instantiation.cloned.struct_dtype_vector",
+            Self::ValueStruct => "instantiation.cloned.struct_value",
+            Self::VariadicStruct => "instantiation.cloned.struct_variadic",
+            Self::InstanceMethod => "instantiation.cloned.method_per_instantiation",
+            Self::InstanceMethodComptime => {
+                "instantiation.cloned.method_per_instantiation_comptime"
+            }
+            Self::PerCallMethod => "instantiation.cloned.method_per_call",
+            Self::NestedDef => "instantiation.cloned.nested_def",
+            Self::Ctfe => "instantiation.cloned.ctfe",
+        }
+    }
+}
+
+/// The bodies one elaboration minted, by class.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloneCensus {
+    counts: std::collections::BTreeMap<CloneClass, usize>,
+}
+
+impl CloneCensus {
+    pub fn add(&mut self, class: CloneClass, bodies: usize) {
+        if bodies > 0 {
+            *self.counts.entry(class).or_default() += bodies;
+        }
+    }
+
+    pub fn count(&self, class: CloneClass) -> usize {
+        self.counts.get(&class).copied().unwrap_or_default()
+    }
+
+    pub fn total(&self) -> usize {
+        self.counts.values().sum()
+    }
+}
+
+/// Which mechanism instantiated each generic body of one compilation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstantiationCensus {
+    /// The bodies the AST cloner minted for the converged program.
+    pub cloned: CloneCensus,
+    /// Distinct cloned bodies the checker inferred, over every discovery
+    /// round and every compile-time evaluation's subprogram.
+    pub inferred: usize,
+    /// Distinct cloned bodies the checker served from a checked template and
+    /// never inferred, over the same rounds.
+    pub derived: usize,
+    /// Parametric bodies in the converged MIR: the ones a clone does not
+    /// replace, which run erased on the VM.
+    pub erased_bodies: usize,
+    /// The erased bodies `main` reaches, and the concrete instances
+    /// monomorphization substitutes from them. `None` when the program has
+    /// no `main` or monomorphization refuses it.
+    pub erased_served: Option<ErasedServed>,
+}
+
+/// What the erased bodies of a program serve with no clone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErasedServed {
+    pub bodies: usize,
+    pub instances: usize,
+}

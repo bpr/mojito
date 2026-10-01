@@ -142,9 +142,29 @@ impl<'a> Specializer<'a> {
                 ),
             });
         }
+        let parametric_bodies = parametric_bodies(self.source);
+        let emitted: HashSet<&str> = program
+            .functions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let instance_templates: Vec<&str> = self
+            .instances
+            .iter()
+            .filter(|(key, name)| {
+                emitted.contains(name.as_str()) && parametric_bodies.contains(key.template.as_str())
+            })
+            .map(|(key, _)| key.template.as_str())
+            .collect();
+        let parametric = ParametricInstances {
+            bodies: parametric_bodies.len(),
+            reached: instance_templates.iter().collect::<HashSet<_>>().len(),
+            instances: instance_templates.len(),
+        };
         Ok(SpecializedProgram {
             program,
             entries: entry_map,
+            parametric,
         })
     }
 

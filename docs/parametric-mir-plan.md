@@ -1,6 +1,7 @@
 # Parametric MIR and One Elaborator: Staged Plan
 
-**Status:** plan recorded 2026-09-30. Nothing here has landed. The scheduled
+**Status:** plan recorded 2026-09-30. P0's census has landed (§P0); no stage
+after it has. The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) §1; this document is their design
 record and is updated as stages land.
 
@@ -138,6 +139,86 @@ replaces is deleted.
   body the certificates do not cover waits for its stage.
 - The counts order the classes inside P2 and P3. This document's order is the
   default until they exist.
+
+#### The census (2026-09-30)
+
+`mojito run --instantiation-census FILE` prints the counts, and `--timings`
+prints the cloned and checked rows as `instantiation.*` counters beside the
+template statistics. `CompiledProgram::instantiation_census` is the same
+record. Taken at `86a25b67` plus the census itself, on the three
+`benchmarks/compile` programs:
+
+| Bodies | Stage | `hello` | `generic` | `stdlib_heavy` |
+|---|---|---:|---:|---:|
+| **Minted by the AST cloner** | | **244** | **329** | **666** |
+| `def`, type arguments only | P2 | 12 | 17 | 17 |
+| `def` holding a `comptime if` | P3a | 0 | 0 | 0 |
+| `def` holding a `comptime for` | P3b | 0 | 0 | 0 |
+| `def` expanding a type pack | P3b | 0 | 0 | 0 |
+| `def` keyed by a `DType` or vector value | P3c | 0 | 0 | 0 |
+| `def` keyed by another value | P3c | 0 | 0 | 0 |
+| Member of a `DType`- or vector-keyed struct | P3c, P3d | 43 | 43 | 43 |
+| Member of another value-keyed struct | P3d | 0 | 0 | 0 |
+| Member of a variadic struct | P3d | 175 | 175 | 175 |
+| Per-instantiation method clone, no compile-time control flow | P2 | 0 | 80 | 417 |
+| Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 0 | 0 |
+| Per-call method clone | P3e | 14 | 14 | 14 |
+| Nested `def` clone | P3e | 0 | 0 | 0 |
+| Minted for a compile-time evaluation's subprogram | P3e | 0 | 0 | 0 |
+| **Checked**: inferred | | 21 | 26 | 48 |
+| **Checked**: derived from a checked template | | 223 | 303 | 618 |
+| **Parametric bodies left in MIR** | | 345 | 357 | 385 |
+| … of which `main` reaches | P1 | 0 | 10 | 36 |
+| Instances those serve with no clone | P1 | 0 | 10 | 98 |
+
+How to read it:
+
+- A cloned body has one class. Where several describe it, it takes the one
+  whose stage lands last, since the cloner keeps it until then
+  (`mojito_checked::census::CloneClass`).
+- The cloned rows count the converged program. The checked rows count
+  distinct bodies over every discovery round, and they sum to the cloned
+  total in all three programs.
+- The instance rows come from running `native::mono` from `main`. A
+  parametric body left in MIR is a function whose types still name a
+  parameter. A clone that keeps one of its own parameters is among them
+  (roadmap §1, the census entry).
+- The 244 bodies of Hello World are the fixed cost every program pays: the
+  bundled `Tuple` specializations, the `DType`-keyed ranges, the hasher, and
+  the `os` and `path` applications.
+
+What the counts say about the order:
+
+- **P2 is the largest stage for a program with its own instantiations.**
+  Per-instantiation method clones are 417 of `stdlib_heavy`'s 666 bodies, and
+  none of them holds compile-time control flow, so P2 moves all of them.
+- **P3d is the largest stage for the fixed cost.** Variadic struct members
+  are 175 of the 244 bodies every program mints. The `DType`- and
+  vector-keyed struct members are 43 more, and they need P3c before P3d.
+- **P3a and P3b move no body in these programs.** No `def` clone here holds a
+  `comptime if`, a `comptime for`, or a pack. They stay first inside P3
+  because P3c and P3d depend on the forms they add, not because of what they
+  move. A program that exercises them is roadmap §1's benchmark entry.
+- **Derivation already serves nine clones in ten.** 223 of 244, 303 of 329,
+  and 618 of 666 bodies are derived, so a stage's saving is mostly the clone
+  and its derivation, and only seldom a second inference.
+- **Erased dispatch serves few bodies.** `main` reaches 36 parametric bodies
+  in `stdlib_heavy` and none in Hello World, so P1 changes little of what
+  these programs run.
+
+The budget baseline for decision D4 is `total` from `--timings`, debug
+profile, `run` on the VM, median of three, same commit and machine as the
+census (rustc 1.96.1):
+
+| Program | Debug `run` |
+|---|---:|
+| `hello.mojo` | 11.56 s (10.82–11.66) |
+| `generic.mojo` | 11.54 s (11.50–11.72) |
+| `stdlib_heavy.mojo` | 15.55 s (15.32–15.82) |
+
+The release rows of [`docs/performance.md`](performance.md) predate checked
+templates. That document records this baseline too, and a stage is measured
+against whichever profile it reruns, interleaved with the commit before it.
 
 ### P1 — One elaborator below the waist, for both backends
 

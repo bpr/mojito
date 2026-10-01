@@ -43,6 +43,7 @@ pub use mojito_symbol::symbol::{
 };
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
+use mojito_checked::census::CloneClass;
 use mojito_common::token::{SourceSpan, Span};
 use mojito_types::ct::{CtLane, CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
@@ -680,6 +681,8 @@ pub struct Elaborated {
     /// What the checks of this elaboration's VM CTFE subprograms derived
     /// and inferred, for the compilation's own template statistics.
     pub ctfe_template_stats: mojito_checked::templates::TemplateStats,
+    /// The bodies this elaboration minted, by class.
+    pub clones: mojito_checked::census::CloneCensus,
 }
 
 /// What the driver's discovery loop hands one elaboration.
@@ -1138,6 +1141,8 @@ pub fn elaborate_prepared(
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         pending_struct_instances: RefCell::new(HashMap::new()),
         per_call_clones: RefCell::new(HashSet::new()),
+        nested_clones: Cell::new(0),
+        ctfe_clones: Cell::new(0),
         def_requests: def_requests
             .iter()
             .map(|request| {
@@ -1178,6 +1183,7 @@ pub fn elaborate_prepared(
         method_traces: _,
         generated: _,
         ctfe_template_stats: _,
+        clones: _,
     } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -1210,18 +1216,31 @@ pub fn elaborate_prepared(
     unserved_template_uses.extend(elab.monomorphize_nested_program(&mut result)?);
     let mut generated = elab.generated.take();
     generated.methods.extend(per_call_clones);
+    let def_traces = elab.def_traces.take();
+    let method_traces = elab.method_traces.take();
+    let mut clones = census::clone_census(&census::Minted {
+        prepared: program,
+        elaborated: &result,
+        def_traces: &def_traces,
+        method_traces: &method_traces,
+        generated: &generated,
+    });
+    clones.add(CloneClass::NestedDef, elab.nested_clones.get());
+    clones.add(CloneClass::Ctfe, elab.ctfe_clones.get());
     Ok(Elaborated {
         program: result,
         instances,
         stub_reaching_structs,
         unserved_template_uses,
-        def_traces: elab.def_traces.take(),
-        method_traces: elab.method_traces.take(),
+        def_traces,
+        method_traces,
         generated,
+        clones,
         ctfe_template_stats: elab.ctfe_template_stats.take(),
     })
 }
 
+mod census;
 mod crossing;
 mod ctfe_calls;
 mod elab;
@@ -1382,7 +1401,12 @@ fn pack_values_projection(expression: &Expr) -> Option<&str> {
 /// Whether a block directly contains a `comptime if`/`comptime for` (not descending
 /// into nested `def`/`struct`, which have their own compile-time scope).
 fn block_has_comptime(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(stmt_has_comptime)
+    block_has_statement(stmts, |kind| {
+        matches!(
+            kind,
+            StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. }
+        )
+    })
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
@@ -2240,6 +2264,10 @@ struct Elab<'a> {
     /// clone name). They carry no receiver type, so source stamping names
     /// them here rather than by `Method::self_ty`.
     per_call_clones: RefCell<HashSet<(String, String)>>,
+    /// Nested `def` clones minted, for the instantiation census.
+    nested_clones: Cell<usize>,
+    /// Bodies minted for VM CTFE subprograms, for the instantiation census.
+    ctfe_clones: Cell<usize>,
     /// The driver's checker-discovered bound-generic applications by call
     /// occurrence. Top-level monomorphization consults its own seeded copy;
     /// the lexical nested pass, which runs after that walk, reads these.
@@ -3033,28 +3061,30 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-fn stmt_has_comptime(s: &Stmt) -> bool {
-    match &s.kind {
-        StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => true,
+/// Whether a block directly contains a statement `wanted` accepts, under the
+/// same scope rule as `block_has_comptime`.
+fn block_has_statement(stmts: &[Stmt], wanted: fn(&StmtKind) -> bool) -> bool {
+    let has = |block: &[Stmt]| block_has_statement(block, wanted);
+    stmts.iter().any(|s| match &s.kind {
+        kind if wanted(kind) => true,
         StmtKind::If { branches, orelse } => {
-            branches.iter().any(|(_, b)| block_has_comptime(b))
-                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
+            branches.iter().any(|(_, b)| has(b)) || orelse.as_ref().is_some_and(|b| has(b))
         }
-        StmtKind::While { body, .. } | StmtKind::For { body, .. } => block_has_comptime(body),
-        StmtKind::With { body, .. } => block_has_comptime(body),
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } => has(body),
+        StmtKind::With { body, .. } => has(body),
         StmtKind::Try {
             body,
             except,
             orelse,
             finalbody,
         } => {
-            block_has_comptime(body)
-                || except.as_ref().is_some_and(|(_, b)| block_has_comptime(b))
-                || orelse.as_ref().is_some_and(|b| block_has_comptime(b))
-                || finalbody.as_ref().is_some_and(|b| block_has_comptime(b))
+            has(body)
+                || except.as_ref().is_some_and(|(_, b)| has(b))
+                || orelse.as_ref().is_some_and(|b| has(b))
+                || finalbody.as_ref().is_some_and(|b| has(b))
         }
         _ => false,
-    }
+    })
 }
 
 /// A pending specialization request: template `orig`, specialized for `vals`.

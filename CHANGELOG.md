@@ -6,6 +6,18 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Added
+
+- `mojito run --instantiation-census FILE` reports which mechanism
+  instantiates each generic body of a compilation: the bodies the AST cloner
+  mints by class, the cloned bodies the checker infers and the ones it
+  derives, and the parametric bodies left in MIR with the instances they
+  serve. `--timings` carries the cloned and checked counts as
+  `instantiation.*` counters, and `CompiledProgram::instantiation_census`
+  returns the record. The table for Hello World, `generic.mojo`, and
+  `stdlib_heavy.mojo`, with the debug `run` baseline for the plan's budget,
+  is in `docs/parametric-mir-plan.md` §P0.
+
 ### Changed
 
 - The A1 shadow core's canonical text is 1.56 to 2.00 times the v1 text,

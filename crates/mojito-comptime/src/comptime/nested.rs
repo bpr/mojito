@@ -1558,6 +1558,7 @@ impl NestedMono {
                 unreachable!("nested templates are functions")
             };
             self.scan_root(elab, body, &mut pack_environment)?;
+            elab.nested_clones.set(elab.nested_clones.get() + 1);
             self.generated
                 .entry(job.template)
                 .or_default()

@@ -582,6 +582,7 @@ impl Checker {
                 stats.reused.push(name.clone());
             } else {
                 stats.derived.push(name.clone());
+                stats.derived_instances.insert(site.instance.clone());
             }
             return Ok(());
         }
@@ -649,6 +650,13 @@ impl Checker {
             outer.extend(reads.struct_applications.iter().cloned());
         }
         inferred?;
+        if generated {
+            self.template_catalog
+                .borrow_mut()
+                .stats_mut()
+                .inferred_instances
+                .insert(site.instance.clone());
+        }
         let traced = !template && self.instance_trace(site).is_some();
         if traced {
             self.template_catalog

@@ -32,6 +32,20 @@ use mojito_types::types::{ParamDecl, Ty, TyArg};
 pub struct SpecializedProgram {
     pub program: MirProgram,
     pub entries: HashMap<String, String>,
+    pub parametric: ParametricInstances,
+}
+
+/// What the specialization instantiated from parametric bodies: the source
+/// functions whose types name a parameter, which reach MIR once and run
+/// erased on the VM.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ParametricInstances {
+    /// Parametric bodies in the source program, reachable or not.
+    pub bodies: usize,
+    /// Those the entries reach.
+    pub reached: usize,
+    /// The concrete functions substituted from the reached ones.
+    pub instances: usize,
 }
 
 /// A source-template-oriented specialization failure.
@@ -47,6 +61,17 @@ pub fn specialize(
     entries: &[String],
 ) -> Result<SpecializedProgram, MonoError> {
     Specializer::new(program).run(entries)
+}
+
+/// The names of the parametric bodies of `program`: the functions whose
+/// types name a parameter.
+pub fn parametric_bodies(program: &MirProgram) -> HashSet<&str> {
+    program
+        .functions
+        .iter()
+        .filter(|(_, function)| function_types(function).any(is_symbolic))
+        .map(|(name, _)| name.as_str())
+        .collect()
 }
 
 #[derive(Clone, PartialEq, Eq)]
