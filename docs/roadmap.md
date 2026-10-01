@@ -3077,13 +3077,7 @@ lines. `checker/template_facts.rs` and its submodules stay frozen: their
 line count only goes down, as section 1 deletes the mechanism stage by
 stage. The rest needs semantic extraction, not line moves.
 
-- [ ] **6.1 Split `verify_instruction`**
-
-  `mir/verify/instr.rs` (about 1,320 lines) is one match over `MirInstr`.
-  - Extract per-family check helpers.
-  - Depends on nothing.
-
-- [ ] **6.2 Shrink the 2 kloc band**
+- [ ] **6.1 Shrink the 2 kloc band**
 
   Split these further only along a cohesive seam, while touching them:
   - `checker/traits.rs` (2,629), `mir/lower_stmt.rs` (2,595),

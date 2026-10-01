@@ -4,6 +4,240 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+pub(super) fn verify_subscript_instruction(
+    cx: &InstrCx<'_>,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    match instruction {
+        MirInstr::Index {
+            dest,
+            base,
+            index,
+            base_place,
+            index_place,
+            call,
+            intrinsic,
+            ..
+        } => {
+            verify_subscript_receiver_place(prefix, cx.reg_ty(*base), base_place.as_ref(), errors);
+            if call.is_some() == intrinsic.is_some() {
+                errors.push(format!(
+                    "{prefix}: index operation must carry exactly one checked-call or intrinsic dispatch"
+                ));
+            }
+            if let Some(call) = call {
+                // `__getitem_param__` reuses the syntactic index register as a
+                // compile-time value argument; it has no ordinary runtime
+                // positional argument. The empty checked argument list is the
+                // explicit ABI discriminator used by lowering and execution.
+                let positional_places = if call.arguments.is_empty() {
+                    &[][..]
+                } else {
+                    std::slice::from_ref(index_place)
+                };
+                let positional_types = if call.arguments.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![cx.reg_ty(*index).cloned()]
+                };
+                verify_subscript_call(
+                    prefix,
+                    cx.function,
+                    cx.declarations,
+                    call,
+                    SubscriptSources {
+                        receiver_ty: cx.reg_ty(*base),
+                        method: "__getitem__",
+                        receiver_place: base_place.as_ref(),
+                        positional_places,
+                        keyword_places: &[],
+                        positional_types: &positional_types,
+                        keyword_types: &[],
+                        dest: Some(*dest),
+                    },
+                    errors,
+                );
+            } else if let Some(intrinsic) = intrinsic {
+                verify_intrinsic_index(
+                    prefix,
+                    *intrinsic,
+                    cx.reg_ty(*base),
+                    cx.reg_ty(*index),
+                    cx.reg_ty(*dest),
+                    errors,
+                );
+            }
+        }
+        MirInstr::Slice {
+            dest,
+            object,
+            kind,
+            object_place,
+            arg_places,
+            call,
+            intrinsic,
+            ..
+        } => {
+            verify_subscript_receiver_place(
+                prefix,
+                cx.reg_ty(*object),
+                object_place.as_ref(),
+                errors,
+            );
+            if arg_places.len() != 1 {
+                errors.push(format!(
+                    "{prefix}: slice place metadata is not aligned with its descriptor argument"
+                ));
+            }
+            if call.is_some() == intrinsic.is_some() {
+                errors.push(format!(
+                    "{prefix}: slice operation must carry exactly one checked-call or intrinsic dispatch"
+                ));
+            }
+            if let Some(call) = call {
+                verify_subscript_call(
+                    prefix,
+                    cx.function,
+                    cx.declarations,
+                    call,
+                    SubscriptSources {
+                        receiver_ty: cx.reg_ty(*object),
+                        method: "__getitem__",
+                        receiver_place: object_place.as_ref(),
+                        positional_places: arg_places,
+                        keyword_places: &[],
+                        positional_types: &[Some(slice_descriptor_ty(*kind))],
+                        keyword_types: &[],
+                        dest: Some(*dest),
+                    },
+                    errors,
+                );
+            } else if let Some(intrinsic) = intrinsic {
+                verify_intrinsic_slice(
+                    prefix,
+                    *intrinsic,
+                    cx.reg_ty(*object),
+                    cx.reg_ty(*dest),
+                    errors,
+                );
+            }
+        }
+        MirInstr::MultiIndex {
+            dest,
+            object,
+            args,
+            object_place,
+            arg_places,
+            kwargs,
+            kwarg_places,
+            call,
+        } => {
+            verify_subscript_receiver_place(
+                prefix,
+                cx.reg_ty(*object),
+                object_place.as_ref(),
+                errors,
+            );
+            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
+                errors.push(format!(
+                    "{prefix}: multi-subscript place metadata is not aligned with its arguments"
+                ));
+            }
+            let positional_types = args
+                .iter()
+                .map(|argument| subscript_argument_ty(cx.function, argument))
+                .collect::<Vec<_>>();
+            let keyword_types = kwargs
+                .iter()
+                .map(|(_, argument)| subscript_argument_ty(cx.function, argument))
+                .collect::<Vec<_>>();
+            if let Some(call) = call {
+                verify_subscript_call(
+                    prefix,
+                    cx.function,
+                    cx.declarations,
+                    call,
+                    SubscriptSources {
+                        receiver_ty: cx.reg_ty(*object),
+                        method: "__getitem__",
+                        receiver_place: object_place.as_ref(),
+                        positional_places: arg_places,
+                        keyword_places: kwarg_places,
+                        positional_types: &positional_types,
+                        keyword_types: &keyword_types,
+                        dest: Some(*dest),
+                    },
+                    errors,
+                );
+            } else {
+                errors.push(format!(
+                    "{prefix}: multi-index operation lacks a checked call contract"
+                ));
+            }
+        }
+        MirInstr::MultiSet {
+            receiver,
+            receiver_place,
+            args,
+            arg_places,
+            value,
+            value_place,
+            value_keyword,
+            call,
+            ..
+        } => {
+            verify_subscript_receiver_place(
+                prefix,
+                cx.reg_ty(*receiver),
+                receiver_place.as_ref(),
+                errors,
+            );
+            if arg_places.len() != args.len() {
+                errors.push(format!(
+                    "{prefix}: subscript-set place metadata is not aligned with its index arguments"
+                ));
+            }
+            let mut positional = arg_places.clone();
+            let mut positional_types = args
+                .iter()
+                .map(|argument| subscript_argument_ty(cx.function, argument))
+                .collect::<Vec<_>>();
+            let keyword = if *value_keyword {
+                vec![value_place.clone()]
+            } else {
+                positional.push(value_place.clone());
+                positional_types.push(cx.reg_ty(*value).cloned());
+                Vec::new()
+            };
+            let keyword_types = if *value_keyword {
+                vec![cx.reg_ty(*value).cloned()]
+            } else {
+                Vec::new()
+            };
+            verify_subscript_call(
+                prefix,
+                cx.function,
+                cx.declarations,
+                call,
+                SubscriptSources {
+                    receiver_ty: cx.reg_ty(*receiver),
+                    method: "__setitem__",
+                    receiver_place: receiver_place.as_ref(),
+                    positional_places: &positional,
+                    keyword_places: &keyword,
+                    positional_types: &positional_types,
+                    keyword_types: &keyword_types,
+                    dest: None,
+                },
+                errors,
+            );
+        }
+        _ => {}
+    }
+}
+
 /// Runtime frame/slot capabilities are represented either by a source-level
 /// `ref T` or by an origin-bearing `UnsafePointer[T, origin]`. Raw/static/
 /// untracked pointer values use allocation arithmetic and are not valid

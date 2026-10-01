@@ -56,6 +56,8 @@ mod calls;
 mod concrete;
 mod instr;
 mod intrinsics;
+mod iteration;
+mod loans;
 mod places;
 mod regs;
 mod subscripts;
@@ -69,6 +71,8 @@ use concrete::verify_concrete_program;
 use instr::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use intrinsics::*;
+use iteration::verify_iteration_instruction;
+use loans::verify_loan_instruction;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use places::*;
 pub use places::{instruction_places, instruction_places_mut};
@@ -129,6 +133,23 @@ struct RegionContext {
     /// Whether a raise from this position reaches an `except` handler before
     /// leaving the function.
     protected: bool,
+}
+
+/// One instruction's verification scope: the function it sits in, the
+/// declarations its calls resolve against, its region, and the finding prefix
+/// naming its block.
+struct InstrCx<'a> {
+    name: &'a str,
+    prefix: &'a str,
+    function: &'a MirFunction,
+    declarations: &'a MirDeclarations,
+    context: &'a RegionContext,
+}
+
+impl<'a> InstrCx<'a> {
+    fn reg_ty(&self, register: Reg) -> Option<&'a Ty> {
+        self.function.reg_types.get(&register.0)
+    }
 }
 
 struct SubscriptSources<'a> {

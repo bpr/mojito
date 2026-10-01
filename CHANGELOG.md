@@ -66,6 +66,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `verify_instruction`, one 1,300-line match over `MirInstr` in
+  `mir/verify/instr.rs`, is now the checks every instruction gets followed by
+  a dispatch on the instruction's family. The loan checks move to
+  `verify/loans.rs`, the iterator-protocol checks to `verify/iteration.rs`,
+  the subscript checks to `verify/subscripts.rs`, and the call checks to
+  `verify/calls.rs`; references, value construction, private storage, SIMD,
+  and effects stay in `instr.rs`. No function needs a `too_many_lines` or
+  `cognitive_complexity` exemption. The move changes no behavior;
+  `docs/symbol-map.md` lists the owners.
 - `infer_method_call`, one 2,400-line method in
   `checker/method_calls/mc_infer.rs`, is now a short sequence of stages over
   one `MethodCallSite`. The receiver families move beside `selection`,

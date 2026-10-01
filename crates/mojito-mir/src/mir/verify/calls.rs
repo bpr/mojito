@@ -27,6 +27,142 @@ pub(super) fn verify_blocks(
     }
 }
 
+pub(super) fn verify_call_instruction(
+    cx: &InstrCx<'_>,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    match instruction {
+        MirInstr::Call {
+            func: FuncRef(callee),
+            args,
+            kwargs,
+            arg_places,
+            kwarg_places,
+            capture_accesses,
+            param_arg_regs,
+            ..
+        } => {
+            verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+            if let Some(declaration) = declared(cx.declarations, callee) {
+                verify_direct_call(
+                    prefix,
+                    cx.function,
+                    declaration,
+                    args,
+                    kwargs,
+                    arg_places,
+                    errors,
+                );
+                verify_param_arguments(
+                    prefix,
+                    cx.function,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                    errors,
+                );
+            }
+            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
+                errors.push(format!(
+                    "{prefix}: call place metadata is not aligned with its arguments"
+                ));
+            }
+        }
+        MirInstr::MethodCall {
+            dest,
+            method,
+            resolved: Some(callee),
+            reference_result,
+            result_adapter,
+            args,
+            kwargs,
+            arg_places,
+            kwarg_places,
+            capture_accesses,
+            param_arg_regs,
+            param_decls,
+            ..
+        } => {
+            verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+            let abstract_value_next = callee.starts_with("__trait_dispatch.")
+                && method == "__next__"
+                && reference_result.is_none();
+            if let Some(reference) = reference_result {
+                let expected = Ty::Ref(reference.clone());
+                if cx.function.reg_types.get(&dest.0) != Some(&expected) {
+                    errors.push(format!(
+                        "{prefix}: method-call reference ABI {expected} does not match its destination type"
+                    ));
+                }
+            }
+            match result_adapter {
+                Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
+                    if !abstract_value_next {
+                        errors.push(format!(
+                            "{prefix}: copy-reference result adapter is not attached to an abstract value-returning __next__ call"
+                        ));
+                    }
+                }
+                None if abstract_value_next => errors.push(format!(
+                    "{prefix}: abstract value-returning __next__ call lacks its copy-reference adapter"
+                )),
+                None => {}
+            }
+            if let Some(declaration) = declared(cx.declarations, callee) {
+                verify_direct_call(
+                    prefix,
+                    cx.function,
+                    declaration,
+                    args,
+                    kwargs,
+                    arg_places,
+                    errors,
+                );
+                let result_abi_matches =
+                    match reference_result {
+                        Some(reference) => {
+                            declaration.returns_reference
+                                && types_compatible(&reference.referent, &declaration.ret_ty)
+                        }
+                        None => {
+                            !declaration.returns_reference
+                                && cx.function.reg_types.get(&dest.0).is_some_and(|result| {
+                                    types_compatible(result, &declaration.ret_ty)
+                                })
+                        }
+                    };
+                if !result_abi_matches {
+                    errors.push(format!(
+                        "{prefix}: method-call result ABI does not match '{}'",
+                        declaration.lowered_name
+                    ));
+                }
+                if &declaration.param_decls != param_decls {
+                    errors.push(format!(
+                        "{prefix}: method-call compile-time parameter metadata does not match '{}'",
+                        declaration.lowered_name
+                    ));
+                }
+                verify_param_arguments(
+                    prefix,
+                    cx.function,
+                    &declaration.param_decls,
+                    param_arg_regs,
+                    errors,
+                );
+            }
+            if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
+                errors.push(format!(
+                    "{prefix}: method-call place metadata is not aligned with its arguments"
+                ));
+            }
+        }
+        MirInstr::CallIndirect { .. } => verify_indirect_call(cx, instruction, errors),
+        _ => {}
+    }
+}
+
 /// Arity, argument-type, and write-back checks against a declaration. Only the
 /// plain positional shape is compared — defaulted, keyword, and variadic calls
 /// are bound by the runtime matcher, whose slotting the verifier does not
@@ -485,5 +621,163 @@ pub(super) fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &m
                 ));
             }
         }
+    }
+}
+
+fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
+    let prefix = cx.prefix;
+    let MirInstr::CallIndirect {
+        dest,
+        callee,
+        resolved,
+        raises,
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        capture_accesses,
+        param_arg_regs,
+        param_decls,
+        instantiated_contract,
+        instantiated_args,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+    if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
+        errors.push(format!(
+            "{prefix}: indirect-call place metadata is not aligned with its arguments"
+        ));
+    }
+    let stored_contract = cx
+        .reg_ty(*callee)
+        .and_then(mojito_types::types::callable_contract_ty);
+    let mut verified_instantiation = None;
+    let contract = match stored_contract {
+        Some(symbolic @ Ty::GenericFunc { .. }) => {
+            if let Some(found) = instantiated_contract {
+                match instantiate_generic_callable_contract(symbolic, instantiated_args) {
+                    Ok(expected) => {
+                        if found != &expected {
+                            errors.push(format!(
+                                        "{prefix}: checker-instantiated callable contract does not match its retained generic arguments"
+                                    ));
+                        }
+                        verified_instantiation = Some(expected);
+                    }
+                    Err(reason) => errors.push(format!(
+                        "{prefix}: invalid generic callable instantiation: {reason}"
+                    )),
+                }
+                verified_instantiation.as_ref()
+            } else {
+                if !instantiated_args.is_empty() {
+                    errors.push(format!(
+                                "{prefix}: symbolic generic indirect call carries an orphaned instantiation witness"
+                            ));
+                }
+                if let Err(reason) = validate_dependent_bindings(symbolic) {
+                    errors.push(format!(
+                        "{prefix}: invalid symbolic generic callable contract: {reason}"
+                    ));
+                }
+                // Calls in an unspecialized generic body remain under
+                // the callable contract's own explicit binders. Their
+                // dependent references are scope-validated below; no
+                // concrete substitution witness exists at this layer.
+                Some(symbolic)
+            }
+        }
+        Some(contract) => {
+            if instantiated_contract.is_some() || !instantiated_args.is_empty() {
+                errors.push(format!(
+                    "{prefix}: nongeneric indirect call carries generic instantiation metadata"
+                ));
+            }
+            Some(contract)
+        }
+        None => {
+            if instantiated_contract.is_some() || !instantiated_args.is_empty() {
+                errors.push(format!(
+                    "{prefix}: non-callable indirect operand carries generic instantiation metadata"
+                ));
+            }
+            None
+        }
+    };
+    if let Some(contract) = contract {
+        verify_callable_contract_call(
+            prefix,
+            cx.function,
+            contract,
+            raises,
+            *dest,
+            args,
+            kwargs,
+            arg_places,
+            errors,
+        );
+    }
+    let checked_decls = cx.reg_ty(*callee).and_then(generic_callable_decls);
+    if let Some(checked_decls) = checked_decls {
+        if checked_decls != param_decls {
+            errors.push(format!(
+                        "{prefix}: indirect-call compile-time parameter metadata does not match its callable contract"
+                    ));
+        }
+        verify_param_arguments(prefix, cx.function, checked_decls, param_arg_regs, errors);
+    } else if !param_decls.is_empty() {
+        errors.push(format!(
+            "{prefix}: nongeneric indirect call carries compile-time parameter metadata"
+        ));
+    }
+    let nominal_name = match cx.reg_ty(*callee) {
+        Some(Ty::Struct(name, _)) => Some(name.as_str()),
+        _ => None,
+    };
+    if let Some(target) = resolved {
+        if nominal_name.is_none()
+            && let Some(expected) = cx
+                .reg_ty(*callee)
+                .and_then(mojito_symbol::symbol::callable_contract_target)
+            && target != &expected
+        {
+            errors.push(format!(
+                        "{prefix}: indirect-call target '{target}' does not match callable contract '{expected}'"
+                    ));
+        }
+        let is_call_target =
+            mojito_symbol::symbol::split_method_symbol(target).is_some_and(|(_, method)| {
+                method == "__call__" || mojito_symbol::symbol::is_overload_of(method, "__call__")
+            });
+        if !is_call_target {
+            errors.push(format!(
+                "{prefix}: indirect-call target '{target}' is not a __call__ method"
+            ));
+        }
+        let concrete = nominal_name
+            .and_then(|name| mojito_symbol::symbol::retarget_method_symbol(target, name))
+            .unwrap_or_else(|| target.clone());
+        if let Some(declaration) = declared(cx.declarations, &concrete) {
+            verify_direct_call(
+                prefix,
+                cx.function,
+                declaration,
+                args,
+                kwargs,
+                arg_places,
+                errors,
+            );
+        } else if nominal_name.is_some() {
+            errors.push(format!(
+                "{prefix}: nominal indirect-call target '{concrete}' is undeclared"
+            ));
+        }
+    } else if let Some(name) = nominal_name {
+        errors.push(format!(
+            "{prefix}: nominal callable '{name}' has no checker-selected __call__ target"
+        ));
     }
 }
