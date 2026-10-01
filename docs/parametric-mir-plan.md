@@ -3,7 +3,8 @@
 **Status:** plan recorded 2026-09-30. P0's census has landed (§P0); no stage
 after it has. The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) §1; this document is their design
-record and is updated as stages land.
+record and is updated as stages land. It was revised on 2026-09-30 after
+[`docs/parametric-mir-plan-review.md`](parametric-mir-plan-review.md).
 
 **Goal.** Mojito's flow should strongly resemble the flow in upstream's
 `Mojo/docs/compiler/MojoCompilerWalkthrough.md`, with MIR standing where
@@ -25,8 +26,9 @@ Upstream's phases, from the walkthrough:
 5. Lower and optimize the concrete IR.
 6. Emit LLVM.
 
-A package is the phase-2 output serialized, so an importer elaborates it
-without checking it again.
+A package is written after the semantic checks and before lowering: the
+post-parse IR with its bodies, which an importer elaborates without checking
+the source again.
 
 Mojito today has the same phases in a different order, and three
 instantiation mechanisms where upstream has one.
@@ -59,14 +61,15 @@ Three facts make the target reachable from here.
   analysis once, and `native::mono` substitutes types and compile-time values
   into it per instance. That is a generator and an elaborator in all but
   name.
-- **Elaborated MIR already runs on the VM.** The A1 experiment's census
-  specialized all 893 of its corpus inputs into MIR that verifies, and its
-  census test asserted that specialization is transparent to the VM
-  ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md) §Coverage). The fixes that
-  made that true stayed when the experiment was removed. The test that pinned
-  it did not.
-- **The VM is already the compile-time interpreter.** CTFE lowers a helper
-  through HIR and MIR and runs it on `VmBackend`.
+- **Specialized MIR mostly runs on the VM already.** The A1 experiment
+  specialized all 893 of its corpus inputs into MIR that verifies
+  ([`docs/notes/pliron-a1.md`](notes/pliron-a1.md) §Coverage). Those rows
+  were compilations, not runs. The `specialized_vm` corpus group measures the
+  runs: 786 of 810 `assets/ok` fixtures behave as the erased program does,
+  and the rest are filed. That is encouraging, not a parity proof.
+- **The VM already executes compile-time code.** CTFE runs a helper on
+  `VmBackend`. It reaches the VM through a synthesized AST subprogram and a
+  checker run, so it does not yet consume generators (§P3).
 
 ## Target pipeline
 
@@ -102,32 +105,103 @@ What this plan does not attempt: a dialect stack, pre-elaboration
 optimization, the lazy three-phase parser, parallel elaboration, and
 parametric debug info.
 
-## The rule that replaces certificates
+## The generator contract
 
 A checked template's MIR is valid for every instance when no fact in it
 depends on the instance. Where a decision does depend on the instance, it is
 an explicit MIR operation the elaborator resolves, never a second check.
 
-- A call through a bound is already such an operation: its contract names the
-  requirement, and the instance supplies the witness.
-- Copying, moving, and destroying a value of a parameter type are resolved
-  from the instance's lifecycle members.
-- A `comptime if` or `comptime for` becomes a region the elaborator selects
-  or unrolls (stage P3).
-- A constraint an instance owes (a `where` clause, a conformance, a `rebind`
-  equality) is recorded on the generator and checked when it is instantiated.
-  The list in the instantiation note, §What an instance still owes, is the
-  specification.
+That principle needs an inventory and a preservation argument before any
+clone check is removed. Without them the certificate machinery would
+reappear inside MIR under other names. The contract is its own note, written
+before P2 (roadmap §1, the generator-contract entry).
+
+**The guarantee.** Substituting arguments that satisfy a generator's recorded
+obligations preserves typing, ownership, and effects. No source expression is
+inferred again and no overload is ranked again.
+
+**What a generator names.**
+
+- Its binders, and the assumptions its bounds supply.
+- The obligations an instance still owes.
+- The calls and witnesses its check selected.
+- Its lifecycle requirements: what copying, moving, and destroying a value of
+  a parameter type demand.
+- Its origin and transfer summaries.
+- Source locations and instantiation provenance, which survive substitution.
+
+It reuses `ParamRef`, `ParamExpr`, `ParamConstraint`, and the callable
+identity in `mojito-symbol`. It adds no parallel vocabulary.
+
+**The inventory.** The instantiation note's §What an instance still owes is
+the migration inventory, not the specification. Each obligation there is
+classified as one of:
+
+- a proof made when the declaration is checked;
+- an assumption a bound supplies;
+- an operation or summary kept in MIR;
+- a predicate checked when the generator is instantiated;
+- clone bookkeeping that disappears (retargeting, local renumbering).
+
+The list is wider than `where` clauses and `rebind` equalities. It holds
+implicit copies, deletability, reference reads, loans in stored values,
+closure effects, and replayed transfers, and some of those vary with the
+substituted type. P2 includes lifecycle members, so none of this waits for
+P3.
+
+**Availability.** `native::mono` keeps a `speculative` set: instances its
+eager constructor walk enqueued, dropped silently when they fail to
+materialize, because a conditional member's `where` clause is absent from MIR
+and the checker is trusted to have admitted no call. A general elaborator
+needs the availability clause on the generator, and demanded reachability
+told apart from speculative reachability, before the checks it trusts are
+removed.
+
+**"Check once"** means one semantic checking process per declaration, not one
+traversal. Effect summaries and loop dataflow still iterate to fixed points
+inside it.
 
 A body the symbolic check cannot type is a defect in the symbolic check, filed
 against the pin's behavior. It is not a reason to check a clone.
+
+## Phases and their names
+
+"Elaborated" already has a meaning in the code:
+`CompiledProgram::elaborated_mir` is *drop-elaborated* MIR, which may still
+be generic. This plan uses three names, and P1 makes the code use them.
+
+| Name | What it is | Who may consume it |
+|---|---|---|
+| Parametric MIR | Checked generators that passed parametric verification | Ownership analysis |
+| Drop-elaborated MIR | Parametric MIR with ownership verified and drops inserted | The elaborator; the serialized artifact |
+| Concrete MIR | The elaborator's entry-rooted output, verified concrete | The VM and the native backend |
+
+- Each is a distinct phase wrapper or an equally explicit API contract. They
+  may share a representation. A caller never has to remember which verifier
+  mode ran.
+- **Parametric verification** accepts well-scoped, well-kinded binders and
+  explicit residual obligations. It still rejects an unbound parameter, an
+  unresolved inference hole, a malformed call contract, and a missing fact.
+  It is not a "symbolic types allowed" switch.
+- **Concrete verification** inspects more than register types: declaration
+  fields, signatures, instruction payloads, constants, nested regions,
+  parameter applications, witnesses, and obligations. It says which metadata
+  may survive with no executable meaning. Erased generic dispatch is gone
+  from concrete MIR. Indirect calls and runtime closures are not.
+- **Entry roots** are defined once for `main`, top-level execution, artifact
+  execution, CTFE, and an externally requested native entry.
+- The native backend receives concrete MIR and does not specialize it again.
 
 ## Stages
 
 Each stage keeps the path it replaces alive behind a switch until the
 nightly gate agrees on both, the way `MOJITO_VERIFY_TEMPLATE_FACTS` compares
-derived facts with inferred ones today. A stage is not done until the code it
-replaces is deleted.
+derived facts with inferred ones today. That comparison path is temporary: a
+stage is not done until the code it replaces is deleted. The erased VM is the
+one exception, kept as an oracle until P5.
+
+A stage that changes the production pipeline or a public contract updates
+`docs/architecture.md` and the contract documents in the same change.
 
 ### P0 — Census and freeze
 
@@ -198,7 +272,8 @@ What the counts say about the order:
 - **P3a and P3b move no body in these programs.** No `def` clone here holds a
   `comptime if`, a `comptime for`, or a pack. They stay first inside P3
   because P3c and P3d depend on the forms they add, not because of what they
-  move. A program that exercises them is roadmap §1's benchmark entry.
+  move. The counts are not costs: they say how many bodies a class holds, not
+  what each costs to check. A program that exercises them is roadmap §1's benchmark entry.
 - **Derivation already serves nine clones in ten.** 223 of 244, 303 of 329,
   and 618 of 666 bodies are derived, so a stage's saving is mostly the clone
   and its derivation, and only seldom a second inference.
@@ -222,108 +297,201 @@ against whichever profile it reruns, interleaved with the commit before it.
 
 ### P1 — One elaborator below the waist, for both backends
 
-- Restore a corpus check that elaborated MIR verifies and runs on the VM as
-  the erased program does. It needs no LLVM, so it belongs in the default
-  lane unless its memory peak says otherwise.
+- Done: the corpus binary's `specialized_vm` group specializes each
+  `assets/ok` program, verifies it, and compares its VM run with the erased
+  run. 786 of 810 agreed when it landed. The rest are an expected-failure
+  list, filed by kind in the roadmap.
 - Done: `mir::verify::verify_concrete` rejects any symbolic type or
   compile-time parameter, and `native::mono` verifies its output with it.
   The compile-time argument slots a resolved call keeps are the residue
   (roadmap 1.5).
-- Run the VM on elaborated MIR by default. The erased path stays selectable
-  as the differential oracle until P5.
+- Give the three phases of §Phases and their names their wrappers and their
+  entry roots, and cache the concrete graph so the native backend does not
+  specialize twice.
+- Run the VM on concrete MIR by default. The erased path stays selectable as
+  the differential oracle until P5.
+- Parity is more than output on accepted programs. The gate compares results,
+  output, error categories, and ordered lifecycle events, with controlled
+  inputs for programs that read files or stdin. It includes artifact round
+  trips and the ownership and type-error folders, since execution parity
+  cannot see a checker that accepts more.
+- The erased VM is a migration comparator. Where it and the pin disagree, the
+  pin decides.
 - Exit: one instantiation mechanism below the waist. `native::mono` is the
   elaborator, and both backends consume its output.
 
 ### P2 — Stop cloning what the elaborator can already instantiate
 
+- Gate: the generator contract is written and every existing obligation is
+  classified (§The generator contract).
 - An ordinary generic struct's methods are cloned per instance only so the
   checker can check them concretely. With P1, the elaborator instantiates the
   template's MIR instead.
 - The same holds for an explicit application of a trait-bound generic `def`.
 - Bodies holding a compile-time construct keep the cloner until P3.
-- The obligations those clone checks discharged move to the symbolic check
-  where the pin rejects symbolically, and to an instantiation-time constraint
-  otherwise.
+- Each obligation the clone checks discharged goes where the contract
+  classified it.
+- Conditional members carry their availability clause, and the elaborator's
+  `speculative` set goes.
 - Exit: the method and function certificate classes that exist only to derive
   these clones are deleted from `template_facts.rs`.
 
 ### P3 — Compile-time parameters and control flow in MIR
 
-One class at a time. For each: HIR and MIR gain the form, the verifier and
-ownership analysis accept it, the elaborator resolves it, the cloner's branch
-for the class is deleted, and so is its certificate class.
+Three prerequisites come first. None of them moves a body.
+
+- **Ownership on a compile-time region.** "Ownership analyses every arm" does
+  not say what the join rule is, where a last use falls, what an arm may
+  assume, or what is cleaned up on a return or a raise. For a loop it leaves
+  open loop-carried ownership, zero iterations, heterogeneous elements, and
+  compile-time `break` and `continue`. Upstream's
+  `Mojo/lib/LowerLIT/CheckLifetimes.cpp` unifies consume sets across the arms
+  of a compile-time conditional and computes a stable consume set for a
+  compile-time loop, so the question is how to express those facts in
+  Mojito's ownership model, not whether it can be done. A narrow vertical
+  experiment answers it: a move-only value, a reference-bearing value, a
+  conditional use followed by a use after the join, and destruction across
+  an early exit; then zero, one, and several iterations and a heterogeneous
+  pack. Each probe records the pin's verdict and destructor order, negative
+  cases included.
+- **Legality is not lifecycle glue.** Symbolic ownership decides legality and
+  last use once. Substitution may resolve a destructor witness or expand
+  aggregate cleanup, and it never recomputes a last use. A development-only
+  concrete ownership comparison checks that, because `mir::verify` alone does
+  not establish ownership preservation.
+- **CTFE requests instances from the worklist.** Today
+  `comptime/ctfe.rs` builds an AST subprogram, checks a synthesized typing
+  probe, turns the result type back into source syntax, and runs a second
+  synthesized helper. Kept, that would put a checker run and AST
+  reconstruction inside the elaborator. The target path: a typed compile-time
+  application demands a concrete callable from the shared worklist, runs
+  verified MIR on the VM, and returns a validated compile-time value. An
+  evaluation may demand further instances without restarting the source
+  pipeline. The effect restrictions, value-crossing rules, and shared fuel
+  stay.
+- **The worklist has keys and states.** Requests have canonical keys and are
+  pending, active, completed, or failed. A recursive function reference is
+  valid. A cycle that demands an unfinished constant or layout is an error.
+  Expanding polymorphic recursion has its own bound, apart from VM
+  instruction fuel. `native::mono`'s instance identity and budget are the
+  starting point.
+- **A common type vocabulary.** A heterogeneous pack already needs a type
+  that depends on a symbolic index, and P2's methods already need receiver
+  applications, conditional members, and lifecycle witnesses. So register
+  types over parameter expressions are specified before P3b and P3c, not in
+  P3c.
+
+Then one class at a time. For each: HIR and MIR gain the form, the verifiers
+and ownership analysis accept it, the elaborator resolves it, the cloner's
+branch for the class is deleted, and so is its certificate class.
 
 - **P3a. `comptime if` on a value parameter.** MIR gains a structured
-  compile-time conditional, as `Try` is a structured instruction today.
-  Ownership analyses every arm. The elaborator keeps the taken one.
-- **P3b. `comptime for` and type packs.** A structured compile-time loop
-  whose body is analysed once with the index symbolic and unrolled at
-  elaboration.
-- **P3c. `DType`, vector, and other value-dependent types.** Registers carry
-  types built over parameter expressions. Layout is asked only of concrete
-  MIR.
+  compile-time conditional, as `Try` is a structured instruction today. The
+  elaborator keeps the taken arm.
+- **P3b. `comptime for` over a value index**, then **heterogeneous pack
+  expansion**. They share the loop form and differ in their correctness
+  conditions, so they are two steps.
+- **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
+  only of a concrete type, and a compile-time layout query names the target
+  it is answered for. A concrete type does not make layout independent of
+  the target.
 - **P3d. Struct generators.** Value-keyed and variadic structs, `Tuple` and
   `TString` included, are declared once and instantiated by the elaborator.
-- **P3e. A method's own compile-time parameters, nested defs, and clones
-  minted during CTFE.**
+- **P3e.** Three steps: a method's own compile-time parameters, nested
+  definitions and their captures, and clones minted during CTFE.
 
-The MIR text schema is bumped once, at P3a, for generators and compile-time
-regions.
+One mixed-feature probe is carried through every P3 step, so migrations that
+pass alone also compose.
+
+The MIR text schema is versioned at P3a for generators and compile-time
+regions. Later forms may bump it again (decision D5).
 
 ### P4 — Check once, then elaborate
 
 - With no clone left to check, the executable check runs once on the linked
-  source, and source validation and the executable check become one pass.
+  source, and source validation and the executable check become one process.
 - The discovery fixpoint becomes the elaborator's worklist: a call in a
   generator names its callee and its parameter expressions, and the
   elaborator finds the instances transitively.
-- Module-scope `comptime` values are the open question of this stage
-  (decision D3).
+- CTFE's AST route is deleted. The request path designed before P3 is the
+  only one.
+- Module-scope `comptime` values follow the boundary decision D3 set before
+  P3.
 
 ### P5 — Delete
 
 - The AST cloner's core, the request plumbing in the driver, and what is left
   of template derivation.
-- Erased dispatch in the VM and its verifier tolerances.
-- `docs/architecture.md` is rewritten to the target pipeline in the same
-  change.
+- Erased dispatch in the VM and its verifier tolerances. This is the one
+  comparison path that outlives its stage, and it goes here.
+- A last pass over `docs/architecture.md`. Each earlier stage already updated
+  the pipeline it changed.
 
 ### P6 — Parametric MIR as the package artifact
 
-- Serialize verified, drop-elaborated generators, which is what upstream's
-  `.mojoc` holds.
+- Serialize verified, drop-elaborated generators. This is Mojito's chosen
+  boundary. Upstream's `.mojoc` holds something earlier: the post-parse
+  `lit.package` with its bodies, written after the semantic checks and before
+  lowering.
 - The first consumer is the bundled standard library, checked once per
   compiler build rather than once per compilation.
+- A package keeps every exported template, whether or not the producing
+  program's entry graph reaches it. An entry-pruned executable artifact is
+  not a package.
+- Importing skips the source check. It still validates the artifact and
+  checks each instance's obligations.
+- The implementation is last, but its metadata shapes the generator contract
+  now: exported signatures, generic bodies, conformance and effect summaries,
+  dependency identities, source provenance, compiler and schema
+  compatibility, target assumptions, and cache invalidation.
 
 ## Decisions for the owner
 
-- **D1. The VM runs only elaborated MIR.** Recommended: yes, from P1, with the
+- **D1. The VM runs only concrete MIR.** Recommended: yes, from P1, with the
   erased path kept as an oracle until P5. Upstream's interpreter never runs a
   generator.
-- **D2. Where the elaborator lives.** `native::mono` sits in `mojito-native`,
-  after `mojito-vm` in the crate order, and the root driver can call it for
-  both backends with no new edge. Recommended: leave it there through P4 and
-  rename the crate at P5. Any stage that seems to need a new dependency edge
-  stops and asks, per `AGENTS.md`.
-- **D3. Module-scope `comptime` values.** Upstream keeps them symbolic until
-  elaboration. Recommended: keep folding them before the check through P4 and
-  decide then, since the checker reads them in types today.
-- **D4. The compile-time budget.** Proposed: no stage may leave a
-  `docs/performance.md` row slower than 1.20 times its P0 baseline, and P4
-  must leave every row faster than the baseline, since it removes the
-  discovery rounds.
-- **D5. The MIR text schema bump** at P3a, and whether pre-P3 artifacts stay
-  readable.
+- **D2. Where the elaborator lives.** For P1, `native::mono` stays in
+  `mojito-native` and the root driver calls it for both backends, with no new
+  edge. Connecting CTFE is different: `mojito-comptime` does not depend on
+  `mojito-native` today. The CTFE protocol entry draws the call and crate
+  graphs and brings the edge or the extraction to the owner as a design
+  question, per `AGENTS.md`. Renaming the crate at P5 does not settle it.
+- **D3. Module-scope `comptime` values.** Decided before P3, not at P4. A
+  module constant can depend on a generic compile-time call whose result
+  shapes another declaration's signature, so this is about types, not module
+  initialization. The decision says which closed constants are folded before
+  the check and which dependencies stay typed requests. Early folding may
+  stay as an implementation for a while; the boundary may not stay undefined.
+- **D4. The budget.** Proposed, for the owner to set:
+  - A named workload set: the three P0 programs, the P3 benchmark (roadmap
+    §1), and one many-instantiation program.
+  - Debug and release baselines, with the P0 revision and machine recorded.
+    Compilation is measured apart from execution, repeated and interleaved,
+    with a stated noise tolerance, and with differential verification off.
+  - Peak memory, instance counts, and concrete-MIR size are tracked beside
+    time. Eager specialization can add work and code even as it removes
+    rounds.
+  - 1.20 times baseline is a regression alarm on any row, not a target.
+  - P4 owes a stated improvement on the workloads repeated checking
+    dominates, and bounded regressions elsewhere. It does not owe a faster
+    time on every row.
+- **D5. The MIR text schema.** Either reserve the complete generator format
+  at P3a or allow further versioned bumps through P3. Recommended: allow the
+  bumps. Whether pre-P3 artifacts stay readable is decided at P3a.
 
 ## What would stop the plan
 
-- P1 fails if elaborated MIR cannot be made to verify and run on the whole
-  corpus, or if D4's budget fails with no fix. The plan then stops with the
-  two-mechanism arrangement, and that is recorded in `docs/non-goals.md`.
-- P3a fails if ownership cannot be decided on a compile-time region without
-  knowing the taken arm. The fallback is to run ownership after elaboration
-  for such generators, a recorded divergence from upstream's order, not the
-  end of the plan.
+- P1 does not switch the default while its parity gate has unexplained
+  failures.
+- If P1 misses the budget, the erased default stays while reachability,
+  copying, and instance caching are investigated. A slow first implementation
+  does not make the goal a non-goal. Only a measured floor above the budget
+  after that investigation stops the plan, and the owner makes that call.
+- If ownership cannot be decided on a compile-time region, running ownership
+  after elaboration is acceptable only as a temporary strategy, and only if
+  it still rejects an invalid untaken arm and an invalid unused declaration.
+  A fallback that checks only the selected instance accepts more programs,
+  which is a language change, not a phase-order divergence.
 
 ## `template_facts.rs`
 
@@ -335,11 +503,17 @@ Two things reduce it.
   capture, certificate grammar, realization, installation, verification — so
   no file is over 3,000 lines and each later deletion removes whole files.
 - **By stage**: P2 deletes the method and function classes, each P3 step
-  deletes its class, and P5 deletes the mechanism. From P0 on the tree's line
-  count only goes down.
+  deletes its class, and P5 deletes the mechanism.
 
-The line shares per class are not measured. P0's census and each stage's plan
-size them.
+The freeze forbids a new certificate class or recipe. It allows a correctness
+fix to existing behavior.
+
+Two measures track progress. The tree's line count goes down from P0 on. The
+census says which semantic decisions still need a clone or an inference, and
+that is the measure a stage is judged by: a migrated class is complete when
+its clone path is deleted.
+
+The line shares per class are not measured. Each stage's plan sizes them.
 
 ## Sizes
 
