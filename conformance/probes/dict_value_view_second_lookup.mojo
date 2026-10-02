@@ -2,10 +2,10 @@
 # Upstream (`1.2.0.dev2026092105`) prints `x y`.
 #
 # Mojito rejects with "use of invalidated interior reference 'v' to
-# 'd["value"]~'": a `Dict` lookup defines a fresh `value` generation, and the
-# view `d["a"].rstrip()` lends the whole subtree below the earlier one, so the
-# second lookup stales it. Upstream's view names `d["value"]["bytes"]`, which
-# a lookup does not replace.
+# 'd["value"]["bytes"]'": a `Dict` lookup defines a fresh `value` generation,
+# and the view `d["a"].rstrip()` lends the `bytes` interior below the earlier
+# one, so the second lookup stales it. Upstream names the same interior, and
+# a lookup does not replace it there.
 #
 # On the fix: promote this file to `assets/ok/` with its manifest rows, and
 # delete the matching roadmap checkbox.

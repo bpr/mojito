@@ -1109,7 +1109,10 @@ impl Checker {
         if view_result && fact_at(&facts.operation_adjustments, id).is_none() {
             facts.operation_adjustments.push((
                 id,
-                SemanticAdjustment::BorrowViewResult { materialized: None },
+                SemanticAdjustment::BorrowViewResult {
+                    materialized: None,
+                    interior: Vec::new(),
+                },
             ));
             let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);
             facts

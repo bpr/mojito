@@ -414,7 +414,9 @@ impl Checker {
                     materialized,
                     ..
                 }
-                | mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
+                | mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                    materialized, ..
+                },
             ) => {
                 if let Some(owner) = materialized {
                     Ok(*owner)

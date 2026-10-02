@@ -207,9 +207,13 @@ pub fn derive_adjustment(
         // A view result's loans are the selected callee's result contract
         // over the call's own receiver and arguments, which no instance
         // changes. A materialized temporary names a binding of one run.
-        SemanticAdjustment::BorrowViewResult { materialized: None } => {
-            Some(SemanticAdjustment::BorrowViewResult { materialized: None })
-        }
+        SemanticAdjustment::BorrowViewResult {
+            materialized: None,
+            interior,
+        } => Some(SemanticAdjustment::BorrowViewResult {
+            materialized: None,
+            interior: interior.clone(),
+        }),
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
         // A pointer to a place is minted with the place owner's capability,
         // which its declaration fixes. A provenance rebind to an origin that
@@ -306,6 +310,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::BorrowConversionSource { .. }
         | SemanticAdjustment::BorrowViewResult {
             materialized: Some(_),
+            ..
         }
         | SemanticAdjustment::CopyPlaceValue
         | SemanticAdjustment::ReferenceResult { .. }

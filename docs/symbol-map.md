@@ -287,7 +287,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   store by the argument values' carried origins only; a
   view-returning method call projects its carried origins through the tags
   `MethodSig::view_return_interior` lowers from its return annotation, kept
-  per call in the checker-only `view_result_interiors` table, and
+  per call in the checker's `view_result_interiors` table and handed to MIR
+  on `SemanticAdjustment::BorrowViewResult::interior`, where
+  `aggregate_borrows` names them in an element receiver's loan, and
   `call_parameters` names each argument), plus its `mut self` twin
   (`check_mutable_receiver_carried_aliases`, called from
   `infer_method_call`: a read argument whose value borrows the receiver's

@@ -929,6 +929,7 @@ impl Checker {
                 .or_insert(
                     mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                         materialized: None,
+                        interior: Vec::new(),
                     },
                 );
         }

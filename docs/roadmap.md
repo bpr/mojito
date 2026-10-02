@@ -530,26 +530,21 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.2 A view of a container element lends the whole element, not the
-  interior its method names**
+- [ ] **3.2 An in-place update of a container element under a live view of
+  it is not rejected**
 
-  Problem: `var it = ys[0].codepoints()`, then `ys[0] = String("zz")`, then a
-  loop over `it` is rejected with "use of invalidated interior reference 'it'
-  to 'ys["element"]~'", where the pin compiles it.
-  - The view's loan is the subtree below the element (`aggregate_borrows`,
-    `mir/facts.rs`), so every store over the element stales every view of it.
-  - The pin stales only a view whose return origin names an interior below
-    the element: `ys[0].rstrip()` names `ys["element"]["bytes"]`.
-  - The checker knows that interior (`view_result_interiors`), but the fact is
-    checker-only and never reaches MIR.
-  - Mojito's diagnostic for the `rstrip` case spells `ys["element"]~` where
-    the pin spells `ys["element"]["bytes"]`.
-  - The pin's accepted program reads bytes the store destroyed, so the plan
-    first decides whether to match it or to record the rejection in
-    `docs/non-goals.md`.
-  - Probe: `conformance/probes/list_element_iterator_after_store.mojo`.
+  Problem: `var v = ys[0].rstrip()`, then `ys[0] += "tail"`, then `print(v)`
+  runs on Mojito and the VM traps with "use after Pointer deallocation". The
+  pin rejects the `print` with "use of invalidated interior reference
+  'ys["element"]["bytes"]'".
+  - The view lends `ys["element"]["bytes"]`, which `ys[0] = …` and
+    `ys.append(…)` both stale.
+  - The augmented store reaches the element through its reference and records
+    no interior invalidation, so nothing stales the view.
+  - Natively the same program would read freed bytes instead of trapping.
+  - Probe: `conformance/probes/list_element_view_inplace_update.mojo`.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **3.3 A `mut` parameter may be transferred away and left empty**
 
@@ -2654,17 +2649,16 @@ last.
 
   Problem: `var v = d["a"].rstrip()` then `var u = d["b"].rstrip()` then a read
   of `v` is rejected with "use of invalidated interior reference 'v' to
-  'd["value"]~'", where the pin prints both.
+  'd["value"]["bytes"]'", where the pin prints both.
   - A `Dict` lookup defines a fresh `value` generation, which replaces the
     earlier one (`record_replacing_interior_reference`).
-  - The view lends the subtree below the earlier generation, so the second
-    lookup stales it.
-  - The pin's view names `d["value"]["bytes"]`, which a lookup does not
-    replace.
+  - The view lends `d["value"]["bytes"]` below the earlier generation, so the
+    second lookup stales it.
+  - The pin names the same interior, and a lookup does not replace it there.
   - A single view of a `Dict` value runs
     (`assets/ok/list_element_view_method_result.mojo`).
   - Probe: `conformance/probes/dict_value_view_second_lookup.mojo`.
-  - Depends on 3.2, which gives the view the interior its method names.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **3.109 A `^` transfer of a `ref` binding fails in MIR verification, not

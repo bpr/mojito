@@ -799,7 +799,7 @@ impl Flatten<'_> {
                 // place arguments lend the same way (the free-function rule
                 // above).
                 if let (
-                    true,
+                    Some(named),
                     ExprKind::MethodCall {
                         object,
                         args,
@@ -808,26 +808,38 @@ impl Flatten<'_> {
                     },
                 ) = (
                     self.checked_adjustments(expression)
-                        .iter()
-                        .any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
-                            )
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                                interior,
+                                ..
+                            } => Some(interior),
+                            _ => None,
                         }),
                     &expression.kind,
                 ) {
-                    let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
+                    let lent = |source: &Expr, named: &[String], this: &mut Self| -> Vec<MirLoan> {
                         let mut loans = this.aggregate_borrows(source);
                         // A receiver inside a container's owned interior
-                        // (`ys[0].rstrip()`) lends the subtree below that
-                        // element's generation: sibling element reads coexist
-                        // with the view, and a container mutation or a store
-                        // over the element stales it.
+                        // lends the interior the callee's return origin names
+                        // below that element's generation (`ys[0].rstrip()`
+                        // lends `ys["element"]["bytes"]`), or the whole
+                        // subtree when it names the receiver itself: sibling
+                        // element reads coexist with the view, and a container
+                        // mutation or a store over the element stales it.
                         if let Some((container, interiors)) = this.element_receiver(source) {
                             let fallback = this.place(container).root;
                             for mut origin in interiors {
-                                origin.path.push(mojito_types::origin::OriginSeg::Subtree);
+                                if named.is_empty() {
+                                    origin.path.push(mojito_types::origin::OriginSeg::Subtree);
+                                } else {
+                                    origin.path.extend(
+                                        named
+                                            .iter()
+                                            .cloned()
+                                            .map(mojito_types::origin::OriginSeg::Interior),
+                                    );
+                                }
                                 let Some(interior) =
                                     this.mir_interior_origin(&origin, Some(fallback))
                                 else {
@@ -877,10 +889,10 @@ impl Flatten<'_> {
                         });
                         loans
                     };
-                    let mut loans = lent(object, self);
+                    let mut loans = lent(object, &named, self);
                     for argument in args.iter().chain(kwargs.iter().map(|kw| &kw.value)) {
                         if self.view_lends_argument(argument) {
-                            loans.extend(lent(argument, self));
+                            loans.extend(lent(argument, &[], self));
                         }
                     }
                     return loans;

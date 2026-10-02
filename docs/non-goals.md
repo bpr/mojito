@@ -240,6 +240,31 @@ prints the element it read out of it.
 - Revisit when a re-pin prints the element first, and promote the probe to
   `assets/ok/` then.
 
+### A store over an element stales an iterator taken from it
+
+`var it = ys[0].codepoints()`, then `ys[0] = String("zz")`, then a loop over
+`it` is rejected with "use of invalidated interior reference 'it' to
+'ys["element"]~'". The pinned Mojo compiles it and prints the replaced
+element's codepoints.
+
+- The pin's program reads bytes the store destroyed: with a heap-sized string
+  as the element it prints the freed string (2026-10-02). It is an upstream
+  defect, not a rule to copy.
+- The pin stales a view only when its return origin names an interior below
+  the element. `codepoints()` returns `origin_of(self)`, which names the
+  element itself, and a store over the element does not stale that at the
+  pin.
+- Mojito lends such a view the whole subtree below the element, so a store
+  over the element stales it. A view that names an interior
+  (`ys[0].rstrip()`) lends exactly `ys["element"]["bytes"]`, as at the pin.
+- The same shape over a local (`var it = s.codepoints()`, then
+  `s = String("zz")`) runs at the pin and is rejected by Mojito as a loan
+  conflict, for the same reason.
+- Growing the list under the iterator is rejected on both sides.
+- Probe: `conformance/probes/list_element_iterator_after_store.mojo`.
+- Revisit when a re-pin rejects the store, and move the probe to
+  `assets/ownership_error/` then.
+
 ### A nested callable contract's binders are not told from its enclosing contract's
 
 Every anonymous callable contract declares its binders under the owner

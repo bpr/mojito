@@ -1,20 +1,18 @@
-# PROBE (subset): an iterator taken from a `List` element is staled by a store
-# over that element.
-# Upstream (`1.2.0.dev2026092105`) compiles this and prints the replaced
-# element's codepoints (`q`, then two spaces).
+# PROBE (divergence): an iterator taken from a `List` element is staled by a
+# store over that element.
 #
-# Mojito rejects with "use of invalidated interior reference 'it' to
-# 'ys["element"]~'". A view returned by a method on an element lends the whole
-# subtree below the element, because MIR does not see the interior the
-# method's return origin names (`view_result_interiors` is checker-only), so
-# every store over the element stales every such view. Upstream stales only a
-# view whose return origin names an interior below the element
-# (`ys[0].rstrip()` names `ys["element"]["bytes"]`), and its diagnostic spells
-# that interior where Mojito's spells `~`.
+# The pinned Mojo compiles this and prints the replaced element's codepoints
+# (`q`, then two spaces): the iterator reads bytes the store destroyed. With a
+# heap-sized string in place of `"q  "` it prints the freed string. Mojito
+# rejects with "use of invalidated interior reference 'it' to
+# 'ys["element"]~'", and rejects the same shape over a plain local
+# (`var it = s.codepoints()` then `s = String("zz")`), which the pin also runs.
 #
-# On the fix: decide whether to match upstream here (the iterator reads bytes
-# the store destroyed), then promote or move this file accordingly, and delete
-# the matching roadmap checkbox.
+# Observed 2026-10-02 against `Mojo 1.2.0.dev2026092105 (e9569894)`.
+#
+# Recorded in `docs/non-goals.md` ("A store over an element stales an iterator
+# taken from it"). Promote to `assets/ownership_error/` when a re-pin rejects
+# it.
 def main():
     var ys: List[String] = [String("q  "), String("r ")]
     var it = ys[0].codepoints()

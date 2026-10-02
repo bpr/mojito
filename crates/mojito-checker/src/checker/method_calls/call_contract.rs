@@ -212,9 +212,10 @@ impl Checker {
         self.operation_adjustments
             .borrow_mut()
             .entry(span.clone())
-            .or_insert(
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+            .or_insert_with(
+                || mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized: None,
+                    interior: resolved.view_return_interior.clone(),
                 },
             );
         if !resolved.view_return_interior.is_empty() {

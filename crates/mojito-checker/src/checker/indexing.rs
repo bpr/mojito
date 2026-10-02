@@ -1087,12 +1087,16 @@ impl Checker {
             let materialized = match adjustments.get(&span) {
                 Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
+                    ..
                 }) => *materialized,
                 _ => None,
             };
             adjustments.insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
+                mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                    materialized,
+                    interior: Vec::new(),
+                },
             );
         }
         self.subscript_descriptors
@@ -1212,12 +1216,16 @@ impl Checker {
             let materialized = match adjustments.get(&span) {
                 Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
+                    ..
                 }) => *materialized,
                 _ => None,
             };
             adjustments.insert(
                 span.clone(),
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { materialized },
+                mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                    materialized,
+                    interior: Vec::new(),
+                },
             );
         }
         self.subscript_descriptors

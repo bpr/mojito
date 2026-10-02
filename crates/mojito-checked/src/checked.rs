@@ -554,6 +554,10 @@ pub enum SemanticAdjustment {
         /// source (see `MaterializeBorrowSource`), and one span carries one
         /// adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
+        /// The owned-interior tags the selected callee's return origin names
+        /// below its receiver (`s.rstrip()` names `bytes`); empty when the
+        /// result's origin is the receiver itself.
+        interior: Vec<String>,
     },
     /// A place expression occurs in an ownership-producing context (binding,
     /// assignment, return, or another consuming slot) and was proven Copyable
@@ -2646,6 +2650,7 @@ pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> boo
             } => Some(arguments.iter().any(|(_, mutable)| *mutable)),
             SemanticAdjustment::BorrowViewResult {
                 materialized: Some(_),
+                ..
             } => Some(true),
             _ => None,
         })
@@ -2668,6 +2673,7 @@ pub fn materialized_borrow_owner(
         }
         | SemanticAdjustment::BorrowViewResult {
             materialized: Some(owner),
+            ..
         } => Some(*owner),
         _ => None,
     })

@@ -272,6 +272,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A view of a container element lends the interior its method's return
+  origin names: `ys[0].rstrip()` lends `ys["element"]["bytes"]` instead of
+  the whole subtree below the element, so a stale use is reported with the
+  pin's spelling, "use of invalidated interior reference 'v' to
+  'ys["element"]["bytes"]'". `SemanticAdjustment::BorrowViewResult` carries
+  the tags to MIR. A view whose origin is the element itself
+  (`ys[0].codepoints()`) keeps the subtree loan, so a store over the element
+  still stales it. The pin compiles that program and reads the bytes the store
+  destroyed, an upstream defect recorded in `docs/non-goals.md`. Fixture
+  `assets/ownership_error/list_element_view_stale_after_append.mojo`. This
+  closes roadmap 3.2, and the new 3.2 records that `ys[0] += …` under a live
+  view is not rejected.
 - An owned heterogeneous pack keeps outliving a literal-index element read
   that is its last use: `print(a[0])` over `var *a: *Ts` prints the element
   and then destroys the pack. The pinned Mojo destroys the pack first and
