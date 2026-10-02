@@ -463,6 +463,7 @@ impl Checker {
             let ty = self.infer(&keyword.value)?;
             self.borrow_reference_result_argument(&keyword.value);
             self.borrow_nominal_place_argument(&keyword.value, &ty);
+            self.borrow_storage_element_argument(&keyword.value);
             let (accepted, expected) =
                 print_keyword(&keyword.name, &ty).ok_or_else(|| TypeError::BadCall {
                     func: "print".to_string(),
@@ -491,6 +492,7 @@ impl Checker {
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);
             self.borrow_nominal_place_argument(arg, &ty);
+            self.borrow_storage_element_argument(arg);
             // `print` writes through `Writable`, taking no ownership.
             self.record_unconsumed_temporary(arg);
             let runtime_ty = default_literal(&ty);
@@ -597,6 +599,24 @@ impl Checker {
             && let Ty::Struct(name, _) = ty
             && self.structs.contains_key(name)
         {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(argument.source_span());
+        }
+    }
+
+    /// A read-only builtin (`print`) over an element of a named tuple or
+    /// pack reads the element where it lies, as it reads a field.
+    pub(super) fn borrow_storage_element_argument(&self, argument: &Expr) {
+        let ExprKind::Index { object, .. } = &argument.kind else {
+            return;
+        };
+        let storage = matches!(object.kind, ExprKind::Identifier(_))
+            && matches!(
+                self.expression_types.borrow().get(&object.source_span()),
+                Some(Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_))
+            );
+        if storage {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .insert(argument.source_span());

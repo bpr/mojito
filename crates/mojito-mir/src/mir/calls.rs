@@ -1496,6 +1496,9 @@ impl Flatten<'_> {
     /// ASAP destruction, which aggregate `LoadPlace` results deliberately
     /// trade for owner retention through the call.
     fn lower_borrowed_read_argument(&mut self, expression: &Expr) -> Option<Reg> {
+        if let ExprKind::Index { object, .. } = &expression.kind {
+            return self.lower_borrowed_element_read(expression, object);
+        }
         let ExprKind::Identifier(name) = &expression.kind else {
             return None;
         };
@@ -1540,6 +1543,58 @@ impl Flatten<'_> {
             expression.source_span(),
             Some(place.root),
             place.ty.clone().unwrap_or(ty),
+        );
+        self.emit(MirInstr::LoadPlace { dest, place });
+        Some(dest)
+    }
+
+    /// A borrowed element read (`f(a[0])` at a read slot): the element is
+    /// read where it lies, as a field is, so its `__copyinit__` never runs
+    /// for the pass. A reference-returning accessor of an owning container
+    /// lends its referent through the receiver path. Tuple and pack storage
+    /// loads the element place, whatever the element: the ordinary read
+    /// would copy the whole storage to index it.
+    fn lower_borrowed_element_read(&mut self, expression: &Expr, object: &Expr) -> Option<Reg> {
+        if self
+            .checked_adjustments(expression)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
+                )
+            })
+        {
+            return None;
+        }
+        if let Some(reference) = self.reference_result(expression) {
+            // A view (`Span[T, origin]`) lends storage it does not own; its
+            // element keeps the ordinary read.
+            let view = matches!(
+                self.checked_ty(object),
+                Some(Ty::Struct(_, arguments))
+                    if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(_)))
+            );
+            return (!view && owns_droppable_storage(&reference.referent))
+                .then(|| self.lower_call_receiver(expression).0);
+        }
+        if self.checked_call_contract(expression).is_some()
+            || !matches!(
+                self.intrinsic_index_dispatch(object),
+                Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage)
+            )
+        {
+            return None;
+        }
+        let place = self.try_place(expression)?;
+        let dest = self.fresh_typed(
+            expression.source_span(),
+            Some(place.root),
+            place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(expression))
+                .unwrap_or(Ty::Error),
         );
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)

@@ -85,6 +85,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An element passed to a read parameter is read where it lies. `print(a[0])`
+  inside `show[*Ts: Writable](*a: *Ts)` ran the element's copy constructor
+  and never destroyed the copy, and `g(xs[0])` or `print(t[0])` over a
+  `List`, an `Array` or a `Tuple` did the same, where the pin copies
+  nothing. MIR now loads a tuple or pack element's place and lends the
+  referent of an owning container's accessor, as it lends a field, and the
+  checker marks a pack or tuple element handed to `print` as read in place.
+  The VM and the native backend agree
+  (`assets/ok/pack_element_read_borrowed.mojo`). A `Span` element and a
+  value read of a homogeneous collector's element still copy (roadmap 3.112
+  and 3.1).
 - A place passed to a static method's `var` parameter must be implicitly
   copyable. `Box.keep(self.item)` with `keep(var v: Self.T)` was accepted for
   any `T`, and a `Box[String]` then stopped on the VM with "double free of
@@ -154,8 +165,7 @@ to evolve under the `0.x` compatibility rules.
   ended before the call. The native backend builds a read collector's pack
   by lending each element instead of cloning it. A module `def`, a method,
   and a static method behave alike, on the VM and natively
-  (`assets/ok/pack_argument_destroyed_after_call.mojo`). Reading an element
-  inside the callee still copies it (roadmap 3.1).
+  (`assets/ok/pack_argument_destroyed_after_call.mojo`).
 - The bitwise and shift operators have their own precedence levels. They
   shared one level with `+` and `-`, so `a << 1 | b >> 1` parsed as
   `(a << 1 | b) >> 1` and printed `7` for `Int32(6)` and `Int32(3)` where

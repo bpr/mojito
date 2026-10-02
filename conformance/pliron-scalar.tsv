@@ -313,6 +313,7 @@ assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_argument_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_default_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_read_borrowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_rebind.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_forwarding_method.mojo	-	ineligible	no-scalar-entry-shape

@@ -512,18 +512,21 @@ then one it rejects where the pin runs it, then a verdict that is right with
 the wrong words. The representation gap and the two standing ledgers are
 last.
 
-- [ ] **3.1 Reading an element of a read type pack copies it**
+- [ ] **3.1 A value read of a homogeneous collector's element copies the
+  whole collector**
 
-  Problem: `print(a[0])` inside `show[*Ts: Writable](*a: *Ts)` runs the
-  element's copy constructor, where the pin prints the element in place. A
-  printing copy constructor makes it a visible wrong output.
-  - The VM copies once and never destroys the copy; the native backend
-    copies twice.
-  - The call site is right: the caller lends the argument and copies
-    nothing.
-  - Probe: `conformance/probes/pack_element_read_copies.mojo`.
-  - The plan must say whether the element read should borrow like a field
-    read, and who destroys a copy that is taken.
+  Problem: `var x = a[1]` inside `def h(*a: IC)` runs the copy constructor of
+  every element of `a`, where the pin copies the one element. The extra
+  copies are never destroyed.
+  - MIR reads the collector as a value before indexing it, which is the
+    lifecycle copy of the whole storage.
+  - An element passed to a read parameter or to `print` is read in place and
+    copies nothing (`assets/ok/pack_element_read_borrowed.mojo`).
+  - A `Tuple` local's element is copied alone, as at the pin.
+  - The lever is `index_expr` (`mir/lower_expr/expr_access.rs`): load the
+    element place and copy that, as a field read does.
+  - Probe:
+    `conformance/probes/variadic_element_value_read_copies_collector.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2724,6 +2727,34 @@ last.
   - Whether a `ref` parameter over a mutable origin may be transferred is
     still to be observed on the pin.
   - Probe: `conformance/probes/reference_binding_transfer.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.112 Converting a `List` to a `Span` copies its elements**
+
+  Problem: `var s: Span[Dup, origin_of(xs)] = xs` runs each element's copy
+  constructor twice, where the pin builds the view and copies nothing. The
+  copies are never destroyed.
+  - An element read through the view (`print(s[0])`, `g(s[0])`) copies once
+    more, where a `List`, `Tuple` or pack element is read in place.
+  - The view read keeps the copy because lending it takes the path 3.31
+    reports as failing.
+  - The conversion's copies are not root-caused.
+  - Probe: `conformance/probes/span_conversion_copies_elements.mojo`.
+  - Depends on 3.31.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.113 An element of a temporary container cannot be passed to a read
+  parameter**
+
+  Problem: `g(make()[0])` over `def make() -> List[Dup]` is rejected with
+  "value of type 'Dup' cannot be implicitly copied", where the pin lends the
+  element and destroys the temporary after the call.
+  - The element of a named container is lent (`g(xs[0])`).
+  - The checker treats the reference result of a temporary receiver as an
+    ordinary value read.
+  - Workaround: bind the container to a local first.
+  - Probe: `conformance/probes/temporary_element_read_argument.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
