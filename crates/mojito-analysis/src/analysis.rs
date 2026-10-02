@@ -26,8 +26,8 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirInteriorOrigin, MirPlace, MirProgram,
-    MirTerm, Proj, Reg, SpanTable, UseMode,
+    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript,
+    MirPlace, MirProgram, MirTerm, Proj, Reg, SpanTable, UseMode,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;

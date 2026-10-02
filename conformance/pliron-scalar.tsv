@@ -305,6 +305,7 @@ assets/ok/overloading_owned_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_struct_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/owned_iteration_iterator_owned_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/owned_pack_destroyed_in_reverse.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_argument_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape

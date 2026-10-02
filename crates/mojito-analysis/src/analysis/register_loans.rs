@@ -209,6 +209,27 @@ pub(super) fn transfer_register_loans(
             }
         }
     }
+    // An element read out of pack storage is the same shallow read as a
+    // `LoadPlace`: an aggregate element aliases the pack until its consumer
+    // finishes, and a scalar one borrows the pack for that consumer alone.
+    if let MirInstr::Index {
+        dest,
+        base_place: Some(place),
+        intrinsic:
+            Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage),
+        ..
+    } = instruction
+    {
+        let roots = std::iter::once(place.root).chain(place.through);
+        if register_types
+            .get(&dest.0)
+            .is_none_or(may_alias_owned_storage)
+        {
+            reference_seeded.extend(roots);
+        } else {
+            registers.single_hop.insert(dest.0, roots.collect());
+        }
+    }
     owners.extend(reference_seeded.iter().copied());
 
     // A call-family result is a fresh independent value — a return runs the

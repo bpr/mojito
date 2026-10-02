@@ -527,18 +527,22 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.2 An owned pack's elements are destroyed after the first element's
-  last use**
+- [ ] **3.2 The pin destroys an owned heterogeneous pack before a
+  literal-index element read is consumed**
 
-  Problem: `take(Noisy(1), Noisy(2))` against `take[*Ts](var *a: *Ts)`,
-  printing each `a[i]` in a `comptime for`, destroys both elements after
-  printing the first, where the pin prints both and then destroys them in
-  reverse order. It is a silent wrong order.
-  - A top-level `def` and a method collector behave alike.
-  - The unrolled `a[0]` read is taken as the whole pack's last use.
-  - Probe: `conformance/probes/owned_pack_elements_destroyed_early.mojo`.
+  Problem: `print(a[0])` as the last use of `var *a: *Ts` prints the element
+  and then destroys the pack, where the pin destroys the whole pack and then
+  prints the element it read. It is a silent wrong order.
+  - The pin's order prints a value whose destructor already ran, so it may
+    be an upstream defect rather than a rule to copy.
+  - A `comptime for` over the pack and a homogeneous `var *a: T` collector
+    print first on both sides.
+  - Decide first: match the pin, or record the difference in
+    `docs/non-goals.md`.
+  - Probe:
+    `conformance/probes/owned_pack_literal_index_destroyed_before_use.mojo`.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Opus, Planned.
 
 - [ ] **3.3 A constructor overload set drops every generic candidate before it is
   ranked**

@@ -305,6 +305,7 @@ assets/ok/overloading_owned_parameter.mojo	main	exe-differential	sanitized
 assets/ok/overloading_struct_params.mojo	main	exe-differential	sanitized
 assets/ok/overloading_variadic_constructor.mojo	main	exe-differential	sanitized
 assets/ok/owned_iteration_iterator_owned_type.mojo	main	exe-differential	sanitized
+assets/ok/owned_pack_destroyed_in_reverse.mojo	main	exe-differential	sanitized
 assets/ok/owned_pointer_api.mojo	main	exe-differential	sanitized
 assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
 assets/ok/pack_argument_destroyed_after_call.mojo	main	exe-differential	sanitized

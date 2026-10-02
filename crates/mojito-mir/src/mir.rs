@@ -211,6 +211,19 @@ pub struct MirFunctionDeclaration {
     pub availability: Vec<GenericConstraint>,
 }
 
+impl MirFunctionDeclaration {
+    /// The variable slot holding an owning (`var`) positional collector. Its
+    /// elements are destroyed last to first, unlike a `Tuple`'s storage.
+    #[must_use]
+    pub fn owned_pack_slot(&self) -> Option<VarId> {
+        if self.variadic.is_none() || self.variadic_convention != Some(ArgConvention::Var) {
+            return None;
+        }
+        let index = self.variadic_index.unwrap_or(self.param_names.len());
+        VarId::try_from(usize::from(self.has_receiver) + index).ok()
+    }
+}
+
 /// # Panics
 ///
 /// Panics if a checked declaration names a parameter absent from its own

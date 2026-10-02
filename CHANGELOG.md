@@ -85,6 +85,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An owning `var *args` collector lives until the last use of any element
+  read out of it, and its elements are then destroyed last to first.
+  `take(Noisy(1), Noisy(2))` against `take[*Ts](var *a: *Ts)`, printing each
+  `a[i]` in a `comptime for`, destroyed both elements before printing the
+  second, and in first-to-last order. An element read out of pack storage
+  now borrows the pack as a field read borrows its owner, and both backends
+  destroy an owning collector in reverse where `Tuple` storage stays
+  left to right (`assets/ok/owned_pack_destroyed_in_reverse.mojo`). The pin
+  destroys a heterogeneous owned pack before consuming a literal-index
+  element read that is its last use (roadmap 3.2).
 - An argument a read `*args` collector gathers is lent to the call, as a
   `read` parameter's argument is. `show(y, 5)` against
   `show[*Ts: Writable](*a: *Ts)` ran `y`'s destructor before `show`'s body,

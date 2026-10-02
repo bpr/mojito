@@ -3525,6 +3525,10 @@ current Mojo:
   dataflow's single-hop retention), so the owner's `DropVar` follows the call
   that reads the field rather than the load; an aggregate load retains its
   owner through every consumer as before.
+- An element read out of pack storage (an intrinsic `TupleStorage` or
+  `VariadicStorage` `Index` with a retained base place) is the same shallow
+  read: an aggregate element retains the pack through every consumer of the
+  register, a scalar one through the single consuming instruction.
 - A consuming parameter (`var`, `deinit`, receiver or not) is a drop root of
   the callee: it is destroyed — for `deinit`, consumed — at its last use in
   the body, and one the body never uses dies at the function's entry, before
@@ -3560,8 +3564,10 @@ declaration order. Struct destruction runs:
    receiver's `ConsumeVar` at its last use destroys only the survivors
 2. otherwise the fields, in declaration order
 
-The compiler-private heterogeneous pack carrier likewise drops elements
-left-to-right, matching current Mojo's pack-storage lifecycle. Public
+The compiler-private tuple storage likewise drops elements left-to-right
+where it backs a `Tuple`. An owning `var *args` collector — the slot
+`MirFunctionDeclaration::owned_pack_slot` names — drops them last to first,
+matching current Mojo's pack lifecycle, in the VM and natively. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary
 declaration order for fields; their library destructors own any
 element-specific teardown. Per-field liveness for `deinit` parameters is a
@@ -3879,8 +3885,8 @@ This makes the VM a useful backstop and executable model for ownership semantics
 Dropping is observably a no-op for scalars and destructor-less leaf values. For
 structs with `__deinit__`, it calls the destructor and then drops fields. A
 destructor-less struct still recursively destroys aggregate fields; elements
-inside the compiler-private heterogeneous pack carrier are visited
-left-to-right. Moved-out fields are skipped so partial moves do not double-drop.
+inside compiler-private tuple storage are visited left-to-right, and those
+of an owning positional collector last to first. Moved-out fields are skipped so partial moves do not double-drop.
 
 ### Exceptions And Non-Normal Flow
 

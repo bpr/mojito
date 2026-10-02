@@ -87,6 +87,24 @@ impl VmBackend {
         Ok(())
     }
 
+    /// Destroy the elements of an owning positional collector, last to
+    /// first — the order Mojo destroys a `var *args` pack in.
+    pub(super) fn drop_owned_pack(
+        &mut self,
+        prog: &Prog,
+        items: Vec<Value>,
+        static_ty: Option<&Ty>,
+    ) -> Result<(), RuntimeError> {
+        let elements = match static_ty.map(super::peel_references) {
+            Some(Ty::Tuple(elements)) => elements.as_slice(),
+            _ => &[],
+        };
+        for (index, item) in items.into_iter().enumerate().rev() {
+            self.drop_typed_value(prog, item, elements.get(index))?;
+        }
+        Ok(())
+    }
+
     /// Destroy a value whose checked static type is known, so a closed
     /// generic-struct instance runs its own `__deinit__` clone rather than the
     /// template's erased body. The fields, elements, and payloads reached
@@ -143,9 +161,9 @@ impl VmBackend {
                     self.drop_value(prog, item)?;
                 }
             }
-            // Private heterogeneous pack storage follows Mojo's element
-            // destruction order (left-to-right). Public Tuple is the nominal
-            // one-field wrapper handled by the struct branch above.
+            // `Tuple`'s private backing storage is destroyed left to right;
+            // the nominal wrapper reaches it through the struct branch above.
+            // An owning collector goes through `drop_owned_pack` instead.
             Value::Tuple(items) => {
                 let elements = match static_ty.map(super::peel_references) {
                     Some(Ty::Tuple(elements)) => elements.as_slice(),

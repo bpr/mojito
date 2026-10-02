@@ -55,7 +55,11 @@ impl FnLowering<'_> {
                             self.end_flag_guard(ctx, guard);
                         }
                     } else {
-                        self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
+                        let owned_pack = self
+                            .declarations
+                            .get(self.name)
+                            .is_some_and(|declaration| declaration.owned_pack_slot() == Some(var));
+                        self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves, owned_pack)?;
                     }
                     self.set_drop_flag(ctx, var, false);
                     if let Some(cont) = cont {
@@ -128,7 +132,7 @@ impl FnLowering<'_> {
                     }
                     let leaves = self.leaf_flags.get(&var).cloned().unwrap_or_default();
                     let ptr = self.var_slots[var as usize];
-                    self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
+                    self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves, false)?;
                 }
                 self.set_drop_flag(ctx, var, false);
                 if let Some(continuation) = continuation {
@@ -319,14 +323,16 @@ impl FnLowering<'_> {
 
     /// Destroy the surviving droppable top-level leaves of partially-tracked
     /// storage: leaves with a presence flag drop under that flag's guard, the
-    /// rest unconditionally. Struct fields and pack elements alike destroy in
-    /// declaration order (left-to-right) — the VM's `drop_value` order.
+    /// rest unconditionally. Struct fields and tuple storage destroy in
+    /// declaration order (left-to-right) — the VM's `drop_value` order; an
+    /// owning positional collector (`last_first`) destroys last to first.
     pub(super) fn emit_surviving_leaf_drops(
         &mut self,
         ctx: &mut Context,
         ptr: Value,
         ty: &Ty,
         leaves: &std::collections::BTreeMap<usize, Value>,
+        last_first: bool,
     ) -> Result<(), PlironError> {
         let element_tys = match ty {
             Ty::Struct(name, _) => {
@@ -342,8 +348,12 @@ impl FnLowering<'_> {
             .layout
             .struct_layout(&element_tys)
             .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-        for (position, element) in element_tys.iter().enumerate() {
-            let element = element.clone();
+        let mut positions: Vec<usize> = (0..element_tys.len()).collect();
+        if last_first {
+            positions.reverse();
+        }
+        for position in positions {
+            let element = element_tys[position].clone();
             if !self.needs_drop(&element) {
                 continue;
             }

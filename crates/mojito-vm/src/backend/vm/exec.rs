@@ -1880,8 +1880,19 @@ impl VmBackend {
             // use, running its `__deinit__` if it has one.
             MirInstr::DropVar { var } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
-                let ty = prog.mir.functions[function].1.var_tys.get(var).cloned();
-                self.drop_typed_value(prog, v, ty.as_ref())?;
+                let (name, body) = &prog.mir.functions[function];
+                let ty = body.var_tys.get(var).cloned();
+                match v {
+                    Value::Tuple(items)
+                        if prog
+                            .sigs
+                            .get(name)
+                            .is_some_and(|sig| sig.owned_pack_slot == Some(*var)) =>
+                    {
+                        self.drop_owned_pack(prog, items, ty.as_ref())?;
+                    }
+                    v => self.drop_typed_value(prog, v, ty.as_ref())?,
+                }
             }
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
