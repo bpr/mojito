@@ -296,11 +296,12 @@ the package list, so neither is reshaped later.
   bodies without them.
 - **Value-dependent register types.** Rows 23 and 27 need a type over a
   parameter expression. That is the common type vocabulary entry.
-- **Summaries of a generic `def`.** A struct method's summary names the
-  origin positions of a stored type itself (§Carried sources). A generic
-  `def` called at a loan-carrying argument is still cloned with origin
-  binders, because its summary is closed only through a struct receiver.
-  That is a roadmap §1 entry.
+- **A `def` the elaborator cannot instantiate.** A generic `def` called at
+  a loan-carrying argument is served by its template (§Carried sources).
+  It still clones, with clone origin binders, where its body holds or
+  reaches a compile-time construct, or names an associated type its
+  signature does not spell. A clone over an origin binder that stores a
+  copy records no loan. Each is a roadmap entry.
 - **Where the symbolic check is too lenient.** Row 10 closed with P2's first
   step. Row 20 holds for a method its template serves and is still a
   section-3 entry for one that clones. Two more turned up when the clones
@@ -320,13 +321,17 @@ are the instance's. Its transfer summary therefore carries the stored type.
   value (`check_outward_store`), and where it hands a symbolic value by
   value to a callee that stores it.
 - **The call.** `replay_transfer_effects` closes the type with the
-  arguments of the struct instance the receiver is. The places the closed
+  arguments of the struct instance the receiver is, and with the types the
+  call binds to the callee's own binders: a generic `def`'s, or a method's
+  own. A type that names a binder the call leaves unbound is skipped. The
+  places the closed
   type names (a reference's or a pointer's origin, a struct's origin
   arguments) are the sources, and the destination borrows them shared. A
   type still symbolic at the call is carried on in the caller's own summary.
   A plain-data type names no place and records nothing.
 - **No binder.** Nothing in the summary names an origin parameter, so no
-  clone origin binder is needed to spell it. A loan-carrying instance is
+  clone origin binder is needed to spell it. A `def` called at a
+  loan-carrying argument keeps its template, and a loan-carrying instance is
   served by its template as a plain-data one is.
 - **The escape verdict** is the call's: a carried source rooted in the
   caller's frame cannot reach a destination that outlives it.

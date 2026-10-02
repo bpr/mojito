@@ -965,7 +965,13 @@ impl Checker {
                 // callee expression as the receiver actual.
                 let carried = contract_transfer_effects(&callable);
                 if !carried.is_empty() {
-                    self.replay_transfer_effects(carried, None, args, &expr.source_span())?;
+                    self.replay_transfer_effects(
+                        carried,
+                        None,
+                        args,
+                        &expr.source_span(),
+                        &TySubst::new(),
+                    )?;
                 }
                 if let Ty::Struct(struct_name, _) = &callable {
                     let method_key = format!("{struct_name}.__call__");
@@ -975,6 +981,7 @@ impl Checker {
                         Some(callee),
                         args,
                         &expr.source_span(),
+                        &TySubst::new(),
                     )?;
                 }
                 self.record_call_environment_effects(

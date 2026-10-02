@@ -514,16 +514,7 @@ impl Specializer<'_> {
                 format!("iterator `{method}` operation applied to non-struct type `{receiver}`"),
             ));
         };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
-            nominal_template(receiver_name),
-            method,
-            selected,
-            0,
-        );
+        let target = self.iterator_step_template(receiver_name, method, selected);
         if !self.functions.contains_key(target.as_str()) {
             return Err(self.error(
                 Some(owner),
@@ -534,6 +525,43 @@ impl Specializer<'_> {
             self.infer_receiver_call(owner, &target, receiver, result)?;
         let concrete = self.enqueue(&target, bindings, arguments)?;
         Ok((concrete, result))
+    }
+
+    /// Whether the nullary iterator-protocol operation `method` of
+    /// `receiver` returns a reference.
+    pub(super) fn iterator_step_returns_reference(
+        &self,
+        receiver: &Ty,
+        method: &str,
+        selected: Option<&str>,
+    ) -> bool {
+        let Ty::Struct(receiver_name, _) = receiver else {
+            return false;
+        };
+        let target = self.iterator_step_template(receiver_name, method, selected);
+        self.declarations
+            .get(target.as_str())
+            .is_some_and(|declaration| declaration.returns_reference)
+    }
+
+    /// The template method a nullary iterator-protocol operation on a
+    /// receiver named `receiver_name` selects.
+    fn iterator_step_template(
+        &self,
+        receiver_name: &str,
+        method: &str,
+        selected: Option<&str>,
+    ) -> String {
+        mojito_symbol::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(receiver_name),
+            method,
+            selected,
+            0,
+        )
     }
 
     /// The receiver-typed sibling of [`Self::infer_call`] for nullary method

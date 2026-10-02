@@ -4649,190 +4649,141 @@ fn template_method_requests_match_an_inferred_run() {
     );
 }
 
+/// Assert that `source` prints `output` and that the template of each `def`
+/// in `served` serves its calls: the program declares no clone of it.
+fn assert_defs_served_by_template(source: &str, output: &str, served: &[&str]) {
+    let compiler = Compiler::default();
+    let compiled = compile_entry(&compiler, source);
+    assert_eq!(compiler.execute(&compiled).expect("execute").output, output);
+    let defs: Vec<&str> = compiled
+        .checked()
+        .statements()
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for template in served {
+        assert!(defs.contains(template), "{template} is declared: {defs:?}");
+        let clone = format!("{template}$y");
+        assert!(
+            defs.iter().all(|name| !name.starts_with(&clone)),
+            "{template} mints no clone: {defs:?}"
+        );
+    }
+    assert!(
+        defs.iter()
+            .all(|name| !name.contains("origin@") && !name.contains("origin#")),
+        "no `def` clone names a place or an origin binder: {defs:?}"
+    );
+}
+
 #[test]
-fn bundled_def_over_loan_carrying_argument_clones() {
+fn bundled_def_over_loan_carrying_argument_keeps_its_template() {
     // A bundled generic `def` called with a loan-carrying type argument
-    // (`alloc(Layout[Span[Int, origin_of(xs)]](...))`) is cloned with the
-    // argument's origin slots bound to clone binders, as a user function's
-    // call is. A clone of a certified template (`dealloc`) derives from it,
-    // and the others pass their concrete clone check. The list is a read
-    // parameter, so the pointer and the span written through it do not alias.
-    let source = "from std.memory import Layout, dealloc\nfrom std.algorithms import first_or\n\ndef run(xs: List[Int]):\n    var a = alloc(Layout[Span[Int, origin_of(xs)]](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_offset(0).unsafe_write(Span(xs))\n    print(len(p[0]))\n    dealloc(a^)\n    var l = List[Span[Int, origin_of(xs)]]()\n    l.append(Span(xs))\n    print(first_or(l, Span(xs))[2])\n    print(xs[0])\n\ndef main():\n    run([1, 2, 3])\n";
-    let compiler = Compiler::default().with_template_verification(false);
-    let derived = compile_entry(&compiler, source);
-    assert_eq!(
-        compiler.execute(&derived).expect("execute").output,
-        "3\n3\n1\n"
-    );
-    let defs: Vec<&str> = derived
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for clone in [
-        "alloc$y9:Span[Int]",
-        "__module$std$memory$alloc$dealloc$y9:Span[Int]",
-        "__module$std$algorithms$first_or$y15:List[Span[Int]]",
-    ] {
-        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
-    }
-    let stats = derived.template_stats();
-    assert!(
-        stats
-            .derived
-            .iter()
-            .any(|name| name == "__module$std$memory$alloc$dealloc$y9:Span[Int]"),
-        "dealloc's clone derives: {:?}",
-        stats.refused
+    // (`alloc(Layout[Span[Int, origin_of(xs)]](...))`) is served by its
+    // template, as a user function's call is. `first_or` iterates its
+    // parameter in place, and the step it resolves copies the element out.
+    // The list is a read parameter, so the pointer and the span written
+    // through it do not alias.
+    assert_defs_served_by_template(
+        "from std.memory import Layout, dealloc\nfrom std.algorithms import first_or\n\ndef run(xs: List[Int]):\n    var a = alloc(Layout[Span[Int, origin_of(xs)]](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_offset(0).unsafe_write(Span(xs))\n    print(len(p[0]))\n    dealloc(a^)\n    var l = List[Span[Int, origin_of(xs)]]()\n    l.append(Span(xs))\n    print(first_or(l, Span(xs))[2])\n    print(xs[0])\n\ndef main():\n    run([1, 2, 3])\n",
+        "3\n3\n1\n",
+        &[
+            "alloc",
+            "__module$std$memory$alloc$dealloc",
+            "__module$std$algorithms$first_or",
+        ],
     );
 }
 
 #[test]
-fn unspelled_loan_carrying_type_argument_clones() {
+fn unspelled_loan_carrying_type_argument_keeps_its_template() {
     // A loan-carrying type argument no runtime parameter spells
-    // (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n)`) is
-    // cloned with explicit origin binders, which each call supplies from its
-    // own application. Over an enclosing origin binder (`Span[Int, o]` in
-    // `def slots[o: MutOrigin]`, or the clone binder `make`'s clone spells
-    // for its `T`), the call supplies that binder by name.
-    let compiler = Compiler::default();
-    let compiled = compile_entry(
-        &compiler,
+    // (`unsafe_alloc[Span[Int, origin_of(xs)]](n)`, a user `make[T](n)`)
+    // leaves its call as written, on the template, whether the slot names a
+    // caller place or an enclosing origin binder (`Span[Int, o]` in `def
+    // slots[o: ImmOrigin]`).
+    assert_defs_served_by_template(
         include_str!("../assets/ok/unspelled_loan_carrying_type_argument.mojo"),
-    );
-    assert_eq!(
-        compiler.execute(&compiled).expect("execute").output,
-        "3 6\n5\n4\n6\n"
-    );
-    let defs: Vec<&str> = compiled
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for clone in [
-        "__module$std$memory$alloc$unsafe_alloc$y9:Span[Int]",
-        "make$y9:Span[Int]",
-    ] {
-        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
-    }
-    let mir = compiled.emit_mir().expect("emit MIR");
-    assert_eq!(
-        mir.matches(r#"func: "__module$std$memory$alloc$unsafe_alloc$y9:Span[Int]""#)
-            .count(),
-        3,
-        "`main`, `slots`, and `make`'s clone each call the clone"
+        "3 6\n5\n4\n6\n",
+        &["make", "slots"],
     );
 }
 
 #[test]
-fn pointer_type_argument_clones_with_origin_binder() {
-    // A `Pointer` type argument naming a caller place bakes into its clone
-    // with a clone origin binder: every place of the shape shares one clone
-    // of each `def` and struct-instance method, and no clone names a place.
-    let compiler = Compiler::default();
-    let compiled = compile_entry(
-        &compiler,
+fn pointer_type_argument_keeps_its_template() {
+    // A `Pointer` type argument naming a caller place binds no clone origin
+    // binder on a `def`: the template serves every place of the shape.
+    assert_defs_served_by_template(
         include_str!("../assets/ok/pointer_type_argument_clone_binder.mojo"),
-    );
-    assert_eq!(
-        compiler.execute(&compiled).expect("execute").output,
-        "1 2\n7 9\n11 13\n"
-    );
-    let defs: Vec<&str> = compiled
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for clone in [
-        "alloc$y31:Pointer[Int, origin#4294967295]",
-        "first$y31:Pointer[Int, origin#4294967295]",
-        "__module$std$memory$alloc$unsafe_alloc$y31:Pointer[Int, origin#4294967295]",
-    ] {
-        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
-    }
-    assert!(
-        defs.iter().all(|name| !name.contains("origin@")),
-        "no clone names a place: {defs:?}"
+        "1 2\n7 9\n11 13\n",
+        &["alloc", "first"],
     );
 }
 
 #[test]
-fn interior_pointer_type_argument_clones_with_projected_binder() {
-    // A `Pointer` type argument over an interior-projected place bakes into
-    // its clone with a clone origin binder that re-applies the projection:
-    // both arrays share one clone of each `def` and struct-instance method,
-    // apart from the plain place's clone, and no clone names a place.
-    let compiler = Compiler::default();
-    let compiled = compile_entry(
-        &compiler,
+fn interior_pointer_type_argument_keeps_its_template() {
+    // A `Pointer` type argument over an interior-projected place is served
+    // by the template too, which the plain place's call shares.
+    assert_defs_served_by_template(
         include_str!("../assets/ok/pointer_type_argument_interior_clone_binder.mojo"),
-    );
-    assert_eq!(
-        compiler.execute(&compiled).expect("execute").output,
-        "3 4 5 4\n30 50\n"
-    );
-    let defs: Vec<&str> = compiled
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for clone in [
-        "first$y60:Pointer[Int, origin#4294967295._get_owned_interior[element]]",
-        "first$y31:Pointer[Int, origin#4294967295]",
-    ] {
-        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
-    }
-    assert!(
-        defs.iter().all(|name| !name.contains("origin@")),
-        "no clone names a place: {defs:?}"
+        "3 4 5 4\n30 50\n",
+        &["first"],
     );
 }
 
 #[test]
-fn receiver_origin_iterator_argument_clones() {
+fn receiver_origin_iterator_argument_keeps_its_template() {
     // An iterator recorded with its method's receiver origin
-    // (`l.__iter__()` over a loan-carrying list) binds that slot to a clone
-    // binder, so `next` and a user generic `def` each get a clone.
-    let compiler = Compiler::default();
-    let compiled = compile_entry(
-        &compiler,
+    // (`l.__iter__()` over a loan-carrying list) is a loan-carrying
+    // argument: `next` and a user generic `def` are served by their
+    // templates, and the `__next__` they dispatch copies the element out of
+    // the reference the list iterator returns.
+    assert_defs_served_by_template(
         include_str!("../assets/ok/receiver_origin_iterator_argument.mojo"),
+        "3 4\n6\n5\n",
+        &["next", "advance"],
     );
+}
+
+#[test]
+fn def_over_loan_carrying_argument_is_served_by_its_template() {
+    // A `def` that stores a copy of its argument publishes the stored type,
+    // which the call closes with its own bindings, so the list borrows `xs`
+    // with no clone to record it. A method with a parameter of its own is
+    // closed the same way, and an instance only the `def`'s body names
+    // (`Box[T]`) is requested from the template's checked types.
+    assert_defs_served_by_template(
+        include_str!("../assets/ok/template_served_def_loan_carrying_argument.mojo"),
+        "1 2\n6\n1 1 7\n11\n",
+        &["keep", "dup", "feed", "wrap"],
+    );
+}
+
+#[test]
+fn keyed_def_over_loan_carrying_argument_still_clones() {
+    // A `def` whose body reaches a compile-time-keyed `def` has no template
+    // body to instantiate, so its call at a loan-carrying argument keeps
+    // its clone and the clone's origin binder.
+    let source = "def inner[T: Copyable & Deinitable](value: T) -> Int:\n    comptime if conforms_to(T, Hashable):\n        return 1\n    else:\n        return 2\n\n\ndef outer[T: Copyable & Deinitable](value: T) -> Int:\n    return inner(value)\n\n\ndef main():\n    var xs: List[Int] = [7, 8, 9]\n    var p: Pointer[List[Int], ImmOrigin(origin_of(xs))] = Pointer(to=xs)\n    print(outer(p), outer(3))\n";
+    let compiler = Compiler::default();
+    let compiled = compile_entry(&compiler, source);
     assert_eq!(
         compiler.execute(&compiled).expect("execute").output,
-        "3 4\n6\n5\n"
+        "2 1\n"
     );
-    let defs: Vec<&str> = compiled
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    for clone in [
-        "next$y50:__module$std$collections$list$_ListIter[Span[Int]]",
-        "advance$y50:__module$std$collections$list$_ListIter[Span[Int]]",
-    ] {
-        assert!(defs.contains(&clone), "{clone} is minted: {defs:?}");
-    }
+    let clone = "outer$y48:Pointer[List[Int], ImmOrigin(origin#4294967295)]";
+    assert!(
+        compiled
+            .checked()
+            .statements()
+            .iter()
+            .any(|statement| matches!(&statement.kind,
+                mojito::ast::StmtKind::Def { name, .. } if name == clone)),
+        "{clone} is minted"
+    );
 }
 
 #[test]

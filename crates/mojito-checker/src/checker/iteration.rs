@@ -206,7 +206,7 @@ impl Checker {
         }
         if protocol.borrowed_origin.is_none()
             && !protocol.prepare.is_empty()
-            && matches!(iter_ty, Ty::Struct(..))
+            && matches!(iter_ty, Ty::Struct(..) | Ty::Param { .. })
             && let Some(mut origin) = source.cloned()
         {
             // Loan granularity is the iterator's declared yielded-origin

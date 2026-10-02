@@ -1009,11 +1009,17 @@ compile-time-keyed `def`. The driver adds the ones only checked types show
 (`src/compiler/template_reach.rs`): a body whose types hold a tuple or a
 struct specialized whole over the struct's parameters, and one that calls an
 overloaded method with binders of its own. An instance whose argument
-carries a loan or a callable clones every method, because its clone's origin
-binders are what a transfer summary names the argument's loans by. Because
+carries a loan clones no more than a plain-data one. A generic `def` called
+at a loan-carrying argument keeps its template the same way
+(`Elab::template_serves_def`): it mints a clone, over clone origin binders,
+only where its body holds or reaches such a construct, or names an
+associated type its signature does not spell, which the elaborator has no
+call type to solve from. Every other closed call of a generic `def` still
+clones. Because
 no clone check walks a template-served body at the instance's arguments, the
 driver also reads from the template's checked types which closed instances
-that body reaches (`Box[List[Self.T]]`), transitively, and requests them, so
+that body reaches (`Box[List[Self.T]]`), transitively, and requests them
+(a served `def`'s body is read the same way, at the types its call binds), so
 a struct reached only from such a body still mints the clones it keeps;
 `native::mono` then targets that clone where a template body calls the
 method on a closed receiver (`instance_method_target`).
@@ -2400,8 +2406,10 @@ canonical artifact and the VM's erased oracle use. `verify_concrete` is for
 concrete MIR, the form the VM and the native backend run: it applies the same rules and then rejects what only
 parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
 signature, slot, register, place, instruction, or declaration; a compile-time
-parameter a declaration or a call contract still declares; a
-`ConstructTypeParam`; and an erased-dispatch result adapter.
+parameter a declaration or a call contract still declares; and a
+`ConstructTypeParam`. A copy-reference result adapter survives elaboration
+only on a `__next__` step that returns a reference, where it copies the
+element out; the elaborator drops it from a step that returns the element.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
 instance it came from. The concrete mode also rejects a declaration that
@@ -3136,10 +3144,11 @@ derived from the body publishes it where the substituted type carries a loan
 (`docs/notes/instantiation-from-template.md`, obligation 14). The same store
 publishes one effect whose source is the stored type itself
 (`SigOrigin::Carried`), as does a symbolic value handed by value to a callee
-that stores it. A call through a struct receiver closes that type with the
-receiver's arguments, and the destination borrows, shared, the places the
-closed type names. That is what serves an instance over a loan-carrying
-argument from its template with no clone
+that stores it. A call closes that type with the arguments of the struct
+instance its receiver is and with the types it binds to the callee's own
+binders, and the destination borrows, shared, the places the closed type
+names. That is what serves an instance over a loan-carrying argument, and a
+generic `def` called at one, from its template with no clone
 (`docs/notes/generator-contract.md` §Carried sources). A nested `def`
 records no such effect. A bundled seed stays in a method's summary beside
 what its body records. Outward storage
@@ -3413,7 +3422,8 @@ is currently List-specific. For a current typed-raising iterator, `TryNext`
 invokes `__next__(mut self)`, writes the mutated iterator back, and branches on
 whether the call returned an element or raised the exact checked
 `StopIteration`; a generic `Iterable` bound takes the same path through the
-abstract `__iterator_dispatch.__next__`. Bundled Range/list/set/dict iterators
+abstract `__iterator_dispatch.__next__`, and a named source of a parameter
+type is borrowed in place as a nominal one is, not copied into the loop. Bundled Range/list/set/dict iterators
 and concrete user iterators use that nominal path. `HasNext`/`Next` serve only
 the method-free fallbacks: the CTFE-only `ComptimeList` carrier and the
 compiler-private heterogeneous runtime-pack carrier; public `Tuple` values are

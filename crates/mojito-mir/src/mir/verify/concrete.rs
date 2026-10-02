@@ -13,8 +13,7 @@ use crate::mir::{MirParamArg, MirSubscriptCall};
 ///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
-/// a compile-time argument a call still forwards or computes from one, or an
-/// erased-dispatch result adapter.
+/// or a compile-time argument a call still forwards or computes from one.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
@@ -230,20 +229,13 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             require_no_parameter_slots(head, param_arg_regs, errors);
         }
         MirInstr::MethodCall {
-            method,
             raises,
-            result_adapter,
             param_arg_regs,
             param_decls,
             ..
         } => {
             if let Some(ty) = raises {
                 require_concrete(head, "error contract", ty, errors);
-            }
-            if result_adapter.is_some() {
-                errors.push(format!(
-                    "{head} call of `{method}` keeps an erased-dispatch result adapter in elaborated MIR"
-                ));
             }
             require_no_parameters(head, param_decls, errors);
             require_no_parameter_slots(head, param_arg_regs, errors);

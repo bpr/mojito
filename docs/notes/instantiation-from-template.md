@@ -18,7 +18,9 @@ instance: the elaborator instantiates the template's MIR
 ([`generator-contract.md`](generator-contract.md) §What has landed). What
 follows still describes every clone that is minted: a `def` clone, and a
 method that holds or reaches a compile-time construct. Since 2026-10-02 an
-instance over a loan-carrying argument clones only those methods too. A derived clone that calls a sibling
+instance over a loan-carrying argument clones only those methods too, and
+a `def` called at a loan-carrying argument mints a clone only where its
+body holds or reaches such a construct. A derived clone that calls a sibling
 with no clone names the sibling's template.
 
 ## The carrier stays the AST clone

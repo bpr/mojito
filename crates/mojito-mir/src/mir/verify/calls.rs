@@ -96,11 +96,17 @@ pub(super) fn verify_call_instruction(
                     ));
                 }
             }
+            // The adapter copies the element out of the reference a concrete
+            // `__next__` returns, as it does for the abstract dispatch.
+            let adapted_reference_next = method == "__next__"
+                && reference_result.is_none()
+                && declared(cx.declarations, callee)
+                    .is_some_and(|declaration| declaration.returns_reference);
             match result_adapter {
                 Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
-                    if !abstract_value_next {
+                    if !abstract_value_next && !adapted_reference_next {
                         errors.push(format!(
-                            "{prefix}: copy-reference result adapter is not attached to an abstract value-returning __next__ call"
+                            "{prefix}: copy-reference result adapter is not attached to a value-yielding __next__ call"
                         ));
                     }
                 }
@@ -126,7 +132,7 @@ pub(super) fn verify_call_instruction(
                                 && types_compatible(&reference.referent, &declaration.ret_ty)
                         }
                         None => {
-                            !declaration.returns_reference
+                            declaration.returns_reference == result_adapter.is_some()
                                 && cx.function.reg_types.get(&dest.0).is_some_and(|result| {
                                     types_compatible(result, &declaration.ret_ty)
                                 })

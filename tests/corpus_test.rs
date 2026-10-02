@@ -302,6 +302,8 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "simd_parameter_default_construction",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to tell a place pointer bound to `T` from a reference.
+    "extensions::template_served_iterable_def",
+    "template_served_def_loan_carrying_argument",
     "template_served_loan_carrying_instance",
 ];
 

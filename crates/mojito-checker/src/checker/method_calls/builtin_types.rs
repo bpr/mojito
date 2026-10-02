@@ -848,7 +848,7 @@ impl Checker {
         self.record_call_environment_effects(span.clone(), callable, &[], args, kwargs)?;
         let carried = contract_transfer_effects(callable);
         if !carried.is_empty() {
-            self.replay_transfer_effects(carried, None, args, &span)?;
+            self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
         if let Some(target) = self.indirect_callable_target(callable) {
             self.overload_targets

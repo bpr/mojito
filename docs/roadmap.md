@@ -49,29 +49,7 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P2) A generic `def` called at a loan-carrying argument is still
-  cloned**
-
-  Problem: `fill(b, p)` with `p: Pointer[List[Int], ImmOrigin(origin_of(xs))]`
-  mints a clone of `fill` with one origin binder per origin slot, where a
-  plain-data call keeps the template.
-  - A struct method's summary carries its stored type, and a call closes it
-    with the receiver's arguments
-    ([`docs/notes/generator-contract.md`](notes/generator-contract.md)
-    §Carried sources).
-  - A `def` has no receiver. Its carried type is over its own binders, so the
-    call must close it with the call's own bindings.
-  - A method's own binders need the same.
-  - `replay_transfer_effects` skips a carried source it cannot close
-    (`checker/origins/transfer.rs`).
-  - The cloner then stops minting clone origin binders for a `def`
-    (`CloneOriginBinders`, `comptime/specialize.rs`).
-  - `bundled_def_over_loan_carrying_argument_clones`
-    (`tests/compiler_test.rs`) pins today's clones.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 (P2) A type name over a struct's parameter is folded before
+- [ ] **1.1 (P2) A type name over a struct's parameter is folded before
   MIR**
 
   Problem: `_unqualified_type_name[Self]()` lowers to a string constant, so a
@@ -88,16 +66,44 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.3 (P2) An explicit application of a trait-bound generic `def` is
-  cloned**
+- [ ] **1.2 (P2) The elaborator cannot solve an associated type a signature
+  does not spell**
 
-  Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
-  keeps the template, so one function reaches MIR in two forms.
-  - Keep the template for both, and let the elaborator instantiate it.
+  Problem: `def count[C: Iterable](items: C) -> Int` names `C.Element` only
+  as the type of its loop variable, so `native::mono` fails on the template
+  with "associated type `C.Element` has no concrete MIR declaration fact".
+  - The elaborator solves an associated type by unifying a signature against
+    a call's types (`mono/unify.rs`). A struct's conformance rows in MIR
+    carry no associated types.
+  - Such a `def` therefore keeps its clone, over clone origin binders at a
+    loan-carrying argument (`signature_binds_associated_types`,
+    `comptime/specialize.rs`).
+  - Record each conformer's associated types in MIR, or solve one from the
+    iterator step the body resolves.
+  - Probe: `conformance/probes/iterable_def_unspelled_element.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.3 (P2) A closed call of a generic `def` is cloned**
+
+  Problem: `show(n)` and `show[Int](n)` each mint the AST clone
+  `show$y3:Int`, so every instantiation of a trait-bound `def` is checked
+  again and reaches MIR beside its template.
+  - Only a call that binds a loan-carrying argument keeps the template
+    (`Elab::template_serves_def`, `comptime/specialize.rs`).
+  - Keep the template for every closed call, and let the elaborator
+    instantiate it.
   - The bound check the resolver makes for a dropped argument stays at the
     call.
+  - A `def` whose body holds or reaches a compile-time construct keeps its
+    clone until the P3 entry that gives the construct a MIR form.
+  - Measured 2026-10-02 by keeping the template for every inferred call: 24
+    of 1491 fixtures change. A type-pack `def` has no template body (9), a
+    pack's solutions conflict in `native::mono` (7), a type parameter stays
+    unresolved (3), a compile-time parameter is left unbound (3), and two
+    are single cases.
   - Delete the function certificate classes that exist only for these clones.
-  - Depends on nothing.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
 - [ ] **1.4 (P2) The elaborator leaves some availability clauses undecided**
@@ -335,7 +341,7 @@ correctness fix to existing behavior is allowed.
     keyed-method and template-reach plumbing, the clone-symbol retargeting in
     the checker, the VM, and `native::mono`, and the method certificate
     classes in `checker/template_facts`.
-  - Depends on 1.2, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.85.
+  - Depends on 1.1, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.85.
   - Model: Fable, Planned.
 
 - [ ] **1.18 (P4) The driver elaborates and checks to a fixpoint**
@@ -351,7 +357,7 @@ correctness fix to existing behavior is allowed.
   - Module-scope `comptime` values follow the boundary decision D3 set.
   - The budget is plan decision D4: a stated improvement on the workloads
     repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on 1.1, 1.3, and 1.17.
+  - Depends on 1.2, 1.3, and 1.17.
   - Model: Fable, Planned.
 
 - [ ] **1.19 (P5) The replaced mechanisms are still in the tree**
@@ -412,13 +418,16 @@ correctness fix to existing behavior is allowed.
   Problem: `assets/ok/template_served_loan_carrying_instance.mojo` runs on
   concrete MIR and stops under `--erased` with "checked nominal subscript
   receiver is Int".
+  - `assets/ok/template_served_def_loan_carrying_argument.mojo` and
+    `assets/extensions/ok/template_served_iterable_def.mojo` stop the same
+    way, in a `def` its template serves.
   - A `Pointer(to=x)` value is a reference handle on the VM. A concrete body
     tells it from a reference by the `Pointer` type of the register or the
     slot.
   - An erased body types it `T`, so `value.copy()` and a read of the whole
     slot chase the handle to the pointee.
-  - The fixture is an `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry 1.19 deletes the oracle and this row with it.
+  - Each fixture is an `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry 1.19 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2816,6 +2825,40 @@ last.
   - The field read yields a reference handle the builtin does not read
     through.
   - Probe: `conformance/probes/len_of_dereferenced_pointer_field.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.118 A clone over an origin binder loses the loan of a copy it
+  stores**
+
+  Problem: `s.put(p, 3)` with `def put[U](mut self, value: Self.T, tag: U)`
+  storing `value.copy()` prints `3 1 8` at the pin and stops in Mojito with
+  "checked nominal subscript receiver is None".
+  - A method with a parameter of its own runs as a per-call clone, spelled
+    over a clone origin binder where the instance's argument carries a loan.
+  - The clone's stored type is closed, so its body publishes no carried
+    source, and the copy names no argument expression. The receiver takes no
+    loan on `xs`, which is destroyed after its last naming.
+  - A generic `def` that keeps its clone at a loan-carrying argument loses
+    the loan the same way.
+  - A body its template serves keeps it
+    (`assets/ok/template_served_def_loan_carrying_argument.mojo`).
+  - Probe: `conformance/probes/per_call_clone_copied_loan.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.119 An instance only a `def` clone over an origin binder names is
+  never requested**
+
+  Problem: `use(p)` with `def use[T](value: T)` building `Box[T]` and calling
+  its `comptime if` method prints 2 at the pin and stops in Mojito with
+  "Box.kind: unspecialized type-keyed method".
+  - `use` reaches a compile-time-keyed method, so it keeps its clone, spelled
+    over a clone origin binder.
+  - The instance `Box[Pointer[...]]` over that binder is not requested, so
+    its method clone is never minted.
+  - The same `def` at a plain argument (`use(3)`) runs.
+  - Probe: `conformance/probes/keyed_def_builds_loan_carrying_instance.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

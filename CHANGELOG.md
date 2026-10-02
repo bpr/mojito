@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` called at a loan-carrying argument (`keep(m, p)` with
+  `p: Pointer[List[Int], ImmOrigin(origin_of(xs))]`) is served by its
+  template and mints no clone. The call closes the stored type in the
+  `def`'s transfer summary with the types it binds to the `def`'s own
+  parameters, and a method's own parameters close the same way. A `def`
+  whose body holds or reaches a compile-time construct, or names an
+  associated type its signature does not spell, keeps its clone.
+  `assets/ok/template_served_def_loan_carrying_argument.mojo` pins it.
 - A generic struct instance over a loan-carrying argument
   (`Bag[Pointer[List[Int], ImmOrigin(origin_of(xs))]]`,
   `List[Span[Int, origin_of(xs)]]`) is served by its template's methods and
@@ -98,6 +106,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic `def` storing a copy of its argument
+  (`into.append(value.copy())`) lost the loan the copy carries, so the
+  pointee was destroyed while the list still pointed at it and the program
+  stopped with "subscript receiver is None".
+- A template-served method calling a generic `def` that iterates an
+  `Iterable` parameter (`Shelf[Int].first` calling `first_or`) failed with
+  "iterator copy-reference adapter is attached to concrete target". The
+  elaborator now resolves the adapted step, and a `for` over a named source
+  of a parameter type borrows it in place instead of copying it into the
+  loop (`assets/extensions/ok/template_served_iterable_def.mojo`).
 - A method storing a copy of its argument (`self.push(value.copy())`) lost
   the loan the copy carries, so the pointee could be destroyed while the
   container still pointed at it. The receiver now borrows every place its

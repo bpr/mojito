@@ -686,6 +686,128 @@ impl Elab<'_> {
         stubbed
     }
 
+    /// Whether the template of the `def` `name` serves a call that binds
+    /// `values`, so the call mints no clone: one of them carries a loan, the
+    /// body neither holds a construct only an instance lowers (by its syntax,
+    /// or by its checked types as the driver read them) nor reaches a
+    /// compile-time-keyed stub, and the signature binds the associated types
+    /// the body may name. The elaborator instantiates the
+    /// template's MIR for such a call, and the call's transfer summary names
+    /// the loans by the stored type. The verdict is the first one made for
+    /// the name, so every call of it agrees.
+    pub(super) fn template_serves_def(
+        &self,
+        name: &str,
+        template: &Stmt,
+        values: &[CtValue],
+        mono: &Mono,
+    ) -> bool {
+        let carries_loan = values.iter().any(
+            |value| matches!(value, CtValue::Type(ty) if self.ty_mentions_origin_slotted_struct(ty)),
+        );
+        if !carries_loan {
+            return false;
+        }
+        if let Some(served) = self.template_served_defs.borrow().get(name) {
+            return *served;
+        }
+        let StmtKind::Def { body, .. } = &template.kind else {
+            return false;
+        };
+        let served = !holds_instance_construct(body)
+            && !self
+                .keyed_methods
+                .contains(&(name.to_string(), String::new()))
+            && self.signature_binds_associated_types(template)
+            && !self
+                .stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
+                .contains(name);
+        self.template_served_defs
+            .borrow_mut()
+            .insert(name.to_string(), served);
+        served
+    }
+
+    /// Whether the signature of the `def` `template` spells every
+    /// unparameterized associated type its type parameters' traits declare
+    /// (`C.Element` for `C: Iterable`). The elaborator solves an associated
+    /// type only by unifying the signature against a call's types, so a body
+    /// that names one its signature leaves out has no instance.
+    fn signature_binds_associated_types(&self, template: &Stmt) -> bool {
+        struct Spelled(Vec<(String, String)>);
+
+        impl mojito_ast::visit::Visitor for Spelled {
+            fn visit_type(&mut self, ty: &Type) {
+                if let Type::Assoc { base, name, .. } = ty
+                    && let Type::Named(parameter, arguments) = base.as_ref()
+                    && arguments.is_empty()
+                {
+                    self.0.push((parameter.clone(), name.clone()));
+                }
+            }
+        }
+
+        let StmtKind::Def {
+            type_params,
+            params,
+            ret,
+            ..
+        } = &template.kind
+        else {
+            return false;
+        };
+        let mut spelled = Spelled(Vec::new());
+        for ty in params.iter().map(|parameter| &parameter.ty).chain(ret) {
+            mojito_ast::visit::walk_type(&mut spelled, ty);
+        }
+        type_params.iter().all(|parameter| {
+            self.associated_type_names(&parameter.bounds)
+                .iter()
+                .all(|member| {
+                    spelled
+                        .0
+                        .iter()
+                        .any(|(base, name)| *base == parameter.name && name == member)
+                })
+        })
+    }
+
+    /// The unparameterized compile-time members the traits `bounds` name
+    /// declare, through the traits they refine.
+    fn associated_type_names(&self, bounds: &[String]) -> Vec<String> {
+        let mut pending: Vec<&str> = bounds.iter().map(String::as_str).collect();
+        let mut seen = HashSet::new();
+        let mut members = Vec::new();
+        while let Some(bound) = pending.pop() {
+            if !seen.insert(bound) {
+                continue;
+            }
+            let declared = self
+                .program
+                .iter()
+                .find_map(|statement| match &statement.kind {
+                    StmtKind::Trait {
+                        name,
+                        refines,
+                        comptime_members,
+                        ..
+                    } if name == bound => Some((refines, comptime_members)),
+                    _ => None,
+                });
+            let Some((refines, comptime_members)) = declared else {
+                continue;
+            };
+            pending.extend(refines.iter().map(String::as_str));
+            members.extend(
+                comptime_members
+                    .iter()
+                    .filter(|member| member.params.is_empty())
+                    .map(|member| member.name.clone()),
+            );
+        }
+        members
+    }
+
     /// The abstract references that can run a compile-time-keyed stub.
     ///
     /// A reference made inside a stub-reaching body is dropped: that body

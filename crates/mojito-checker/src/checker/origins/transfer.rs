@@ -16,6 +16,7 @@ impl Checker {
         receiver: Option<&Expr>,
         args: &[Expr],
         span: &SourceSpan,
+        bindings: &TySubst,
     ) -> Result<(), TypeError> {
         let effects = self.transfer_effects.borrow().get(callee).cloned();
         // First-seen observation (including "none"): the two-phase pass
@@ -35,7 +36,7 @@ impl Checker {
         let Some(effects) = effects else {
             return Ok(());
         };
-        self.replay_transfer_effects(&effects, receiver, args, span)
+        self.replay_transfer_effects(&effects, receiver, args, span, bindings)
     }
 
     /// A def name in value position carries the callable's committed
@@ -261,7 +262,7 @@ impl Checker {
             }
             let translated = translate_call_through(&effects, through)?;
             if !translated.is_empty() {
-                self.replay_transfer_effects(&translated, receiver, args, span)?;
+                self.replay_transfer_effects(&translated, receiver, args, span, &TySubst::new())?;
             }
         }
         Ok(())
@@ -385,13 +386,15 @@ impl Checker {
     /// Replay already-resolved callee effects against the call's actuals.
     /// Effects arriving here came from the name-keyed map (with its
     /// observation recorded by the caller) or from a function-typed value
-    /// (observed when the def name was baked into the type).
+    /// (observed when the def name was baked into the type). `bindings` are
+    /// the types the call solved for the callee's own binders.
     pub(in crate::checker) fn replay_transfer_effects(
         &self,
         effects: &[mojito_checked::checked::TransferEffect],
         receiver: Option<&Expr>,
         args: &[Expr],
         span: &SourceSpan,
+        bindings: &TySubst,
     ) -> Result<(), TypeError> {
         use mojito_checked::checked::{CheckedCallTransfer, CheckedTransferDest};
         use mojito_types::origin::SigOrigin;
@@ -443,12 +446,11 @@ impl Checker {
             let mut sources = match &effect.src {
                 SigOrigin::Bound(origin) => vec![origin.clone()],
                 // The stored type is spelled over the callee's binders: the
-                // receiver's arguments close it, and the places it then
-                // names are what the destination borrows.
+                // receiver's arguments and the call's own bindings close it,
+                // and the places it then names are what the destination
+                // borrows.
                 SigOrigin::Carried(stored) => {
-                    let Some(stored) =
-                        receiver.and_then(|receiver| self.receiver_substituted(receiver, stored))
-                    else {
+                    let Some(stored) = self.call_closed(stored, receiver, bindings) else {
                         continue;
                     };
                     let origins = named_place_origins(&stored);
@@ -795,10 +797,27 @@ impl Checker {
 }
 
 impl Checker {
-    /// `stored`, a type over a callee's struct binders, at the arguments of
-    /// the struct instance `receiver` is. `None` where the receiver is no
-    /// declared struct instance.
-    fn receiver_substituted(&self, receiver: &Expr, stored: &Ty) -> Option<Ty> {
+    /// `stored`, a type over a callee's binders, at this call: its struct
+    /// binders bound to the arguments of the struct instance `receiver` is,
+    /// and its own binders to `bindings`. `None` where a binder of the callee
+    /// stays unbound.
+    fn call_closed(&self, stored: &Ty, receiver: Option<&Expr>, bindings: &TySubst) -> Option<Ty> {
+        let mut subst = bindings.clone();
+        subst.extend(
+            receiver
+                .and_then(|receiver| self.receiver_bindings(receiver))
+                .unwrap_or_default(),
+        );
+        let unbound = mojito_types::types::mentions(
+            stored,
+            &|ty| matches!(ty, Ty::Param { binder, .. } if !subst.contains_key(&binder.id)),
+        );
+        (!unbound).then(|| substitute(stored, &subst))
+    }
+
+    /// The struct binders of the instance `receiver` is, bound to its
+    /// arguments. `None` where the receiver is no declared struct instance.
+    fn receiver_bindings(&self, receiver: &Expr) -> Option<TySubst> {
         let receiver = self
             .infer_reference_value(receiver)
             .map(|reference| *reference.referent)
@@ -807,7 +826,7 @@ impl Checker {
             return None;
         };
         let info = self.structs.get(name)?;
-        Some(substitute(stored, &struct_subst(&info.decls, arguments)))
+        Some(struct_subst(&info.decls, arguments))
     }
 }
 

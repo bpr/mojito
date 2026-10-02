@@ -25,10 +25,16 @@ impl Checker {
         let MethodCallArguments {
             param_args, args, ..
         } = call;
+        // The method's own binders, at the types this call solved for them.
+        let bindings = resolved
+            .instantiation
+            .as_deref()
+            .map(|arguments| struct_subst(&resolved.param_decls, arguments))
+            .unwrap_or_default();
         if let Ty::Struct(struct_name, _) = obj_ty {
             let method_key = format!("{struct_name}.{method}");
             let effect_key = selected_target.unwrap_or(&method_key);
-            self.apply_transfer_effects(effect_key, Some(object), args, span)?;
+            self.apply_transfer_effects(effect_key, Some(object), args, span, &bindings)?;
             self.apply_call_through_effects(
                 effect_key,
                 &resolved.param_decls,
@@ -45,7 +51,7 @@ impl Checker {
             // key keeps the two-phase pass exact even for conformers whose
             // effects commit in a later round.
             for key in self.dispatch_conformers(bounds, method) {
-                self.apply_transfer_effects(&key, Some(object), args, span)?;
+                self.apply_transfer_effects(&key, Some(object), args, span, &bindings)?;
                 self.apply_call_through_effects(
                     &key,
                     &resolved.param_decls,

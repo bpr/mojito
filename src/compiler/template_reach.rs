@@ -1,11 +1,12 @@
-//! What a generic struct's template method bodies reach once an instance
-//! binds the struct's parameters.
+//! What a template-served body reaches once its owner's parameters are
+//! bound: a generic struct's template methods at an instance, and a generic
+//! `def` at a call whose argument carries a loan.
 //!
 //! A method with no compile-time construct in its body mints no clone per
-//! instance: the elaborator instantiates the template's MIR. The clone's
-//! check is then no longer there to discover what the body reaches at the
-//! instance's arguments, so the driver reads it off the template's checked
-//! types instead.
+//! instance, and neither does such a `def` at a loan-carrying argument: the
+//! elaborator instantiates the template's MIR. The clone's check is then no
+//! longer there to discover what the body reaches at those arguments, so
+//! the driver reads it off the template's checked types instead.
 
 use super::{ServedRequests, StructInstanceRequest, closed_generic_argument};
 use crate::ast::{Expr, Stmt, StmtKind};
@@ -26,7 +27,8 @@ pub(super) struct TemplateDemand {
     /// template the elaborator could instantiate.
     specialized: HashSet<String>,
     /// Template methods that still clone per instance because of what their
-    /// checked bodies hold, as (struct, method).
+    /// checked bodies hold, as (struct, method). A `def` that still clones
+    /// at a loan-carrying argument for the same reason is (`def`, "").
     keyed_methods: Vec<(String, String)>,
 }
 
@@ -55,12 +57,16 @@ impl TemplateDemand {
     ) -> Option<String> {
         let mut reach = TemplateReach::new(checked, &self.specialized);
         let mut last = None;
-        for request in reach.instances(struct_requests) {
+        let calls = loan_carrying_calls(checked);
+        let owners = |struct_requests: &[StructInstanceRequest]| {
+            [struct_requests, calls.as_slice()].concat()
+        };
+        for request in reach.instances(&owners(struct_requests)) {
             last = Some(request.template().to_string());
             served.instances.push(request.clone());
             struct_requests.push(request);
         }
-        for method in reach.keyed_methods(struct_requests) {
+        for method in reach.keyed_methods(&owners(struct_requests)) {
             if !self.keyed_methods.contains(&method) {
                 last = Some(format!("{}.{}", method.0, method.1));
                 served.keyed_templates.push(method.0.clone());
@@ -87,6 +93,9 @@ impl<'a> TemplateReach<'a> {
             .iter()
             .filter_map(|statement| match &statement.kind {
                 StmtKind::Struct {
+                    name, type_params, ..
+                }
+                | StmtKind::Def {
                     name, type_params, ..
                 } if !type_params.is_empty() => Some((name.as_str(), statement)),
                 _ => None,
@@ -146,8 +155,9 @@ impl<'a> TemplateReach<'a> {
         found
     }
 
-    /// The template methods of the structs `requests` instantiate whose
-    /// bodies only an instance's own check can serve, as (struct, method):
+    /// The template bodies of the owners `requests` instantiate that only
+    /// an instance's own check can serve, as (struct, method), or (`def`, "")
+    /// for a `def`'s:
     /// one that applies a struct specialized whole, or builds a tuple, over
     /// the struct's parameters, and one that calls an overloaded method with
     /// compile-time parameters of its own, which runs as a per-call clone.
@@ -308,18 +318,55 @@ fn template_applications(
         }
     }
 
-    let StmtKind::Struct { methods, .. } = &statement.kind else {
-        return Vec::new();
-    };
     let mut bodies = Bodies {
         checked,
         template,
         method: "",
         found: Vec::new(),
     };
-    for method in methods.iter().filter(|method| method.self_ty.is_none()) {
-        bodies.method = &method.name;
-        mojito_ast::visit::walk_block(&mut bodies, &method.body);
+    match &statement.kind {
+        StmtKind::Struct { methods, .. } => {
+            for method in methods.iter().filter(|method| method.self_ty.is_none()) {
+                bodies.method = &method.name;
+                mojito_ast::visit::walk_block(&mut bodies, &method.body);
+            }
+        }
+        StmtKind::Def { body, .. } => mojito_ast::visit::walk_block(&mut bodies, body),
+        _ => {}
     }
     bodies.found
+}
+
+/// The closed calls of generic `def`s in `checked` that bind a loan-carrying
+/// argument and still name their template, each as its callee with the
+/// arguments it binds. Such a call may be served by the template.
+fn loan_carrying_calls(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
+    let carries_loan = |argument: &TyArg| match argument {
+        TyArg::Ty(ty) => mentions(ty, &|inner| match inner {
+            Ty::Ref(_) => true,
+            Ty::Pointer { origin, .. } => origin.as_origin().is_some(),
+            Ty::Struct(_, arguments) => arguments
+                .iter()
+                .any(|argument| matches!(argument, TyArg::Origin(_))),
+            _ => false,
+        }),
+        TyArg::Val(_) | TyArg::Origin(_) => false,
+    };
+    let mut calls: Vec<StructInstanceRequest> = Vec::new();
+    for instantiation in checked.generic_instantiations.values() {
+        if !instantiation.arguments.iter().any(carries_loan)
+            || !instantiation.arguments.iter().all(closed_generic_argument)
+        {
+            continue;
+        }
+        let call = StructInstanceRequest::new(
+            instantiation.callee.clone(),
+            instantiation.arguments.clone(),
+        );
+        if !calls.contains(&call) {
+            calls.push(call);
+        }
+    }
+    calls.sort_by_cached_key(|call| format!("{}{:?}", call.template(), call.arguments()));
+    calls
 }

@@ -691,7 +691,14 @@ impl Checker {
                         // Overloads share the bare-name effect entry (a
                         // conservative union); replay it and any call-through
                         // residues exactly like the single-callable path.
-                        self.apply_transfer_effects(name, None, args, &span)?;
+                        let bindings = self.call_bindings.borrow_mut().remove(&span);
+                        self.apply_transfer_effects(
+                            name,
+                            None,
+                            args,
+                            &span,
+                            &bindings.unwrap_or_default(),
+                        )?;
                         self.record_call_through(name, &prepared, args);
                         self.record_call_parameter_names(&span, &prepared);
                         let callee_decls = match &prepared {
@@ -827,7 +834,8 @@ impl Checker {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
         // Replay the callee's loan-transfer effects against the actuals.
-        self.apply_transfer_effects(name, None, args, &span)?;
+        let bindings = self.call_bindings.borrow_mut().remove(&span);
+        self.apply_transfer_effects(name, None, args, &span, &bindings.unwrap_or_default())?;
         // A call through one of the current body's own callable parameters
         // records a higher-order residue for this body's callers to resolve;
         // a call to a callee WITH such residues resolves them against the
@@ -843,7 +851,7 @@ impl Checker {
         // and nested calls by declaration name).
         let carried = contract_transfer_effects(&ty);
         if !carried.is_empty() {
-            self.replay_transfer_effects(carried, None, args, &span)?;
+            self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
         // A callable struct value dispatches `Struct.__call__`; replay its
         // effects with the callee binding as the receiver actual.
@@ -856,7 +864,13 @@ impl Checker {
             };
             let method_key = format!("{struct_name}.__call__");
             let effect_key = indirect_target.as_deref().unwrap_or(&method_key);
-            self.apply_transfer_effects(effect_key, Some(&callee_value), args, &span)?;
+            self.apply_transfer_effects(
+                effect_key,
+                Some(&callee_value),
+                args,
+                &span,
+                &TySubst::new(),
+            )?;
         }
         self.record_call_environment_effects(
             span.clone(),
@@ -1064,12 +1078,12 @@ impl Checker {
             self.infer_callable_ty(&span, "<element>", callable.clone(), &[], args, kwargs)?;
         let carried = contract_transfer_effects(&callable);
         if !carried.is_empty() {
-            self.replay_transfer_effects(carried, None, args, &span)?;
+            self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
         if let Ty::Struct(struct_name, _) = &element_ty {
             let method_key = format!("{struct_name}.__call__");
             let effect_key = target.as_deref().unwrap_or(&method_key);
-            self.apply_transfer_effects(effect_key, Some(receiver), args, &span)?;
+            self.apply_transfer_effects(effect_key, Some(receiver), args, &span, &TySubst::new())?;
         }
         self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
         self.operation_adjustments.borrow_mut().insert(
@@ -1690,6 +1704,9 @@ impl Checker {
             })
             .unwrap_or(referent);
         let error = error.as_ref().map(|error| resolve(error)).transpose()?;
+        self.call_bindings
+            .borrow_mut()
+            .insert(span.clone(), subst.clone());
         // An inferred application whose clone already exists (an earlier
         // discovery round minted it for another occurrence) retargets to it
         // by exact name instead of requesting a round of its own; otherwise

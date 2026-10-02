@@ -900,6 +900,7 @@ impl<'a> Specializer<'a> {
                         recv,
                         method,
                         resolved,
+                        result_adapter,
                         args,
                         kwargs,
                         param_arg_regs,
@@ -1006,6 +1007,16 @@ impl<'a> Specializer<'a> {
                                 }
                             }
                             continue;
+                        }
+                        // The adapter copies the element out of a reference
+                        // the method returns: one that returns the element
+                        // itself needs none.
+                        if !self
+                            .declarations
+                            .get(target.as_str())
+                            .is_some_and(|declaration| declaration.returns_reference)
+                        {
+                            *result_adapter = None;
                         }
                         let target = self
                             .instance_method_target(
@@ -1289,6 +1300,16 @@ impl<'a> Specializer<'a> {
                     // own boundary.
                     MirInstr::TryNext { iter, call, .. } => {
                         if let Some(receiver) = function.var_tys.get(iter).cloned() {
+                            // The adapter copies the element out of a
+                            // reference the step returns: a step that
+                            // returns the element itself needs none.
+                            if !self.iterator_step_returns_reference(
+                                &receiver,
+                                "__next__",
+                                Some(&call.target),
+                            ) {
+                                call.result_adapter = None;
+                            }
                             let (target, _) = self.resolve_iterator_step(
                                 owner,
                                 &receiver,

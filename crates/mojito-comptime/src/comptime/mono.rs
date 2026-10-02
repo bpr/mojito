@@ -1616,7 +1616,8 @@ impl Elab<'_> {
 
     /// The checker-requested clone for an inferred bound-generic call whose
     /// source arguments could not resolve, plus the source arguments the
-    /// rewritten call keeps. `None` leaves the call on the abstract path.
+    /// rewritten call keeps. `None` leaves the call on the abstract path, as
+    /// a call its template serves is left ([`Elab::template_serves_def`]).
     fn def_request_target(
         &self,
         name: &str,
@@ -1638,6 +1639,9 @@ impl Elab<'_> {
             Some(_) => self.selected_declaration(name, target.decl),
             None => *self.specializable.get(name)?,
         };
+        if self.template_serves_def(name, template, &target.vals, mono) {
+            return None;
+        }
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
         Some((target.vals.clone(), kept, target.decl))
     }

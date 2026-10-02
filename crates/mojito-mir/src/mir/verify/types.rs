@@ -145,8 +145,12 @@ pub(super) fn iterator_result_matches_declaration(
     call: &mojito_checked::checked::CheckedIteratorCall,
     declaration: &MirFunctionDeclaration,
 ) -> bool {
+    // The adapter copies the element out of the reference a concrete step
+    // returns, so the call's result is the referent by value.
     if call.result_adapter.is_some() {
-        return false;
+        return declaration.returns_reference
+            && call.reference_result.is_none()
+            && types_compatible(&call.result_ty, &declaration.ret_ty);
     }
     match (&call.reference_result, &call.result_ty) {
         (Some(reference), Ty::Ref(result_reference)) => {
@@ -169,15 +173,9 @@ pub(super) fn verify_iterator_result_adapter(
     let abstract_dispatch = call.target == "__iterator_dispatch.__next__";
     match call.result_adapter {
         Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
-            if !abstract_dispatch {
-                errors.push(format!(
-                    "{prefix}: iterator copy-reference adapter is attached to concrete target '{}'",
-                    call.target
-                ));
-            }
             if call.reference_result.is_some() {
                 errors.push(format!(
-                    "{prefix}: adapted abstract iterator result also carries a concrete reference ABI"
+                    "{prefix}: adapted iterator result also carries a concrete reference ABI"
                 ));
             }
         }

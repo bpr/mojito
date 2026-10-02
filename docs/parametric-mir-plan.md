@@ -413,10 +413,21 @@ its template's MIR, lifecycle members and constructors included.
   sources). `assets/ok/bundled_instance_loan_carrying_argument.mojo` mints
   248 clones where it minted 413. The three benchmark programs hold no such
   instance and are unchanged.
-- **Not done.** The clause forms the elaborator leaves undecided, a generic
-  `def` called at a loan-carrying argument, the explicit
-  application of a trait-bound `def`, and the exit: clone-symbol retargeting
-  and the method certificate classes still serve the clones that remain.
+- **A `def` at a loan-carrying argument (2026-10-02).** Such a call keeps
+  its template: the call closes a carried source with the types it binds to
+  the `def`'s own binders, and a method's own binders close the same way.
+  The driver reads what the served body reaches at those types. The
+  elaborator resolves an adapted iterator step on the way: a step that
+  returns the element drops the adapter, and one that returns a reference
+  keeps it as a copy-out. A `def` whose body holds or reaches a compile-time
+  construct, or names an associated type its signature does not spell,
+  keeps its clone. `assets/ok/unspelled_loan_carrying_type_argument.mojo`
+  mints 245 clones where it minted 247. The three benchmark programs hold
+  no such call and are unchanged.
+- **Not done.** The clause forms the elaborator leaves undecided, every
+  other closed call of a generic `def` (plain data clones whether the call
+  is inferred or explicit), and the exit: clone-symbol retargeting and the
+  method certificate classes still serve the clones that remain.
 
 The census on the three `benchmarks/compile` programs, before and after:
 

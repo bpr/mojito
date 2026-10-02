@@ -22,7 +22,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
 | MIR | `mir::lower_checked_program`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. |
 | MIR text | `mir::text::{disassemble, parse_artifact, verify_artifact, load_artifact, ParsedArtifact, ArtifactSourceMap, ArtifactReport}` | Canonical serialization, source-located Mojo-independent artifact parsing, and the parse-then-verify loading gate that maps canonical `mir::verify` findings to artifact spans. |
-| Verify | `mir::verify::{verify, verify_concrete, concrete_function_findings}` | `verify_concrete` is the mode for elaborated MIR: `verify` plus the rules of `verify/concrete.rs`, which reject symbolic types, compile-time parameters, compile-time argument slots that forward a binder or compute an expression over one, and erased-dispatch result adapters; `concrete_function_findings` is the same rules for one body, which `native::mono` asks while materializing an instance. `verify` is semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. `verify/instr.rs` owns `verify_instruction`: the place and register checks every instruction gets, then a dispatch on the instruction's family over one `InstrCx`. Each family's checks sit with the rules they use: loans and interior invalidation in `loans.rs`, the iterator protocol in `iteration.rs`, subscripts in `subscripts.rs`, calls in `calls.rs`, and references, value construction, private storage, SIMD, and raise/`try` effects in `instr.rs`. |
+| Verify | `mir::verify::{verify, verify_concrete, concrete_function_findings}` | `verify_concrete` is the mode for elaborated MIR: `verify` plus the rules of `verify/concrete.rs`, which reject symbolic types, compile-time parameters, and compile-time argument slots that forward a binder or compute an expression over one; `concrete_function_findings` is the same rules for one body, which `native::mono` asks while materializing an instance. `verify` is semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. `verify/instr.rs` owns `verify_instruction`: the place and register checks every instruction gets, then a dispatch on the instruction's family over one `InstrCx`. Each family's checks sit with the rules they use: loans and interior invalidation in `loans.rs`, the iterator protocol in `iteration.rs`, subscripts in `subscripts.rs`, calls in `calls.rs`, and references, value construction, private storage, SIMD, and raise/`try` effects in `instr.rs`. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR; `analysis/moves.rs` walks `try` regions per channel (`walk_region`/`walk_try`). |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar`/`ConsumeVar` operations, plus `DropPlace`s before writes that overwrite an initialized droppable place — a field store, and a whole place written through a reference (a `mut` parameter's or `mut self` receiver's `WriteRef`, a place pointer's or `ref` binding's `Store`) — from `analysis/store_drops.rs` (`elaborate_store_drops`, whose `out self` receiver test is `mojito_symbol::symbol::is_initializer_symbol`) and per-field `DropPlace`s for `deinit` parameters from `analysis/field_drops.rs` (`refine_deinit_fields`); re-verified before execution. |
 | Execute | `compiler::Compiler::{execute, with_vm_instantiation}`, `backend::Backend::{run, run_concrete, run_elaborated}`, `backend::vm::VmBackend`, `artifact::{run_artifact, run_artifact_as}` | Production execution runs the cached `CompiledProgram::concrete_mir` through `run_concrete`; a loaded artifact is elaborated the same way first. `run_elaborated` runs drop-elaborated MIR erased, as the differential oracle (`VmInstantiation::Erased`, `MOJITO_VM_ERASED`, `--erased`). `run` is the stage-composed test seam, which stays erased. |
@@ -965,15 +965,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the ones `holds_instance_construct` finds a nested `def`, a lambda, or a
   type name in, the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
-  whatever the instance's arguments carry. `checker/origins/transfer.rs`
-  owns the carried source that lets it (`SigOrigin::Carried`, recorded by
-  `record_transfer_effect` and closed by `replay_transfer_effects`).
-- `src/compiler/template_reach.rs` owns what a template-served method body
-  reaches at an instance (`TemplateReach`), read from one check's facts: the
+  whatever the instance's arguments carry. `template_serves_def` says
+  which generic `def` keeps its template at a loan-carrying argument: one
+  with no such construct whose signature spells the associated types its
+  bounds declare. `checker/origins/transfer.rs`
+  owns the carried source that lets both (`SigOrigin::Carried`, recorded by
+  `record_transfer_effect` and closed by `replay_transfer_effects` with the
+  receiver's arguments and the call's own bindings, `call_closed`).
+- `src/compiler/template_reach.rs` owns what a template-served body reaches
+  once its owner's parameters are bound (`TemplateReach`): a method at an
+  instance, and a generic `def` at a loan-carrying call
+  (`loan_carrying_calls`). It is read from one check's facts: the
   closed instances its checked types name once the struct's parameters are
   bound (`instances`, requested like checker-recorded ones), and the methods
   whose checked bodies only an instance's own check can serve
-  (`keyed_methods`). `compile_linked` consults it every discovery round, and
+  (`keyed_methods`; a `def` is listed with an empty method name). `compile_linked` consults it every discovery round, and
   a body that reached a struct whose method becomes keyed is inferred again
   (`ServedRequests::keyed_templates`).
 - `comptime/nested.rs` owns the lexically scoped specialization of generic

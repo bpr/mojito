@@ -117,6 +117,9 @@ template; a field type under a symbolic index is opaque until a
 | `loan_carrying_temporary_owned_argument.mojo` | Is a heap-owning temporary that carries a loan destroyed once when an owning parameter takes it? | **differs**: the pin prints `1` `1`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.115 |
 | `immutable_origin_struct_argument_exclusivity.mojo` | May a `Span` over an immutable origin be handed to a method of a receiver naming the same origin? | **differs**: the pin prints `1 2`, Mojito rejects ("aliasing values passed mutably") — `docs/roadmap.md` 3.116 |
 | `len_of_dereferenced_pointer_field.mojo` | Does `len` run on a list reached through a pointer field? | **differs**: the pin prints `3`, Mojito stops at run time ("methods on ref") — `docs/roadmap.md` 3.117 |
+| `per_call_clone_copied_loan.mojo` | Does a method with a parameter of its own keep the loan of a value it stores a copy of? | **differs**: the pin prints `3 1 8`, Mojito stops at run time ("checked nominal subscript receiver is None") — `docs/roadmap.md` 3.118 |
+| `keyed_def_builds_loan_carrying_instance.mojo` | Does a generic `def` that calls a compile-time-keyed method run when only its body names the loan-carrying instance? | **differs**: the pin prints `2`, Mojito stops at run time ("Box.kind: unspecialized type-keyed method") — `docs/roadmap.md` 3.119 |
+| `iterable_def_unspelled_element.mojo` | Is a `def` over an `Iterable` parameter served by its template when its signature does not spell the element type? | Mojito prints `1` and mints `count$y15:List[Span[Int]]`; the pin rejects the loop — `docs/roadmap.md` 1.2 |
 
 ## Re-probes of enforced claims
 

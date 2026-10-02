@@ -233,9 +233,12 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         Ty::Assoc { .. } => {
             let key = pattern.to_string();
             match bindings.associated.get(&key) {
-                Some(known) if known != actual => Err(format!(
-                    "conflicting solutions for associated type `{key}`: `{known}` and `{actual}`"
-                )),
+                // Origins erase from the runtime ABI, as for a type binder.
+                Some(known) if known != actual && !ty_equal_modulo_origins(known, actual) => {
+                    Err(format!(
+                        "conflicting solutions for associated type `{key}`: `{known}` and `{actual}`"
+                    ))
+                }
                 Some(_) => Ok(()),
                 None => {
                     bindings.associated.insert(key, actual.clone());

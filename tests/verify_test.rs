@@ -1656,7 +1656,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
 // survivor); under the authoritative Compiler this shape is retained-template
 // residue.
 #[test]
-fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
+fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
     let source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
     let mut missing = lower_source(source);
     let call = missing
@@ -1694,10 +1694,10 @@ fn verifier_rejects_missing_or_concrete_iterator_result_adapters() {
             _ => None,
         })
         .expect("abstract iterator next");
-    call.target = "IntRefIter.__next__".to_string();
+    call.target = "IntRefIter.__len__".to_string();
     expect_finding(
         &concrete,
-        "iterator copy-reference adapter is attached to concrete target",
+        "TryNext result contract does not match 'IntRefIter.__len__'",
     );
 }
 

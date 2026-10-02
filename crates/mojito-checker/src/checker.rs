@@ -674,6 +674,9 @@ pub struct Checker {
     /// exact compile-time arguments), retained for instantiation discovery.
     generic_instantiations:
         RefCell<FactMap<SourceSpan, mojito_checked::checked::GenericInstantiation>>,
+    /// The types a generic `def` call solved for the callee's binders, held
+    /// from the call's typing until its transfer replay takes them.
+    call_bindings: RefCell<HashMap<SourceSpan, TySubst>>,
     /// The resolved compile-time arguments per generic *method* call site
     /// (receiver struct + method + declaration-order arguments), retained for
     /// per-call method specialization discovery.
@@ -1055,6 +1058,7 @@ impl Checker {
             nested_origins_read_only_functions: HashSet::new(),
             contextual_bases: RefCell::new(FactMap::default()),
             generic_instantiations: RefCell::new(FactMap::default()),
+            call_bindings: RefCell::new(HashMap::new()),
             method_instantiations: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
             hash_leaf_types: RefCell::new(FactVec::default()),

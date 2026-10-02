@@ -705,6 +705,7 @@ assets/ok/template_print_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_print_whole_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_served_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_loan_carrying_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_tuple_default_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
@@ -840,6 +841,7 @@ assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligib
 assets/extensions/ok/self_hosted_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/subtree_pointer_generic_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/template_served_iterable_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/allocation_use_after_dealloc.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/div_by_zero.mojo	-	ineligible	no-scalar-entry-shape
