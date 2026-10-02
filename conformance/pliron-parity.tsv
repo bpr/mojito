@@ -202,6 +202,7 @@ assets/ok/line_continuation.mojo	main	exe-differential	sanitized
 assets/ok/list_and_struct.mojo	main	exe-differential	sanitized
 assets/ok/list_anytype_element.mojo	main	exe-differential	sanitized
 assets/ok/list_contiguous_slice_strict.mojo	main	exe-differential	sanitized
+assets/ok/list_element_view_method_result.mojo	main	exe-differential	sanitized
 assets/ok/list_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/list_of_vectors_subscript.mojo	main	exe-differential	sanitized
 assets/ok/list_strided_slice_normalizes.mojo	main	exe-differential	sanitized

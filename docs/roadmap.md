@@ -572,21 +572,24 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.4 A view returned by a method on a `List` element reads freed memory on
-  the VM**
+- [ ] **3.4 A view of a container element lends the whole element, not the
+  interior its method names**
 
-  Problem: `var v = ys[0].rstrip()` followed by `String(v)` fails with "use
-  after Pointer deallocation", where the pin prints the stripped text.
-  - The element receiver is an `Index` place: the view-result borrow in
-    `aggregate_origins` (`checker/origins/ref_params.rs`) lends only
-    identifier and field receivers, and MIR materializes only non-place
-    receivers, so nothing keeps the element's bytes alive for the view.
-  - The call-result aliasing rule already projects such a view through the
-    element place (`carried_argument_origins`), which is the origin the
-    borrow should carry.
-  - Pinned by `conformance/probes/list_element_view_method_result.mojo`.
-  - Lending an element place changes loans for every view-returning method on a
-    subscript, so the plan enumerates that fallout first.
+  Problem: `var it = ys[0].codepoints()`, then `ys[0] = String("zz")`, then a
+  loop over `it` is rejected with "use of invalidated interior reference 'it'
+  to 'ys["element"]~'", where the pin compiles it.
+  - The view's loan is the subtree below the element (`aggregate_borrows`,
+    `mir/facts.rs`), so every store over the element stales every view of it.
+  - The pin stales only a view whose return origin names an interior below
+    the element: `ys[0].rstrip()` names `ys["element"]["bytes"]`.
+  - The checker knows that interior (`view_result_interiors`), but the fact is
+    checker-only and never reaches MIR.
+  - Mojito's diagnostic for the `rstrip` case spells `ys["element"]~` where
+    the pin spells `ys["element"]["bytes"]`.
+  - The pin's accepted program reads bytes the store destroyed, so the plan
+    first decides whether to match it or to record the rejection in
+    `docs/non-goals.md`.
+  - Probe: `conformance/probes/list_element_iterator_after_store.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2719,6 +2722,23 @@ last.
   - Found while the template's MIR replaced per-instance method clones
     (2026-10-01).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.111 A second `Dict` lookup stales a view of an earlier value**
+
+  Problem: `var v = d["a"].rstrip()` then `var u = d["b"].rstrip()` then a read
+  of `v` is rejected with "use of invalidated interior reference 'v' to
+  'd["value"]~'", where the pin prints both.
+  - A `Dict` lookup defines a fresh `value` generation, which replaces the
+    earlier one (`record_replacing_interior_reference`).
+  - The view lends the subtree below the earlier generation, so the second
+    lookup stales it.
+  - The pin's view names `d["value"]["bytes"]`, which a lookup does not
+    replace.
+  - A single view of a `Dict` value runs
+    (`assets/ok/list_element_view_method_result.mojo`).
+  - Probe: `conformance/probes/dict_value_view_second_lookup.mojo`.
+  - Depends on 3.4, which gives the view the interior its method names.
   - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*

@@ -211,6 +211,33 @@ impl Flatten<'_> {
             }))
     }
 
+    /// The container a subscripted view receiver (`ys[0]`, `ps[0].name`,
+    /// `self.rows[i][j]`) reads its element out of, with the interior origins
+    /// the checker recorded for that element. `None` for a receiver that
+    /// crosses no subscript, whose container is not a plain place, or whose
+    /// subscript recorded no interior reference.
+    pub(super) fn element_receiver<'e>(
+        &self,
+        receiver: &'e Expr,
+    ) -> Option<(&'e Expr, Vec<mojito_types::origin::OriginPlace>)> {
+        let mut element = None;
+        let mut current = receiver;
+        loop {
+            match &current.kind {
+                ExprKind::Index { object, .. } => {
+                    element = Some((object.as_ref(), current));
+                    current = object;
+                }
+                ExprKind::Member { object, .. } => current = object,
+                ExprKind::Identifier(_) => break,
+                _ => return None,
+            }
+        }
+        let (container, subscript) = element?;
+        let interiors = self.checked_interior_references(subscript);
+        (!interiors.is_empty()).then_some((container, interiors))
+    }
+
     pub(super) fn checked_adjustments(
         &self,
         expression: &Expr,
@@ -792,6 +819,32 @@ impl Flatten<'_> {
                 ) {
                     let lent = |source: &Expr, this: &mut Self| -> Vec<MirLoan> {
                         let mut loans = this.aggregate_borrows(source);
+                        // A receiver inside a container's owned interior
+                        // (`ys[0].rstrip()`) lends the subtree below that
+                        // element's generation: sibling element reads coexist
+                        // with the view, and a container mutation or a store
+                        // over the element stales it.
+                        if let Some((container, interiors)) = this.element_receiver(source) {
+                            let fallback = this.place(container).root;
+                            for mut origin in interiors {
+                                origin.path.push(mojito_types::origin::OriginSeg::Subtree);
+                                let Some(interior) =
+                                    this.mir_interior_origin(&origin, Some(fallback))
+                                else {
+                                    continue;
+                                };
+                                loans.push(MirLoan {
+                                    place: MirPlace::root(
+                                        interior.root,
+                                        this.var_types.get(&interior.root).cloned(),
+                                    ),
+                                    mutable: false,
+                                    interior: Some(interior),
+                                    shared: false,
+                                });
+                            }
+                            return loans;
+                        }
                         if !matches!(
                             source.kind,
                             ExprKind::Identifier(_) | ExprKind::Member { .. }

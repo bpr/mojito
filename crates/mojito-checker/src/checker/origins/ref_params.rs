@@ -626,9 +626,9 @@ impl Checker {
                 }
                 // A method returning a ref-field struct (a borrowing
                 // view/iterator) carries its receiver's origins, exactly as a
-                // view-typed slice result does, and a named receiver place
-                // itself: the result must outlive a view receiver, not only
-                // the storage the view borrows.
+                // view-typed slice result does, and a named or element
+                // receiver place itself: the result must outlive a view
+                // receiver, not only the storage the view borrows.
                 if let (
                     Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }),
                     ExprKind::MethodCall { object, .. },
@@ -637,7 +637,7 @@ impl Checker {
                     let mut carried = self.aggregate_origins(object);
                     if matches!(
                         object.kind,
-                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                        ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
                     ) && let Ok(place) = self.origin_place(object)
                     {
                         append_unique(&mut carried, [Origin::Place(place)]);

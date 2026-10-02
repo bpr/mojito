@@ -202,6 +202,7 @@ assets/ok/line_continuation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_and_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_anytype_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_contiguous_slice_strict.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_element_view_method_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_of_vectors_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape

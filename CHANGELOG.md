@@ -85,6 +85,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A view returned by a method on a container element keeps the container
+  alive: `var v = ys[0].rstrip()` followed by `String(v)` prints the stripped
+  text where the VM stopped with "use after Pointer deallocation". The view
+  lends the element's owned interior instead of nothing, so sibling element
+  reads and a second view coexist with it, while `ys.append(…)` or
+  `ys[0] = …` under a live view is rejected with "use of invalidated interior
+  reference", as the pin rejects it. The same holds for a field of an element
+  (`ps[0].name.rstrip()`, which used to be rejected as a loan conflict once a
+  second element was read), a nested list, and a `Dict` value.
+  `assets/ok/list_element_view_method_result.mojo` and
+  `assets/ownership_error/list_element_view_stale_after_store.mojo` pin it.
 - A constructor overload set ranks every candidate, as free functions and
   methods do. Selection used to keep only the concrete constructors whenever
   one matched, so `C(s)` for `__init__(out self, var a: String)` beside

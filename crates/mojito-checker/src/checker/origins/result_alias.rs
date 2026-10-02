@@ -107,24 +107,7 @@ impl Checker {
         }) {
             return Vec::new();
         }
-        let origins = self.aggregate_origins(expression);
-        if origins.is_empty()
-            && let ExprKind::MethodCall { object, .. } = &expression.kind
-            && matches!(object.kind, ExprKind::Index { .. })
-            && matches!(
-                self.operation_adjustments
-                    .borrow()
-                    .get(&expression.source_span()),
-                Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. })
-            )
-            && let Ok(element) = self.origin_place(object)
-        {
-            return self.project_view_result_interior(
-                expression,
-                vec![mojito_types::origin::Origin::Place(element)],
-            );
-        }
-        origins
+        self.aggregate_origins(expression)
     }
 
     fn check_result_aliases(
