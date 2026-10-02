@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic struct instance over a loan-carrying argument
+  (`Bag[Pointer[List[Int], ImmOrigin(origin_of(xs))]]`,
+  `List[Span[Int, origin_of(xs)]]`) is served by its template's methods and
+  clones only the methods a plain-data instance clones. A template's store of
+  a value of a parameter type publishes the stored type as its transfer
+  summary's source (`SigOrigin::Carried`, `sig_carried(type)` in text schema
+  1.10), and a call closes it with the receiver's arguments. Such an instance
+  no longer fails on a member it never calls (`write_to` over a pointer
+  element).
+- `--instantiation-census` reports a clone that keeps a parameter of its own
+  apart from the templates no clone replaces
+  (`instantiation.cloned_parametric.*`), so the `instantiation.erased.*`
+  rows count erased templates only.
 - A struct member's `where` clause reaches MIR
   (`MirFunctionDeclaration.availability`), with each struct's conformance
   rows (`MirStructDeclaration.conformances`) and the declared traits
@@ -85,6 +98,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method storing a copy of its argument (`self.push(value.copy())`) lost
+  the loan the copy carries, so the pointee could be destroyed while the
+  container still pointed at it. The receiver now borrows every place its
+  type arguments name.
+- On the VM, a place pointer bound to a type parameter was read as the value
+  it points at: `value.copy()` and a read of a pointer-typed slot inside an
+  instantiated body now yield the pointer.
+- The elaborator minted one instance twice, and stopped on the symbol
+  collision, where two calls differed only in a pointer argument's origin.
 - A `mut` parameter transferred away must be written back before the
   function leaves. `def take(mut x: String) -> String: return x^` ran and
   printed `<ref 1:0>`, where the pin reports "'x' is uninitialized at return

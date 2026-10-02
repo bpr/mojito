@@ -190,6 +190,7 @@ impl Decoder {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "sig_param" => self.uint(inner).map(SigOrigin::Param),
                 "sig_bound" => self.origin(inner).map(SigOrigin::Bound),
+                "sig_carried" => self.ty(inner).map(|ty| SigOrigin::Carried(Box::new(ty))),
                 "sig_union" => {
                     let members = self
                         .list(inner)

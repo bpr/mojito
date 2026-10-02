@@ -49,20 +49,25 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P2) An instance over a loan-carrying argument still clones
-  every method**
+- [ ] **1.1 (P2) A generic `def` called at a loan-carrying argument is still
+  cloned**
 
-  Problem: `Bag[Span[Int, origin_of(xs)]]` mints a clone of each method,
-  because the clone's origin binders are what a transfer summary names the
-  argument's loans by.
-  - The generator's transfer summary must name the argument's origin
-    positions itself (the contract note's §What this contract leaves open).
-  - A template keeps a store of a symbolic value as a latent effect and
-    publishes none. An instance at a loan-carrying argument must publish it,
-    or reject the store where its origin would escape.
-  - An argument holding a callable clones the same way and goes with it.
-  - The cloner's test is `carries_loan_or_callable`
-    (`comptime/specialize.rs`).
+  Problem: `fill(b, p)` with `p: Pointer[List[Int], ImmOrigin(origin_of(xs))]`
+  mints a clone of `fill` with one origin binder per origin slot, where a
+  plain-data call keeps the template.
+  - A struct method's summary carries its stored type, and a call closes it
+    with the receiver's arguments
+    ([`docs/notes/generator-contract.md`](notes/generator-contract.md)
+    §Carried sources).
+  - A `def` has no receiver. Its carried type is over its own binders, so the
+    call must close it with the call's own bindings.
+  - A method's own binders need the same.
+  - `replay_transfer_effects` skips a carried source it cannot close
+    (`checker/origins/transfer.rs`).
+  - The cloner then stops minting clone origin binders for a `def`
+    (`CloneOriginBinders`, `comptime/specialize.rs`).
+  - `bundled_def_over_loan_carrying_argument_clones`
+    (`tests/compiler_test.rs`) pins today's clones.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -330,7 +335,7 @@ correctness fix to existing behavior is allowed.
     keyed-method and template-reach plumbing, the clone-symbol retargeting in
     the checker, the VM, and `native::mono`, and the method certificate
     classes in `checker/template_facts`.
-  - Depends on 1.1, 1.2, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.85.
+  - Depends on 1.2, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.85.
   - Model: Fable, Planned.
 
 - [ ] **1.18 (P4) The driver elaborates and checks to a fixpoint**
@@ -383,23 +388,7 @@ correctness fix to existing behavior is allowed.
   - Depends on 1.4 and 1.19.
   - Model: Fable, Planned.
 
-- [ ] **1.21 (P0) The census cannot tell an erased template from a clone that
-  keeps a parameter**
-
-  Problem: `--instantiation-census` counts every parametric body left in MIR
-  as erased, and a cloned body that still declares a parameter is one of
-  them.
-  - `Tuple$t2[…].write_to` is a clone, and it is still generic in its writer.
-    It is counted once as cloned and once as an erased body.
-  - The MIR function carries no mark saying the cloner minted it, and the
-    census does not match clone names against lowered symbols.
-  - Report the two apart, so the erased rows count only bodies no clone
-    replaces.
-  - Nothing blocks on it. The cloned rows and the checker rows are exact.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **1.22 (P5) The erased oracle cannot default-construct a SIMD-typed
+- [ ] **1.21 (P5) The erased oracle cannot default-construct a SIMD-typed
   parameter**
 
   Problem: `Array[c_char, 4]()` runs on concrete MIR and stops under
@@ -414,6 +403,22 @@ correctness fix to existing behavior is allowed.
     `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
   - Entry 1.19 deletes the oracle and this row with it. Nothing else needs
     the erased path to construct one.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.22 (P5) The erased oracle reads a place pointer bound to a
+  parameter as its pointee**
+
+  Problem: `assets/ok/template_served_loan_carrying_instance.mojo` runs on
+  concrete MIR and stops under `--erased` with "checked nominal subscript
+  receiver is Int".
+  - A `Pointer(to=x)` value is a reference handle on the VM. A concrete body
+    tells it from a reference by the `Pointer` type of the register or the
+    slot.
+  - An erased body types it `T`, so `value.copy()` and a read of the whole
+    slot chase the handle to the pointee.
+  - The fixture is an `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry 1.19 deletes the oracle and this row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2752,6 +2757,65 @@ last.
     (`is_trivial_register_passable`) and would have to record it on the
     transfer.
   - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.114 A pointer handed to a struct's constructor does not keep its
+  pointee alive**
+
+  Problem: `var c = Cell[Pointer[List[Int], ImmOrigin(origin_of(xs))]](p)`
+  followed by `print(c.item[][1])` prints 2 at the pin and stops in Mojito
+  with "use after Pointer deallocation".
+  - The cell takes no loan on `xs`, so `xs` is destroyed after the pointer's
+    own last use.
+  - A copy read back out (`var q = c.get()`) loses it the same way.
+  - A method that stores the pointer after construction does keep it
+    (`assets/ok/template_served_loan_carrying_instance.mojo`). A constructor
+    body records no transfer, and the caller's aggregate path does not see a
+    copied pointer.
+  - Probe: `conformance/probes/pointer_copied_into_struct_keeps_loan.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.115 A heap-owning temporary that carries a loan is destroyed twice
+  when an owning parameter takes it**
+
+  Problem: `take(Maybe(Span(xs)))` with `def take[T](var m: Maybe[T])` prints
+  1 at the pin and stops in Mojito with "use after Pointer deallocation".
+  - MIR lowering anchors the temporary in a hidden `$arg_loan_r` slot to keep
+    `xs` alive through the call (`anchor_borrowing_argument`,
+    `mir/calls.rs`).
+  - The slot and the callee's parameter both own the value, and both destroy
+    the list inside it.
+  - A temporary with no destructor (`Span(xs)`) is unaffected.
+  - Probe: `conformance/probes/loan_carrying_temporary_owned_argument.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.116 A struct argument over an immutable origin counts as mutable
+  in the exclusivity check**
+
+  Problem: `b.push(s)` with `s: Span[Int, ImmOrigin(origin_of(xs))]` on a
+  `Bag` over the same type prints `1 2` at the pin and is rejected in Mojito
+  with "aliasing values passed mutably to 'self' argument and passed mutably
+  to 'value' argument".
+  - The same call over `Pointer[List[Int], ImmOrigin(origin_of(xs))]` is
+    accepted.
+  - The check reads a struct's origin argument without the `ImmOrigin` cast's
+    mutability.
+  - Probe:
+    `conformance/probes/immutable_origin_struct_argument_exclusivity.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.117 `len` of a list reached through a pointer field does not run**
+
+  Problem: `print(len(c.item[]))` with `c.item` a
+  `Pointer[List[Int], ImmOrigin(origin_of(xs))]` prints 3 at the pin and
+  stops in Mojito with "vm backend does not support methods on ref yet".
+  - The field read yields a reference handle the builtin does not read
+    through.
+  - Probe: `conformance/probes/len_of_dereferenced_pointer_field.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -756,45 +756,61 @@ impl VmBackend {
                 ..
             } => {
                 let recv_val = regs[recv.0 as usize].clone();
-                let argv: Vec<Value> = args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                let kw: Vec<(String, Value)> = kwargs
-                    .iter()
-                    .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))
-                    .collect();
-                let result = self.method_call(
-                    prog,
-                    MethodInvocation {
-                        receiver: recv_val,
-                        method,
-                        resolved_name: resolved.as_deref(),
-                        result_adapter: *result_adapter,
-                        arguments: argv,
-                        keyword_arguments: kw,
-                        receiver_place: recv_place,
-                        argument_places: arg_places,
-                        keyword_argument_places: kwarg_places,
-                        parameter_arguments: param_arg_regs,
-                        parameter_declarations: param_decls,
-                        argument_types: args
-                            .iter()
-                            .map(|reg| {
-                                prog.mir.functions[function]
-                                    .1
-                                    .reg_types
-                                    .get(&reg.0)
-                                    .cloned()
-                            })
-                            .collect(),
-                    },
-                    CallerFrame {
-                        id: frame_id,
-                        function: caller_function,
-                        registers: regs,
-                        variables: vars,
-                    },
-                )?;
-                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                regs[dest.0 as usize] = self.materialize_checked_result(prog, result, target)?;
+                // A place pointer is a reference handle here, and its
+                // trait-dispatched `copy` is the handle, not its pointee's.
+                let pointer_copy = method == "copy"
+                    && resolved.is_none()
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && matches!(
+                        prog.mir.functions[function].1.reg_types.get(&recv.0),
+                        Some(Ty::Pointer { .. })
+                    );
+                if pointer_copy {
+                    regs[dest.0 as usize] = recv_val;
+                } else {
+                    let argv: Vec<Value> =
+                        args.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                    let kw: Vec<(String, Value)> = kwargs
+                        .iter()
+                        .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))
+                        .collect();
+                    let result = self.method_call(
+                        prog,
+                        MethodInvocation {
+                            receiver: recv_val,
+                            method,
+                            resolved_name: resolved.as_deref(),
+                            result_adapter: *result_adapter,
+                            arguments: argv,
+                            keyword_arguments: kw,
+                            receiver_place: recv_place,
+                            argument_places: arg_places,
+                            keyword_argument_places: kwarg_places,
+                            parameter_arguments: param_arg_regs,
+                            parameter_declarations: param_decls,
+                            argument_types: args
+                                .iter()
+                                .map(|reg| {
+                                    prog.mir.functions[function]
+                                        .1
+                                        .reg_types
+                                        .get(&reg.0)
+                                        .cloned()
+                                })
+                                .collect(),
+                        },
+                        CallerFrame {
+                            id: frame_id,
+                            function: caller_function,
+                            registers: regs,
+                            variables: vars,
+                        },
+                    )?;
+                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                    regs[dest.0 as usize] =
+                        self.materialize_checked_result(prog, result, target)?;
+                }
             }
             MirInstr::PointerStorageTake {
                 dest,
@@ -1586,7 +1602,18 @@ impl VmBackend {
             MirInstr::LoadPlace { dest, place } => {
                 // The read half of `c[i] += e` on a user struct goes through
                 // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
-                regs[dest.0 as usize] = if let Some(reference) =
+                // A pointer-typed variable holding a place handle is the
+                // handle itself, as `UseVar` reads it: the whole slot is
+                // the pointer, not its pointee.
+                let pointer_slot = place.proj.is_empty()
+                    && place.through.is_none()
+                    && matches!(
+                        prog.mir.functions[function].1.var_tys.get(&place.root),
+                        Some(Ty::Pointer { .. })
+                    );
+                regs[dest.0 as usize] = if pointer_slot {
+                    vars[place.root as usize].clone()
+                } else if let Some(reference) =
                     self.extend_reference(&vars[place.root as usize], place, regs)?
                 {
                     // Reading through a reference-alias root (a `mut`/`ref self`

@@ -1491,7 +1491,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.9", "mojito-mir 1.2", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.2", 1)
         .replace(
             "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H }",
             "type.construct { dest: %r0, param: H }",
@@ -1500,7 +1500,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             ", binder: present(binder { owner: \"$test:H\", slot: 0, name: H })",
             "",
         );
-    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.9", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.10", 1), text);
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let read = &parsed.program.functions[0].1.blocks[0].instrs;
     assert!(matches!(
@@ -1560,7 +1560,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
     assert_eq!(recorded(&write::program(&program)), Some(expr));
 
     let older = write::program(&call(None))
-        .replacen("mojito-mir 1.9", "mojito-mir 1.6", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.6", 1)
         .replace(", expr: absent", "");
     assert!(!older.contains("expr:"));
     assert_eq!(recorded(&older), None);
@@ -1603,7 +1603,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     assert_eq!(recorded(&write::program(&program)), Some(receiver));
 
     let older = write::program(&call(None))
-        .replacen("mojito-mir 1.9", "mojito-mir 1.7", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.7", 1)
         .replace(", receiver: absent", "");
     assert!(!older.contains("receiver:"));
     assert_eq!(recorded(&older), None);
@@ -1705,13 +1705,13 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     assert_bound(&read_decls(&text));
 
     let older = text
-        .replacen("mojito-mir 1.9", "mojito-mir 1.3", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.3", 1)
         .replace("binder { owner: \"$test:T\", slot: 0, name: T }", "T")
         .replace(
             "binder { owner: \"$unbound:Outer\", slot: 0, name: Outer }",
             "Outer",
         );
-    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.9", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.10", 1), text);
     assert_bound(&read_decls(&older));
 }
 
@@ -1751,13 +1751,13 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     ));
 
     let older = text
-        .replacen("mojito-mir 1.9", "mojito-mir 1.4", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.4", 1)
         .replace(
             "ct_deferred(binder { owner: \"$test:callback\", slot: 0, name: callback })",
             "ct_deferred(callback)",
         )
         .replace("ct_marker(marker_local)", "ct_deferred(\"$local\")");
-    assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.9", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.10", 1), text);
     let Ty::Struct(_, arguments) = read(&older) else {
         panic!("expected a struct type");
     };
@@ -1804,12 +1804,12 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
     assert_eq!(read_pack(&text).id, test_id("Ts"));
 
     let older = text
-        .replacen("mojito-mir 1.9", "mojito-mir 1.5", 1)
+        .replacen("mojito-mir 1.10", "mojito-mir 1.5", 1)
         .replace(
             "pack: binder { owner: \"$test:Ts\", slot: 0, name: Ts }",
             "pack: Ts",
         );
-    assert_ne!(older.replacen("mojito-mir 1.5", "mojito-mir 1.9", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.5", "mojito-mir 1.10", 1), text);
     let pack = read_pack(&older);
     assert!(pack.is_unbound() && &*pack.name == "Ts");
 }

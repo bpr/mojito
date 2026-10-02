@@ -47,6 +47,7 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
             .copied()
             .unwrap_or_default();
         census.add(def_class(trace, template), 1);
+        census.name(trace.clone_name.clone());
     }
     let method_templates: HashMap<(&str, Span), &[Stmt]> = minted
         .prepared
@@ -90,6 +91,9 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
                 .get(name.as_str())
                 .map_or(CloneClass::ValueStruct, |trace| struct_class(trace));
             census.add(class, methods.len());
+            for method in methods {
+                census.name(method_source_name(name, method));
+            }
             continue;
         }
         for method in methods {
@@ -119,9 +123,19 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
                 continue;
             };
             census.add(class, 1);
+            census.name(method_source_name(name, method));
         }
     }
     census
+}
+
+/// The source name MIR lowers `method` of `owner` under, before any
+/// overload qualifier.
+fn method_source_name(owner: &str, method: &mojito_ast::ast::Method) -> String {
+    format!(
+        "{owner}.{}",
+        mojito_symbol::symbol::lifecycle_method_name(method)
+    )
 }
 
 fn def_class(trace: &DefInstanceTrace, template: &[Stmt]) -> CloneClass {

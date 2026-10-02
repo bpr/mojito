@@ -300,6 +300,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // Section 1, the erased oracle: an erased value carries no type
     // argument to construct `T()` from where `T` is a SIMD type.
     "simd_parameter_default_construction",
+    // Section 1, the erased oracle: an erased value carries no type
+    // argument to tell a place pointer bound to `T` from a reference.
+    "template_served_loan_carrying_instance",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

@@ -639,6 +639,11 @@ pub enum SigOrigin {
     Projected(Box<Self>, Vec<OriginSeg>),
     Union(Vec<Self>),
     Infer,
+    /// Every origin a value of this type names once the callable's binders
+    /// are bound: the source of a transfer effect whose body stores a value
+    /// of a type over those binders. It is never a reference contract's
+    /// origin.
+    Carried(Box<crate::types::Ty>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -793,6 +798,7 @@ fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
             SigOrigin::Infer => 6,
             SigOrigin::Union(_) => 7,
             SigOrigin::UnsafeAny { .. } => 8,
+            SigOrigin::Carried(_) => 9,
         }
     }
 
@@ -815,6 +821,7 @@ fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
                     .find(|ordering| !ordering.is_eq())
                     .unwrap_or(Ordering::Equal)
             }),
+            (SigOrigin::Carried(a), SigOrigin::Carried(b)) => a.to_string().cmp(&b.to_string()),
             _ => Ordering::Equal,
         })
 }

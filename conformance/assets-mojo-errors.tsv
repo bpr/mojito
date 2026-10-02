@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	475
+# swept-count	476
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -90,6 +90,7 @@ assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subse
 assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/template_method_reference_local_invalidated.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.items["element"]'
+assets/ownership_error/template_served_instance_keeps_loan.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/transfer_into_var_parameter.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/use_after_move_after_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/use_after_move_in_try_else.mojo	compile-reject	agree	error: use of uninitialized value 's'

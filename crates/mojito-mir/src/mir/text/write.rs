@@ -2227,6 +2227,7 @@ fn sig_origin(value: &SigOrigin) -> String {
         ),
         SigOrigin::Union(v) => positional("sig_union", &list(v.iter().map(sig_origin))),
         SigOrigin::Infer => "sig_infer".into(),
+        SigOrigin::Carried(ty) => positional("sig_carried", &ty_value(ty)),
     }
 }
 fn sig_mutability(value: &SigMutability) -> String {

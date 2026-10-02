@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.8
+# Mojito Textual MIR Format, Version 1.10
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.8 is implemented end to end for inspection and loading: canonical
+Version 1.10 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.8
+mojito-mir 1.10
 ```
 
-The writer emits 1.8. The reader accepts 1.0 through 1.8; *Schema 1.0*
+The writer emits 1.10. The reader accepts 1.0 through 1.10; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -99,6 +99,16 @@ parameters, so the elaborator binds them from this type; a resolved call in
 concrete MIR records `absent`. A 1.7 consumer rejects the field, which is the
 intended failure. A 1.8 consumer reads an older `call` as recording no
 receiver.
+
+Minor version 9 carries a struct member's `where` clauses
+(`availability` on a declaration), each struct's conformance rows
+(`conformances`), and the declared traits (`traits`). An older artifact reads
+as carrying none.
+
+Minor version 10 adds the signature origin `sig_carried(type)`: the source of
+a transfer effect whose body stores a value of a type over its binders. It
+stands for every origin that type names once the binders are bound. A 1.9
+consumer rejects the spelling, which is the intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -460,7 +470,8 @@ are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,
-`sig_untracked`, `sig_unsafe_any`, `sig_projected`, `sig_union`, and `sig_infer`. Signature
+`sig_untracked`, `sig_unsafe_any`, `sig_projected`, `sig_union`, `sig_infer`,
+and `sig_carried(type)`. Signature
 mutability is `sig_immutable`, `sig_mutable`, `sig_bool_param(index)`, or
 `sig_infer`. A `RefSig` is `ref_sig { origin, mutability }`.
 
@@ -572,7 +583,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.8
+mojito-mir 1.10
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

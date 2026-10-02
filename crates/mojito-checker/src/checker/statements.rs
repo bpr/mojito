@@ -497,6 +497,7 @@ impl Checker {
                 if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
                     frame.latent_escapes = true;
                 }
+                self.record_transfer_effect(place, &[], storage, Some(found));
             } else {
                 self.record_transfer_effect(place, &origins, storage, Some(found));
             }

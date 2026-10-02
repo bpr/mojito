@@ -992,7 +992,7 @@ An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
 a plain type parameter) keeps its template in the program — checked once
 with `T` as `Ty::Param` (Mojo's generic pre-check). A method with no
 compile-time construct in its body is a generator: its template's MIR serves
-every plain-data instance, and `native::mono` substitutes into it for both
+every instance, and `native::mono` substitutes into it for both
 backends, so nothing is cloned, checked, or derived per instance. What the
 elaborator resolves there is what the instance's own check used to: the
 witness of an operator or a bound call, a `!=` served by a negated `__eq__`,
@@ -2417,7 +2417,8 @@ under an instance's bindings (`mono/availability.rs`) without ranking or
 re-deriving anything. A member its instance disproves is skipped when struct
 discovery reaches it and is an error when a call demands it. An instance that
 fails to materialize fails the compilation. The text schema carries the three
-fields from 1.9, and an older artifact reads as carrying none.
+fields from 1.9, and an older artifact reads as carrying none. Schema 1.10
+adds the `sig_carried(type)` signature origin.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection
@@ -3132,7 +3133,16 @@ a symbolic value that may carry a loan once instantiated records its effect
 as latent: the frame keeps it, in order, beside the published effects
 (`TransferFrame::record`) and never publishes it, and a template instance
 derived from the body publishes it where the substituted type carries a loan
-(`docs/notes/instantiation-from-template.md`, obligation 14). Outward storage
+(`docs/notes/instantiation-from-template.md`, obligation 14). The same store
+publishes one effect whose source is the stored type itself
+(`SigOrigin::Carried`), as does a symbolic value handed by value to a callee
+that stores it. A call through a struct receiver closes that type with the
+receiver's arguments, and the destination borrows, shared, the places the
+closed type names. That is what serves an instance over a loan-carrying
+argument from its template with no clone
+(`docs/notes/generator-contract.md` §Carried sources). A nested `def`
+records no such effect. A bundled seed stays in a method's summary beside
+what its body records. Outward storage
 covers both the frame's outliving owners (`self`, `mut`/`ref` parameters and
 the capture-reachable extensions of the escape context) and ANY
 enclosing-frame binding a nested def reaches through captures — storing a

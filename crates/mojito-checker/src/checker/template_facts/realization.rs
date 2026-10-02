@@ -227,7 +227,24 @@ impl Checker {
                         ty: substitute(&source.ty),
                         is_place: source.is_place,
                     }))
-                    .filter(|(_, source)| !self.loan_free(&source.ty))
+                    .filter_map(|(member, source)| match member {
+                        // A carried type is spelled only while it is still
+                        // symbolic: a closed instance's own check records
+                        // the origins its values hold instead.
+                        mojito_types::origin::SigOrigin::Carried(_) => {
+                            (mojito_types::types::is_symbolic(&source.ty)
+                                && self.type_may_carry_loans(&source.ty))
+                            .then(|| {
+                                (
+                                    mojito_types::origin::SigOrigin::Carried(Box::new(
+                                        source.ty.clone(),
+                                    )),
+                                    source,
+                                )
+                            })
+                        }
+                        member => (!self.loan_free(&source.ty)).then_some((member, source)),
+                    })
                     .unzip();
                 let src_is_place = match sources.as_slice() {
                     [only] => only.is_place,
@@ -267,6 +284,19 @@ impl Checker {
             .any(|(callee, read)| summaries.get(callee) != Some(read))
         {
             return Err("a callee's transfer summary is no longer the one the template read");
+        }
+        // A carried type the template took from a callee's summary is spelled
+        // again only where that summary is committed.
+        let carried = |effect: &mojito_types::types::TransferEffect| {
+            matches!(effect.src, mojito_types::origin::SigOrigin::Carried(_))
+        };
+        if facts
+            .transfer_effects
+            .iter()
+            .any(|effect| carried(&effect.effect))
+            && empty.iter().any(|(_, read)| read.iter().any(&carried))
+        {
+            return Err("a callee's carried summary is not committed yet");
         }
         facts.transfer_reads = replayed;
         for (callee, _) in empty {

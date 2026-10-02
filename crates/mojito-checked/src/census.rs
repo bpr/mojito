@@ -91,10 +91,12 @@ impl CloneClass {
     }
 }
 
-/// The bodies one elaboration minted, by class.
+/// The bodies one elaboration minted, by class, and the source names the
+/// ones that reach MIR lower under.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CloneCensus {
     counts: std::collections::BTreeMap<CloneClass, usize>,
+    names: std::collections::BTreeSet<String>,
 }
 
 impl CloneCensus {
@@ -102,6 +104,23 @@ impl CloneCensus {
         if bodies > 0 {
             *self.counts.entry(class).or_default() += bodies;
         }
+    }
+
+    /// Record the source name a minted body lowers under: a `def` clone's
+    /// name, or a method's `Struct.method`.
+    pub fn name(&mut self, source_name: String) {
+        self.names.insert(source_name);
+    }
+
+    /// Whether the cloner minted the body lowered as `symbol`: one of the
+    /// recorded names, or one extended by a `$` suffix, which is how an
+    /// overload qualifier and a body lifted out of a clone are spelled.
+    pub fn minted(&self, symbol: &str) -> bool {
+        self.names.iter().any(|name| {
+            symbol
+                .strip_prefix(name.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
+        })
     }
 
     pub fn count(&self, class: CloneClass) -> usize {
@@ -124,16 +143,24 @@ pub struct InstantiationCensus {
     /// Distinct cloned bodies the checker served from a checked template and
     /// never inferred, over the same rounds.
     pub derived: usize,
-    /// Parametric bodies in the converged MIR: the ones a clone does not
-    /// replace, which run erased on the VM.
+    /// Parametric bodies in the converged MIR that no clone replaces: the
+    /// templates, which run erased on the VM's oracle path.
     pub erased_bodies: usize,
     /// The erased bodies `main` reaches, and the concrete instances
     /// monomorphization substitutes from them. `None` when the program has
     /// no `main` or monomorphization refuses it.
     pub erased_served: Option<ErasedServed>,
+    /// Cloned bodies that are still parametric in MIR: a clone that keeps a
+    /// parameter of its own (`Tuple$t2[…].write_to`, generic in its writer).
+    /// Each is counted in `cloned` and in no erased row.
+    pub parametric_clones: usize,
+    /// What `main` reaches of the parametric clones, as `erased_served` is
+    /// for the erased bodies.
+    pub parametric_clones_served: Option<ErasedServed>,
 }
 
-/// What the erased bodies of a program serve with no clone.
+/// What a set of parametric bodies serves: how many of them `main` reaches,
+/// and the concrete instances substituted from those.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErasedServed {
     pub bodies: usize,

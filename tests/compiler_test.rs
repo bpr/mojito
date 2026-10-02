@@ -1120,6 +1120,20 @@ fn instantiation_census_counts_each_cloned_class() {
     }
     let served = classes.erased_served.expect("main specializes");
     assert!(served.instances >= served.bodies);
+    // The bundled `Tuple` specializations keep their writer parameter: each
+    // is a clone, counted apart from the templates no clone replaces.
+    for census in [&baseline, &classes] {
+        assert!(census.parametric_clones > 0);
+        assert!(census.parametric_clones <= census.cloned.total());
+    }
+    assert_eq!(
+        classes.parametric_clones, baseline.parametric_clones,
+        "the clones of `pick`, `total`, and `Box.kind` keep no parameter"
+    );
+    assert!(
+        classes.erased_bodies > baseline.erased_bodies,
+        "`Box`'s template members stay parametric and are no clone"
+    );
 }
 
 #[test]
@@ -4823,16 +4837,41 @@ fn receiver_origin_iterator_argument_clones() {
 
 #[test]
 fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
-    // `self.item = value^` over a symbolic `T` publishes no transfer in the
-    // template, which records it as latent. The loan-carrying instance
-    // publishes it, so `c` keeps the loan on `xs` its own check records, and
-    // the plain-data instance drops it. The lists are read parameters, so
-    // the cell and the span put into it do not alias.
+    // `self.item = value^` over a symbolic `T` names no loan in the
+    // template, whose summary carries the stored type. Neither instance
+    // clones `put`: the call on the loan-carrying one closes the type and
+    // `c` borrows the lists it names, and the plain-data one records
+    // nothing. The lists are read parameters, so the cell and the span put
+    // into it do not alias.
     assert_methods_derive(
         "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef run(xs: List[Int], ys: List[Int]):\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n\n\ndef main():\n    run([1, 2, 3], [4, 5, 6])\n",
         "3 2 2\n",
-        &[("Cell.put", 1)],
+        &[("Cell.put", 0)],
     );
+}
+
+#[test]
+fn loan_carrying_instance_is_served_by_its_template() {
+    // An instance over a loan-carrying argument clones no method its
+    // template serves. The summary's carried source keeps the loan a clone's
+    // own check used to record, so each pointee outlives its last naming.
+    let compiler = Compiler::default().with_template_verification(true);
+    let compiled = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_served_loan_carrying_instance.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&compiled).expect("execute").output,
+        "1 2\n1 5\n2 9\n0\n1 3\n"
+    );
+    let (clones, _) = clones_and_requests(&compiled);
+    for method in ["Bag.push", "Bag.push_copy", "Bag.first", "Cell.put"] {
+        let clone = format!("{method}$");
+        assert!(
+            clones.iter().all(|name| !name.starts_with(&clone)),
+            "{method} mints no clone: {clones:?}"
+        );
+    }
 }
 
 #[test]

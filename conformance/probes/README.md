@@ -113,6 +113,10 @@ template; a field type under a symbolic index is opaque until a
 | `value_struct_generic_constructor_overload.mojo` | Does a generic constructor declared beside another one run on a struct with a value parameter? | **differs**: the pin prints `5` `5` `1`, Mojito stops at run time ("vm backend does not support the built-in or callee 'P.__init__$ov$T$Writable' yet") — `docs/roadmap.md` 3.111 |
 | `mut_capture_transfer_refilled.mojo` | May a `mut` capture be transferred away when the body writes it back? | **differs**: the pin rejects ("cannot consume indirect references to values"), Mojito prints `ab` — `docs/roadmap.md` 3.112 |
 | `trivial_struct_mut_parameter_transfer.mojo` | Does `^` copy a `TrivialRegisterPassable` struct out of a `mut` parameter? | **differs**: the pin prints `3 3`, Mojito rejects ("'v' is uninitialized at return from this function") — `docs/roadmap.md` 3.113 |
+| `pointer_copied_into_struct_keeps_loan.mojo` | Does a pointer handed to a struct's constructor keep its pointee alive? | **differs**: the pin prints `2` `2` `2` `3`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.114 |
+| `loan_carrying_temporary_owned_argument.mojo` | Is a heap-owning temporary that carries a loan destroyed once when an owning parameter takes it? | **differs**: the pin prints `1` `1`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.115 |
+| `immutable_origin_struct_argument_exclusivity.mojo` | May a `Span` over an immutable origin be handed to a method of a receiver naming the same origin? | **differs**: the pin prints `1 2`, Mojito rejects ("aliasing values passed mutably") — `docs/roadmap.md` 3.116 |
+| `len_of_dereferenced_pointer_field.mojo` | Does `len` run on a list reached through a pointer field? | **differs**: the pin prints `3`, Mojito stops at run time ("methods on ref") — `docs/roadmap.md` 3.117 |
 
 ## Re-probes of enforced claims
 

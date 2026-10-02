@@ -296,13 +296,11 @@ the package list, so neither is reshaped later.
   bodies without them.
 - **Value-dependent register types.** Rows 23 and 27 need a type over a
   parameter expression. That is the common type vocabulary entry.
-- **Summaries with origin parameters.** Row 14 keeps today's rule, where a
-  source vanishes when the substituted type is loan-free. A loan-carrying
-  argument is served today by clone origin binders
-  (`Bag[Span[Int, __clone_origin0]]`). Without a clone there is no such
-  binder, and the generator's summary must name the argument's origin
-  positions itself. P2 must settle that for the instances rows 12 and 14
-  describe before their clones go.
+- **Summaries of a generic `def`.** A struct method's summary names the
+  origin positions of a stored type itself (§Carried sources). A generic
+  `def` called at a loan-carrying argument is still cloned with origin
+  binders, because its summary is closed only through a struct receiver.
+  That is a roadmap §1 entry.
 - **Where the symbolic check is too lenient.** Row 10 closed with P2's first
   step. Row 20 holds for a method its template serves and is still a
   section-3 entry for one that clones. Two more turned up when the clones
@@ -310,17 +308,47 @@ the package list, so neither is reshaped later.
   bound on a type whose own `__eq__` takes another type, and an implicit
   conversion through a consuming constructor.
 
+## Carried sources
+
+A template's store of a value of a parameter type names no loan: the loans
+are the instance's. Its transfer summary therefore carries the stored type.
+
+- **The effect.** `TransferEffect.src` is `SigOrigin::Carried(type)`, with
+  the destination the store wrote (`self.items`, a `mut` parameter). It
+  stands for every origin the type names once the callable's binders are
+  bound. The body records it where it accepts an outward store of a symbolic
+  value (`check_outward_store`), and where it hands a symbolic value by
+  value to a callee that stores it.
+- **The call.** `replay_transfer_effects` closes the type with the
+  arguments of the struct instance the receiver is. The places the closed
+  type names (a reference's or a pointer's origin, a struct's origin
+  arguments) are the sources, and the destination borrows them shared. A
+  type still symbolic at the call is carried on in the caller's own summary.
+  A plain-data type names no place and records nothing.
+- **No binder.** Nothing in the summary names an origin parameter, so no
+  clone origin binder is needed to spell it. A loan-carrying instance is
+  served by its template as a plain-data one is.
+- **The escape verdict** is the call's: a carried source rooted in the
+  caller's frame cannot reach a destination that outlives it.
+- **A nested `def`** records none. Its summary key is its bare name in every
+  copy of the enclosing body, and that body is cloned per instance.
+- **Serialized.** `sig_carried(type)`, text schema 1.10.
+
+A derived clone drops a carried source its instance closes, and respells one
+still symbolic, as its own check records it.
+
 ## What has landed
 
 P2's first step (2026-10-01) serves a generic struct's method from its
 template's MIR where the body holds no compile-time construct and the
-instance's arguments are plain data.
+instance's arguments are plain data. Since 2026-10-02 the instance's
+arguments may carry a loan too (§Carried sources).
 
 | Rows | State |
 |---|---|
 | 1, 4, 5, 8 | Done for those methods: the elaborator binds the owner's parameters from the receiver, or from `Call.receiver` for a static call, and the driver reads the instances a template body reaches off its checked types (`src/compiler/template_reach.rs`). |
 | 3, 10, 11 | Proved on the declaration. Row 10 is new. |
-| 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. An instance over a loan-carrying argument still clones (roadmap §1). |
+| 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. A store of a symbolic value publishes its stored type as a carried source, and a call through a struct receiver closes it (§Carried sources). An instance over a loan-carrying argument clones no more than a plain-data one. |
 | 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |
 | 18 | The template's selected constructor serves the instance, a variadic one keyed by the call's element count. |
 | 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap §1). |

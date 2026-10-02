@@ -41,14 +41,14 @@ pub struct SpecializedProgram {
 /// What the specialization instantiated from parametric bodies: the source
 /// functions whose types name a parameter, which reach MIR once and run
 /// erased on the VM.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParametricInstances {
     /// Parametric bodies in the source program, reachable or not.
     pub bodies: usize,
-    /// Those the entries reach.
-    pub reached: usize,
-    /// The concrete functions substituted from the reached ones.
-    pub instances: usize,
+    /// The parametric body each concrete function was substituted from, one
+    /// entry per instance: the distinct names are the bodies the entries
+    /// reach.
+    pub instance_templates: Vec<String>,
 }
 
 /// A source-template-oriented specialization failure.

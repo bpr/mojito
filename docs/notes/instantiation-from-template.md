@@ -16,9 +16,9 @@ Since 2026-10-01 the mechanism serves fewer bodies. A generic struct's method
 with no compile-time construct in its body mints no clone on a plain-data
 instance: the elaborator instantiates the template's MIR
 ([`generator-contract.md`](generator-contract.md) §What has landed). What
-follows still describes every clone that is minted: a `def` clone, a method
-that holds or reaches a compile-time construct, and every method of an
-instance over a loan-carrying argument. A derived clone that calls a sibling
+follows still describes every clone that is minted: a `def` clone, and a
+method that holds or reaches a compile-time construct. Since 2026-10-02 an
+instance over a loan-carrying argument clones only those methods too. A derived clone that calls a sibling
 with no clone names the sibling's template.
 
 ## The carrier stays the AST clone

@@ -52,19 +52,34 @@ impl CompiledProgram {
     /// so it elaborates the program if nothing has yet.
     pub fn instantiation_census(&self) -> crate::census::InstantiationCensus {
         let mir = self.drop_elaborated_mir();
-        let erased_served =
-            self.concrete_mir()
-                .ok()
-                .map(|specialized| crate::census::ErasedServed {
-                    bodies: specialized.parametric.reached,
-                    instances: specialized.parametric.instances,
-                });
+        // A parametric body the cloner minted is a clone that keeps a
+        // parameter of its own; every other one is a template.
+        let (clones, erased): (Vec<&str>, Vec<&str>) = crate::native::mono::parametric_bodies(mir)
+            .into_iter()
+            .partition(|body| self.clones.minted(body));
+        let served = |minted: bool| {
+            self.concrete_mir().ok().map(|specialized| {
+                let templates: Vec<&str> = specialized
+                    .parametric
+                    .instance_templates
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|template| self.clones.minted(template) == minted)
+                    .collect();
+                crate::census::ErasedServed {
+                    bodies: templates.iter().collect::<HashSet<_>>().len(),
+                    instances: templates.len(),
+                }
+            })
+        };
         crate::census::InstantiationCensus {
             cloned: self.clones.clone(),
             inferred: self.template_stats.inferred_instances.len(),
             derived: self.template_stats.derived_only_instances(),
-            erased_bodies: crate::native::mono::parametric_bodies(mir).len(),
-            erased_served,
+            erased_bodies: erased.len(),
+            erased_served: served(false),
+            parametric_clones: clones.len(),
+            parametric_clones_served: served(true),
         }
     }
 

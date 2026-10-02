@@ -345,7 +345,8 @@ pub(super) fn verify_callable_contract_call(
                         | mojito_types::origin::SigOrigin::Param(_)
                         | mojito_types::origin::SigOrigin::Projected(_, _)
                         | mojito_types::origin::SigOrigin::Union(_)
-                        | mojito_types::origin::SigOrigin::Infer => true,
+                        | mojito_types::origin::SigOrigin::Infer
+                        | mojito_types::origin::SigOrigin::Carried(_) => true,
                     };
                     if !origin_matches {
                         errors.push(format!(

@@ -245,6 +245,20 @@ record. Taken at `86a25b67` plus the census itself, on the three
 | … of which `main` reaches | P1 | 0 | 10 | 36 |
 | Instances those serve with no clone | P1 | 0 | 10 | 98 |
 
+The last three rows counted a clone that keeps a parameter of its own among
+the erased bodies. The census now reports the two apart
+(`instantiation.erased.*` and `instantiation.cloned_parametric.*`). At
+2026-10-02, after P2's first steps:
+
+| Parametric bodies in MIR | `hello` | `generic` | `stdlib_heavy` |
+|---|---:|---:|---:|
+| Templates no clone replaces | 303 | 305 | 306 |
+| … of which `main` reaches | 0 | 11 | 42 |
+| Instances those serve with no clone | 0 | 11 | 120 |
+| Clones that keep a parameter | 42 | 43 | 53 |
+| … of which `main` reaches | 0 | 0 | 1 |
+| Instances those serve | 0 | 0 | 3 |
+
 How to read it:
 
 - A cloned body has one class. Where several describe it, it takes the one
@@ -255,8 +269,10 @@ How to read it:
   total in all three programs.
 - The instance rows come from running `native::mono` from `main`. A
   parametric body left in MIR is a function whose types still name a
-  parameter. A clone that keeps one of its own parameters is among them
-  (roadmap §1, the census entry).
+  parameter. In the 2026-09-30 table a clone that keeps one of its own
+  parameters is among them (`Tuple$t2[…].write_to`, generic in its writer).
+  The cloner now reports the names its clones lower under
+  (`CloneCensus::minted`), and the later table splits them out.
 - The 244 bodies of Hello World are the fixed cost every program pays: the
   bundled `Tuple` specializations, the `DType`-keyed ranges, the hasher, and
   the `os` and `path` applications.
@@ -380,15 +396,25 @@ its template's MIR, lifecycle members and constructors included.
   a method that still clones repeats it, and that is a roadmap §3 entry.
 - **The serialized `Call`.** A static call records its spelled receiver type,
   from which the elaborator binds the struct's parameters (text schema 1.8).
-- **The erased oracle.** It agrees on every fixture but one. An erased value
-  carries no type arguments, so the oracle cannot hand a template-served
-  body's call to the receiver instance's clone as the elaborator does. That
-  fixture is the `erased_vm` group's one expected failure.
+- **The erased oracle.** It agrees on every fixture but the
+  `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`). An erased value carries
+  no type arguments, so the oracle cannot hand a template-served body's call
+  to the receiver instance's clone as the elaborator does, and it cannot
+  tell a place pointer bound to a parameter from a reference.
 - **Availability.** A member's `where` clause and each struct's conformance
   rows reach MIR, and the elaborator decides the clause. Its `speculative`
   set and the rollback are gone (text schema 1.9).
-- **Not done.** The clause forms the elaborator leaves undecided, the
-  summaries of an instance over a loan-carrying argument, the explicit
+- **Loan-carrying instances (2026-10-02).** An instance over a loan-carrying
+  argument clones no more than a plain-data one. A template's store of a
+  symbolic value publishes the stored type as the summary's source
+  (`SigOrigin::Carried`, text schema 1.10), and a call closes it with the
+  receiver's arguments
+  ([`notes/generator-contract.md`](notes/generator-contract.md) §Carried
+  sources). `assets/ok/bundled_instance_loan_carrying_argument.mojo` mints
+  248 clones where it minted 413. The three benchmark programs hold no such
+  instance and are unchanged.
+- **Not done.** The clause forms the elaborator leaves undecided, a generic
+  `def` called at a loan-carrying argument, the explicit
   application of a trait-bound `def`, and the exit: clone-symbol retargeting
   and the method certificate classes still serve the clones that remain.
 

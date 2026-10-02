@@ -705,6 +705,7 @@ assets/ok/template_print_statement.mojo	main	exe-differential	sanitized
 assets/ok/template_print_whole_value.mojo	main	exe-differential	sanitized
 assets/ok/template_raise_forms.mojo	main	exe-differential	sanitized
 assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized
+assets/ok/template_served_loan_carrying_instance.mojo	main	exe-differential	sanitized
 assets/ok/template_tuple_default_initializer.mojo	main	exe-differential	sanitized
 assets/ok/template_two_arms.mojo	main	exe-differential	sanitized
 assets/ok/template_two_types.mojo	main	exe-differential	sanitized

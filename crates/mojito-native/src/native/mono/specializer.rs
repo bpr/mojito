@@ -130,18 +130,17 @@ impl<'a> Specializer<'a> {
             .iter()
             .map(|(name, _)| name.as_str())
             .collect();
-        let instance_templates: Vec<&str> = self
+        let instance_templates = self
             .instances
             .iter()
             .filter(|(key, name)| {
                 emitted.contains(name.as_str()) && parametric_bodies.contains(key.template.as_str())
             })
-            .map(|(key, _)| key.template.as_str())
+            .map(|(key, _)| key.template.clone())
             .collect();
         let parametric = ParametricInstances {
             bodies: parametric_bodies.len(),
-            reached: instance_templates.iter().collect::<HashSet<_>>().len(),
-            instances: instance_templates.len(),
+            instance_templates,
         };
         Ok(SpecializedProgram {
             program,
@@ -195,9 +194,9 @@ impl<'a> Specializer<'a> {
             arguments: arguments
                 .into_iter()
                 .map(|argument| match argument {
-                    InstanceArg::Ty(ty) => {
-                        InstanceArg::Ty(mojito_types::types::erase_origin_arguments(&ty))
-                    }
+                    InstanceArg::Ty(ty) => InstanceArg::Ty(without_pointer_origins(
+                        &mojito_types::types::erase_origin_arguments(&ty),
+                    )),
                     value @ InstanceArg::Value(_) => value,
                 })
                 .collect(),
@@ -1803,6 +1802,32 @@ fn lifecycle_clone_instance_symbol(
         .is_some_and(|baked| baked > owner_arity);
     (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP) && !per_call)
         .then(|| format!("{owner}.{base}"))
+}
+
+/// `ty` with every pointer origin reset to the static one. A pointer's
+/// provenance erases from the runtime ABI and from the instance symbol, as a
+/// struct's origin slots do.
+fn without_pointer_origins(ty: &Ty) -> Ty {
+    let recur = without_pointer_origins;
+    match ty {
+        Ty::Pointer { element, .. } => Ty::Pointer {
+            element: Box::new(recur(element)),
+            origin: mojito_types::origin::PointerOrigin::Static,
+        },
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            mojito_types::types::map_tyargs(arguments, recur),
+        ),
+        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
+        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
+        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
+        Ty::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = Box::new(recur(&reference.referent));
+            Ty::Ref(reference)
+        }
+        other => other.clone(),
+    }
 }
 
 /// Strips what only an instantiation reads from the compile-time argument

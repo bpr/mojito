@@ -1115,6 +1115,12 @@ impl Checker {
                 let sources = sig_origin_members(&effect.src)
                     .iter()
                     .map(|member| {
+                        if let SigOrigin::Carried(stored) = member {
+                            return Ok(TemplateEffectSource {
+                                ty: (**stored).clone(),
+                                is_place: false,
+                            });
+                        }
                         let (owner, is_place) = match member {
                             SigOrigin::Self_ => (param_owners.receiver, true),
                             SigOrigin::Param(index) => (

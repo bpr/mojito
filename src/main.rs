@@ -445,8 +445,8 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
 }
 
 /// The `--instantiation-census` lines: the bodies the AST cloner minted by
-/// class, the ones the checker inferred and derived, and what the erased
-/// bodies serve.
+/// class, the ones the checker inferred and derived, what the erased bodies
+/// serve, and the same for the clones that are still parametric.
 fn census_report(census: &mojito::census::InstantiationCensus) -> String {
     let unreached = || "unavailable".to_string();
     let mut rows: Vec<(&str, String)> = mojito::census::CloneClass::ALL
@@ -477,6 +477,22 @@ fn census_report(census: &mojito::census::InstantiationCensus) -> String {
             "instantiation.erased.instances",
             census
                 .erased_served
+                .map_or_else(unreached, |served| served.instances.to_string()),
+        ),
+        (
+            "instantiation.cloned_parametric.bodies",
+            census.parametric_clones.to_string(),
+        ),
+        (
+            "instantiation.cloned_parametric.bodies_reached",
+            census
+                .parametric_clones_served
+                .map_or_else(unreached, |served| served.bodies.to_string()),
+        ),
+        (
+            "instantiation.cloned_parametric.instances",
+            census
+                .parametric_clones_served
                 .map_or_else(unreached, |served| served.instances.to_string()),
         ),
     ]);

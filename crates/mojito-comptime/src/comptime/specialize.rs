@@ -2478,9 +2478,8 @@ impl Elab<'_> {
     /// `keyed` method whose `where` clause holds for the instance is cloned
     /// from the original template with the struct's parameters baked
     /// (`kind$y3:Int`) and an explicit receiver type, so the checker binds
-    /// `self`/`Self` to the instance. Every other method's template serves a
-    /// plain-data instance, so it mints no clone; an instance over a
-    /// loan-carrying argument clones every method. A user template's
+    /// `self`/`Self` to the instance. Every other method's template serves
+    /// the instance, so it mints no clone. A user template's
     /// lifecycle methods clone like any other, a constructor family as one
     /// overload set under the shared clone name; a bundled template's stay
     /// erased, carrying the value-parameter reification that path relies on. Only a template whose
@@ -2597,9 +2596,6 @@ impl Elab<'_> {
             .get(&instance_key)
             .map_or(&[][..], Vec::as_slice);
         let bundled = mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
-        let plain_data = values
-            .iter()
-            .all(|value| matches!(value, CtValue::Type(ty) if !carries_loan_or_callable(ty)));
         // The methods this instance withholds rather than fails to clone: an
         // unavailable method cannot be called on it at all, so its erased body
         // never runs.
@@ -2645,11 +2641,9 @@ impl Elab<'_> {
             {
                 continue;
             }
-            // The template serves a plain-data instance of a method that
-            // holds no compile-time construct. An instance over a
-            // loan-carrying argument still clones: its origin binders are
-            // what a transfer summary names the argument's loans by.
-            if plain_data && !keyed.contains(&method.name) {
+            // The template serves a method that holds no compile-time
+            // construct, whatever the instance's arguments carry.
+            if !keyed.contains(&method.name) {
                 continue;
             }
             // Same-name overloads all clone: they share the mangled name and
@@ -3527,7 +3521,7 @@ fn owed_instance_clones(
 /// compile-time construct folds only per instance), one that holds a
 /// construct only an instance lowers, and one whose erased body reaches a
 /// compile-time-keyed stub. Every other method's template serves each
-/// plain-data instance, so it mints no clone. An overload family is keyed
+/// instance, so it mints no clone. An overload family is keyed
 /// whole.
 fn keyed_methods(
     methods: &[Method],
@@ -3573,19 +3567,6 @@ fn holds_instance_construct(body: &[Stmt]) -> bool {
     let mut finder = Finder { found: false };
     mojito_ast::visit::walk_block(&mut finder, body);
     finder.found
-}
-
-/// Whether a value of `ty` may hold a loan or a callable: a reference, a
-/// pointer or a struct argument naming an origin, or a function type.
-fn carries_loan_or_callable(ty: &Ty) -> bool {
-    mojito_types::types::mentions(ty, &|ty| match ty {
-        Ty::Ref(_) | Ty::Func { .. } | Ty::GenericFunc { .. } => true,
-        Ty::Pointer { origin, .. } => origin.as_origin().is_some(),
-        Ty::Struct(_, arguments) => arguments
-            .iter()
-            .any(|argument| matches!(argument, TyArg::Origin(_))),
-        _ => false,
-    })
 }
 
 /// Whether `body` is [`unspecialized_method_stub`]'s trap.

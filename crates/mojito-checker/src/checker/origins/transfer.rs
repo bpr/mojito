@@ -442,6 +442,23 @@ impl Checker {
             let mut symbolic_value = None;
             let mut sources = match &effect.src {
                 SigOrigin::Bound(origin) => vec![origin.clone()],
+                // The stored type is spelled over the callee's binders: the
+                // receiver's arguments close it, and the places it then
+                // names are what the destination borrows.
+                SigOrigin::Carried(stored) => {
+                    let Some(stored) =
+                        receiver.and_then(|receiver| self.receiver_substituted(receiver, stored))
+                    else {
+                        continue;
+                    };
+                    let origins = named_place_origins(&stored);
+                    if mojito_types::types::is_symbolic(&stored)
+                        && self.type_may_carry_loans(&stored)
+                    {
+                        symbolic_value = Some(stored);
+                    }
+                    origins
+                }
                 src => {
                     let Some(src_expr) = actual(src) else {
                         continue;
@@ -495,7 +512,7 @@ impl Checker {
                         | mojito_types::origin::Origin::Untracked { .. }
                 )
             });
-            if sources.is_empty() {
+            if sources.is_empty() && symbolic_value.is_none() {
                 continue;
             }
             // The store-outward rule, across the call: a destination rooted
@@ -570,6 +587,24 @@ impl Checker {
                         })
                     });
                 if let Some(dest_sig) = derived_dest {
+                    // A value handed over while its type is still symbolic
+                    // names its loans only at an instance: the frame's own
+                    // summary carries the type on. A nested `def` carries
+                    // none: its name is one summary key in every copy of the
+                    // enclosing body, which is cloned per instance.
+                    if let Some(stored) = &symbolic_value
+                        && let [frame] = self.transfer_frames.borrow_mut().as_mut_slice()
+                    {
+                        frame.record(
+                            mojito_checked::checked::TransferEffect {
+                                dest: dest_sig.clone(),
+                                src: SigOrigin::Carried(Box::new(stored.clone())),
+                                src_is_place: false,
+                                mutable: false,
+                            },
+                            None,
+                        );
+                    }
                     for origin in &sources {
                         if let Some(src_sig) =
                             self.abstract_body_origin(origin, &param_owners, self_owner)
@@ -614,6 +649,9 @@ impl Checker {
                 }
                 _ => continue,
             };
+            if sources.is_empty() {
+                continue;
+            }
             call_transfers.push(CheckedCallTransfer {
                 dest,
                 dest_path,
@@ -642,7 +680,9 @@ impl Checker {
     /// installs those loans), and self-to-self transfers are skipped so
     /// internal reshuffles do not self-loan every call. A `latent` store
     /// (its stored type) records its effect unpublished
-    /// ([`TransferFrame::record`]).
+    /// ([`TransferFrame::record`]), and publishes one whose source is the
+    /// stored type itself, which a call closes with its receiver's
+    /// arguments.
     #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(in crate::checker) fn record_transfer_effect(
         &self,
@@ -656,6 +696,7 @@ impl Checker {
             return;
         }
         let mut frames = self.transfer_frames.borrow_mut();
+        let nested = frames.len() > 1;
         let Some(frame) = frames.last_mut() else {
             return;
         };
@@ -709,6 +750,19 @@ impl Checker {
             }
             _ => true,
         };
+        if let Some(stored) = latent
+            && !nested
+        {
+            frame.record(
+                mojito_checked::checked::TransferEffect {
+                    dest: dest.clone(),
+                    src: SigOrigin::Carried(Box::new(stored.clone())),
+                    src_is_place: false,
+                    mutable: false,
+                },
+                None,
+            );
+        }
         let (param_owners, param_borrowed, self_owner) = (
             frame.param_owners.clone(),
             frame.param_borrowed.clone(),
@@ -738,4 +792,56 @@ impl Checker {
             frame.record(effect, latent.cloned());
         }
     }
+}
+
+impl Checker {
+    /// `stored`, a type over a callee's struct binders, at the arguments of
+    /// the struct instance `receiver` is. `None` where the receiver is no
+    /// declared struct instance.
+    fn receiver_substituted(&self, receiver: &Expr, stored: &Ty) -> Option<Ty> {
+        let receiver = self
+            .infer_reference_value(receiver)
+            .map(|reference| *reference.referent)
+            .or_else(|| self.infer(receiver).ok())?;
+        let Ty::Struct(name, arguments) = &receiver else {
+            return None;
+        };
+        let info = self.structs.get(name)?;
+        Some(substitute(stored, &struct_subst(&info.decls, arguments)))
+    }
+}
+
+/// The places the origins spelled in `ty` name: a reference's or a pointer's
+/// origin, and a struct's origin arguments.
+fn named_place_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
+    use mojito_types::origin::Origin;
+    fn places(origin: &Origin, into: &mut Vec<Origin>) {
+        match origin {
+            Origin::Place(_) if !into.contains(origin) => into.push(origin.clone()),
+            Origin::Union(members) => members.iter().for_each(|member| places(member, into)),
+            _ => {}
+        }
+    }
+    let found = std::cell::RefCell::new(Vec::new());
+    mojito_types::types::mentions(ty, &|ty| {
+        let mut found = found.borrow_mut();
+        match ty {
+            Ty::Ref(reference) => places(&reference.origin, &mut found),
+            Ty::Pointer { origin, .. } => {
+                if let Some(origin) = origin.as_origin() {
+                    places(&origin, &mut found);
+                }
+            }
+            Ty::Struct(_, arguments) => {
+                for argument in arguments {
+                    if let mojito_types::types::TyArg::Origin(origin) = argument {
+                        places(origin, &mut found);
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    found.into_inner()
 }

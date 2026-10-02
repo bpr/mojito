@@ -44,7 +44,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile` and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
-| Instantiation census (`--instantiation-census`) | `census::{InstantiationCensus, CloneCensus, CloneClass, ErasedServed}` (crate `mojito-checked`) | The elaborator classifies what it mints (`comptime/census.rs`, `Elaborated::clones`); the checker records distinct inferred and derived instance bodies in `TemplateStats::{inferred_instances, derived_instances}`; `native::mono` reports `SpecializedProgram::parametric` and `parametric_bodies`; `CompiledProgram::instantiation_census` assembles them and the CLI prints them. |
+| Instantiation census (`--instantiation-census`) | `census::{InstantiationCensus, CloneCensus, CloneClass, ErasedServed}` (crate `mojito-checked`) | The elaborator classifies what it mints (`comptime/census.rs`, `Elaborated::clones`); the checker records distinct inferred and derived instance bodies in `TemplateStats::{inferred_instances, derived_instances}`; `native::mono` reports `SpecializedProgram::parametric` (the template of each instance) and `parametric_bodies`; `CompiledProgram::instantiation_census` assembles them and the CLI prints them. `CloneCensus::minted` says whether the cloner minted a lowered symbol, from the source names `comptime/census.rs` records, which is how a clone that keeps a parameter is counted apart from an erased template. |
 | `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage and the elaborator's `check_default_effects` (`comptime/ctfe.rs`) one that does I/O | The VM's `bind_for_call` runs the function per call; pliron calls it from the caller (`evaluated_default_value` in `lower/calls.rs`), releasing a borrowed slot's value through `default_temps`. `native::mono` (`instantiate_constructed_defaults`) and pliron's `reachable_set` carry the edge no call instruction spells. |
@@ -964,9 +964,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   of an instance still clone: the ones whose template body is the trap stub,
   the ones `holds_instance_construct` finds a nested `def`, a lambda, or a
   type name in, the stub-reaching ones, and the driver-reported ones
-  (`ElaborationInputs::keyed_methods`). Every other method of a plain-data
-  instance (`carries_loan_or_callable` is false of each argument) mints no
-  clone.
+  (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
+  whatever the instance's arguments carry. `checker/origins/transfer.rs`
+  owns the carried source that lets it (`SigOrigin::Carried`, recorded by
+  `record_transfer_effect` and closed by `replay_transfer_effects`).
 - `src/compiler/template_reach.rs` owns what a template-served method body
   reaches at an instance (`TemplateReach`), read from one check's facts: the
   closed instances its checked types name once the struct's parameters are

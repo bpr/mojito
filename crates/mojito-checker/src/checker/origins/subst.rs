@@ -149,6 +149,7 @@ pub(in crate::checker) fn instantiate_sig_origin(
 
     match signature {
         SigOrigin::Self_ | SigOrigin::Infer => Origin::SelfParam,
+        SigOrigin::Carried(_) => Origin::Union(vec![]),
         SigOrigin::Param(index) => Origin::Param(OriginParamId(*index as u32)),
         SigOrigin::Bound(origin) => instantiate_bound_origin(origin, tail),
         SigOrigin::Static => Origin::Static,
@@ -284,11 +285,13 @@ pub(in crate::checker) fn map_delegated_sig_origin(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        SigOrigin::Param(_) | SigOrigin::Infer => Err(TypeError::Unsupported(
-            "the delegated callee's ref-return origin must be declared in terms of its \
+        SigOrigin::Param(_) | SigOrigin::Infer | SigOrigin::Carried(_) => {
+            Err(TypeError::Unsupported(
+                "the delegated callee's ref-return origin must be declared in terms of its \
              receiver or struct origin parameters"
-                .to_string(),
-        )),
+                    .to_string(),
+            ))
+        }
     }
 }
 
@@ -494,7 +497,7 @@ pub(in crate::checker) fn substitute_sig_origin(
 ) -> mojito_types::origin::Origin {
     use mojito_types::origin::{Origin, SigOrigin};
     match signature {
-        SigOrigin::Self_ => Origin::Union(vec![]),
+        SigOrigin::Self_ | SigOrigin::Carried(_) => Origin::Union(vec![]),
         SigOrigin::Bound(origin) => origin.clone(),
         SigOrigin::Param(index) => actual
             .get(*index)

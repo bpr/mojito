@@ -1665,9 +1665,19 @@ impl Checker {
         self.raise_observation_frames.borrow_mut().pop();
         if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
             if !frame.effects.is_empty() {
+                // A bundled seed is never inferred from the body, so what
+                // the body records joins it.
+                let mut effects = seeded_transfer_effects()
+                    .remove(&frame.callable)
+                    .unwrap_or_default();
+                for effect in frame.effects {
+                    if !effects.contains(&effect) {
+                        effects.push(effect);
+                    }
+                }
                 self.transfer_effects
                     .borrow_mut()
-                    .insert(frame.callable.clone(), frame.effects);
+                    .insert(frame.callable.clone(), effects);
             }
             if !frame.call_throughs.is_empty() {
                 self.call_through_effects
