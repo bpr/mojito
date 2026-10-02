@@ -825,7 +825,11 @@ them for a named owner — a generic constructor's included
 (`C.__init__$y6:String`, `PerCallBase::constructors`), which the checker's
 `per_call_constructor_target` retargets a construction to after ranking the
 whole constructor set — `generate_instance_clones` for an instance
-(instance values first, then the call's), and `generate_value_struct_spec`
+(instance values first, then the call's; a user template's generic
+constructor included, `C.__init__$y3:Int$y6:String`, which
+`record_constructor_instantiation` requests against the instance and
+retargets to, and `native::mono` emits under its own symbol rather than the
+instance's plain `__init__`), and `generate_value_struct_spec`
 for a struct specialized whole per value (the requests keyed by the
 specialization's mangled name, no base values, untraced, each clone body
 under its own source tag), a pack binding expands `*args:

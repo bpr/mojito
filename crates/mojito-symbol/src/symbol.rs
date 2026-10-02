@@ -2174,6 +2174,12 @@ pub fn specialization_template(symbol: &str) -> Option<&str> {
     split_specialization(symbol).map(|(template, _)| template)
 }
 
+/// How many values `symbol` bakes, whatever they are; `None` when it carries
+/// no specialization suffix.
+pub fn specialization_arity(symbol: &str) -> Option<usize> {
+    split_specialization(symbol).map(|(_, values)| values.len())
+}
+
 /// The template name and one entry per baked value, `None` where a value is
 /// well formed but not rebuildable here.
 fn split_specialization(symbol: &str) -> Option<(&str, Vec<Option<CtValue>>)> {

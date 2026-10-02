@@ -2587,9 +2587,10 @@ impl Elab<'_> {
             }
         }
         // Checker-discovered instantiations of this instance's generic
-        // methods (`b.kind[Bool]()` on `Box[Int]`) mint per-call clones with
-        // the instance's values baked before the call's
-        // (`kind$y3:Int$y4:Bool`); the request owner is the instance key.
+        // methods (`b.kind[Bool]()` on `Box[Int]`) and generic constructors
+        // (`Box[Int](s)`) mint per-call clones with the instance's values
+        // baked before the call's (`kind$y3:Int$y4:Bool`); the request owner
+        // is the instance key.
         let instance_key = mangle(name, values)?;
         let per_call_requests = self
             .method_requests
@@ -2630,7 +2631,7 @@ impl Elab<'_> {
                         template: name,
                     }),
                     origin_binders: Some(&origin_binders),
-                    constructors: false,
+                    constructors: !bundled,
                 },
                 &consts,
             ));
@@ -3436,8 +3437,10 @@ impl Elab<'_> {
 /// the origin binders the instance declares on every clone of it. A
 /// clone minted into a struct specialized whole names the specialization
 /// as its owner and the template struct as its template's. `constructors`
-/// says a generic `__init__` mints here too (`__init__$y6:String`); a struct
-/// specialized whole mints those itself, under the name `__init__`.
+/// says a generic `__init__` mints here too (`__init__$y6:String`, or
+/// `__init__$y3:Int$y6:String` on an instance); a struct specialized whole
+/// mints those itself, under the name `__init__`, and a bundled template's
+/// constructors stay erased.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PerCallBase<'a> {
     pub(super) values: &'a [CtValue],

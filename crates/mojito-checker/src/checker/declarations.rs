@@ -1890,9 +1890,6 @@ impl Checker {
         matches.next().is_none().then_some(target)
     }
 
-    /// Record a generic constructor's resolved compile-time arguments for
-    /// per-call specialization and, once its clone exists on the struct,
-    /// retarget the construction to it (`Variant$…​.__init__$y3:Int`).
     /// The pack a bare construction of a variadic struct (`Pair((1, True))`,
     /// no `[...]` arguments on a struct keyed by exactly one type pack) must
     /// infer from the constructor it selects; `None` for every other call.
@@ -1995,6 +1992,11 @@ impl Checker {
         Some(self.infer_construction(span, &specialization, &[], args, kwargs))
     }
 
+    /// Record a generic constructor's resolved compile-time arguments for
+    /// per-call specialization and, once its clone exists on the struct,
+    /// retarget the construction to it (`Variant$…​.__init__$y3:Int`). A
+    /// closed instance of a generic struct owns the request, so its clone is
+    /// keyed by the instance and then the call (`C.__init__$y3:Int$y6:String`).
     fn record_constructor_instantiation(
         &self,
         span: &SourceSpan,
@@ -2019,25 +2021,45 @@ impl Checker {
         let Some(arguments) = arguments else {
             return;
         };
+        let generic = self
+            .structs
+            .get(name)
+            .is_some_and(|info| !info.decls.is_empty());
+        // A closed instance that mints its own clones keys the request, so
+        // the constructor clone is minted beside the instance's other
+        // per-call clones; any other owner keeps the template's key.
+        let instance = self.instance_arguments(name, owner_arguments);
+        // The selected member of an overloaded constructor set: two generic
+        // constructors baked alike share a clone name.
+        let overload = self
+            .structs
+            .get(name)
+            .and_then(|info| info.methods.get("__init__"))
+            .filter(|sigs| sigs.len() > 1)
+            .and_then(|_| {
+                let lowered = method_lowered_name(
+                    name,
+                    "__init__",
+                    sig,
+                    self.self_instance_ty(name).as_ref(),
+                );
+                mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string)
+            });
         self.method_instantiations.borrow_mut().insert(
             span.clone(),
             mojito_checked::checked::MethodInstantiation {
                 owner: name.to_string(),
-                owner_arguments: Vec::new(),
+                owner_arguments: instance.unwrap_or_default(),
                 method: "__init__".to_string(),
                 parameter_names: sig.names.clone(),
-                overload: None,
+                overload: overload.clone(),
                 arguments: arguments.clone(),
             },
         );
         // On a generic struct the instance's own values precede the call's in
         // a clone name, as `per_call_method_clones` mints them: mangling the
         // call's alone would name another instance's clone.
-        let clone = if self
-            .structs
-            .get(name)
-            .is_some_and(|info| !info.decls.is_empty())
-        {
+        let clone = if generic {
             self.instance_call_method_clone(
                 name,
                 owner_arguments,
@@ -2047,7 +2069,8 @@ impl Checker {
             )
         } else {
             self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
-        };
+        }
+        .filter(|clone| self.clone_serves_overload(name, "__init__", clone, overload.as_deref()));
         if let Some(clone) = clone {
             self.overload_targets
                 .borrow_mut()

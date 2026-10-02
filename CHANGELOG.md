@@ -85,6 +85,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic constructor declared beside another one runs on a generic
+  struct. `C[Int](7)` for `struct C[U: AnyType]` declaring
+  `__init__(out self, var a: String)` beside
+  `__init__[T: Writable](out self, a: T)` failed with "vm backend does not
+  support the built-in or callee 'C.__init__$ov$T$Writable' yet", where the
+  pin prints `2`. The constructor's clone is now requested against the
+  instance and minted with the instance's other per-call clones, keyed by the
+  instance's arguments and then the call's (`__init__$y3:Int$y6:String`),
+  and `native::mono` keeps such a clone on its own symbol instead of the
+  instance's plain `__init__`.
+  `assets/ok/generic_struct_generic_constructor_overload.mojo` pins it.
 - An element passed to a read parameter is read where it lies. `print(a[0])`
   inside `show[*Ts: Writable](*a: *Ts)` ran the element's copy constructor
   and never destroyed the copy, and `g(xs[0])` or `print(t[0])` over a

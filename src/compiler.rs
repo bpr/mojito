@@ -790,7 +790,13 @@ impl ServedRequests {
                         .any(|callee| self.callees.iter().any(|served| served == callee))
                     || site.instantiated_methods().any(|(owner, method)| {
                         self.methods.iter().any(|(served_owner, served_method)| {
-                            served_owner == owner && served_method == method
+                            // A request against a closed instance is keyed
+                            // by the instance (`C$y3:Int`); the site records
+                            // the template it constructed.
+                            served_method == method
+                                && (served_owner == owner
+                                    || crate::symbol::specialization_template(served_owner)
+                                        == Some(owner))
                         })
                     })
                     || ((tuples || tstrings)

@@ -181,13 +181,10 @@ impl<'a> Specializer<'a> {
                 ),
             ));
         }
-        let owner = bindings.self_instance.as_ref().and_then(|(_, ty)| {
-            if let Ty::Struct(name, _) = ty {
-                Some(name.clone())
-            } else {
-                None
-            }
-        });
+        let (owner, owner_arity) = match bindings.self_instance.as_ref() {
+            Some((_, Ty::Struct(name, arguments))) => (Some(name.clone()), arguments.len()),
+            _ => (None, 0),
+        };
 
         // Origins erase from the runtime ABI and from the instance symbol, so
         // two arguments differing only in an origin name the same native
@@ -212,36 +209,38 @@ impl<'a> Specializer<'a> {
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
         // overload lookups against the instance struct name keep working.
-        let name =
-            if let Some(name) = lifecycle_clone_instance_symbol(template, key.owner.as_deref()) {
-                // A per-instantiation lifecycle clone is the instance's lifecycle
-                // body: it takes the plain symbol lowering composes by name
-                // (`Box$mono$TInt.__deinit__`), whichever site enqueues it first.
-                // A variadic initializer's clone is keyed by each call's pack
-                // length and only ever reached through its call sites.
-                if key.arguments.is_empty() {
-                    name
-                } else {
-                    mojito_symbol::symbol::instance_symbol(&name, &key.arguments)
-                }
-            } else if let Some(owner) = &key.owner {
-                let base = mojito_symbol::symbol::retarget_method_symbol(template, owner)
-                    .ok_or_else(|| {
-                        self.error(
-                            Some(template),
-                            format!("owner-bound instance `{template}` is not a method symbol"),
-                        )
-                    })?;
-                if key.arguments.is_empty() {
-                    base
-                } else {
-                    mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
-                }
-            } else if key.arguments.is_empty() {
-                template.to_string()
+        let name = if let Some(name) =
+            lifecycle_clone_instance_symbol(template, key.owner.as_deref(), owner_arity)
+        {
+            // A per-instantiation lifecycle clone is the instance's lifecycle
+            // body: it takes the plain symbol lowering composes by name
+            // (`Box$mono$TInt.__deinit__`), whichever site enqueues it first.
+            // A variadic initializer's clone is keyed by each call's pack
+            // length and only ever reached through its call sites.
+            if key.arguments.is_empty() {
+                name
             } else {
-                mojito_symbol::symbol::instance_symbol(template, &key.arguments)
-            };
+                mojito_symbol::symbol::instance_symbol(&name, &key.arguments)
+            }
+        } else if let Some(owner) = &key.owner {
+            let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
+                || {
+                    self.error(
+                        Some(template),
+                        format!("owner-bound instance `{template}` is not a method symbol"),
+                    )
+                },
+            )?;
+            if key.arguments.is_empty() {
+                base
+            } else {
+                mojito_symbol::symbol::instance_symbol(&base, &key.arguments)
+            }
+        } else if key.arguments.is_empty() {
+            template.to_string()
+        } else {
+            mojito_symbol::symbol::instance_symbol(template, &key.arguments)
+        };
         // Two clones of one method whose owner instance and arguments agree
         // differ only in pointer provenance (a clone origin binder with and
         // without an interior projection), which erases natively: the second
@@ -1778,8 +1777,15 @@ pub(super) fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
 ///
 /// Lowering composes a struct's lifecycle symbols by name, so the clone must
 /// answer to the plain one; its template is never instantiated for that
-/// instance beside it.
-fn lifecycle_clone_instance_symbol(template: &str, owner: Option<&str>) -> Option<String> {
+/// instance beside it. A per-call clone of a generic constructor bakes the
+/// call's values after the instance's `owner_arity`
+/// (`C.__init__$y3:Int$y6:String`): one instance has several, reached only
+/// through their call sites, so each keeps its own symbol.
+fn lifecycle_clone_instance_symbol(
+    template: &str,
+    owner: Option<&str>,
+    owner_arity: usize,
+) -> Option<String> {
     let owner = owner?;
     let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
     let base = mojito_symbol::symbol::instance_clone_base(method);
@@ -1793,7 +1799,9 @@ fn lifecycle_clone_instance_symbol(template: &str, owner: Option<&str>) -> Optio
     // of the template itself (`Optional.__init__$ov$None`) keeps its own
     // symbol: its siblings answer to the same base name.
     let baked = method.strip_prefix(base)?;
-    (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP))
+    let per_call = mojito_symbol::symbol::specialization_arity(method)
+        .is_some_and(|baked| baked > owner_arity);
+    (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP) && !per_call)
         .then(|| format!("{owner}.{base}"))
 }
 

@@ -152,6 +152,7 @@ assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	saniti
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
+assets/ok/generic_struct_generic_constructor_overload.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_template_reach.mojo	main	exe-differential	sanitized
