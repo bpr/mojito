@@ -544,22 +544,31 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.3 A constructor overload set drops every generic candidate before it is
-  ranked**
+- [ ] **3.3 A generic constructor beside a declared one cannot be constructed
+  on a generic struct**
 
-  Problem: `C(s)` for a struct with `__init__(out self, var a: String)` beside
-  `__init__[T: Writable](out self, a: T)` prints `2` at the pin, where the
-  place costs the first candidate a copy, and `1` in Mojito.
-  - `decls_are_concrete` (`checker/declarations.rs`) retains only the concrete
-    candidates whenever one matches, at both constructor selection sites.
-  - The filter is there so a per-call clone of a generic constructor beats the
-    template it was minted from (`Variant`, `Cell`). It cannot tell that clone
-    from a separately declared concrete overload.
-  - Unlike the rank terms, the filter also overrides conversion cost, so a
-    generic candidate needing fewer conversions loses too.
-  - Pinned by `conformance/probes/overload_var_copy_constructor.mojo`.
-  - The plan must say how a clone is told from a declared overload — the minting
-    record, or a marker on the clone.
+  Problem: `C[Int](7)` for `struct C[U: AnyType]` declaring `__init__(out self,
+  var a: String)` beside `__init__[T: Writable](out self, a: T)` prints `2` at
+  the pin and fails in Mojito with "vm backend does not support the built-in or
+  callee 'C.__init__$ov$T$Writable' yet".
+  - The same pair on a non-generic struct runs
+    (`assets/ok/overload_var_copy_constructor.mojo`). So does a generic struct
+    whose only constructor is the generic one.
+  - Selection is right: the generic candidate is ranked and wins. Its clone is
+    never reached.
+  - `record_constructor_instantiation` (`checker/declarations.rs`) looks for a
+    clone keyed by the instance and the call (`__init__$y3:Int$y6:String`). The
+    elaborator mints one keyed by the call alone (`__init__$y6:String`).
+  - Retargeting to the call-keyed clone is not enough. `__init__$y3:Int` then
+    names both the clone baked at `T = Int` and the instance family at
+    `U = Int`, and `native::mono` reports "concrete instance symbol
+    `C$mono$TInt.__init__` collides with an existing declaration".
+  - `C[Int](s)` on that struct used to print `1`, the wrong constructor. It now
+    fails with the message above.
+  - The plan must pick one key for a constructor clone on a generic struct, and
+    mint it where the instance's other per-call clones are minted
+    (`generate_instance_clones`).
+  - No fixture pins it yet.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -970,19 +979,22 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.29 Two type-pack `__init__` overloads cannot be constructed**
+- [ ] **3.29 A matching constructor clone displaces every generic constructor,
+  not only its own template**
 
-  Problem: `H(x, x, x)` for a struct with `__init__[*Ts](out self, a: Int,
-  *rest: *Ts)` beside `__init__[*Ts](out self, a: Int, b: Int, *rest: *Ts)`
-  prints `3` at the pin and fails in Mojito with "checked constructor
-  'H.__init__$ov$…' is missing from MIR".
-  - The checker selects the same constructor the pin does. The selected clone
-    never reaches MIR.
-  - The rejection is safe, but it is a VM-phase message for a program the pin
-    runs.
-  - Pinned by `conformance/probes/pack_overload_constructor_missing_mir.mojo`.
-  - Free functions and methods are served from the checker's recorded selection;
-    the plan must find why constructors are not.
+  Problem: on a struct specialized whole (a variadic one, as `Variant`), a
+  call that a per-call constructor clone matches never considers a second
+  generic constructor, even one that would rank better.
+  - Such a clone is declared `__init__` beside its template, and selection
+    drops every generic candidate once a clone matches (`ranks_beside_clone`,
+    `checker/declarations.rs`).
+  - The clone carries a mark (`MethodProvenance::PerCallConstructor`), not the template
+    it was minted from, so the filter cannot drop that template alone.
+  - No program is known to hit it. `Variant`'s two generic constructors never
+    match the same call, and no fixture pins it.
+  - A non-generic struct's clone is minted under its mangled name and reached
+    by retargeting, so its overload set holds no clone and needs no filter.
+    Minting the specialized struct's clone the same way removes the filter.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -1270,16 +1282,13 @@ last.
   - Upstream picks the more specific signature. Mojito's construction
     selection scores the substituted `Self.T` parameter as an equal match
     (`select_method_overload`, `checker/declarations.rs`).
-  - The preference already exists one level down: a per-call clone of a
-    generic constructor wins over the template it was minted from
-    (`constructor_is_concrete`).
+  - Every constructor candidate is ranked now, generic or not, so specificity
+    can be one more rank term.
   - Such a family is also the one shape that collapses on the instance, so
     its constructor clone family stays withdrawn.
   - Found while closing the overloaded-constructor-family item; no fixture
     pins it yet.
-  - Depends on 3.3, which teaches constructor selection to tell a clone from
-    a declared overload. Ranking by specificity means nothing while a
-    candidate is dropped before it is ranked.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
 - [ ] **3.49 Methods cannot overload on the parameter convention alone**

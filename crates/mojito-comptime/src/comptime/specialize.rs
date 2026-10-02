@@ -2140,6 +2140,9 @@ impl Elab<'_> {
                     clone
                         .type_params
                         .splice(0..0, origin_binders.params().iter().cloned());
+                    if method.name == "__init__" {
+                        clone.provenance = mojito_ast::ast::MethodProvenance::PerCallConstructor;
+                    }
                     elaborated_methods.push(clone);
                 }
                 match self.block(&method.body, &mut env, true) {
@@ -2627,6 +2630,7 @@ impl Elab<'_> {
                         template: name,
                     }),
                     origin_binders: Some(&origin_binders),
+                    constructors: false,
                 },
                 &consts,
             ));
@@ -2787,12 +2791,13 @@ impl Elab<'_> {
             receiver,
             owner,
             origin_binders: base_binders,
+            constructors,
         } = *base;
         let specializable = method
             .type_params
             .iter()
             .any(|parameter| method_parameter_is_baked(parameter, &method.type_params));
-        if !specializable || method.name == "__init__" {
+        if !specializable || (method.name == "__init__" && !constructors) {
             return Vec::new();
         }
         let mut clones = Vec::new();
@@ -3430,7 +3435,9 @@ impl Elab<'_> {
 /// list the clone joins under its own source tag, which a trace names, and
 /// the origin binders the instance declares on every clone of it. A
 /// clone minted into a struct specialized whole names the specialization
-/// as its owner and the template struct as its template's.
+/// as its owner and the template struct as its template's. `constructors`
+/// says a generic `__init__` mints here too (`__init__$y6:String`); a struct
+/// specialized whole mints those itself, under the name `__init__`.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PerCallBase<'a> {
     pub(super) values: &'a [CtValue],
@@ -3438,6 +3445,7 @@ pub(super) struct PerCallBase<'a> {
     pub(super) receiver: Option<&'a Type>,
     pub(super) owner: Option<PerCallOwner<'a>>,
     pub(super) origin_binders: Option<&'a CloneOriginBinders>,
+    pub(super) constructors: bool,
 }
 
 /// The struct a traced per-call clone joins, its module, and the struct

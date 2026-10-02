@@ -777,11 +777,26 @@ pub struct Method {
     /// struct scope's parametric `Self`. The parser never sets it.
     pub self_ty: Option<Type>,
     pub body: Vec<Stmt>,
+    /// Where the method came from, when not from source. The parser never
+    /// sets it.
+    pub provenance: MethodProvenance,
+}
+
+/// How a [`Method`] came to be declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MethodProvenance {
+    /// Written in source.
+    #[default]
+    Source,
     /// Materialized from a built-in trait's default (Copyable's `copy`,
     /// Hashable's `__hash__`) rather than written in source: its body
     /// serves every instance of a generic struct, which mints no clone of
-    /// it. The parser never sets it.
-    pub synthesized: bool,
+    /// it.
+    SynthesizedDefault,
+    /// A per-call clone of a generic constructor that the elaborator minted
+    /// under the name `__init__`, beside its template: the mark is what
+    /// tells it from a concrete overload written in source.
+    PerCallConstructor,
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`

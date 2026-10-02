@@ -265,6 +265,7 @@ impl Checker {
                     nested_origins: NestedOrigins::AsDeclared,
                     template_ret: None,
                     overload: None,
+                    per_call_constructor: false,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -1537,6 +1538,7 @@ impl Checker {
             nested_origins: req_sig.nested_origins,
             template_ret: None,
             overload: None,
+            per_call_constructor: false,
         }
     }
 

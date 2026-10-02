@@ -821,7 +821,10 @@ concrete struct exactly as its body's calls do.
 
 Per-call clones of a method with its own compile-time parameters share one
 minting path (`per_call_method_clones`): the elaborator's struct walk mints
-them for a named owner, `generate_instance_clones` for an instance
+them for a named owner — a generic constructor's included
+(`C.__init__$y6:String`, `PerCallBase::constructors`), which the checker's
+`per_call_constructor_target` retargets a construction to after ranking the
+whole constructor set — `generate_instance_clones` for an instance
 (instance values first, then the call's), and `generate_value_struct_spec`
 for a struct specialized whole per value (the requests keyed by the
 specialization's mangled name, no base values, untraced, each clone body

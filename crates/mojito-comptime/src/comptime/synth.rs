@@ -98,7 +98,7 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             where_clauses,
             self_ty: None,
             body,
-            synthesized: true,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
         });
     }
 }
@@ -198,7 +198,7 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             where_clauses,
             self_ty: None,
             body,
-            synthesized: true,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
         });
     }
 }

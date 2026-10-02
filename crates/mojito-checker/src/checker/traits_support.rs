@@ -62,7 +62,7 @@ pub(super) fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeErr
                     self_ty: None,
                     body: body.clone(),
                     where_clauses: method.where_clauses.clone(),
-                    synthesized: false,
+                    provenance: mojito_ast::ast::MethodProvenance::Source,
                 },
             );
         }

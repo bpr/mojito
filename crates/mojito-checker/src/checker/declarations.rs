@@ -26,8 +26,7 @@ pub(super) fn baked_decl_count(decls: &[ParamDecl]) -> usize {
         .count()
 }
 
-/// Whether a declaration bakes no compile-time parameter, so a per-call clone
-/// of it is a concrete same-name overload.
+/// Whether a declaration bakes no compile-time parameter.
 pub(super) fn decls_are_concrete(decls: &[ParamDecl]) -> bool {
     baked_decl_count(decls) == 0
 }
@@ -218,6 +217,20 @@ fn constructor_miss(
             reason: NO_MATCH.to_string(),
         },
     }
+}
+
+/// Whether a constructor candidate ranks as generic: a template baking a
+/// compile-time parameter, or the per-call clone minted from one.
+fn constructor_is_generic(sig: &MethodSig) -> bool {
+    sig.per_call_constructor || !decls_are_concrete(&sig.decls)
+}
+
+/// Whether a matched constructor candidate stays in the set being ranked,
+/// given whether a per-call clone matched too. A clone stands in for the
+/// generic template it was minted from, so the template leaves; a concrete
+/// overload declared in source is ranked against the clone like any other.
+fn ranks_beside_clone(sig: &MethodSig, clone_matched: bool) -> bool {
+    !clone_matched || sig.per_call_constructor || decls_are_concrete(&sig.decls)
 }
 
 /// Whether `body` builds the compiler-private element storage `self.<field>`
@@ -561,10 +574,13 @@ impl Checker {
                     .name
                     .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
             }),
-            synthesized_default: method.synthesized,
+            synthesized_default: method.provenance
+                == mojito_ast::ast::MethodProvenance::SynthesizedDefault,
             nested_origins: NestedOrigins::of(&method.decorators),
             template_ret: None,
             overload: None,
+            per_call_constructor: method.provenance
+                == mojito_ast::ast::MethodProvenance::PerCallConstructor,
         })
     }
 
@@ -1792,7 +1808,18 @@ impl Checker {
         sig: &MethodSig,
         subst: &TySubst,
     ) -> Option<String> {
-        self.method_clone_target(name, "__init__", arguments, sig, subst)
+        // A per-call clone of a generic constructor baked at the same type
+        // (`__init__$y3:Int` for `T = Int`) shares the instance family's
+        // name and declares no receiver instance: it is not that family.
+        let family = self.instance_method_clone(name, "__init__", arguments)?;
+        self.structs
+            .get(name)?
+            .methods
+            .get(&family)?
+            .iter()
+            .all(|member| member.receiver.is_some())
+            .then(|| self.method_clone_target(name, "__init__", arguments, sig, subst))
+            .flatten()
     }
 
     /// The lowered target of `method`'s per-instantiation clone on
@@ -2028,6 +2055,55 @@ impl Checker {
         }
     }
 
+    /// The lowered target of the per-call clone (`C.__init__$y6:String`) that
+    /// runs a call which selected the generic constructor `selected` of the
+    /// non-generic struct `name`, once the elaborator has minted it. Two
+    /// generic constructors baked alike share the clone name, so the call's
+    /// arguments select the member of that family.
+    fn per_call_constructor_target(
+        &self,
+        name: &str,
+        selected: &MethodCallResolution,
+        arguments: &[TyArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<String> {
+        let clone =
+            self.specialized_method_clone(name, "__init__", &selected.param_decls, arguments)?;
+        let overload = selected
+            .lowered_name
+            .as_deref()
+            .and_then(mojito_symbol::symbol::overload_qualifier);
+        if !self.clone_serves_overload(name, "__init__", &clone, overload) {
+            return None;
+        }
+        let family = self.structs.get(name)?.methods.get(&clone)?;
+        let [_, _, ..] = family.as_slice() else {
+            return Some(format!("{name}.{clone}"));
+        };
+        let ranked: Vec<(usize, &MethodSig)> = family
+            .iter()
+            .filter_map(|member| {
+                self.score_method_call(
+                    member,
+                    &member.params,
+                    member.variadic.as_deref(),
+                    member.kw_variadic.as_deref(),
+                    args,
+                    kwargs,
+                )
+                .ok()
+                .map(|scored| (scored.rank, member))
+            })
+            .collect();
+        let best = ranked.iter().map(|(rank, _)| *rank).min()?;
+        let mut members = ranked.iter().filter(|(rank, _)| *rank == best);
+        let (_, member) = members.next()?;
+        members.next().is_none().then(|| {
+            method_lowered_name(name, &clone, member, self.self_instance_ty(name).as_ref())
+        })
+    }
+
     /// The call diagnostic of a constructor candidate whose availability
     /// clause fails for the constructed type, which is then no candidate.
     /// `method_arguments` bind the constructor's own parameters, which a
@@ -2096,6 +2172,9 @@ impl Checker {
         if let Some(sigs) = info.methods.get("__init__") {
             if info.decls.is_empty() {
                 let mut matches = Vec::new();
+                // Per match, whether it stays ranked beside a matching clone.
+                let mut beside_clone = Vec::new();
+                let mut clone_matched = false;
                 // The reason the last candidate failed its origin binding, so a
                 // miss caused by an explicit-origin or pointer-permission
                 // mismatch reports that, not a bare miss.
@@ -2155,6 +2234,8 @@ impl Checker {
                             availability_failure.get_or_insert(unavailable);
                             continue;
                         }
+                        clone_matched |= sig.per_call_constructor;
+                        beside_clone.push(ranks_beside_clone(sig, true));
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
                             simd_erasures: scored.simd_erasures,
@@ -2200,13 +2281,12 @@ impl Checker {
                         });
                     }
                 }
-                // A per-call clone of a generic constructor is a concrete
-                // same-name overload; it wins over the generic template it
-                // was minted from whenever it matches at all.
-                if matches.iter().any(|m| decls_are_concrete(&m.param_decls))
-                    && matches.iter().any(|m| !decls_are_concrete(&m.param_decls))
-                {
-                    matches.retain(|m| decls_are_concrete(&m.param_decls));
+                // A per-call clone of a generic constructor is a same-name
+                // overload; it replaces the generic template it was minted
+                // from whenever it matches at all.
+                if clone_matched {
+                    let mut kept = beside_clone.into_iter();
+                    matches.retain(|_| kept.next().unwrap_or(true));
                 }
                 let selected =
                     select_method_overload("__init__", matches, None).map_err(|kind| {
@@ -2218,6 +2298,13 @@ impl Checker {
                         .insert(span.clone(), target.clone());
                 }
                 if let Some(arguments) = &selected.instantiation {
+                    if let Some(target) =
+                        self.per_call_constructor_target(name, &selected, arguments, args, kwargs)
+                    {
+                        self.overload_targets
+                            .borrow_mut()
+                            .insert(span.clone(), target);
+                    }
                     self.method_instantiations.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::MethodInstantiation {
@@ -2569,8 +2656,12 @@ impl Checker {
                         for (expression, _, convention) in &bound {
                             binding.bind(*convention, false, expression);
                         }
-                        let rank =
-                            overload_rank(score, sig.variadic.is_some(), 0, false) + binding.rank();
+                        let rank = overload_rank(
+                            score,
+                            sig.variadic.is_some(),
+                            0,
+                            constructor_is_generic(sig),
+                        ) + binding.rank();
                         matches.push((
                             rank,
                             sig.clone(),
@@ -2587,19 +2678,12 @@ impl Checker {
             }
             let best = matches.iter().map(|(rank, ..)| *rank).min();
             if let Some(best) = best {
-                // A per-call clone of a generic constructor is a concrete
-                // same-name overload; it wins over the generic template it
-                // was minted from whenever it matches at all.
+                // A per-call clone of a generic constructor is a same-name
+                // overload; it replaces the generic template it was minted
+                // from whenever it matches at all.
                 let mut matches = matches;
-                if matches
-                    .iter()
-                    .any(|(_, sig, ..)| decls_are_concrete(&sig.decls))
-                    && matches
-                        .iter()
-                        .any(|(_, sig, ..)| !decls_are_concrete(&sig.decls))
-                {
-                    matches.retain(|(_, sig, ..)| decls_are_concrete(&sig.decls));
-                }
+                let clone_matched = matches.iter().any(|(_, sig, ..)| sig.per_call_constructor);
+                matches.retain(|(_, sig, ..)| ranks_beside_clone(sig, clone_matched));
                 let best = matches.iter().map(|(rank, ..)| *rank).min().unwrap_or(best);
                 let mut best_matches = matches
                     .into_iter()

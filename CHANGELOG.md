@@ -85,6 +85,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A constructor overload set ranks every candidate, as free functions and
+  methods do. Selection used to keep only the concrete constructors whenever
+  one matched, so `C(s)` for `__init__(out self, var a: String)` beside
+  `__init__[T: Writable](out self, a: T)` printed `1` where the pin prints
+  `2`, and a generic constructor needing fewer conversions lost too. A
+  generic constructor of a non-generic struct, which the filter was hiding as
+  unexecutable, now runs as a per-call clone (`C.__init__$y6:String`) the
+  construction is retargeted to. Two type-pack constructors of one struct
+  construct as well, where the VM reported "checked constructor … is missing
+  from MIR". `assets/ok/overload_var_copy_constructor.mojo` and
+  `assets/ok/pack_overload_constructor.mojo` pin it. On a generic struct, a
+  generic constructor declared beside another is now selected and fails as
+  unsupported instead of running the wrong constructor (`docs/roadmap.md`
+  3.3).
 - An owning `var *args` collector lives until the last use of any element
   read out of it, and its elements are then destroyed last to first.
   `take(Noisy(1), Noisy(2))` against `take[*Ts](var *a: *Ts)`, printing each

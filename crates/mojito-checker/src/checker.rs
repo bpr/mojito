@@ -2245,7 +2245,7 @@ struct MethodSig {
     /// loan-carrying type argument (`__clone_origin0`), which a call binds
     /// from its receiver and arguments.
     clone_origins: bool,
-    /// A synthesized trait default ([`mojito_ast::ast::Method::is_synthesized_default`]):
+    /// A synthesized trait default ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,
     /// How a call's exclusivity check counts the origins the argument
@@ -2259,6 +2259,11 @@ struct MethodSig {
     /// several same-named overloads: what a call selecting that overload
     /// records. `None` for every other method.
     overload: Option<String>,
+    /// A per-call clone of a generic constructor declared `__init__`
+    /// ([`mojito_ast::ast::MethodProvenance::PerCallConstructor`]), so a same-name
+    /// overload: it ranks as the generic candidate it was minted from, and
+    /// replaces that template in a selection it matches.
+    per_call_constructor: bool,
 }
 
 impl MethodSig {
@@ -2298,6 +2303,7 @@ impl MethodSig {
             nested_origins: NestedOrigins::AsDeclared,
             template_ret: None,
             overload: None,
+            per_call_constructor: false,
         }
     }
 }

@@ -889,6 +889,7 @@ impl Elab<'_> {
                 module: stmt.module.as_deref(),
                 template: name,
             }),
+            constructors: true,
             ..super::specialize::PerCallBase::default()
         };
         let mut clones = Vec::new();

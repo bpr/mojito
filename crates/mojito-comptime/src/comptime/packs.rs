@@ -365,7 +365,7 @@ pub(super) fn tuple_transform_method(
         where_clauses: Vec::new(),
         self_ty: None,
         body: vec![mk(StmtKind::Return(Some(result)), span)],
-        synthesized: false,
+        provenance: mojito_ast::ast::MethodProvenance::Source,
     }
 }
 
