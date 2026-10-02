@@ -1254,6 +1254,27 @@ fn rejects_transfer_out_of_read_parameter_but_allows_owned_and_trivial() {
 }
 
 #[test]
+fn static_var_parameter_demands_implicit_copy_of_a_place() {
+    let declarations = "struct P:\n    @staticmethod\n    def take(var xs: List[Int]) -> Int:\n        return len(xs)\n\n";
+    let rejected = err_std(&format!(
+        "{declarations}def main():\n    var xs: List[Int] = [1]\n    print(P.take(xs))\n"
+    ));
+    assert!(
+        matches!(&rejected, TypeError::ImplicitCopy { context, transferable: true, .. } if context == "argument 1 to method 'take'"),
+        "got {rejected:?}"
+    );
+    let generic = "struct Box[T: Copyable & Deinitable]:\n    var item: Self.T\n\n    @staticmethod\n    def keep(var v: Self.T) -> Int:\n        return 1\n\n    def via_static(self) -> Int:\n        return Box.keep(self.item)\n";
+    let rejected = err_std(generic);
+    assert!(
+        matches!(&rejected, TypeError::ImplicitCopy { ty, .. } if ty == "T"),
+        "got {rejected:?}"
+    );
+    ok_std(&format!(
+        "{declarations}def main():\n    var xs: List[Int] = [1]\n    print(P.take(xs.copy()))\n    print(P.take(xs=xs^))\n"
+    ));
+}
+
+#[test]
 fn rejects_trait_receiver_convention_mismatch() {
     let e = err(
         "trait Bumpable:\n    def bump(mut self):\n        ...\n\n@fieldwise_init\nstruct Counter(Bumpable):\n    var n: Int\n\n    def bump(self):\n        pass\n",

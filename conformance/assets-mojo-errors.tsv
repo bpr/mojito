@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	462
+# swept-count	463
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -250,6 +250,7 @@ assets/type_error/implicit_copy_list_concat.mojo	compile-reject	agree	error: val
 assets/type_error/implicit_copy_owned_argument.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicit_copy_reference_result.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicit_copy_return_local.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/implicit_copy_static_var_argument.mojo	compile-reject	agree	error: value of type 'T' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicit_copy_var_init.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicitly_copyable_rejects_explicit_copy.mojo	compile-reject	agree	error: invalid call to 'duplicate_implicit': value passed to 'x' cannot be converted from 'ExplicitBox' to 'T', argument type 'ExplicitBox' does not conform to trait 'ImplicitlyCopyable'
 assets/type_error/implicit_two_param_ref_rejected.mojo	compile-reject	agree	error: '@implicit' initializers must accept a single positional argument value

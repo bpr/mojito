@@ -85,6 +85,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A place passed to a static method's `var` parameter must be implicitly
+  copyable. `Box.keep(self.item)` with `keep(var v: Self.T)` was accepted for
+  any `T`, and a `Box[String]` then stopped on the VM with "double free of
+  Pointer allocation"; the checker now reports "value of type 'T' cannot be
+  implicitly copied", as the pin and the instance-method path do. A transfer
+  (`x^`), an explicit `.copy()`, and a fresh temporary still pass.
+  `assets/type_error/implicit_copy_static_var_argument.mojo` pins it.
 - A `^` transfer out of a read parameter is rejected. `def ident(x: String)
   -> String: return x^` moved the caller's `String` into the result, so the
   VM stopped with "use after Pointer deallocation" or a double free once the

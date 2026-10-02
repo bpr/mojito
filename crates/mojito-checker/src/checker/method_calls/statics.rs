@@ -588,6 +588,21 @@ impl Checker {
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
                 let ty = self.infer_with_expected(expression, parameter, true)?;
+                if let Some(owned @ (ArgConvention::Var | ArgConvention::Deinit)) =
+                    selected.conventions.get(index).copied().flatten()
+                {
+                    let kind = if owned == ArgConvention::Deinit {
+                        crate::checker::traits::ConsumeKind::Deinit
+                    } else {
+                        crate::checker::traits::ConsumeKind::Move
+                    };
+                    self.check_consuming_as(
+                        expression,
+                        &ty,
+                        &format!("argument {} to method '{}'", index + 1, method),
+                        kind,
+                    )?;
+                }
                 Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;

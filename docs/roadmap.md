@@ -608,16 +608,16 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.6 A static call copies a place into a `var` parameter whatever its
-  type**
+- [ ] **3.6 An owned `var *args` collector copies a place whatever its type**
 
-  Problem: `Box.keep(self.item)` with `keep(var v: Self.T)` runs on Mojito
-  for a `String` instance and stops with "double free of Pointer
-  allocation". The pin rejects it ("value of type 'T' cannot be implicitly
-  copied").
-  - A method call's `var` argument demands `ImplicitlyCopyable` of a copied
-    place; the static path (`finish_static_call`) does not.
-  - Pinned by `conformance/probes/static_var_parameter_implicit_copy.mojo`.
+  Problem: `take(xs)` with `def take(var *xs: List[Int])` and a `List[Int]`
+  local runs on Mojito and prints `1` `2`. The pin rejects it ("value of type
+  'List[Int]' cannot be implicitly copied").
+  - A named `var` parameter demands `ImplicitlyCopyable` of a copied place on
+    the free, method, and static call paths; a collected argument does not on
+    any of them.
+  - The `**kwargs` collector on the method path already makes the demand.
+  - Probe: `conformance/probes/variadic_var_collector_implicit_copy.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
