@@ -285,6 +285,7 @@ assets/ok/optional_raising_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_value_protocols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_binder_result_keeps_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_call_arguments_run.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_call_with_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-entry-shape

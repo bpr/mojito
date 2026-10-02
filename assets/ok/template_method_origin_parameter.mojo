@@ -38,4 +38,3 @@ def main():
     words.bump(seven)
     print(words.first(w), words.add(seven))
     print(words.pick(w))
-    print(w)

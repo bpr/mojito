@@ -85,6 +85,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A reference a method returns through an origin binder keeps the argument
+  it names alive. `print(words.pick(w))` printed `None` at `w`'s last use,
+  where `pick[o: Origin](self, ref[o] x: Self.T) -> ref[o] Self.T` returns
+  its parameter. MIR now reads such a result out of the hidden handle slot a
+  module `def`'s result already used, which loans the places the result's
+  origin names (`assets/ok/origin_binder_result_keeps_argument.mojo`).
 - A `^` transfer of a value of a parameter type is rejected on the
   declaration unless a bound proves `Movable`, as the pin rejects it, where
   Mojito asked `Movable` of each instance

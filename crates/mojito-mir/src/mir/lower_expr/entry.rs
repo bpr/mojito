@@ -83,8 +83,10 @@ impl Flatten<'_> {
         }
         // A free call's reference result is read out of a hidden handle slot
         // that loans the storage its origin names, so the arguments it
-        // borrows from stay alive until the referent is copied.
-        if matches!(e.kind, ExprKind::Call { .. })
+        // borrows from stay alive until the referent is copied. A method
+        // call's result takes the same path when its origin names an argument
+        // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
+        if (matches!(e.kind, ExprKind::Call { .. }) || self.reference_result_borrows_argument(e))
             && self.reference_result(e).is_some()
             && let Some(place) = self.materialize_reference_result_place(e)
         {
@@ -300,6 +302,23 @@ impl Flatten<'_> {
             })
     }
 
+    /// Whether a method call's reference result has an origin rooted at one
+    /// of the call's own arguments rather than at its receiver.
+    fn reference_result_borrows_argument(&self, expression: &Expr) -> bool {
+        let ExprKind::MethodCall { args, kwargs, .. } = &expression.kind else {
+            return false;
+        };
+        let Some(reference) = self.reference_result(expression) else {
+            return false;
+        };
+        let mut roots = Vec::new();
+        origin_place_roots(&reference.origin, &mut roots);
+        args.iter()
+            .chain(kwargs.iter().map(|keyword| &keyword.value))
+            .filter_map(|argument| self.checked_owner(place_root_expression(argument)))
+            .any(|owner| roots.contains(&owner))
+    }
+
     /// A builtin string producer (`String("abc")`, `repr(x)`, `input(...)`)
     /// is typed as the compile-time string plus a nominal-String wrap
     /// conversion at its own span; a view conversion of that temporary
@@ -334,5 +353,28 @@ impl Flatten<'_> {
             receiver: None,
         });
         nominal
+    }
+}
+
+fn origin_place_roots(
+    origin: &mojito_types::origin::Origin,
+    roots: &mut Vec<mojito_types::origin::OwnerId>,
+) {
+    match origin {
+        mojito_types::origin::Origin::Place(place) => roots.push(place.root),
+        mojito_types::origin::Origin::Union(members) => members
+            .iter()
+            .for_each(|member| origin_place_roots(member, roots)),
+        _ => {}
+    }
+}
+
+/// The expression naming the binding a place expression is rooted at.
+fn place_root_expression(expression: &Expr) -> &Expr {
+    match &expression.kind {
+        ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => {
+            place_root_expression(object)
+        }
+        _ => expression,
     }
 }

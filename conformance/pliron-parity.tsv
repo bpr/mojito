@@ -285,6 +285,7 @@ assets/ok/optional_raising_subscript.mojo	main	exe-differential	sanitized
 assets/ok/optional_value_protocols.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
+assets/ok/origin_binder_result_keeps_argument.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_call_arguments_run.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_call_with_arguments.mojo	main	exe-differential	sanitized
 assets/ok/origin_delegated_multi_binder.mojo	main	exe-differential	sanitized
