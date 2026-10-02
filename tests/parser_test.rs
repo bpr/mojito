@@ -110,6 +110,44 @@ fn subtraction_is_left_associative() {
 }
 
 #[test]
+fn shifts_bind_tighter_than_bitwise_operators() {
+    // a << 1 | b >> 1  ==  (a << 1) | (b >> 1)
+    assert_eq!(
+        parse_expr("a << 1 | b >> 1"),
+        Expr::from(ExprKind::Infix(
+            InfixOp::BitOr,
+            bx(ExprKind::Infix(InfixOp::Shl, ident("a"), int(1))),
+            bx(ExprKind::Infix(InfixOp::Shr, ident("b"), int(1)))
+        ))
+    );
+}
+
+#[test]
+fn bitwise_levels_nest_between_comparison_and_sum() {
+    // a | b ^ c & d + 1 == e  ==  (a | (b ^ (c & (d + 1)))) == e
+    assert_eq!(
+        parse_expr("a | b ^ c & d + 1 == e"),
+        Expr::from(ExprKind::Infix(
+            InfixOp::Eq,
+            bx(ExprKind::Infix(
+                InfixOp::BitOr,
+                ident("a"),
+                bx(ExprKind::Infix(
+                    InfixOp::BitXor,
+                    ident("b"),
+                    bx(ExprKind::Infix(
+                        InfixOp::BitAnd,
+                        ident("c"),
+                        bx(ExprKind::Infix(InfixOp::Add, ident("d"), int(1)))
+                    ))
+                ))
+            )),
+            ident("e")
+        ))
+    );
+}
+
+#[test]
 fn unary_minus_binds_tighter_than_sum() {
     // -a + 1  ==  (-a) + 1
     assert_eq!(

@@ -85,6 +85,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The bitwise and shift operators have their own precedence levels. They
+  shared one level with `+` and `-`, so `a << 1 | b >> 1` parsed as
+  `(a << 1 | b) >> 1` and printed `7` for `Int32(6)` and `Int32(3)` where
+  the pin prints `13`. The levels are now Python's and Mojo's: `|` loosest,
+  then `^`, `&`, `<<`/`>>`, and `+`/`-`. No bundled or fixture source parsed
+  differently before. `assets/ok/bitwise_shift_precedence.mojo` pins it.
 - A reference a method returns through an origin binder keeps the argument
   it names alive. `print(words.pick(w))` printed `None` at `w`'s last use,
   where `pick[o: Origin](self, ref[o] x: Self.T) -> ref[o] Self.T` returns

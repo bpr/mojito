@@ -33,7 +33,7 @@ mod suffix;
 mod types;
 
 /// Binding-power levels, lowest to highest. Mirrors Python/Mojo expression
-/// precedence for the implemented operator set (no bitwise / `**` yet).
+/// precedence for the implemented operator set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
     Lowest,
@@ -43,6 +43,10 @@ enum Precedence {
     And,         // and
     Not,         // not x  (prefix)
     Comparison,  // == != < > <= >=
+    BitOr,       // |
+    BitXor,      // ^  (infix; an adjacent `^` is the postfix transfer)
+    BitAnd,      // &
+    Shift,       // << >>
     Sum,         // + -
     Product,     // * / // %
     Unary,       // -x  (prefix)
@@ -235,13 +239,11 @@ const fn infix_precedence(op: InfixOp) -> Precedence {
         | InfixOp::NotIn
         | InfixOp::Is
         | InfixOp::IsNot => Precedence::Comparison,
-        InfixOp::Add
-        | InfixOp::Sub
-        | InfixOp::Shl
-        | InfixOp::Shr
-        | InfixOp::BitAnd
-        | InfixOp::BitOr
-        | InfixOp::BitXor => Precedence::Sum,
+        InfixOp::BitOr => Precedence::BitOr,
+        InfixOp::BitXor => Precedence::BitXor,
+        InfixOp::BitAnd => Precedence::BitAnd,
+        InfixOp::Shl | InfixOp::Shr => Precedence::Shift,
+        InfixOp::Add | InfixOp::Sub => Precedence::Sum,
         InfixOp::Mul | InfixOp::Div | InfixOp::FloorDiv | InfixOp::Mod | InfixOp::MatMul => {
             Precedence::Product
         }

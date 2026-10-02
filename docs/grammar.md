@@ -636,7 +636,8 @@ from the lexer's offside rule. An empty body is written `pass`.
 ## Expressions
 
 Lowest precedence first; each level falls through to the next. The left-recursive
-rules (`comparison`, `sum`, `term`, `primary`) encode left associativity.
+rules (`comparison`, `bitwise_or`, `bitwise_xor`, `bitwise_and`, `shift`, `sum`,
+`term`, `primary`) encode left associativity.
 
 ```
 expression:
@@ -659,10 +660,23 @@ inversion:
     | 'not' inversion
     | comparison
 comparison:
-    | sum (compare_op sum)+       # chained: `a < b < c` (implemented — each operand once, short-circuits)
-    | sum compare_op sum          # a single comparison stays an `Infix`
-    | sum
+    | bitwise_or (compare_op bitwise_or)+   # chained: `a < b < c` (implemented — each operand once, short-circuits)
+    | bitwise_or compare_op bitwise_or      # a single comparison stays an `Infix`
+    | bitwise_or
 compare_op: '==' | '!=' | '<=' | '<' | '>=' | '>' | 'in' | 'not' 'in' | 'is' | 'is' 'not'
+bitwise_or:
+    | bitwise_or '|' bitwise_xor
+    | bitwise_xor
+bitwise_xor:
+    | bitwise_xor '^' bitwise_and  # whitespace-separated; an adjacent `^` is the transfer sigil
+    | bitwise_and
+bitwise_and:
+    | bitwise_and '&' shift
+    | shift
+shift:
+    | shift '<<' sum
+    | shift '>>' sum
+    | sum
 sum:
     | sum '+' term
     | sum '-' term

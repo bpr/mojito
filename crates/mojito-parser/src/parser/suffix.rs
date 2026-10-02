@@ -513,15 +513,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // comparison precedence. In infix position (after an operand)
             // `not` can only start `not in`.
             Some(Token::In | Token::Not | Token::Is) => Precedence::Comparison,
-            Some(
-                Token::Plus
-                | Token::Minus
-                | Token::Shl
-                | Token::Shr
-                | Token::Amp
-                | Token::Pipe
-                | Token::Caret,
-            ) => Precedence::Sum,
+            Some(Token::Pipe) => Precedence::BitOr,
+            Some(Token::Caret) => Precedence::BitXor,
+            Some(Token::Amp) => Precedence::BitAnd,
+            Some(Token::Shl | Token::Shr) => Precedence::Shift,
+            Some(Token::Plus | Token::Minus) => Precedence::Sum,
             Some(Token::Star | Token::Slash | Token::DoubleSlash | Token::Percent | Token::At) => {
                 Precedence::Product
             }

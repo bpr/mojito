@@ -487,6 +487,10 @@ enum Precedence {
     And,
     Not,
     Comparison,
+    BitOr,
+    BitXor,
+    BitAnd,
+    Shift,
     Sum,
     Product,
     Unary,
@@ -503,6 +507,10 @@ Lowest to highest:
 - `and`
 - prefix `not`
 - comparisons and membership
+- `|`
+- infix `^`
+- `&`
+- `<<`, `>>`
 - `+`, `-`
 - `*`, `/`, `//`, `%`
 - prefix unary `-`
@@ -552,6 +560,7 @@ Postfix forms:
 Infix forms:
 
 - arithmetic: `+`, `-`, `*`, `/`, `//`, `%`, `**`
+- bitwise and shift: `|`, `^`, `&`, `<<`, `>>`
 - boolean: `and`, `or`
 - comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - membership: `in`, `not in`

@@ -26,6 +26,7 @@ assets/ok/assign_register_passable_element_over_list.mojo	-	ineligible	no-scalar
 assets/ok/associated_trait_self_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_type_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bitwise_shift_precedence.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bool_alias_predicate_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
