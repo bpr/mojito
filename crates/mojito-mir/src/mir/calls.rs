@@ -15,6 +15,23 @@ pub(super) type FieldwiseCallArguments = (
     Vec<Option<MirPlace>>,
 );
 
+/// Whether a value of this type owns storage that destruction must release:
+/// an aggregate (a struct with a destructor or owning fields, tuple/pack
+/// storage, a variant, or a still-abstract parameter type). Kept textually
+/// aligned with the drop analysis' `may_alias_owned_storage`.
+pub(super) const fn owns_droppable_storage(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Struct(..)
+            | Ty::Tuple(_)
+            | Ty::RuntimePack(_)
+            | Ty::Variant(_)
+            | Ty::ComptimeList(_)
+            | Ty::Param { .. }
+            | Ty::Assoc { .. }
+    )
+}
+
 impl Flatten<'_> {
     /// Lower one ordinary call argument together with the caller storage that
     /// checking selected for a `mut`/`ref` parameter. Dynamic indexed places
@@ -1599,21 +1616,4 @@ impl Flatten<'_> {
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)
     }
-}
-
-/// Whether a value of this type owns storage that destruction must release:
-/// an aggregate (a struct with a destructor or owning fields, tuple/pack
-/// storage, a variant, or a still-abstract parameter type). Kept textually
-/// aligned with the drop analysis' `may_alias_owned_storage`.
-const fn owns_droppable_storage(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::Struct(..)
-            | Ty::Tuple(_)
-            | Ty::RuntimePack(_)
-            | Ty::Variant(_)
-            | Ty::ComptimeList(_)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
-    )
 }

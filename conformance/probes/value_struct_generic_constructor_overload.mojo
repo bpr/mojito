@@ -1,7 +1,7 @@
 # A generic constructor declared beside another one on a struct with a value
 # parameter. The pin prints `5` `5` `1`; Mojito stops at run time ("vm backend
 # does not support the built-in or callee 'P.__init__$ov$T$Writable' yet").
-# `docs/roadmap.md` 3.112. When Mojito runs it, move this to `assets/ok/`.
+# `docs/roadmap.md` 3.111. When Mojito runs it, move this to `assets/ok/`.
 struct P[U: AnyType, n: Int]:
     var v: Int
 

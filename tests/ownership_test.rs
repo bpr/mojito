@@ -877,6 +877,42 @@ fn mut_parameter_reinit_after_partial_move_is_ok() {
 }
 
 #[test]
+fn mut_parameter_transferred_away_must_be_written_back() {
+    // A `mut` parameter is the caller's storage: whole or in part, it holds
+    // a value again on every path that leaves the function.
+    let whole = format!(
+        "{PAIR}def take(mut p: Pair) -> Pair:\n    return p^\n\ndef main():\n    var p = Pair(Inner(1), Inner(2))\n    var q = take(p)\n    print(q.a.id)\n"
+    );
+    match own(&whole) {
+        Err(OwnershipError::ReferenceParameterLeftUninitialized { var, .. }) => {
+            assert_eq!(var, "p");
+        }
+        other => panic!("expected ReferenceParameterLeftUninitialized of p, got {other:?}"),
+    }
+    let field = format!(
+        "{PAIR}def take(mut p: Pair) -> Inner:\n    return p.a^\n\ndef main():\n    var p = Pair(Inner(1), Inner(2))\n    print(take(p).id)\n"
+    );
+    match own(&field) {
+        Err(OwnershipError::ReferenceParameterLeftUninitialized { var, .. }) => {
+            assert_eq!(var, "p.a");
+        }
+        other => panic!("expected ReferenceParameterLeftUninitialized of p.a, got {other:?}"),
+    }
+    let refilled = format!(
+        "{PAIR}def take(mut p: Pair, c: Bool) -> Pair:\n    var q = Pair(Inner(5), Inner(6))\n    if c:\n        q = p^\n        p = Pair(Inner(3), Inner(4))\n    return q^\n\ndef main():\n    var p = Pair(Inner(1), Inner(2))\n    var q = take(p, True)\n    print(q.a.id, p.a.id)\n"
+    );
+    assert!(own(&refilled).is_ok(), "{:?}", own(&refilled));
+    let read_between = format!(
+        "{PAIR}def take(mut p: Pair) -> Pair:\n    var q = p^\n    print(p.a.id)\n    p = Pair(Inner(3), Inner(4))\n    return q^\n\ndef main():\n    var p = Pair(Inner(1), Inner(2))\n    var q = take(p)\n    print(q.a.id)\n"
+    );
+    assert!(
+        matches!(own(&read_between), Err(OwnershipError::UseAfterMove { .. })),
+        "{:?}",
+        own(&read_between)
+    );
+}
+
+#[test]
 fn use_after_move_through_a_method_call() {
     let src = "@fieldwise_init\nstruct Thing:\n    var x: Int\n    def get(self) -> Int:\n        return self.x\n\ndef main():\n    var a: Thing = Thing(1)\n    var b: Thing = a^\n    print(a.get())\n";
     assert!(matches!(own(src), Err(OwnershipError::UseAfterMove { .. })));

@@ -85,6 +85,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `mut` parameter transferred away must be written back before the
+  function leaves. `def take(mut x: String) -> String: return x^` ran and
+  printed `<ref 1:0>`, where the pin reports "'x' is uninitialized at return
+  from this function". The ownership analysis now requires every `mut`
+  parameter and `mut self` receiver to hold a whole value at each return, and
+  at each raise ("use of uninitialized value 'x'"), and counts a write
+  through the parameter as putting the value back. `x^` now takes the value
+  out through the reference instead of handing over the reference, so a body
+  that moves and refills (`var r = x^`, `x = String("b")`, `return r^`)
+  returns the caller's old value on the VM and natively; a value that owns no
+  storage transfers as a copy. A field left moved out of a `mut` parameter
+  reports the same message in place of "destroyed out of the middle of a
+  value". `assets/ok/mut_parameter_transfer_refilled.mojo` and six
+  `assets/ownership_error/mut_*` fixtures pin it.
 - A generic constructor declared beside another one runs on a generic
   struct. `C[Int](7)` for `struct C[U: AnyType]` declaring
   `__init__(out self, var a: String)` beside

@@ -323,6 +323,27 @@ impl Flatten<'_> {
     pub(super) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
         if let ExprKind::Identifier(name) = &inner.kind {
             let var = self.expression_var(name, inner);
+            // A `mut` parameter's slot holds the handle to the caller's
+            // storage, so the transfer takes the referent out through it. A
+            // value that owns no storage transfers as a copy and leaves the
+            // caller's value in place.
+            if (var as usize) < self.f.n_params
+                && self.runtime_aliases.contains(&var)
+                && !self.pointer_valued_slot(var)
+            {
+                let ty = self.var_types.get(&var).cloned();
+                if !ty
+                    .as_ref()
+                    .is_some_and(crate::mir::calls::owns_droppable_storage)
+                {
+                    return self.expr(inner);
+                }
+                let d = self.fresh(span(e), Some(var));
+                let mut place = MirPlace::root(var, ty);
+                place.through = Some(var);
+                self.emit(MirInstr::MovePlace { dest: d, place });
+                return d;
+            }
             let d = self.fresh(span(e), Some(var));
             self.emit(MirInstr::UseVar {
                 dest: d,

@@ -934,6 +934,12 @@ pub enum OwnershipError {
         field: String,
         span: crate::token::SourceSpan,
     },
+    /// A `mut` parameter — the caller's storage — or a part of it was
+    /// transferred away and not written back before the function returns.
+    ReferenceParameterLeftUninitialized {
+        var: String,
+        span: crate::token::SourceSpan,
+    },
     /// An owner place was accessed incompatibly while a local reference loan to
     /// overlapping storage remained live.
     LoanConflict {
@@ -971,6 +977,9 @@ impl fmt::Display for OwnershipError {
                 "field '{field}' destroyed out of the middle of a value, \
                  preventing the overall value from being destroyed"
             ),
+            Self::ReferenceParameterLeftUninitialized { var, .. } => {
+                write!(f, "'{var}' is uninitialized at return from this function")
+            }
             Self::LoanConflict { place, loan, .. } => write!(
                 f,
                 "access to '{place}' conflicts with live reference '{loan}'"
@@ -1001,6 +1010,7 @@ impl OwnershipError {
             | Self::ConditionallyMoved { span, .. }
             | Self::ConsumedFieldUsedLater { span, .. }
             | Self::FieldDestroyedOutOfTheMiddle { span, .. }
+            | Self::ReferenceParameterLeftUninitialized { span, .. }
             | Self::LoanConflict { span, .. }
             | Self::InvalidatedInteriorReference { span, .. } => span.span,
         }
@@ -1013,6 +1023,7 @@ impl OwnershipError {
             | Self::ConditionallyMoved { span, .. }
             | Self::ConsumedFieldUsedLater { span, .. }
             | Self::FieldDestroyedOutOfTheMiddle { span, .. }
+            | Self::ReferenceParameterLeftUninitialized { span, .. }
             | Self::LoanConflict { span, .. }
             | Self::InvalidatedInteriorReference { span, .. } => span.source.as_deref(),
         }

@@ -1,4 +1,4 @@
-# expect: field 'p.a' destroyed out of the middle of a value
+# expect: 'p.a' is uninitialized at return from this function
 @fieldwise_init
 struct Inner:
     var id: Int

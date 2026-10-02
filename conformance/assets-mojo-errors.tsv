@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	464
+# swept-count	470
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -61,6 +61,12 @@ assets/ownership_error/list_element_view_stale_after_store.mojo	compile-reject	a
 assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
 assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'
 assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
+assets/ownership_error/mut_parameter_read_after_transfer.mojo	compile-reject	agree	error: use of uninitialized value 'x'
+assets/ownership_error/mut_parameter_transfer_conditional.mojo	compile-reject	agree	error: 'x' is uninitialized at return from this function
+assets/ownership_error/mut_parameter_transfer_implicit_return.mojo	compile-reject	agree	error: 'x' is uninitialized at the implicit return from this function
+assets/ownership_error/mut_parameter_transfer_left_uninitialized.mojo	compile-reject	agree	error: 'x' is uninitialized at return from this function
+assets/ownership_error/mut_parameter_transfer_raise_path.mojo	compile-reject	agree	error: use of uninitialized value 'x'
+assets/ownership_error/mut_self_transfer_left_uninitialized.mojo	compile-reject	agree	error: 'self' is uninitialized at return from this function
 assets/ownership_error/origin_delegated_parameter_receiver_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pack_struct_use_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'p'
 assets/ownership_error/partial_move_branch_sibling_read.mojo	compile-reject	agree	error: value 'c.first' cannot be consumed, because 'c' is used later

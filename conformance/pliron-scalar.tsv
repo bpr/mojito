@@ -232,6 +232,7 @@ assets/ok/mut_callable_parameter_write_back.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/mut_owned_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_parameter_reassignment_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_parameter_reassignment_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mut_parameter_transfer_refilled.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_pointer_parameter_reassign.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
