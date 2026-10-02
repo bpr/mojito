@@ -369,6 +369,13 @@ pub enum MirInstr {
         dest: Reg,
         ty: Ty,
     },
+    /// The unqualified spelling of one checker-resolved type that names a
+    /// compile-time parameter. Only a template holds one: the elaborator
+    /// writes the name from the substituted type as a string constant.
+    TypeName {
+        dest: Reg,
+        ty: Ty,
+    },
     /// Cross the compile-time literal boundary selected by the checker.  The
     /// operand is an exact `IntLiteral`/`FloatLiteral`; `target` is a concrete
     /// scalar (or width-one scalar alias).  Backends must implement this

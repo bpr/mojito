@@ -29,7 +29,8 @@ impl<'a> Parser<'a> {
         let version = self.take_while(|byte| byte.is_ascii_digit() || byte == b'.');
         match version {
             "1.0" => self.legacy = true,
-            "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | "1.7" | "1.8" | "1.9" | "1.10" => {}
+            "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | "1.7" | "1.8" | "1.9" | "1.10"
+            | "1.11" => {}
             value if value.starts_with("1.") => self.error(
                 (version_start, self.pos),
                 "unsupported MIR 1.x minor version",

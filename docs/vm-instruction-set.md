@@ -318,6 +318,20 @@ Produces an `Int` from the shared native ABI layout engine. The checked type is
 part of the instruction, and verification rejects types without a concrete
 runtime layout; the VM does not infer layout from a runtime value.
 
+### `type.name` — Unqualified spelling of a parametric type
+
+```text
+type.name { dest: %r0, type: Box[T] }
+```
+
+Produces a `StringLiteral`: the unqualified spelling of a type that names a
+compile-time parameter (`_unqualified_type_name[Self]()` in a generic
+struct's method). Only a template holds one, and verification rejects a
+concrete type, whose name lowers to a `const`. The elaborator substitutes the
+type and replaces the instruction with that constant, so concrete MIR and
+the native backend never see it. The erased oracle runs the template itself
+and spells the parameters as written (`Box[T]`).
+
 ### Unary instructions
 
 ```text

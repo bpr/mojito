@@ -175,6 +175,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             "{head} constructs compile-time parameter `{}` in elaborated MIR",
             param.name
         )),
+        MirInstr::TypeName { ty, .. } => {
+            errors.push(format!("{head} names the type `{ty}` in elaborated MIR"));
+        }
         MirInstr::SizeOf { ty, .. }
         | MirInstr::MaterializeLiteral { target: ty, .. }
         | MirInstr::PointerStorageTake { element: ty, .. }

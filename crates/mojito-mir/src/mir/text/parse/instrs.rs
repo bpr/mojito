@@ -214,6 +214,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,
             }),
+            "type.name" => Some(MirInstr::TypeName {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                ty: self.req(value, fields, "type", Self::ty)?,
+            }),
             "type.construct" => {
                 // The writer spells the parameter with `symbol` (a bare atom
                 // for identifier-safe names), so accept both spellings here.

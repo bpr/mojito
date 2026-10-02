@@ -164,7 +164,7 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
                         push_instruction_types(blocks, out);
                     }
                 }
-                MirInstr::SizeOf { ty, .. } => out.push(ty.clone()),
+                MirInstr::SizeOf { ty, .. } | MirInstr::TypeName { ty, .. } => out.push(ty.clone()),
                 MirInstr::PointerStorageTake { element, .. }
                 | MirInstr::PointerStorageDestroy { element, .. }
                 | MirInstr::UninitStorageTake { element, .. }

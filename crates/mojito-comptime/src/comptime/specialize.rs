@@ -3663,8 +3663,7 @@ fn keyed_methods(
 }
 
 /// Whether a method body holds a construct only an instance can lower: a
-/// nested `def` or a lambda, whose lifted body is cloned per instance, or a
-/// type name, which is spelled from the instance's arguments.
+/// nested `def` or a lambda, whose lifted body is cloned per instance.
 fn holds_instance_construct(body: &[Stmt]) -> bool {
     struct Finder {
         found: bool,
@@ -3676,13 +3675,7 @@ fn holds_instance_construct(body: &[Stmt]) -> bool {
         }
 
         fn visit_expr(&mut self, expr: &Expr) {
-            self.found |= match &expr.kind {
-                ExprKind::Lambda { .. } => true,
-                ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } => {
-                    name == "_unqualified_type_name"
-                }
-                _ => false,
-            };
+            self.found |= matches!(&expr.kind, ExprKind::Lambda { .. });
         }
     }
 

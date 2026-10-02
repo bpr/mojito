@@ -305,6 +305,12 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "extensions::template_served_iterable_def",
     "template_served_def_loan_carrying_argument",
     "template_served_loan_carrying_instance",
+    // Section 1, the erased oracle: an erased value carries no type
+    // argument to spell a type name over a parameter from.
+    "generic_struct_instance_bodies",
+    "generic_struct_instance_dispatch",
+    "optional_raising_subscript",
+    "template_method_string_builtins",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

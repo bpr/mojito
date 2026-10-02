@@ -218,6 +218,10 @@ impl FnLowering<'_> {
                 ),
                 *dest,
             )),
+            MirInstr::TypeName { dest, ty } => {
+                Err(self
+                    .unsupported_reg(format!("type name of `{ty}` after monomorphization"), *dest))
+            }
             MirInstr::SizeOf { dest, ty } => {
                 let size = self
                     .layout

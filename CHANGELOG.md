@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method that spells a type name over its struct's parameters
+  (`_unqualified_type_name[Self]()`, the `write_repr_to` of `List`, `Dict`,
+  `Set`, `Array`, and `Optional`) is served by its template and mints no
+  clone. The template's MIR carries the type in a new `type.name`
+  instruction (`MirInstr::TypeName`, text schema 1.11), and the elaborator
+  writes the name from the substituted type as a string constant, for the VM
+  and the native backend alike. The erased oracle spells the parameters as
+  written (`Box[T]`), so four fixtures leave its comparison
+  (`docs/roadmap.md` 1.22).
 - A generic `def` called at a loan-carrying argument (`keep(m, p)` with
   `p: Pointer[List[Int], ImmOrigin(origin_of(xs))]`) is served by its
   template and mints no clone. The call closes the stored type in the
@@ -106,6 +115,9 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `repr` of an `Array` names its element type
+  (`Array[SIMD[DType.int, 1], 2]([Int(1), Int(1)])`); it printed
+  `Array[T, 2](...)`, the parameter as the template spelled it.
 - A generic `def` storing a copy of its argument
   (`into.append(value.copy())`) lost the loan the copy carries, so the
   pointee was destroyed while the list still pointed at it and the program

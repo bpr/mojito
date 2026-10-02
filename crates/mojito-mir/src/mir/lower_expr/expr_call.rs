@@ -59,7 +59,7 @@ impl Flatten<'_> {
             }
             return dest;
         }
-        if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, .. }) =
+        if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) =
             self.checked_adjustments(e).into_iter().find(|adjustment| {
                 matches!(
                     adjustment,
@@ -67,6 +67,13 @@ impl Flatten<'_> {
                 )
             })
         {
+            // A type naming a compile-time parameter is spelled per
+            // instance, so the template carries the type to the elaborator.
+            if mojito_types::types::is_symbolic(&ty) {
+                let dest = self.fresh_typed(span(e), None, Ty::StringLiteral);
+                self.emit(MirInstr::TypeName { dest, ty });
+                return dest;
+            }
             return self.constant(e, Const::Str(text));
         }
         // A checked pointer construction materializes the frame/slot

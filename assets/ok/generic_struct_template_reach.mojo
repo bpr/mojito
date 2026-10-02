@@ -1,7 +1,7 @@
 # A method of an ordinary generic struct with no compile-time construct in
 # its body mints no clone per instance: the elaborator instantiates the
 # template's MIR. What such a body reaches at an instance is still found:
-# a member that keeps its clones (a `comptime if` on `Self.T`, a type name)
+# a member that keeps its clones (a `comptime if` on `Self.T`)
 # called by name, through `print`, or on an instance only the template body
 # builds (`Box[List[Self.T]]`), runs as that instance's clone.
 from std.reflection.type_info import _unqualified_type_name

@@ -962,8 +962,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   clone's origin binders from its receiver, `bind_clone_receiver_origins` in
   `checker/origins/construct.rs`). `keyed_methods` there says which methods
   of an instance still clone: the ones whose template body is the trap stub,
-  the ones `holds_instance_construct` finds a nested `def`, a lambda, or a
-  type name in, the stub-reaching ones, and the driver-reported ones
+  the ones `holds_instance_construct` finds a nested `def` or a lambda in,
+  the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry. `template_serves_def` says
   which generic `def` keeps its template at a loan-carrying argument: one

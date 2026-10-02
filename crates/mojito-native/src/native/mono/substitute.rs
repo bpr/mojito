@@ -344,8 +344,8 @@ pub(super) fn substitute_instruction(
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeTuple, MakeVariant,
         MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, PointerStorageDestroy,
-        PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext, UninitStorageDestroy,
-        UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
+        PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName,
+        UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
     };
     match instruction {
         EstablishLoans { loans, .. } => {
@@ -400,6 +400,19 @@ pub(super) fn substitute_instruction(
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
             sub_opt_ty(receiver, bindings)?;
+        }
+        // A type name is spelled from the instance's type; a type the
+        // bindings leave symbolic stays for the verifier's concrete mode.
+        TypeName { dest, ty } => {
+            *ty = substitute_ty(ty, bindings)?;
+            if !mojito_types::types::is_symbolic(ty) {
+                *instruction = Const {
+                    dest: *dest,
+                    k: mojito_mir::mir::Const::Str(
+                        mojito_symbol::symbol::unqualified_instance_name(ty),
+                    ),
+                };
+            }
         }
         // `H()` on a type parameter constructs the bound struct: once the
         // binding is concrete this is an ordinary nullary constructor call,

@@ -135,11 +135,11 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 fn generic_struct_instances_get_per_instantiation_method_clones() {
     // A closed application of an ordinary generic struct reached from user
     // code mints one clone per method that holds a compile-time construct,
-    // checked with `self` bound to the instance:
-    // `_unqualified_type_name[Self]` spells the instantiation and a
-    // `comptime if` on `Self.T` folds, while the template keeps its erased
-    // pre-check and the runtime name stays the template's. Calls on the
-    // instance retarget to the clone by exact name.
+    // checked with `self` bound to the instance: a `comptime if` on `Self.T`
+    // folds, while the template keeps its erased pre-check and the runtime
+    // name stays the template's. Calls on the instance retarget to the clone
+    // by exact name. `_unqualified_type_name[Self]` mints none: the
+    // elaborator spells the instantiation from the template's MIR.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -149,9 +149,7 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
         .expect("compile the instance clones");
     let targets = program.checked().overload_targets();
     assert!(
-        targets
-            .values()
-            .any(|target| target == "Box.type_name$y3:Int"),
+        targets.values().any(|target| target == "Box.kind$y3:Int"),
         "the Int instance's call retargets to its clone: {targets:?}"
     );
     assert!(
@@ -162,8 +160,14 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
     );
     let mir = mojito::mir::lower_checked_program(program.checked());
     let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
-    assert!(names.iter().any(|name| *name == "Box.type_name$y3:Int"));
+    assert!(names.iter().any(|name| *name == "Box.kind$y3:Int"));
     assert!(names.iter().any(|name| *name == "Box.type_name"));
+    assert!(
+        names
+            .iter()
+            .all(|name| !name.starts_with("Box.type_name$y")),
+        "the template serves the type name for each instance"
+    );
     let output = compiler.execute(&program).expect("run the instance clones");
     assert_eq!(
         output.output,
@@ -222,10 +226,11 @@ fn overloaded_constructor_family_clones_as_one_overload_set() {
 #[test]
 fn instance_clones_serve_only_compile_time_members() {
     // On a closed generic-struct instance, a member holding a compile-time
-    // construct runs as the instance's clone: `len(x)` and `repr(x)` reach
-    // it by the argument's checked static type. Every other call shape — the
-    // `==` dunder, `List[Int]` subscript assignment, the `for` loop's
-    // `__iter__` — names the template, which the elaborator instantiates.
+    // construct runs as the instance's clone: `len(x)` reaches it by the
+    // argument's checked static type. Every other call shape — the `==`
+    // dunder, `repr(x)` over a type name, `List[Int]` subscript assignment,
+    // the `for` loop's `__iter__` — names the template, which the elaborator
+    // instantiates.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -235,13 +240,16 @@ fn instance_clones_serve_only_compile_time_members() {
         .expect("compile the instance dispatch program");
     let mir = mojito::mir::lower_checked_program(program.checked());
     let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
-    for clone in ["Box.__len__$y3:Int", "Box.write_repr_to$y3:Int"] {
-        assert!(
-            names.iter().any(|name| *name == clone),
-            "{clone} is minted: it holds a compile-time construct"
-        );
-    }
-    for template in ["Box.__eq__", "List.__setitem__", "List.__iter__"] {
+    assert!(
+        names.iter().any(|name| *name == "Box.__len__$y3:Int"),
+        "Box.__len__ is minted: it holds a compile-time construct"
+    );
+    for template in [
+        "Box.__eq__",
+        "Box.write_repr_to",
+        "List.__setitem__",
+        "List.__iter__",
+    ] {
         let clone = format!("{template}$y3:Int");
         assert!(
             names.iter().all(|name| !name.starts_with(&clone)),

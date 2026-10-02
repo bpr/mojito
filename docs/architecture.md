@@ -1003,9 +1003,11 @@ on the call as its spelled receiver type (`MirInstr::Call::receiver`,
 
 The methods that still clone are the ones MIR cannot express yet
 (`keyed_methods`, `comptime/specialize.rs`): a body the template stubs (a
-`comptime if`, a `comptime for`, a `rebind`), one holding a nested `def`, a
-lambda, or a type name over the struct's parameters, and one that reaches a
-compile-time-keyed `def`. The driver adds the ones only checked types show
+`comptime if`, a `comptime for`, a `rebind`), one holding a nested `def` or a
+lambda, and one that reaches a compile-time-keyed `def`. A type name over
+the struct's parameters clones nothing: the template carries the type in
+`MirInstr::TypeName`, and the elaborator writes the name from the
+substituted type. The driver adds the ones only checked types show
 (`src/compiler/template_reach.rs`): a body whose types hold a tuple or a
 struct specialized whole over the struct's parameters, and one that calls an
 overloaded method with binders of its own. An instance whose argument
@@ -2478,6 +2480,7 @@ Representative instructions:
 ```rust
 Const
 SizeOf
+TypeName
 UseVar
 MovePlace
 DefVar

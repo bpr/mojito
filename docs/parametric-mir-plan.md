@@ -440,9 +440,10 @@ The census on the three `benchmarks/compile` programs, before and after:
 | Parametric bodies `main` reaches | 0 → 0 | 10 → 11 | 36 → 43 |
 | Instances those serve with no clone | 0 → 0 | 10 → 11 | 96 → 123 |
 
-The method clones that remain in `stdlib_heavy` spell a type name
-(`write_repr_to` on `List`, `Dict`, and `Optional`), which is roadmap §1's
-type-name entry.
+A method that spells a type name (`write_repr_to` on `List`, `Dict`, and
+`Optional`) no longer clones: the template carries the type in
+`MirInstr::TypeName` (text schema 1.11), and the elaborator writes the name
+from the substituted type. The table predates that change.
 
 Measured against decision D4 on the same machine, release profile, `total`
 from `--timings`, the commit before and this one interleaved, median of five:

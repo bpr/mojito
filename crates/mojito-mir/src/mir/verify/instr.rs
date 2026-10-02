@@ -63,6 +63,7 @@ pub(super) fn verify_instruction(
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::SizeOf { .. }
+        | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
         | MirInstr::DefVar { .. }
         | MirInstr::MakeVariant { .. }
@@ -393,6 +394,20 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             .layout_of(ty)
             {
                 errors.push(format!("{prefix}: size_of has no layout for {ty}: {error}"));
+            }
+        }
+        MirInstr::TypeName { dest, ty } => {
+            if let Some(found) = cx.reg_ty(*dest)
+                && found != &Ty::StringLiteral
+            {
+                errors.push(format!(
+                    "{prefix}: type name result register has type {found}, expected StringLiteral"
+                ));
+            }
+            if !mojito_types::types::is_symbolic(ty) {
+                errors.push(format!(
+                    "{prefix}: type name of the concrete type {ty} is not a constant"
+                ));
             }
         }
         MirInstr::CopyValue { dest, value } => {

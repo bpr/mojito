@@ -12,6 +12,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::CopyValue { dest, .. }
         | MirInstr::Const { dest, .. }
         | MirInstr::SizeOf { dest, .. }
+        | MirInstr::TypeName { dest, .. }
         | MirInstr::ConstructTypeParam { dest, .. }
         | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::UseVar { dest, .. }
@@ -323,6 +324,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
+        | MirInstr::TypeName { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }

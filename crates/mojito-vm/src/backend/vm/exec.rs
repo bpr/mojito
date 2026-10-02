@@ -205,6 +205,12 @@ impl VmBackend {
                     )?,
                 };
             }
+            // Only the erased oracle runs a template: its values carry no
+            // type arguments, so the name keeps the template's parameters.
+            MirInstr::TypeName { dest, ty } => {
+                regs[dest.0 as usize] =
+                    Value::Str(mojito_symbol::symbol::unqualified_instance_name(ty));
+            }
             MirInstr::SizeOf { dest, ty } => {
                 let target = mojito_native_core::target::NativeTarget::new(
                     mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
