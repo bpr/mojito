@@ -353,6 +353,12 @@ impl Checker {
                 )?;
             }
         }
+        self.check_consuming_collected(
+            resolved.variadic_convention == Some(ArgConvention::Var),
+            &resolved.positional_overflow,
+            args,
+            &format!("method '{method}'"),
+        )?;
         let (effective_conventions, solved_return) = self.solve_call_origins(
             &resolved.slots,
             &resolved.conventions,

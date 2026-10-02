@@ -3002,6 +3002,29 @@ impl Checker {
         self.check_consuming_as(expr, ty, context, ConsumeKind::Move)
     }
 
+    /// The arguments an owned `var *args` collector gathers at `positions`
+    /// are consumed like a named `var` parameter's: a place is copied into
+    /// the pack. A forwarded pack is bound whole, against the collector's
+    /// convention. A collector that only reads its elements copies nothing.
+    pub(super) fn check_consuming_collected(
+        &self,
+        owned: bool,
+        positions: &[usize],
+        args: &[Expr],
+        callee: &str,
+    ) -> Result<(), TypeError> {
+        positions
+            .iter()
+            .map(|&position| &args[position])
+            .filter(|argument| {
+                owned && is_place_expr(argument) && self.forwarded_pack(argument).is_none()
+            })
+            .try_for_each(|argument| {
+                let ty = self.infer(argument)?;
+                self.check_consuming(argument, &ty, &format!("variadic argument to {callee}"))
+            })
+    }
+
     pub(super) fn check_consuming_as(
         &self,
         expr: &Expr,

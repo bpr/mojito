@@ -563,6 +563,12 @@ impl Checker {
                 .collect();
             self.record_constructor_reference_borrows(&span, &selected.ref_params, &selected.slots);
         }
+        self.check_consuming_collected(
+            selected.variadic_convention == Some(ArgConvention::Var),
+            &selected.positional_overflow,
+            args,
+            &format!("method '{method}'"),
+        )?;
         // `mut`/`ref` arguments keep their caller places and alias-check as
         // on an instance call (statics return before that shared tail).
         let (effective_conventions, _) = self.solve_call_origins(

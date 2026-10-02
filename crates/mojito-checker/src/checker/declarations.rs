@@ -2396,6 +2396,12 @@ impl Checker {
                         kind,
                     )?;
                 }
+                self.check_consuming_collected(
+                    selected.variadic_convention == Some(ArgConvention::Var),
+                    &selected.positional_overflow,
+                    args,
+                    &format!("'{name}'"),
+                )?;
                 return Ok(selected.return_type);
             }
             // A surplus positional argument falls through to the slot
@@ -2753,7 +2759,7 @@ impl Checker {
                     })
                     .collect();
                 for position in &overflow {
-                    bound.push((&args[*position], None));
+                    bound.push((&args[*position], sig.variadic_convention));
                 }
                 for (index, expected) in &conversions {
                     let (expression, _) = bound[*index];

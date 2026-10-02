@@ -486,6 +486,18 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **2.3 A collector indexed by a runtime value does not compile natively**
+
+  Problem: `sum += xs[i]` in `def total(*xs: Int) -> Int` prints `6` on the VM
+  for `total(1, 2, 3)`, and `--backend pliron` rejects it with "unsupported
+  runtime index into pack storage".
+  - A literal index (`xs[0]`) and `len(xs)` compile natively.
+  - The rejection is explicit and at compile time, so nothing runs wrong.
+  - The site is `crates/mojito-pliron/src/lower/subscripts.rs`.
+  - Probe: `conformance/probes/collector_runtime_index_native.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### 3. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
 - When the pinned nightly moves: re-pin [`docs/mojo-nightly.md`](mojo-nightly.md),
@@ -546,16 +558,17 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.3 An owned `var *args` collector copies a place whatever its type**
+- [ ] **3.3 An element of a `String` collector cannot be the operand of `+=`**
 
-  Problem: `take(xs)` with `def take(var *xs: List[Int])` and a `List[Int]`
-  local runs on Mojito and prints `1` `2`. The pin rejects it ("value of type
-  'List[Int]' cannot be implicitly copied").
-  - A named `var` parameter demands `ImplicitlyCopyable` of a copied place on
-    the free, method, and static call paths; a collected argument does not on
-    any of them.
-  - The `**kwargs` collector on the method path already makes the demand.
-  - Probe: `conformance/probes/variadic_var_collector_implicit_copy.mojo`.
+  Problem: `out += parts[i]` in `def join(var *parts: String) -> String`
+  prints `xy` at the pin for `join("x", "y")`. Mojito stops with "invalid
+  checked program: fn 'join': register r12 has no checked type".
+  - The index read of the collector element reaches MIR with no checked type
+    when it is the right operand of an augmented assignment.
+  - `parts[i].byte_length()` and `print(parts[i])` over the same collector
+    run.
+  - Probe:
+    `conformance/probes/variadic_var_collector_element_augmented_operand.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

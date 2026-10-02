@@ -1244,6 +1244,9 @@ impl Checker {
                     .iter()
                     .map(|e| self.infer(e))
                     .collect::<Result<Vec<_>, _>>()?;
+                for (value, ty) in elems.iter().zip(&tys) {
+                    self.check_consuming(value, ty, "Tuple display element")?;
+                }
                 let result = self.public_tuple_type(tys.clone());
                 self.check_tuple_literal_exclusivity(&result, elems, &tys)?;
                 self.record_collection_construction(expr.source_span(), &result);

@@ -121,6 +121,16 @@ to evolve under the `0.x` compatibility rules.
   (`assets/ok/pack_element_read_borrowed.mojo`). A `Span` element and a
   value read of a homogeneous collector's element still copy (roadmap 3.112
   and 3.1).
+- A place gathered by an owned `var *args` collector must be implicitly
+  copyable. `take(xs)` with `def take(var *xs: List[Int])` ran and printed
+  `1` `2`; the checker now reports "value of type 'List[Int]' cannot be
+  implicitly copied", as the pin does, on the free, method, static and
+  constructor call paths. A tuple display (`(xs, 1)`) and `Tuple(xs, 2)`
+  reach `Tuple`'s own `var *args` collector and are rejected the same way. A
+  transfer (`x^`), an explicit `.copy()`, and a fresh temporary still pass
+  (`assets/ok/variadic_var_collector_transfer.mojo`). The
+  `assets/type_error/implicit_copy_variadic_var_collector*.mojo` fixtures and
+  `implicit_copy_tuple_display_element.mojo` pin it.
 - A place passed to a static method's `var` parameter must be implicitly
   copyable. `Box.keep(self.item)` with `keep(var v: Self.T)` was accepted for
   any `T`, and a `Box[String]` then stopped on the VM with "double free of

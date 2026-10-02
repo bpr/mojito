@@ -1315,6 +1315,7 @@ impl Checker {
             }
             None => Vec::new(),
         };
+        self.check_owned_collector(name, &overflow, args)?;
         if let Some(elem) = kw_collector {
             for index in kw_overflow {
                 let expression = &kwargs[index].value;
@@ -1628,6 +1629,7 @@ impl Checker {
                 )?;
             }
         }
+        self.check_owned_collector(name, &overflow, args)?;
         let (effective_conventions, return_ref, bool_bindings) = self
             .solve_call_origins_with_bool_bindings(
                 &slots,
@@ -1903,6 +1905,21 @@ impl Checker {
             }
             _ => Ok((score, collected)),
         }
+    }
+
+    /// [`Self::check_consuming_collected`] for the free callee `name`.
+    fn check_owned_collector(
+        &self,
+        name: &str,
+        overflow: &[usize],
+        args: &[Expr],
+    ) -> Result<(), TypeError> {
+        self.check_consuming_collected(
+            self.owned_collectors.get(name) == Some(&true),
+            overflow,
+            args,
+            &format!("'{name}'"),
+        )
     }
 
     /// Bind a callee's own origin binders named by its parameters — a
