@@ -2167,7 +2167,28 @@ impl Checker {
             .collect();
         self.hash_leaf_types.replace(leaf_types);
         self.hash_leaf_demands.replace(leaf_demands);
-        mojito_checked::checked::ConformanceFacts { traits, structs }
+        let associated = self
+            .structs
+            .iter()
+            .map(|(name, info)| {
+                let mut members: Vec<(String, Ty)> = info
+                    .associated
+                    .iter()
+                    .filter_map(|(member, value)| match value {
+                        CtValue::Type(ty) => Some((member.clone(), (**ty).clone())),
+                        _ => None,
+                    })
+                    .collect();
+                members.sort_by(|left, right| left.0.cmp(&right.0));
+                (name.clone(), members)
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
+        mojito_checked::checked::ConformanceFacts {
+            traits,
+            structs,
+            associated,
+        }
     }
 
     /// The conditions under which an instance of the struct `name` conforms

@@ -967,8 +967,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry. `template_serves_def` says
   which generic `def` keeps its template at a loan-carrying argument: one
-  with no such construct whose signature spells the associated types its
-  bounds declare. `checker/origins/transfer.rs`
+  with no such construct. An associated type its body names is solved below
+  the waist, from `MirStructDeclaration.associated_types`
+  (`declared_associated_type`, `native/mono/substitute.rs`).
+  `checker/origins/transfer.rs`
   owns the carried source that lets both (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).

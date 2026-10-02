@@ -155,6 +155,11 @@ pub struct MirStructDeclaration {
     /// when its arguments satisfy any of the row's conditions. A concrete
     /// instance's rows are decided, so each holds `Bool(true)` or nothing.
     pub conformances: Vec<StructConformance>,
+    /// The struct's unparameterized associated types (`Element` of `List`),
+    /// sorted by member, each over the struct's own binders: the elaborator
+    /// solves `C.Element` from them once `C` is bound to an instance, so
+    /// elaborated MIR carries none.
+    pub associated_types: Vec<(String, Ty)>,
 }
 
 #[derive(Debug, Clone)]
@@ -560,6 +565,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     conformances: checked
                         .conformances()
                         .structs
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    associated_types: checked
+                        .conformances()
+                        .associated
                         .get(name)
                         .cloned()
                         .unwrap_or_default(),

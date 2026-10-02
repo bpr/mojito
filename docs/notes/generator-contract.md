@@ -299,9 +299,8 @@ the package list, so neither is reshaped later.
 - **A `def` the elaborator cannot instantiate.** A generic `def` called at
   a loan-carrying argument is served by its template (§Carried sources).
   It still clones, with clone origin binders, where its body holds or
-  reaches a compile-time construct, or names an associated type its
-  signature does not spell. A clone over an origin binder that stores a
-  copy records no loan. Each is a roadmap entry.
+  reaches a compile-time construct. A clone over an origin binder that
+  stores a copy records no loan. Each is a roadmap entry.
 - **Where the symbolic check is too lenient.** Row 10 closed with P2's first
   step. Row 20 holds for a method its template serves and is still a
   section-3 entry for one that clones. Two more turned up when the clones

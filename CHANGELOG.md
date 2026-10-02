@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` that names an associated type only in its body
+  (`def count[C: Iterable](items: C) -> Int` with `for item in items`) is
+  served by its template at a loan-carrying argument and mints no clone. A
+  struct's MIR declaration carries its unparameterized associated types
+  (`MirStructDeclaration.associated_types`, text schema 1.12), and the
+  elaborator reads `C.Element` off the struct `C` is bound to, for the VM and
+  the native backend alike.
+  `assets/extensions/ok/template_served_iterable_def.mojo` pins it.
 - A method that spells a type name over its struct's parameters
   (`_unqualified_type_name[Self]()`, the `write_repr_to` of `List`, `Dict`,
   `Set`, `Array`, and `Optional`) is served by its template and mints no

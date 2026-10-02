@@ -420,8 +420,7 @@ its template's MIR, lifecycle members and constructors included.
   elaborator resolves an adapted iterator step on the way: a step that
   returns the element drops the adapter, and one that returns a reference
   keeps it as a copy-out. A `def` whose body holds or reaches a compile-time
-  construct, or names an associated type its signature does not spell,
-  keeps its clone. `assets/ok/unspelled_loan_carrying_type_argument.mojo`
+  construct keeps its clone. `assets/ok/unspelled_loan_carrying_type_argument.mojo`
   mints 245 clones where it minted 247. The three benchmark programs hold
   no such call and are unchanged.
 - **Not done.** The clause forms the elaborator leaves undecided, every
@@ -444,6 +443,11 @@ A method that spells a type name (`write_repr_to` on `List`, `Dict`, and
 `Optional`) no longer clones: the template carries the type in
 `MirInstr::TypeName` (text schema 1.11), and the elaborator writes the name
 from the substituted type. The table predates that change.
+
+A `def` that names an associated type only in its body (`for item in items`
+over `C: Iterable`) no longer clones at a loan-carrying argument: a struct's
+MIR declaration carries its associated types (text schema 1.12), and the
+elaborator reads `C.Element` off the struct `C` is bound to.
 
 Measured against decision D4 on the same machine, release profile, `total`
 from `--timings`, the commit before and this one interleaved, median of five:

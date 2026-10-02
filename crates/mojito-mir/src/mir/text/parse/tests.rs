@@ -1101,6 +1101,17 @@ fn declaration_metadata_reprints_byte_identically() {
                 conditions: Vec::new(),
             },
         ],
+        associated_types: vec![(
+            "Element".into(),
+            Ty::Param {
+                binder: ParamRef {
+                    id: test_id("T"),
+                    name: "T".into(),
+                },
+                bounds: Vec::new(),
+                callable_bound: None,
+            },
+        )],
     };
     let zebra = MirStructDeclaration {
         name: "Zebra needs quoting!".into(),
@@ -1111,6 +1122,7 @@ fn declaration_metadata_reprints_byte_identically() {
         explicit_destroy_message: None,
         explicit_destructors: HashMap::new(),
         conformances: Vec::new(),
+        associated_types: Vec::new(),
     };
     let add = MirFunctionDeclaration {
         lowered_name: "add".into(),

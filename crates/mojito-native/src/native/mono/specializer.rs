@@ -34,6 +34,23 @@ impl<'a> Specializer<'a> {
                     .map(|d| d.name.clone())
                     .collect(),
             ),
+            associated_types: Rc::new(
+                source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|d| !d.associated_types.is_empty())
+                    .map(|d| {
+                        (
+                            d.name.clone(),
+                            AssociatedTypes {
+                                param_decls: d.param_decls.clone(),
+                                members: d.associated_types.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
             queue: VecDeque::new(),
             instances: Vec::new(),
             output_functions: Vec::new(),
@@ -152,6 +169,7 @@ impl<'a> Specializer<'a> {
     pub(super) fn base_bindings(&self) -> Bindings {
         Bindings {
             generic_templates: Rc::clone(&self.generic_templates),
+            associated_types: Rc::clone(&self.associated_types),
             ..Bindings::default()
         }
     }
@@ -1402,6 +1420,7 @@ impl<'a> Specializer<'a> {
                         explicit_destroy_message: None,
                         explicit_destructors: HashMap::default(),
                         conformances: Vec::new(),
+                        associated_types: Vec::new(),
                     });
                 }
                 continue;
@@ -1432,6 +1451,7 @@ impl<'a> Specializer<'a> {
             }
             declaration.name = name;
             declaration.param_decls.clear();
+            declaration.associated_types.clear();
             // Overload-qualified `mut self` entries name the template
             // (for example, a signature-qualified `List.pop`); respell them
             // under the instance so

@@ -185,6 +185,15 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                         )
                     })),
                 ),
+                (
+                    "associated_types",
+                    list(declaration.associated_types.iter().map(|(name, ty)| {
+                        record(
+                            "associated_type",
+                            &[("name", symbol(name)), ("type", ty_value(ty))],
+                        )
+                    })),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();

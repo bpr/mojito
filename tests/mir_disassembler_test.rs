@@ -142,6 +142,7 @@ fn metadata_program() -> MirProgram {
             explicit_destroy_message: Some("call destroy() first".into()),
             explicit_destructors: HashMap::from([("_finish".into(), true)]),
             conformances: Vec::new(),
+            associated_types: Vec::new(),
         }],
         functions: vec![MirFunctionDeclaration {
             lowered_name: "scale".into(),

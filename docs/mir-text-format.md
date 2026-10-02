@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.11
+# Mojito Textual MIR Format, Version 1.12
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.11 is implemented end to end for inspection and loading: canonical
+Version 1.12 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.11
+mojito-mir 1.12
 ```
 
-The writer emits 1.11. The reader accepts 1.0 through 1.11; *Schema 1.0*
+The writer emits 1.12. The reader accepts 1.0 through 1.12; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -115,6 +115,13 @@ of a type that names a compile-time parameter, which only a template holds.
 The elaborator replaces it with a string `const` spelled from the
 substituted type, so elaborated MIR holds none. A 1.10 consumer rejects the
 instruction, which is the intended failure.
+
+Minor version 12 carries a struct's unparameterized associated types
+(`associated_types` on a `struct` record): a list of
+`associated_type { name, type }`, sorted by name, each type over the
+struct's own binders. The elaborator solves `C.Element` from them once `C`
+is bound to an instance, and elaborated MIR carries an empty list. An
+older artifact reads as carrying none.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -227,12 +234,15 @@ struct {
   fieldwise_init: true,
   param_decls: [],
   explicit_destroy_message: absent,
-  explicit_destructors: []
+  explicit_destructors: [],
+  conformances: [],
+  associated_types: []
 }
 ```
 
 `explicit_destructors` contains `destructor { name: symbol, raises: bool }`
-records sorted by name.
+records sorted by name. `associated_types` contains
+`associated_type { name: symbol, type: type }` records sorted by name.
 
 ### Function declarations
 
@@ -589,7 +599,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.11
+mojito-mir 1.12
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

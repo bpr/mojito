@@ -1254,6 +1254,10 @@ pub struct ConformanceFacts {
     /// conforms to none of them by its shape.
     pub traits: Vec<String>,
     pub structs: HashMap<String, Vec<StructConformance>>,
+    /// Each struct's unparameterized associated types (`Element` of `List`),
+    /// sorted by member, each over the struct's own binders. The elaborator
+    /// solves `C.Element` from them once `C` is bound to an instance.
+    pub associated: HashMap<String, Vec<(String, mojito_types::types::Ty)>>,
 }
 
 /// One struct's conformance to one trait: it holds for the instances whose

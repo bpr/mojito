@@ -191,6 +191,24 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.12 carries the associated types; an older artifact has none.
+        let associated_types = self
+            .field(fields, "associated_types")
+            .ok()
+            .and_then(|members| self.list(members).ok())
+            .map(|members| {
+                members
+                    .iter()
+                    .filter_map(|member| {
+                        let member_fields = self.record(member, "associated_type").ok()?;
+                        let name = self.req(member, member_fields, "name", Self::symbol);
+                        let ty = self.req(member, member_fields, "type", Self::ty);
+                        self.unknown(member_fields, &["name", "type"]);
+                        Some((name?, ty?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -202,6 +220,7 @@ impl Decoder {
                 "explicit_destroy_message",
                 "explicit_destructors",
                 "conformances",
+                "associated_types",
             ],
         );
         Some(MirStructDeclaration {
@@ -213,6 +232,7 @@ impl Decoder {
             explicit_destroy_message,
             explicit_destructors,
             conformances,
+            associated_types,
         })
     }
 

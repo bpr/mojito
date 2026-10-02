@@ -135,6 +135,10 @@ struct Bindings {
     /// instance symbol; checker-specialized structs with empty `param_decls`
     /// (the `Tuple$tN` family) keep their names.
     generic_templates: Rc<HashSet<String>>,
+    /// Each source struct's parameters and unparameterized associated types.
+    /// Substitution solves `C.Element` from them once `C` is bound to an
+    /// instance, where no signature spelled the member for unification.
+    associated_types: Rc<HashMap<String, AssociatedTypes>>,
     /// The call-site arity of an unspecialized variadic callee: substitution
     /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
     variadic_arity: Option<usize>,
@@ -148,12 +152,19 @@ struct Bindings {
     folded_captures: Vec<(String, CtValue)>,
 }
 
+/// A struct's own parameters and its associated types over them.
+struct AssociatedTypes {
+    param_decls: Vec<ParamDecl>,
+    members: Vec<(String, Ty)>,
+}
+
 struct Specializer<'a> {
     source: &'a MirProgram,
     functions: HashMap<&'a str, &'a MirFunction>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
+    associated_types: Rc<HashMap<String, AssociatedTypes>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,
     output_functions: Vec<(String, MirFunction)>,

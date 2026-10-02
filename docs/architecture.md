@@ -1014,10 +1014,10 @@ overloaded method with binders of its own. An instance whose argument
 carries a loan clones no more than a plain-data one. A generic `def` called
 at a loan-carrying argument keeps its template the same way
 (`Elab::template_serves_def`): it mints a clone, over clone origin binders,
-only where its body holds or reaches such a construct, or names an
-associated type its signature does not spell, which the elaborator has no
-call type to solve from. Every other closed call of a generic `def` still
-clones. Because
+only where its body holds or reaches such a construct. An associated type
+the signature does not spell (`C.Element` as a loop variable's type) is
+solved from `MirStructDeclaration.associated_types` once `C` is bound. Every
+other closed call of a generic `def` still clones. Because
 no clone check walks a template-served body at the instance's arguments, the
 driver also reads from the template's checked types which closed instances
 that body reaches (`Box[List[Self.T]]`), transitively, and requests them
@@ -2429,6 +2429,14 @@ discovery reaches it and is an error when a call demands it. An instance that
 fails to materialize fails the compilation. The text schema carries the three
 fields from 1.9, and an older artifact reads as carrying none. Schema 1.10
 adds the `sig_carried(type)` signature origin.
+
+A struct's unparameterized associated types ride the same way:
+`MirStructDeclaration.associated_types` holds each member's type over the
+struct's own binders (`ConformanceFacts::associated`, text schema 1.12). The
+elaborator unifies a signature's `C.Element` against a call's types first
+(`mono/unify.rs`); one no signature spells it substitutes from the member of
+the struct `C` is bound to (`declared_associated_type`,
+`mono/substitute.rs`). Elaborated MIR carries no associated types.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection

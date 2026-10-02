@@ -736,15 +736,14 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 bindings,
             )?
         }
-        Ty::Assoc { .. } => bindings
-            .associated
-            .get(&ty.to_string())
-            .cloned()
-            .ok_or_else(|| {
+        Ty::Assoc { base, name, args } => match bindings.associated.get(&ty.to_string()) {
+            Some(solved) => solved.clone(),
+            None => declared_associated_type(base, name, args, bindings)?.ok_or_else(|| {
                 unsupported(format!(
                     "associated type `{ty}` has no concrete MIR declaration fact"
                 ))
             })?,
+        },
         // A generic callable remains as a transient storage type until its
         // statically named producer and dependent call sites are rewritten.
         // `ensure_concrete_function` rejects it if any executable use survives.
@@ -920,4 +919,51 @@ pub(super) fn bound_parameter_locals<'a>(
             Some((binder.name.trim_start_matches('*').to_string(), value))
         })
         .collect()
+}
+
+/// The associated type `name` of the instance `base` resolves to, read off
+/// the member its struct declares: the member's type under the instance's
+/// own arguments. `None` where `base` is no struct that declares the member,
+/// or the member takes arguments of its own.
+fn declared_associated_type(
+    base: &Ty,
+    name: &str,
+    args: &[TyArg],
+    bindings: &Bindings,
+) -> Result<Option<Ty>, MonoError> {
+    if !args.is_empty() {
+        return Ok(None);
+    }
+    let base = substitute_ty(base, bindings)?;
+    let Ty::Struct(struct_name, struct_args) = peel_refs(&base) else {
+        return Ok(None);
+    };
+    let Some((template, declared)) = bindings
+        .associated_types
+        .get_key_value(struct_name.as_str())
+        .or_else(|| {
+            bindings
+                .associated_types
+                .get_key_value(nominal_template(struct_name))
+        })
+    else {
+        return Ok(None);
+    };
+    let Some((_, member)) = declared.members.iter().find(|(member, _)| member == name) else {
+        return Ok(None);
+    };
+    let mut instance = Bindings {
+        generic_templates: Rc::clone(&bindings.generic_templates),
+        associated_types: Rc::clone(&bindings.associated_types),
+        self_instance: Some((template.clone(), peel_refs(&base).clone())),
+        ..Bindings::default()
+    };
+    bind_ty_args(&declared.param_decls, struct_args, &mut instance).map_err(|construct| {
+        MonoError {
+            function: None,
+            construct,
+        }
+    })?;
+    apply_defaults(&declared.param_decls, &mut instance)?;
+    substitute_ty(member, &instance).map(Some)
 }
