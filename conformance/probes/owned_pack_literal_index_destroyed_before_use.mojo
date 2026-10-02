@@ -10,8 +10,10 @@
 #   mojo:   del 2 / del 1 / N1 / het_one end
 #   mojito: N1 / del 2 / del 1 / het_one end
 #
-# When decided: match the pin, or record the difference in
-# `docs/non-goals.md` if the pin's order reads a destroyed value.
+# Decided: the pin's order reads a destroyed value (a `String` field prints
+# after its owner's `__deinit__` ran), so Mojito keeps its order and the
+# difference is recorded in `docs/non-goals.md`. When a re-pin prints first,
+# promote this to `assets/ok/`.
 struct Noisy(Movable, Writable):
     var n: Int
 

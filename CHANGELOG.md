@@ -155,7 +155,7 @@ to evolve under the `0.x` compatibility rules.
   destroy an owning collector in reverse where `Tuple` storage stays
   left to right (`assets/ok/owned_pack_destroyed_in_reverse.mojo`). The pin
   destroys a heterogeneous owned pack before consuming a literal-index
-  element read that is its last use (roadmap 3.2).
+  element read that is its last use (`docs/non-goals.md`).
 - An argument a read `*args` collector gathers is lent to the call, as a
   `read` parameter's argument is. `show(y, 5)` against
   `show[*Ts: Writable](*a: *Ts)` ran `y`'s destructor before `show`'s body,
@@ -261,6 +261,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An owned heterogeneous pack keeps outliving a literal-index element read
+  that is its last use: `print(a[0])` over `var *a: *Ts` prints the element
+  and then destroys the pack. The pinned Mojo destroys the pack first and
+  prints an element whose destructor already ran, a `String` field included,
+  so the difference is an upstream defect recorded in `docs/non-goals.md`
+  rather than an order to copy. This closes roadmap 3.2 with no code change.
 - `CompiledProgram::elaborated_mir` is `drop_elaborated_mir`, naming the
   phase apart from concrete MIR. `backend::pliron::compile` takes the
   driver's `SpecializedProgram` and elaborates nothing; `compile_mir` keeps

@@ -221,6 +221,25 @@ before the pointer is read.
 
 - Upstream does the same, so this is parity, not a defect.
 
+### An owned pack outlives a literal-index element read
+
+`print(a[0])` as the last use of `var *a: *Ts` prints the element and then
+destroys the pack. The pinned Mojo destroys the whole pack first and then
+prints the element it read out of it.
+
+- The pin's order reads a destroyed value: an element holding a `String`
+  prints that string after the element's `__deinit__` ran and its field was
+  freed (2026-10-02). It is an upstream defect, not a rule to copy.
+- The same happens at the pin for `a[1]` and for an element handed to a read
+  parameter (`show(a[0])`).
+- A `comptime for` over the pack, a homogeneous `var *a: T` collector, and a
+  read `*a: *Ts` pack consume the element first on both sides, which is the
+  order Mojito keeps everywhere.
+- Probe:
+  `conformance/probes/owned_pack_literal_index_destroyed_before_use.mojo`.
+- Revisit when a re-pin prints the element first, and promote the probe to
+  `assets/ok/` then.
+
 ### A nested callable contract's binders are not told from its enclosing contract's
 
 Every anonymous callable contract declares its binders under the owner
