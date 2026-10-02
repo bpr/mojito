@@ -443,6 +443,7 @@ fn lower_nested_node(
                 error: None,
                 returns_reference: false,
                 param_writes: Vec::new(),
+                availability: Vec::new(),
             });
         let capture_count = captures.len();
         let binders = enclosing_binders.with(&param_decls);
@@ -527,6 +528,7 @@ fn lower_nested_node(
             param_writes: std::iter::repeat_n(true, captures.len())
                 .chain(effect.param_writes.iter().copied())
                 .collect(),
+            availability: Vec::new(),
         });
         let immutable_captures: HashSet<String> = captures
             .iter()

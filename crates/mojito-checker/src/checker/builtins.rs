@@ -7,6 +7,11 @@ pub use mojito_types::types::{
     coerces,
 };
 
+pub use mojito_types::conformance::SIMD_WILDCARD_BOUND;
+pub(super) use mojito_types::conformance::{
+    builtin_hashable_ty, is_integer_like, is_numeric, is_numeric_like, is_scalar,
+    is_signed_numeric_like, simd_valued_ty,
+};
 pub(super) use mojito_types::types::default_literal;
 
 /// The inferred type parameter a `Hasher`'s wildcard vector parameter
@@ -19,8 +24,6 @@ pub(super) use mojito_types::types::default_literal;
 /// (`synth::desugar_simd_keyed_methods`); the checker owns the names, since
 /// it checks the template symbolically and proves the bound.
 pub const SIMD_WILDCARD_PARAM: &str = "$simd";
-/// The hidden bound of [`SIMD_WILDCARD_PARAM`].
-pub const SIMD_WILDCARD_BOUND: &str = "$SIMD";
 
 /// Whether a declaration's binder is the desugared wildcard vector
 /// parameter: infer-only, bounded by [`SIMD_WILDCARD_BOUND`] alone.
@@ -32,12 +35,6 @@ pub(super) fn simd_wildcard_binder(binder: &mojito_ast::ast::TypeParam) -> bool 
 /// signature and the `Hasher` conformance check see it.
 pub(super) fn simd_wildcard_param(ty: &Ty) -> bool {
     matches!(ty, Ty::Param { bounds, .. } if matches!(bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND))
-}
-
-/// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
-/// the numeric cases (handled by `common_numeric`) are out of the way.
-pub(super) const fn is_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None | Ty::Dtype)
 }
 
 /// Whether an opaque type parameter carries a bound that promises equality.
@@ -244,18 +241,6 @@ pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'s
     }
 }
 
-/// Integer-kind scalars — the operands of bitwise and shift operators
-/// (`IntLiteral` materializes to `Int`).
-pub(super) fn is_integer_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty), Ty::Int | Ty::UInt)
-}
-
-/// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
-/// is excluded, matching the existing `infer_prefix` rule.
-pub(super) fn is_signed_numeric_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty), Ty::Int | Ty::Float64)
-}
-
 /// The trait bounds that supply a numeric-rounding dunder (`method`/`argc`),
 /// used by the self-hosted `math` module (roadmap milestone 7). `__floor__`/`__ceil__`/
 /// `__trunc__` are nullary (`Floorable`/`Ceilable`/`Truncable`); `__ceildiv__`
@@ -270,25 +255,6 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
         ("__ceildiv__", 1) => &["CeilDivable", "CeilDivableRaising"],
         _ => &[],
     }
-}
-
-pub(super) const fn builtin_hashable_ty(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::Int
-            | Ty::UInt
-            | Ty::Bool
-            | Ty::StringLiteral
-            | Ty::Float64
-            | Ty::Simd { .. }
-            | Ty::Dtype
-    )
-}
-
-/// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
-/// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
-pub(super) const fn simd_valued_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::Simd { .. }) || mojito_types::types::simd_shape(ty).is_some()
 }
 
 /// The bit width of one lane of `dtype` (`bool` is one bit).
@@ -333,10 +299,6 @@ pub(super) fn symbolic_unsigned_dtype_of(
         target = context.op(ParamOp::Cond, &[same_width, dtype(unsigned)?, target])?;
     }
     Ok(target)
-}
-
-pub(super) fn is_numeric_like(ty: &Ty) -> bool {
-    is_numeric(&default_literal(ty))
 }
 
 /// Enforce that a builtin-driven dunder (`__len__`/`__str__`/`__contains__`)
@@ -404,14 +366,6 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
         Ty::Tuple(elems) => elems.iter().all(is_printable),
         _ => false,
     }
-}
-
-/// Whether `ty` is a numeric type (concrete or literal).
-pub(super) const fn is_numeric(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::Int | Ty::UInt | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral
-    )
 }
 
 /// True when `from` fails to bind to `to` solely because a capturing

@@ -2443,6 +2443,7 @@ impl Checker {
                         .collect::<Vec<_>>(),
                     &ref_params,
                 ),
+                availability: Vec::new(),
             },
         );
         let fn_ty = if decls.is_empty() {

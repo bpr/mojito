@@ -17,6 +17,7 @@ use symbolic::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use unify::*;
 
+use availability::Availability;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::{
@@ -172,15 +173,9 @@ struct Specializer<'a> {
     /// parameter. A snapshot of one never differs from the slot, so a
     /// direct call to a generic nested `def` may pass the slot itself.
     folded_slots: HashSet<u32>,
-    /// Instance names enqueued only by struct discovery's eager `__init__`
-    /// walk, never by a call site. A conditional constructor (`__init__(out
-    /// self) where conforms_to(Self.T, Defaultable)`) has no MIR-visible
-    /// clause, so discovery over-approximates; an instance that cannot
-    /// materialize is dropped instead of rejecting the program, exactly
-    /// because the checker admitted no call to it.
-    speculative: HashSet<String>,
 }
 
+mod availability;
 mod equiv;
 mod infer;
 mod instances;

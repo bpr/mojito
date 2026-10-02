@@ -60,7 +60,8 @@ vocabulary.
 |---|---|---|
 | Binders | `ParamDecl::{Type, Value}` with its `ParamId`; uses are `Ty::Param { binder: ParamRef }` and `ParamExpr` over `ParamRef` | `MirFunctionDeclaration.param_decls`, `MirStructDeclaration.param_decls` |
 | Assumptions a bound supplies | `ParamDecl::Type.bounds`, `callable_bound`, and `constraints: Vec<GenericConstraint>` | Yes, serialized with the declaration |
-| Availability of a conditional member | `GenericConstraint` (the checker's `MethodSig.availability`) | **No.** See §Availability |
+| Availability of a conditional member | `GenericConstraint` (the checker's `MethodSig.availability`) | `MirFunctionDeclaration.availability`. See §Availability |
+| A struct's conformances, with their conditions | `StructConformance`: a trait and the `GenericConstraint`s any of which proves it | `MirStructDeclaration.conformances`, and the declared traits in `MirDeclarations.traits` |
 | Value propositions an instance owes | `ParamConstraint`: a `Bool` `ParamExpr` with its location and message, decided by `ParamConstraint::verdict` into a `ConstraintVerdict` | Not yet used above the waist; see §Predicates |
 | Selected calls | Callable identity from `mojito-symbol`: the lowered symbol on `Call.func`, `MethodCall.resolved`, `CallIndirect.resolved`, `GetIter.prepare`, and the iterator call of `TryNext` | Yes |
 | Witness requests | The abstract receiver `symbol::TRAIT_DISPATCH` (`__trait_dispatch.copy$ov$…`) on those same fields, and type-directed operations (§The inventory) | Yes |
@@ -186,79 +187,63 @@ materializes an instance, with the instance's `Bindings`.
   a concrete instance is an invariant violation: concrete bindings close
   every operand.
 
-## Availability: the `speculative` audit
+## Availability
 
-What the code does today (`crates/mojito-native/src/native/mono.rs`,
-`mono/specializer.rs`):
+A member-level `where` clause is the checker's `MethodSig.availability`. It
+reaches MIR on the member's declaration, and the elaborator decides it under
+an instance's `Bindings` (`mono/availability.rs`).
 
-- `Specializer::discover_structs`' eager walk enqueues, for each concrete
-  struct instance, every overload of `__init__`, `__copyinit__`,
-  `__moveinit__`, and `__deinit__`. Lowering composes lifecycle symbols by
-  name, so they must exist whether or not a call names them.
-- `__init__` overloads are enqueued through `enqueue_speculative`, which
-  puts the instance name in `Specializer::speculative`. The other three are
-  firm.
-- A call site's `enqueue` of the same instance removes it from the set. The
-  instance is then firm.
-- In `Specializer::run`, a firm instance that fails to materialize fails
-  the compilation. A speculative one is rolled back: its functions and
-  declarations are truncated and its key is forgotten.
-- "Fails to materialize" is any `MonoError`, including the per-instance
-  concrete check (`mono/symbolic.rs:ensure_concrete_function`).
+What the generator carries:
 
-Why it exists: a member-level `where` clause is the checker's
-`MethodSig.availability`. It does not reach `MirFunctionDeclaration`. Only a
-binder's own `ParamDecl::Type.constraints` do. So `Slot[NoDefault]`'s
-`__init__(out self) where conforms_to(Self.T, Defaultable)` looks, in MIR,
-like any other constructor, and the walk cannot tell it is absent from that
-instance. It tries, and treats failure as absence.
+- **The availability clause, on the declaration.**
+  `MirFunctionDeclaration.availability` holds the member's
+  `Vec<GenericConstraint>`, one entry per clause, serialized as binder
+  constraints are. The operands name the owner's and the member's binders by
+  `ParamRef`. No new type was needed.
+- **The conformance rows, on the struct.** `MirStructDeclaration.conformances`
+  holds one row per trait that an availability clause or a conformance
+  condition of the program names. A row lists conditions over the struct's
+  own binders, and an instance conforms when its arguments satisfy any of
+  them. No condition means no instance conforms. The checker builds the rows
+  from the same rules `conforms_to` applies to a struct
+  (`Checker::conformance_facts`), so the elaborator ranks nothing and
+  re-derives nothing.
+- **The declared traits, on the program.** `MirDeclarations.traits` lists
+  them. A compiler-known type conforms to none of them, and to a built-in
+  trait by its shape alone. That shape rule is one function,
+  `mojito_types::conformance::leaf_conforms`, which the checker's
+  `conforms_to` and the elaborator both call.
 
-What is wrong with that as a contract:
+How the elaborator uses it:
 
-- **Failure stands in for a predicate.** An elaborator defect in an
-  available constructor that only the walk reaches is swallowed, and the
-  constructor is missing later with no diagnostic.
-- **It is sound only because the checker admitted no call.** That is the
-  trust P2 removes for method bodies, and a package importer never had it.
-- **It covers one member name.** A conditional ordinary method is never
-  enqueued eagerly, so it needs nothing today. A conditional copy or move
-  constructor is covered only because current Mojo spells both as
-  `__init__` overloads. The `__copyinit__`, `__moveinit__`, and `__deinit__`
-  symbols are enqueued firm, and no rule says what a conditional one means
-  for an instance that does not meet its clause.
-- **Demanded and discovered are one bit on a name**, cleared as a side
-  effect of `enqueue`.
-
-What the generator must carry instead:
-
-- **The availability clause, on the declaration.** `MirFunctionDeclaration`
-  gains the member's `Vec<GenericConstraint>`, lowered from
-  `MethodSig.availability` and serialized as binder constraints already
-  are. The operands name the owner's and the member's binders by `ParamRef`.
-  A clause over value binders uses the same enum's comparison forms. No new
-  type is needed.
 - **A verdict, not a trial.** Before materializing a member, the elaborator
-  evaluates the clause under the instance's `Bindings`. False means the
-  member is not in this instance.
-- **Reachability as a state.** A request is *demanded* (a call, a witness
-  request, or a lifecycle operation in a reachable body) or *discovered*
-  (the eager walk). The rules:
-  - Discovered and unavailable: skipped.
-  - Demanded and unavailable: a compile error at the demanding site.
-  - Available, either way: materialized, and any failure is an error.
-- **Lifecycle members follow the same rule.** A conditional lifecycle
-  member that is unavailable in an instance is absent from it, and a drop
-  or copy that needs it is a demand.
+  evaluates the clause. The verdict is proven, disproven, or undecided.
+- **Reachability is the caller's.** A request is *demanded* (`enqueue`: a
+  call, a witness request, or a lifecycle operation in a reachable body) or
+  *discovered* (the eager walk in `discover_structs`).
 
-With that, `speculative` and the rollback in `run` are deleted. That is
-roadmap §1's availability entry.
+  | Request | Proven | Disproven | Undecided |
+  |---|---|---|---|
+  | Discovered `__init__` | Materialized | Skipped | Skipped. A call site demands it |
+  | Discovered `__copyinit__`, `__moveinit__`, `__deinit__` | Materialized | Skipped | Materialized. Lowering composes the name |
+  | Demanded | Materialized | A compile error naming the member, the instance, and the clause's message | Materialized on the checker's word |
 
-The conformance question — does `Slot[Int]` conform to `Defaultable` — is
-the checker's `traits.rs` today. The elaborator needs the same answer for
-concrete types. Conformance tables reach MIR only as the names in
-`ParamDecl::Type.bounds`, so the elaborator's evaluator needs each concrete
-struct's conformance set, conditional conformances included. That metadata is
-listed below, and it is the one piece of P2 that touches `MirStructDeclaration`.
+- **A failure is an error.** Nothing is rolled back. A member that is
+  available and does not materialize fails the compilation.
+- **An instance keeps nothing to decide.** An elaborated declaration has an
+  empty `availability`, and an instance struct's rows hold `Bool(true)` or
+  nothing. `mir::verify::verify_concrete` rejects anything else.
+
+What is undecided: a clause over `IsTrivially*`, a pack predicate, or a value
+expression, and a question asked of a struct that answers by its elements
+before its specialization exists. That is roadmap §1's entry on undecided
+clauses. The contract's rule that concrete bindings close every predicate
+(§Predicates) holds once that entry lands.
+
+Removing the trial exposed one defect it had hidden. `Array[c_char, n]()`
+never materialized, because `T()` over a SIMD binding had no construction.
+The eager walk reached that constructor in a program that never called it,
+and the rollback dropped it. The elaborator now builds the zero vector.
 
 ## Pin verdicts
 
@@ -272,7 +257,7 @@ Probes run on 2026-10-01 against Mojo `1.6.0.dev2026092105`.
 | `def inner() {var item}` capturing `item: Self.T`, `T: Copyable & Deinitable` | Rejects the declaration: "value of type 'T' cannot be implicitly copied" | Rejects the declaration: "capture convention for 'item' requires ImplicitlyCopyable" | Row 26's capability is D |
 | `rebind[Int](x)` with `x: T`, called at `String` | Rejects the instance: "function instantiation failed" | Rejects the instance | Row 2 is P |
 | `var w: Wrapper[Self.T] = self.item`, `Wrapper` with `@implicit` constructors over `Int` and `Self.T`, at `Box[Int]` | Prints 2: the `Self.T` constructor, bound once | Prints 2 where the template serves the method (`assets/ok/implicit_conversion_bound_on_declaration.mojo`); "ambiguous implicit conversion from 'Int' to 'Wrapper[Int]'" where the method still clones | Row 20 is D. The cloned case is filed (`conformance/probes/implicit_conversion_bound_on_declaration.mojo`) |
-| Conditional `__init__` and method over `conforms_to(Self.T, Defaultable)`, one instance with and one without | Runs | Runs, concrete and erased | §Availability describes working behavior |
+| Conditional `__init__` and method over `conforms_to(Self.T, Defaultable)`, one instance with and one without | Runs | Runs, concrete and erased | §Availability describes working behavior (`assets/ok/conditional_member_availability.mojo`) |
 | Calling the conditional method on the instance without | "invalid call to 'reset': violated constraint" | Same | A demanded unavailable member is an error at the call |
 
 ## Package metadata
@@ -285,11 +270,11 @@ the list in view.
 |---|---|
 | Exported signature: runtime parameters, conventions, result, raise contract | `MirFunctionDeclaration` |
 | Binders, bounds, binder constraints | `param_decls`, serialized |
-| Member availability clauses | Missing (§Availability) |
+| Member availability clauses | `MirFunctionDeclaration.availability`, serialized |
 | Bodies, drop-elaborated | MIR text |
 | Struct layout inputs: fields over binders | `MirStructDeclaration.fields` |
-| A struct's conformances, with their conditions | Missing. Checker tables only |
-| Trait declarations: requirements and defaults | Missing. A witness request names the requirement's symbol only |
+| A struct's conformances, with their conditions | `MirStructDeclaration.conformances`, for the traits a clause or a condition names |
+| Trait declarations: requirements and defaults | Names only (`MirDeclarations.traits`). A witness request names the requirement's symbol only |
 | Transfer and call-through summaries | Missing. Checker tables only |
 | Instantiation-time predicates of a body (`rebind`, lane constraints) | Missing. Derivation holds them as `RebindAssertion` |
 | Export set: every template, reached or not | The artifact holds one program's whole drop-elaborated MIR. It records no export set |
@@ -299,7 +284,7 @@ the list in view.
 | Target assumptions | None in parametric MIR. Layout is asked only of concrete types |
 | Cache key: source hash, compiler identity, dependency keys | Missing |
 
-P2 adds two rows: availability clauses, and the conformance set the
+P2 added two rows: availability clauses, and the conformance rows the
 elaborator's verdicts need. Both are declaration metadata, and both are in
 the package list, so neither is reshaped later.
 
@@ -338,5 +323,5 @@ instance's arguments are plain data.
 | 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. An instance over a loan-carrying argument still clones (roadmap §1). |
 | 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |
 | 18 | The template's selected constructor serves the instance, a variadic one keyed by the call's element count. |
-| 7, 16, 18 (availability) | Still decided by the checker at the call. The clause is not in MIR (roadmap §1). |
+| 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap §1). |
 | 2, 23, 24, 26, 27 | Unchanged: these bodies hold a compile-time construct and keep their clones until P3. |

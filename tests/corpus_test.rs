@@ -297,6 +297,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // type arguments, so a template-served body's call cannot be handed to
     // the receiver instance's clone as the elaborator hands it.
     "generic_struct_template_reach",
+    // Section 1, the erased oracle: an erased value carries no type
+    // argument to construct `T()` from where `T` is a SIMD type.
+    "simd_parameter_default_construction",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

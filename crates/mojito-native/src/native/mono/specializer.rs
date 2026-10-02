@@ -44,7 +44,6 @@ impl<'a> Specializer<'a> {
             closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
             folded_slots: HashSet::new(),
-            speculative: HashSet::new(),
         }
     }
 
@@ -81,22 +80,7 @@ impl<'a> Specializer<'a> {
                     "polymorphic recursion exceeded the 4096-instance budget",
                 ));
             }
-            let name = self.instance_name(&key).to_string();
-            if !self.speculative.contains(&name) {
-                self.materialize(&key, &bindings)?;
-                continue;
-            }
-            // A discovery-only constructor instance that cannot materialize
-            // is not part of the program: forget it (a later call site would
-            // re-enqueue and report the failure in its own context).
-            let functions = self.output_functions.len();
-            let decls = self.output_function_decls.len();
-            if self.materialize(&key.clone(), &bindings).is_err() {
-                self.output_functions.truncate(functions);
-                self.output_function_decls.truncate(decls);
-                self.instances.retain(|(known, _)| known != &key);
-            }
-            self.speculative.remove(&name);
+            self.materialize(&key, &bindings)?;
         }
         let function_order = self
             .source
@@ -129,6 +113,7 @@ impl<'a> Specializer<'a> {
             declarations: MirDeclarations {
                 structs: self.output_structs,
                 functions: self.output_function_decls,
+                traits: self.source.declarations.traits.clone(),
             },
             invariant_errors: self.source.invariant_errors.clone(),
         };
@@ -172,35 +157,30 @@ impl<'a> Specializer<'a> {
         }
     }
 
+    /// Demand the instance of `template` under `bindings`. A member whose
+    /// `where` clause these bindings disprove is not part of its owner's
+    /// instance, so demanding it is an error.
     pub(super) fn enqueue(
         &mut self,
         template: &str,
         bindings: Bindings,
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
-        self.enqueue_with(template, bindings, arguments, false)
-    }
-
-    /// `enqueue` for struct discovery's eager `__init__` walk: a fresh
-    /// instance is speculative (see `Specializer::speculative`); an instance
-    /// some call site already demanded stays firm, and a later call-site
-    /// `enqueue` of a speculative instance makes it firm.
-    fn enqueue_speculative(
-        &mut self,
-        template: &str,
-        bindings: Bindings,
-        arguments: Vec<InstanceArg>,
-    ) -> Result<String, MonoError> {
-        self.enqueue_with(template, bindings, arguments, true)
-    }
-
-    fn enqueue_with(
-        &mut self,
-        template: &str,
-        bindings: Bindings,
-        arguments: Vec<InstanceArg>,
-        speculative: bool,
-    ) -> Result<String, MonoError> {
+        if let Some(declaration) = self.declarations.get(template).copied()
+            && let Availability::Disproven(message) = self.availability(declaration, &bindings)
+        {
+            let instance = bindings
+                .self_instance
+                .as_ref()
+                .map_or_else(|| "this instance".to_string(), |(_, ty)| format!("`{ty}`"));
+            return Err(self.error(
+                Some(template),
+                format!(
+                    "member `{template}`, which is unavailable in {instance}{}",
+                    message.map_or_else(String::new, |message| format!(": {message}"))
+                ),
+            ));
+        }
         let owner = bindings.self_instance.as_ref().and_then(|(_, ty)| {
             if let Ty::Struct(name, _) = ty {
                 Some(name.clone())
@@ -227,11 +207,7 @@ impl<'a> Specializer<'a> {
             owner,
         };
         if let Some((_, name)) = self.instances.iter().find(|(known, _)| known == &key) {
-            let name = name.clone();
-            if !speculative {
-                self.speculative.remove(&name);
-            }
-            return Ok(name);
+            return Ok(name.clone());
         }
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
@@ -281,9 +257,6 @@ impl<'a> Specializer<'a> {
                     .zip(self.functions.get(template))
                     .is_some_and(|(known, template)| functions_equivalent(known, template))
         }) {
-            if !speculative {
-                self.speculative.remove(&name);
-            }
             return Ok(name);
         }
         if (name != template && self.functions.contains_key(name.as_str()))
@@ -296,9 +269,6 @@ impl<'a> Specializer<'a> {
         }
         self.instances.push((key.clone(), name.clone()));
         self.queue.push_back((key, bindings));
-        if speculative {
-            self.speculative.insert(name.clone());
-        }
         Ok(name)
     }
 
@@ -356,6 +326,7 @@ impl<'a> Specializer<'a> {
             .declarations
             .get(key.template.as_str())
             .map_or(&[][..], |declaration| &declaration.param_decls);
+        default_construct_simd_parameters(&mut function, bindings);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
@@ -420,6 +391,7 @@ impl<'a> Specializer<'a> {
             substitute_declaration(&mut declaration, bindings)?;
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
+            declaration.availability.clear();
             fold_leading_capture_parameters(&mut declaration, bindings.folded_captures.len());
             for (parameter, ty) in promoted {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
@@ -1410,6 +1382,7 @@ impl<'a> Specializer<'a> {
                         param_decls: Vec::new(),
                         explicit_destroy_message: None,
                         explicit_destructors: HashMap::default(),
+                        conformances: Vec::new(),
                     });
                 }
                 continue;
@@ -1486,6 +1459,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
+            declaration.conformances = self.instance_conformances(template, &bindings);
             self.output_structs.push(declaration);
             // The nominal String's `__copyinit__` stays too: native lowering
             // bridges it and never reaches the body, but the VM runs it.
@@ -1544,17 +1518,17 @@ impl<'a> Specializer<'a> {
                             owner_covered_prefix(&template.param_decls, &function_decl.param_decls);
                         method_arguments.drain(..covered);
                     }
-                    // Constructors are only ever reached through call sites;
-                    // the eager walk over-approximates a conditional
-                    // overload (`where conforms_to(Self.T, Defaultable)`
-                    // on an instance whose element is not), so it is
-                    // speculative. The copy/move/deinit lifecycle stays
-                    // firm: lowering composes those names itself.
-                    if method == "__init__" {
-                        self.enqueue_speculative(&candidate, bindings.clone(), method_arguments)?;
-                    } else {
-                        self.enqueue(&candidate, bindings.clone(), method_arguments)?;
+                    // A member whose `where` clause the instance disproves
+                    // is not part of it. A constructor whose clause stays
+                    // undecided waits for the call site that reaches it;
+                    // lowering composes the copy/move/deinit names itself,
+                    // so those join the instance unless disproven.
+                    match self.availability(function_decl, &bindings) {
+                        Availability::Proven => {}
+                        Availability::Undecided if method != "__init__" => {}
+                        Availability::Disproven(_) | Availability::Undecided => continue,
                     }
+                    self.enqueue(&candidate, bindings.clone(), method_arguments)?;
                 }
             }
         }

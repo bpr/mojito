@@ -1485,8 +1485,10 @@ mod tests {
                     param_decls: Vec::new(),
                     explicit_destroy_message: None,
                     explicit_destructors: HashMap::default(),
+                    conformances: Vec::new(),
                 }],
                 functions: Vec::new(),
+                traits: Vec::new(),
             },
             invariant_errors: Vec::new(),
         };

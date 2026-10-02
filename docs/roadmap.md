@@ -49,28 +49,7 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P2) A conditional member's availability clause does not reach
-  MIR**
-
-  Problem: `native::mono` enqueues every `__init__` overload of a struct
-  instance speculatively and drops the ones that fail to materialize, because
-  a member's `where` clause is absent from its MIR declaration.
-  - `MirFunctionDeclaration` gains the member's `GenericConstraint`s, lowered
-    from `MethodSig.availability` and serialized as binder constraints are.
-  - The elaborator decides the clause under the instance's bindings, so it
-    also needs each concrete struct's conformances, conditional ones
-    included, on `MirStructDeclaration`.
-  - A discovered member that is unavailable is skipped. A demanded one is a
-    compile error. An available one that fails to materialize is an error
-    too.
-  - Delete `Specializer::speculative` and the rollback in `run`.
-  - The design is
-    [`docs/notes/generator-contract.md`](notes/generator-contract.md)
-    §Availability.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 (P2) An instance over a loan-carrying argument still clones
+- [ ] **1.1 (P2) An instance over a loan-carrying argument still clones
   every method**
 
   Problem: `Bag[Span[Int, origin_of(xs)]]` mints a clone of each method,
@@ -87,7 +66,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.3 (P2) A type name over a struct's parameter is folded before
+- [ ] **1.2 (P2) A type name over a struct's parameter is folded before
   MIR**
 
   Problem: `_unqualified_type_name[Self]()` lowers to a string constant, so a
@@ -104,7 +83,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.4 (P2) An explicit application of a trait-bound generic `def` is
+- [ ] **1.3 (P2) An explicit application of a trait-bound generic `def` is
   cloned**
 
   Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
@@ -115,6 +94,29 @@ correctness fix to existing behavior is allowed.
   - Delete the function certificate classes that exist only for these clones.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **1.4 (P2) The elaborator leaves some availability clauses undecided**
+
+  Problem: `native::mono` decides a member's `where` clause only where it is
+  built from `conforms_to`, so a clause over a trivial-lifecycle predicate, a
+  pack predicate, or a value expression is not checked when the member is
+  instantiated.
+  - A demanded member with an undecided clause is materialized on the
+    checker's word.
+  - A discovered constructor with one waits for a call site. A discovered
+    copy, move, or destroy member with one is materialized.
+  - `MaybeUninit`'s members (`IsTriviallyDeinitable[T]`) are the bundled
+    case.
+  - `IsTrivially*` needs each struct's lifecycle facts in MIR. A value
+    comparison needs `ParamConstraint::verdict` over the instance's bindings.
+  - A struct that answers by its elements before its specialization exists,
+    the variadic `Tuple` and `TString` templates, carries no conformance
+    rows. A clause that asks one is undecided too.
+  - The evaluator is `mono/availability.rs`. The design is
+    [`docs/notes/generator-contract.md`](notes/generator-contract.md)
+    §Availability.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **1.5 (P3) No benchmark program mints a `comptime if`, `comptime for`,
   or pack body**
@@ -328,7 +330,7 @@ correctness fix to existing behavior is allowed.
     keyed-method and template-reach plumbing, the clone-symbol retargeting in
     the checker, the VM, and `native::mono`, and the method certificate
     classes in `checker/template_facts`.
-  - Depends on 1.2, 1.3, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.91.
+  - Depends on 1.1, 1.2, 1.9, 1.10, 1.13, 1.14, 1.15, and 3.91.
   - Model: Fable, Planned.
 
 - [ ] **1.18 (P4) The driver elaborates and checks to a fixpoint**
@@ -344,7 +346,7 @@ correctness fix to existing behavior is allowed.
   - Module-scope `comptime` values follow the boundary decision D3 set.
   - The budget is plan decision D4: a stated improvement on the workloads
     repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on 1.1, 1.2, 1.4, and 1.17.
+  - Depends on 1.1, 1.3, and 1.17.
   - Model: Fable, Planned.
 
 - [ ] **1.19 (P5) The replaced mechanisms are still in the tree**
@@ -378,7 +380,7 @@ correctness fix to existing behavior is allowed.
   - Importing skips the source check. It still validates the artifact and
     checks each instance's obligations.
   - The bundled library is the first consumer, built once per compiler build.
-  - Depends on 1.19.
+  - Depends on 1.4 and 1.19.
   - Model: Fable, Planned.
 
 - [ ] **1.21 (P0) The census cannot tell an erased template from a clone that
@@ -394,6 +396,24 @@ correctness fix to existing behavior is allowed.
   - Report the two apart, so the erased rows count only bodies no clone
     replaces.
   - Nothing blocks on it. The cloned rows and the checker rows are exact.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **1.22 (P5) The erased oracle cannot default-construct a SIMD-typed
+  parameter**
+
+  Problem: `Array[c_char, 4]()` runs on concrete MIR and stops under
+  `--erased` with "constructing type parameter 'T' ... requires a reified
+  type argument".
+  - `T()` over a parameter bound to a SIMD type is the zero vector. The
+    elaborator builds it (`mono/substitute.rs`,
+    `default_construct_simd_parameters`).
+  - An erased value carries no type argument for a native scalar or vector,
+    so the VM's `ConstructTypeParam` has nothing to construct from.
+  - `assets/ok/simd_parameter_default_construction.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry 1.19 deletes the oracle and this row with it. Nothing else needs
+    the erased path to construct one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

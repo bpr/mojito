@@ -61,9 +61,21 @@ impl Decoder {
                 functions.push(function);
             }
         }
+        // Schema 1.9 lists the declared traits; an older artifact names none.
+        let traits = self
+            .field(fields, "traits")
+            .map(|value| self.strings(value))
+            .unwrap_or_default();
         self.unknown(
             fields,
-            &["features", "files", "structs", "decls", "functions"],
+            &[
+                "features",
+                "files",
+                "traits",
+                "structs",
+                "decls",
+                "functions",
+            ],
         );
         if self.diagnostics.is_empty() {
             Ok((
@@ -72,6 +84,7 @@ impl Decoder {
                     declarations: MirDeclarations {
                         structs,
                         functions: function_declarations,
+                        traits,
                     },
                     invariant_errors: Vec::new(),
                 },
@@ -157,6 +170,27 @@ impl Decoder {
             }
             destructors
         };
+        // Schema 1.9 carries the conformance rows; an older artifact has none.
+        let conformances = self
+            .field(fields, "conformances")
+            .ok()
+            .and_then(|rows| self.list(rows).ok())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let row_fields = self.record(row, "conformance").ok()?;
+                        let trait_name = self.req(row, row_fields, "trait", Self::symbol);
+                        let conditions =
+                            self.req(row, row_fields, "conditions", |d, v| Some(d.constraints(v)));
+                        self.unknown(row_fields, &["trait", "conditions"]);
+                        Some(mojito_checked::checked::StructConformance {
+                            trait_name: trait_name?,
+                            conditions: conditions?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -167,6 +201,7 @@ impl Decoder {
                 "param_decls",
                 "explicit_destroy_message",
                 "explicit_destructors",
+                "conformances",
             ],
         );
         Some(MirStructDeclaration {
@@ -177,6 +212,7 @@ impl Decoder {
             param_decls,
             explicit_destroy_message,
             explicit_destructors,
+            conformances,
         })
     }
 
@@ -247,6 +283,12 @@ impl Decoder {
         })?;
         let ref_params = self.req(value, fields, "ref_params", |d, v| Some(d.bools(v)))?;
         let param_writes = self.req(value, fields, "param_writes", |d, v| Some(d.bools(v)))?;
+        // Schema 1.9 carries a member's `where` clauses; an older artifact
+        // has none.
+        let availability = self
+            .field(fields, "availability")
+            .map(|value| self.constraints(value))
+            .unwrap_or_default();
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
@@ -292,6 +334,7 @@ impl Decoder {
                 "error_type",
                 "ref_params",
                 "param_writes",
+                "availability",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -318,6 +361,7 @@ impl Decoder {
             error_ty,
             ref_params,
             param_writes,
+            availability,
         })
     }
 

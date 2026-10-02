@@ -25,12 +25,12 @@ use mojito_ast::ast::{
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
-use mojito_checked::checked::{CheckedConst, CheckedProgram};
+use mojito_checked::checked::{CheckedConst, CheckedProgram, StructConformance};
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use mojito_types::param_expr::{ParamContext, ParamExpr};
-use mojito_types::types::{ParamDecl, Ty, TyArg, dict_elements, tuple_elements};
+use mojito_types::types::{GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements};
 use std::collections::{HashMap, HashSet};
 
 mod ir;
@@ -118,6 +118,10 @@ impl std::ops::Deref for ConcreteMir {
 pub struct MirDeclarations {
     pub structs: Vec<MirStructDeclaration>,
     pub functions: Vec<MirFunctionDeclaration>,
+    /// Every trait the program declares, sorted. A compiler-known type
+    /// conforms to a trait outside this list by its shape
+    /// (`mojito_types::conformance::leaf_conforms`) and to none inside it.
+    pub traits: Vec<String>,
 }
 
 /// Build the native layout's struct-field index from MIR declaration metadata.
@@ -146,6 +150,11 @@ pub struct MirStructDeclaration {
     pub param_decls: Vec<ParamDecl>,
     pub explicit_destroy_message: Option<String>,
     pub explicit_destructors: HashMap<String, bool>,
+    /// The struct's answer for each trait a `where` clause or a conformance
+    /// condition of the program names, sorted by trait: an instance conforms
+    /// when its arguments satisfy any of the row's conditions. A concrete
+    /// instance's rows are decided, so each holds `Bool(true)` or nothing.
+    pub conformances: Vec<StructConformance>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +204,11 @@ pub struct MirFunctionDeclaration {
     /// analysis classifies a retained argument place by this mask. Same
     /// order as `param_types`.
     pub param_writes: Vec<bool>,
+    /// A struct member's `where` clauses, one entry per clause, over the
+    /// owner's and the member's binders. An instance whose arguments
+    /// disprove one does not have the member. Empty on a concrete instance,
+    /// whose clauses the elaborator decided.
+    pub availability: Vec<GenericConstraint>,
 }
 
 /// # Panics
@@ -205,7 +219,10 @@ pub struct MirFunctionDeclaration {
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     let program = checked.statements();
     let mut functions = Vec::new();
-    let mut declarations = MirDeclarations::default();
+    let mut declarations = MirDeclarations {
+        traits: checked.conformances().traits.clone(),
+        ..MirDeclarations::default()
+    };
     let mut invariant_errors = Vec::new();
     let mut toplevel: Vec<Stmt> = Vec::new();
     let overloads = {
@@ -331,6 +348,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             error: None,
                             returns_reference: false,
                             param_writes: Vec::new(),
+                            availability: Vec::new(),
                         }
                     });
                 let defaults = regular
@@ -425,6 +443,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     error_ty: effect.error.clone(),
                     ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
                     param_writes: effect.param_writes.clone(),
+                    availability: Vec::new(),
                 });
                 lower_fn_nested(
                     FunctionLowering {
@@ -525,6 +544,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .get(name)
                         .map(|info| info.destructors.clone())
                         .unwrap_or_default(),
+                    conformances: checked
+                        .conformances()
+                        .structs
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default(),
                 });
                 for (method_index, m) in methods.iter().enumerate() {
                     let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
@@ -577,6 +602,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                 error: None,
                                 returns_reference: false,
                                 param_writes: Vec::new(),
+                                availability: Vec::new(),
                             }
                         });
                     let generic_site = GenericSite::Method {
@@ -750,6 +776,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .map(|param| is_ref(&param.convention))
                             .collect(),
                         param_writes: effect.param_writes.clone(),
+                        availability: effect.availability.clone(),
                     });
                     // A method's receiver `self` is the implicit first parameter,
                     // followed by the declared params.
@@ -990,6 +1017,7 @@ fn lower_default(
         error_ty: None,
         ref_params: Vec::new(),
         param_writes: Vec::new(),
+        availability: Vec::new(),
     });
     Some(CheckedConst::Evaluate { function })
 }

@@ -176,7 +176,7 @@ pub(super) fn push_instruction_types(blocks: &[MirBlock], out: &mut Vec<Ty>) {
 }
 /// Reject an instance the verifier's concrete mode refuses, naming the
 /// template it came from. Materialization asks per instance, ahead of the
-/// whole-program verification, so a speculative instance can be dropped.
+/// whole-program verification, so the failure names its instance.
 pub(super) fn ensure_concrete_function(
     template: &str,
     name: &str,

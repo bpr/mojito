@@ -42,7 +42,9 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
 }
 
 /// The program-wide concreteness findings: every function body, and every
-/// declaration the bodies are checked against.
+/// declaration the bodies are checked against. A declaration's availability
+/// clauses and conformance conditions are decided when it is instantiated,
+/// so none survives.
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
         errors.extend(concrete_function_findings(name, function));
@@ -50,6 +52,9 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
     for declaration in &program.declarations.functions {
         let head = format!("MIR function '{}' declaration", declaration.lowered_name);
         require_no_parameters(&head, &declaration.param_decls, errors);
+        if !declaration.availability.is_empty() {
+            errors.push(format!("{head} still carries an availability clause"));
+        }
         let types = declaration
             .param_types
             .iter()
@@ -67,6 +72,22 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         for (field, ty) in &declaration.fields {
             require_concrete(&head, &format!("field `{field}`"), ty, errors);
         }
+        errors.extend(
+            declaration
+                .conformances
+                .iter()
+                .filter(|row| {
+                    row.conditions.iter().any(|condition| {
+                        !matches!(condition, mojito_types::types::GenericConstraint::Bool(_))
+                    })
+                })
+                .map(|row| {
+                    format!(
+                        "{head} still carries a condition on its `{}` conformance",
+                        row.trait_name
+                    )
+                }),
+        );
     }
 }
 

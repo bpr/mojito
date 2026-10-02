@@ -2396,8 +2396,21 @@ signature, slot, register, place, instruction, or declaration; a compile-time
 parameter a declaration or a call contract still declares; a
 `ConstructTypeParam`; and an erased-dispatch result adapter.
 `native::mono` verifies its output in the concrete mode, and asks
-`concrete_function_findings` per instance so that a speculative instance which
-cannot be made concrete is dropped rather than failing the program.
+`concrete_function_findings` per instance so that a failure names the
+instance it came from. The concrete mode also rejects a declaration that
+still carries an availability clause or a conformance condition.
+
+A struct member's `where` clause is declaration metadata:
+`MirFunctionDeclaration.availability`. What decides it rides with it.
+`MirStructDeclaration.conformances` holds, per trait a clause or a
+conformance condition names, the conditions under which an instance conforms,
+and `MirDeclarations.traits` lists the declared traits. The checker builds
+the rows (`Checker::conformance_facts`), and the elaborator evaluates a clause
+under an instance's bindings (`mono/availability.rs`) without ranking or
+re-deriving anything. A member its instance disproves is skipped when struct
+discovery reaches it and is an error when a call demands it. An instance that
+fails to materialize fails the compilation. The text schema carries the three
+fields from 1.9, and an older artifact reads as carrying none.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection

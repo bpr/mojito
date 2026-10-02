@@ -4,6 +4,59 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// Rewrite `T()` over a binder these bindings solve to a SIMD type into the
+/// zero vector of that type: a splat of one zero lane, held in a fresh
+/// register. `Defaultable` admits every SIMD value, and a single
+/// instruction cannot spell the splat.
+pub(super) fn default_construct_simd_parameters(function: &mut MirFunction, bindings: &Bindings) {
+    use mojito_ast::ast::Dtype;
+    for block in &mut function.blocks {
+        let mut index = 0;
+        while index < block.instrs.len() {
+            let MirInstr::ConstructTypeParam { dest, param } = &block.instrs[index] else {
+                index += 1;
+                continue;
+            };
+            let Some(Ty::Simd { dtype, width }) = bindings.types.get(param) else {
+                index += 1;
+                continue;
+            };
+            let (Some(dtype), Some(width)) = (
+                dtype.known(),
+                width.known().and_then(|width| usize::try_from(width).ok()),
+            ) else {
+                index += 1;
+                continue;
+            };
+            let (zero, lane_ty) = match dtype {
+                Dtype::Bool => (Const::Bool(false), Ty::Bool),
+                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
+                    (Const::Float(0.0), Ty::Float64)
+                }
+                _ => (Const::Int(0), Ty::Int),
+            };
+            let dest = *dest;
+            let lane = Reg(function.n_regs);
+            function.n_regs += 1;
+            function.reg_types.insert(lane.0, lane_ty);
+            block.instrs[index] = MirInstr::MakeSimd {
+                dest,
+                dtype,
+                width,
+                elems: vec![lane],
+            };
+            block.instrs.insert(
+                index,
+                MirInstr::Const {
+                    dest: lane,
+                    k: zero,
+                },
+            );
+            index += 2;
+        }
+    }
+}
+
 /// Substitute `bindings` through `function`, whose declaration declares the
 /// compile-time parameters in `scope`.
 pub(super) fn substitute_function(

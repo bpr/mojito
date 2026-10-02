@@ -1,9 +1,10 @@
-mojito-mir 1.8
+mojito-mir 1.9
 artifact {
   features: [],
   files: [
     file { id: file0, path: present("identity.mojo"), module: absent }
   ],
+  traits: [],
   structs: [
   ],
   decls: [

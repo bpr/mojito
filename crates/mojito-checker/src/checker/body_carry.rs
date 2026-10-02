@@ -457,15 +457,19 @@ macro_rules! define_carry_ops {
             /// Move this pass's facts into a carry, with `statements` as
             /// the checked tree and `explicit_destroy_types` as the
             /// destruction facts the pass established (empty for a pass
-            /// that stopped at the transfer fixpoint).
+            /// that stopped at the transfer fixpoint), and `conformances`
+            /// as the conformance facts later phases decide a `where`
+            /// clause from.
             pub(crate) fn into_carry(
                 self,
                 statements: Vec<Stmt>,
                 explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+                conformances: mojito_checked::checked::ConformanceFacts,
             ) -> PassCarry {
                 let result = DiscoveryResult {
                     statements,
                     explicit_destroy_types,
+                    conformances,
                     ..carried_result(&self)
                 };
                 let internal = InternalStores {
@@ -785,6 +789,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
     DiscoveryResult {
         statements: Vec::new(),
         explicit_destroy_types: HashMap::new(),
+        conformances: mojito_checked::checked::ConformanceFacts::default(),
         overload_targets: checker.overload_targets.take(),
         contextual_bases: checker.contextual_bases.take(),
         generic_instantiations: checker.generic_instantiations.take(),

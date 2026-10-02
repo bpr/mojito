@@ -69,6 +69,12 @@ pub(super) fn program(program: &MirProgram) -> String {
     writeln!(output, "artifact {{").unwrap();
     writeln!(output, "  features: [],").unwrap();
     write_files(&mut output, &files);
+    writeln!(
+        output,
+        "  traits: {},",
+        list(program.declarations.traits.iter().map(|name| symbol(name)))
+    )
+    .unwrap();
     write_structs(&mut output, &program.declarations.structs);
     write_declarations(&mut output, &program.declarations.functions);
     writeln!(output, "  functions: [").unwrap();
@@ -167,6 +173,18 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                     ),
                 ),
                 ("explicit_destructors", destructors),
+                (
+                    "conformances",
+                    list(declaration.conformances.iter().map(|row| {
+                        record(
+                            "conformance",
+                            &[
+                                ("trait", symbol(&row.trait_name)),
+                                ("conditions", list(row.conditions.iter().map(constraint))),
+                            ],
+                        )
+                    })),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();
@@ -285,6 +303,10 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                 (
                     "param_writes",
                     list(declaration.param_writes.iter().map(bool::to_string)),
+                ),
+                (
+                    "availability",
+                    list(declaration.availability.iter().map(constraint)),
                 ),
             ],
         );

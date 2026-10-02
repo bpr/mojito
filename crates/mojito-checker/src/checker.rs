@@ -337,7 +337,11 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
                 callable,
             });
         }
-        previous = Some(checker.into_carry(Vec::new(), HashMap::new()));
+        previous = Some(checker.into_carry(
+            Vec::new(),
+            HashMap::new(),
+            mojito_checked::checked::ConformanceFacts::default(),
+        ));
     };
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
@@ -353,7 +357,8 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
         )?;
         explicit_destroy_types
     };
-    Ok(checker.into_carry(expanded, explicit_destroy_types))
+    let conformances = checker.conformance_facts();
+    Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
 }
 
 /// The source-validation body gate, which `explicit_destroy` reuses to walk

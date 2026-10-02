@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct member's `where` clause reaches MIR
+  (`MirFunctionDeclaration.availability`), with each struct's conformance
+  rows (`MirStructDeclaration.conformances`) and the declared traits
+  (`MirDeclarations.traits`). The elaborator decides the clause under an
+  instance's bindings instead of trying every constructor and dropping the
+  ones that fail: a member its instance disproves is skipped where struct
+  discovery reaches it and is an error where a call demands it, and an
+  instance that fails to materialize fails the compilation. The text schema
+  is 1.9; an older artifact reads as carrying none.
+  `assets/ok/conditional_member_availability.mojo` pins it.
+- `T()` over a parameter bound to a SIMD type builds the zero vector, so
+  `Array[c_char, 4]()` runs on the VM and natively
+  (`assets/ok/simd_parameter_default_construction.mojo`). The eager
+  constructor walk used to hide that it could not.
 - A method of an ordinary generic struct with no compile-time construct in
   its body mints no clone per instance. The elaborator instantiates the
   template's MIR for both backends, lifecycle members and constructors

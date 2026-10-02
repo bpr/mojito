@@ -1,8 +1,9 @@
-mojito-mir 1.8
+mojito-mir 1.9
 artifact {
   features: [],
   files: [
   ],
+  traits: [],
   structs: [
   ],
   decls: [

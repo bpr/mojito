@@ -1067,6 +1067,7 @@ pub struct DiscoveryResult {
     pub interior_references: FactMap<SourceSpan, mojito_types::origin::OriginPlace>,
     pub interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
     pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    pub conformances: ConformanceFacts,
     pub explicit_destroy_calls: FactSet<SourceSpan>,
     pub reference_value_uses: FactMap<SourceSpan, bool>,
     pub copy_place_value_uses: FactSet<SourceSpan>,
@@ -1115,6 +1116,7 @@ impl DiscoveryResult {
             &self.interior_references,
             &self.interior_invalidations,
             self.explicit_destroy_types,
+            self.conformances,
             &self.explicit_destroy_calls,
             &self.reference_value_uses,
             &self.copy_place_value_uses,
@@ -1235,7 +1237,28 @@ pub struct CheckedProgram {
     tables: Arc<CheckedTables>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+}
+
+/// What decides a conformance below the checker: the declared traits, and
+/// each struct's answer for every trait a `where` clause or a conformance
+/// condition of the program names.
+#[derive(Debug, Clone, Default)]
+pub struct ConformanceFacts {
+    /// Every trait the program declares, sorted. A compiler-known type
+    /// conforms to none of them by its shape.
+    pub traits: Vec<String>,
+    pub structs: HashMap<String, Vec<StructConformance>>,
+}
+
+/// One struct's conformance to one trait: it holds for the instances whose
+/// arguments satisfy any of `conditions`, each over the struct's own binders.
+/// No condition means no instance conforms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructConformance {
+    pub trait_name: String,
+    pub conditions: Vec<mojito_types::types::GenericConstraint>,
 }
 
 #[derive(Debug, Clone)]
@@ -1398,6 +1421,11 @@ pub struct DeclarationEffect {
     /// contract only reads (its body cannot prove mutability), so a place
     /// lent to it stays a shared access for loan checking.
     pub param_writes: Vec<bool>,
+    /// A struct member's trailing `where` clauses, one entry per clause,
+    /// over the owner's and the member's binders. A clause that does not
+    /// hold under an instance's arguments leaves the member out of that
+    /// instance.
+    pub availability: Vec<mojito_types::types::GenericConstraint>,
 }
 
 impl DeclarationEffect {
@@ -1514,6 +1542,7 @@ impl CheckedProgram {
         interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+        conformances: ConformanceFacts,
         explicit_destroy_calls: &HashSet<SourceSpan>,
         reference_value_uses: &HashMap<SourceSpan, bool>,
         copy_place_value_uses: &HashSet<SourceSpan>,
@@ -1583,6 +1612,7 @@ impl CheckedProgram {
             tables: Arc::new(CheckedTables::new(expressions, declarations)),
             expression_index,
             explicit_destroy_types,
+            conformances,
             declaration_effects,
         }
     }
@@ -1692,6 +1722,10 @@ impl CheckedProgram {
 
     pub const fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
         &self.explicit_destroy_types
+    }
+
+    pub const fn conformances(&self) -> &ConformanceFacts {
+        &self.conformances
     }
 
     /// Module identity attached to a declaration or expression location.

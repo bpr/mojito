@@ -152,13 +152,11 @@ closure effects, and replayed transfers, and some of those vary with the
 substituted type. P2 includes lifecycle members, so none of this waits for
 P3.
 
-**Availability.** `native::mono` keeps a `speculative` set: instances its
-eager constructor walk enqueued, dropped silently when they fail to
-materialize, because a conditional member's `where` clause is absent from MIR
-and the checker is trusted to have admitted no call. A general elaborator
-needs the availability clause on the generator, and demanded reachability
-told apart from speculative reachability, before the checks it trusts are
-removed.
+**Availability.** A conditional member's `where` clause is on the generator,
+with the conformance rows that decide it, and `native::mono` evaluates it
+under each instance's bindings. A demanded member its instance disproves is
+an error, and a discovered one is skipped. The contract note's §Availability
+has the rules.
 
 **"Check once"** means one semantic checking process per declaration, not one
 traversal. Effect summaries and loop dataflow still iterate to fixed points
@@ -386,7 +384,10 @@ its template's MIR, lifecycle members and constructors included.
   carries no type arguments, so the oracle cannot hand a template-served
   body's call to the receiver instance's clone as the elaborator does. That
   fixture is the `erased_vm` group's one expected failure.
-- **Not done.** Availability clauses in MIR and the `speculative` set, the
+- **Availability.** A member's `where` clause and each struct's conformance
+  rows reach MIR, and the elaborator decides the clause. Its `speculative`
+  set and the rollback are gone (text schema 1.9).
+- **Not done.** The clause forms the elaborator leaves undecided, the
   summaries of an instance over a loan-carrying argument, the explicit
   application of a trait-bound `def`, and the exit: clone-symbol retargeting
   and the method certificate classes still serve the clones that remain.

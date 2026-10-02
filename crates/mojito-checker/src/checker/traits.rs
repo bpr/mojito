@@ -868,6 +868,7 @@ impl Checker {
                         &sig.conventions,
                         &sig.ref_params,
                     ),
+                    availability: sig.availability.clone(),
                 },
             );
             let info = self.structs.get_mut(name).ok_or_else(|| {
@@ -1985,6 +1986,16 @@ impl Checker {
             return true;
         }
         if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
+            // A hashed leaf is recorded as it is proved, so `is_hashable`
+            // answers for its own.
+            if tr != "Hashable"
+                && let Some(conforms) =
+                    mojito_types::conformance::leaf_conforms(ty, tr, &mut |element, tr| {
+                        self.conforms_to(element, tr)
+                    })
+            {
+                return conforms;
+            }
             return match tr {
                 "AnyType" => true,
                 "Copyable" => self.is_copyable(ty),
@@ -2120,6 +2131,149 @@ impl Checker {
                         || builtin_trait_implies(available, required))
             })
         })
+    }
+
+    /// The conformance facts the elaborator decides a `where` clause from:
+    /// the declared traits, and each registered struct's answer for every
+    /// trait a member's availability clause or a conformance condition
+    /// names. Each answer is the one [`Self::conforms_to`] gives that struct.
+    pub(super) fn conformance_facts(&self) -> mojito_checked::checked::ConformanceFacts {
+        let mut traits: Vec<String> = self.traits.keys().cloned().collect();
+        traits.sort();
+        let named = self.constrained_traits();
+        // Proving a hashable aggregate records its leaves for elaboration;
+        // a table row demands none.
+        let leaf_types = self.hash_leaf_types.take();
+        let leaf_demands = self.hash_leaf_demands.take();
+        let structs = self
+            .structs
+            .iter()
+            .map(|(name, info)| {
+                let rows = named
+                    .iter()
+                    .filter_map(|required| {
+                        let conditions =
+                            self.struct_conformance_conditions(name, info, required)?;
+                        Some(mojito_checked::checked::StructConformance {
+                            trait_name: required.clone(),
+                            conditions,
+                        })
+                    })
+                    .collect();
+                (name.clone(), rows)
+            })
+            .collect();
+        self.hash_leaf_types.replace(leaf_types);
+        self.hash_leaf_demands.replace(leaf_demands);
+        mojito_checked::checked::ConformanceFacts { traits, structs }
+    }
+
+    /// The conditions under which an instance of the struct `name` conforms
+    /// to `required`, each over the struct's own binders: any one holding
+    /// proves it, and none means no instance conforms. `None` where the
+    /// answer is not a function of the declared conformances (a type that
+    /// answers by its elements before its specialization exists).
+    fn struct_conformance_conditions(
+        &self,
+        name: &str,
+        info: &StructInfo,
+        required: &str,
+    ) -> Option<Vec<GenericConstraint>> {
+        let always = || vec![GenericConstraint::Bool(true)];
+        if info.decls.is_empty() {
+            let self_ty = Ty::Struct(
+                name.to_string(),
+                info.fixed_arguments.clone().unwrap_or_default(),
+            );
+            return Some(if self.conforms_to(&self_ty, required) {
+                always()
+            } else {
+                Vec::new()
+            });
+        }
+        let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls));
+        if tuple_elements(&self_ty).is_some()
+            || mojito_types::types::tstring_elements(&self_ty).is_some()
+            || mojito_types::types::uninit_storage_element(&self_ty).is_some()
+        {
+            return None;
+        }
+        // The conditions of the declared conformances `accepts` admits. One
+        // whose condition does not compile proves nothing.
+        let declared = |accepts: &dyn Fn(&str) -> bool| -> Vec<GenericConstraint> {
+            info.conforms
+                .iter()
+                .filter(|declared| accepts(declared))
+                .filter_map(|declared| match info.conformance_conditions.get(declared) {
+                    Some(condition) => self.compile_condition(&info.decls, condition).ok(),
+                    None => Some(GenericConstraint::Bool(true)),
+                })
+                .collect()
+        };
+        let refining =
+            |declared: &str| declared == required || self.trait_refines(declared, required);
+        if !BUILTIN_TRAITS.contains(&required) || self.traits.contains_key(required) {
+            return Some(declared(&refining));
+        }
+        Some(match required {
+            "Copyable" => {
+                let family = |declared: &str| {
+                    matches!(
+                        declared,
+                        "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+                    )
+                };
+                if info.conforms.iter().any(|declared| family(declared)) {
+                    declared(&family)
+                } else if info.methods.contains_key("__copyinit__") {
+                    always()
+                } else {
+                    Vec::new()
+                }
+            }
+            "ImplicitlyCopyable" if self.struct_implicitly_copyable_conformance_ok(name) => {
+                declared(&|declared| {
+                    matches!(declared, "ImplicitlyCopyable" | "TrivialRegisterPassable")
+                })
+            }
+            "ImplicitlyCopyable" => Vec::new(),
+            "Movable" | "Deinitable" => {
+                if info.conforms.iter().any(|declared| declared == required) {
+                    declared(&refining)
+                } else {
+                    always()
+                }
+            }
+            "Writable" | "Writer" | "Hasher" | "Hashable" | "Defaultable" | "Indexer"
+            | "Equatable" | "Comparable" | "Intable" | "Floatable" => declared(&refining),
+            "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
+            | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
+            | "Andable" | "Orable" | "Xorable" | "Negatable" => Vec::new(),
+            SIMD_WILDCARD_BOUND => return None,
+            _ => always(),
+        })
+    }
+
+    /// Every trait a member's availability clause or a struct's conformance
+    /// condition names, sorted.
+    fn constrained_traits(&self) -> std::collections::BTreeSet<String> {
+        let mut named = std::collections::BTreeSet::new();
+        for info in self.structs.values() {
+            for condition in info.conformance_conditions.values() {
+                if let Ok(condition) = self.compile_condition(&info.decls, condition) {
+                    constraint_traits(&condition, &mut named);
+                }
+            }
+            for clause in info
+                .methods
+                .values()
+                .flatten()
+                .flat_map(|method| &method.availability)
+            {
+                constraint_traits(clause, &mut named);
+            }
+        }
+        named
     }
 
     pub(super) fn struct_conformance_applies(
@@ -2338,13 +2492,6 @@ impl Checker {
             return false;
         }
         match ty {
-            Ty::ComptimeList(element) => self.is_copyable(element),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
-                elements.iter().all(|element| self.is_copyable(element))
-            }
-            Ty::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.is_copyable(alternative)),
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
                 // A declared Copyable-family conformance is the contract
                 // and its condition decides: `Array[T]` declares
@@ -2385,7 +2532,12 @@ impl Checker {
             // Scalars, `String`, `List`/`Tuple`/`Simd`/`Range`, `Error`, closures,
             // and `Self` are treated as copyable (element-wise copyability of
             // aggregates is not modeled).
-            _ => true,
+            // Every other type answers by its shape, an aggregate by its
+            // elements.
+            _ => mojito_types::conformance::leaf_conforms(ty, "Copyable", &mut |element, _| {
+                self.is_copyable(element)
+            })
+            .unwrap_or(true),
         }
     }
 
@@ -2411,13 +2563,6 @@ impl Checker {
             return true;
         }
         match ty {
-            Ty::ComptimeList(element) => self.is_implicitly_copyable(element),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
-                .iter()
-                .all(|element| self.is_implicitly_copyable(element)),
-            Ty::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.is_implicitly_copyable(alternative)),
             Ty::Struct(name, args) => self.structs.get(name).map_or_else(
                 || {
                     mojito_types::types::list_element(ty).is_none()
@@ -2445,7 +2590,14 @@ impl Checker {
             // An abstract associated type is implicitly copyable only when its
             // declared member bounds say so, mirroring the `Ty::Param` rule.
             Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
-            _ => true,
+            // Every other type answers by its shape, an aggregate by its
+            // elements.
+            _ => mojito_types::conformance::leaf_conforms(
+                ty,
+                "ImplicitlyCopyable",
+                &mut |element, _| self.is_implicitly_copyable(element),
+            )
+            .unwrap_or(true),
         }
     }
 
@@ -2519,13 +2671,6 @@ impl Checker {
             return true;
         }
         match ty {
-            Ty::ComptimeList(element) => self.is_movable(element),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
-                elements.iter().all(|element| self.is_movable(element))
-            }
-            Ty::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.is_movable(alternative)),
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
                 if info.conforms.iter().any(|tr| tr == "Movable") {
                     self.struct_conformance_applies(name, args, "Movable")
@@ -2538,7 +2683,12 @@ impl Checker {
                 callable_bound: None,
                 ..
             } => self.bounds_prove_movable(bounds),
-            _ => true,
+            // Every other type answers by its shape, an aggregate by its
+            // elements.
+            _ => mojito_types::conformance::leaf_conforms(ty, "Movable", &mut |element, _| {
+                self.is_movable(element)
+            })
+            .unwrap_or(true),
         }
     }
 
@@ -2697,13 +2847,6 @@ impl Checker {
             return true;
         }
         match ty {
-            Ty::ComptimeList(element) => self.is_deinitable(element),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
-                elements.iter().all(|element| self.is_deinitable(element))
-            }
-            Ty::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.is_deinitable(alternative)),
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
                 if info.conforms.iter().any(|tr| tr == "Deinitable") {
                     self.struct_conformance_applies(name, args, "Deinitable")
@@ -2712,7 +2855,12 @@ impl Checker {
                 }
             }),
             Ty::Param { bounds, .. } => self.bounds_prove_deinitable(bounds),
-            _ => true,
+            // Every other type answers by its shape, an aggregate by its
+            // elements.
+            _ => mojito_types::conformance::leaf_conforms(ty, "Deinitable", &mut |element, _| {
+                self.is_deinitable(element)
+            })
+            .unwrap_or(true),
         }
     }
 
@@ -3335,4 +3483,23 @@ fn builtin_requirement_witnessed(
             .zip(&required.params)
             .all(|(got, want)| fits(got, want))
         && fits(&member.ret, &required.ret)
+}
+
+/// The traits `constraint`'s conformance atoms name.
+fn constraint_traits(
+    constraint: &GenericConstraint,
+    named: &mut std::collections::BTreeSet<String>,
+) {
+    use GenericConstraint::{And, Conforms, ConformsPack, Not, Or, WithMessage};
+    match constraint {
+        Conforms { trait_name, .. } | ConformsPack { trait_name, .. } => {
+            named.insert(trait_name.clone());
+        }
+        WithMessage(inner, _) | Not(inner) => constraint_traits(inner, named),
+        And(left, right) | Or(left, right) => {
+            constraint_traits(left, named);
+            constraint_traits(right, named);
+        }
+        _ => {}
+    }
 }

@@ -735,3 +735,113 @@ fn concrete_verification_separates_elaborated_from_parametric_mir() {
         Vec::<String>::new()
     );
 }
+
+const CONDITIONAL_MEMBERS: &str = "struct NoDefault(Movable):\n\
+     \x20   var v: Int\n\
+     \n\
+     \x20   def __init__(out self, v: Int):\n\
+     \x20       self.v = v\n\
+     \n\
+     struct Slot[T: Movable & Deinitable]:\n\
+     \x20   var item: Self.T\n\
+     \n\
+     \x20   def __init__(out self) where conforms_to(Self.T, Defaultable):\n\
+     \x20       self.item = Self.T()\n\
+     \n\
+     \x20   def __init__(out self, var item: Self.T):\n\
+     \x20       self.item = item^\n\
+     \n\
+     def main():\n\
+     \x20   var a = Slot[Int]()\n\
+     \x20   print(a.item)\n\
+     \x20   var b = Slot[NoDefault](NoDefault(7))\n\
+     \x20   print(b.item.v)\n";
+
+const NULLARY_SLOT_INIT: &str = "Slot.__init__$ov$";
+
+/// The bindings of `Slot[argument]` over the compiled `CONDITIONAL_MEMBERS`.
+fn slot_bindings(specializer: &Specializer<'_>, argument: Ty) -> Bindings {
+    let template = specializer.structs["Slot"];
+    let mut bindings = specializer.base_bindings();
+    bind_ty_args(&template.param_decls, &[TyArg::Ty(argument)], &mut bindings).unwrap();
+    bindings
+}
+
+#[test]
+fn discovered_member_its_instance_disproves_is_left_out() {
+    let specialized = specialized_main(CONDITIONAL_MEMBERS);
+    let nullary = |owner: &str| {
+        let name = mojito_symbol::symbol::retarget_method_symbol(NULLARY_SLOT_INIT, owner)
+            .expect("constructor symbol retargets");
+        specialized
+            .program
+            .functions
+            .iter()
+            .any(|(known, _)| *known == name)
+    };
+    let owners: Vec<&str> = specialized
+        .program
+        .declarations
+        .structs
+        .iter()
+        .map(|declaration| declaration.name.as_str())
+        .filter(|name| name.starts_with("Slot$mono"))
+        .collect();
+    let [with, without] = ["Int", "NoDefault"].map(|argument| {
+        *owners
+            .iter()
+            .find(|owner| owner.contains(argument))
+            .unwrap_or_else(|| panic!("no `Slot[{argument}]` in {owners:?}"))
+    });
+    assert!(nullary(with), "`Slot[Int]` default-constructs");
+    assert!(
+        !nullary(without),
+        "`Slot[NoDefault]` has no nullary constructor"
+    );
+    assert!(
+        specialized
+            .program
+            .declarations
+            .functions
+            .iter()
+            .all(|declaration| declaration.availability.is_empty()),
+        "an instance's clauses are decided"
+    );
+}
+
+#[test]
+fn demanded_member_its_instance_disproves_is_an_error() {
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
+        .expect("compile conditional members");
+    let mut specializer = Specializer::new(compiled.drop_elaborated_mir());
+    let available = slot_bindings(&specializer, Ty::Int);
+    specializer
+        .enqueue(NULLARY_SLOT_INIT, available, Vec::new())
+        .expect("`Int` is `Defaultable`");
+    let unavailable = slot_bindings(&specializer, Ty::Struct("NoDefault".into(), Vec::new()));
+    let error = specializer
+        .enqueue(NULLARY_SLOT_INIT, unavailable, Vec::new())
+        .unwrap_err();
+    assert!(error.construct.contains("unavailable"), "{error}");
+}
+
+#[test]
+fn available_member_that_does_not_materialize_is_an_error() {
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
+        .expect("compile conditional members");
+    let mut specializer = Specializer::new(compiled.drop_elaborated_mir());
+    // The empty tuple is `Defaultable`, and `T()` has no construction for it.
+    let bindings = slot_bindings(&specializer, Ty::Tuple(Vec::new()));
+    specializer
+        .enqueue(NULLARY_SLOT_INIT, bindings, Vec::new())
+        .expect("the clause holds");
+    let error = specializer.run(&[]).unwrap_err();
+    assert!(
+        error.construct.contains("constructing type parameter"),
+        "{error}"
+    );
+}
