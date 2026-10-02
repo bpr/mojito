@@ -677,7 +677,7 @@ fn borrowed_operands(
             let Some(declaration) = declarations.get(resolved) else {
                 return Vec::new();
             };
-            if declaration.variadic.is_some() || declaration.kw_variadic.is_some() {
+            if declaration.kw_variadic.is_some() {
                 return Vec::new();
             }
             let mut borrowed = borrowed_slots(declaration, args, kwargs);
@@ -702,9 +702,7 @@ fn borrowed_operands(
             ..
         } => {
             let mut borrowed = match declarations.get(&func.0) {
-                Some(declaration)
-                    if declaration.variadic.is_none() && declaration.kw_variadic.is_none() =>
-                {
+                Some(declaration) if declaration.kw_variadic.is_none() => {
                     borrowed_slots(declaration, args, kwargs)
                 }
                 Some(_) => Vec::new(),
@@ -746,22 +744,32 @@ fn borrowed_operands(
 
 /// The positional and keyword arguments bound to non-consuming slots of
 /// `declaration`. `param_conventions` covers the explicit parameters only,
-/// so positional index `i` is slot `i`.
+/// so positional index `i` is slot `i` up to the positional collector, which
+/// gathers every later one under its own convention.
 fn borrowed_slots(
     declaration: &MirFunctionDeclaration,
     args: &[Reg],
     kwargs: &[(String, Reg)],
 ) -> Vec<u32> {
-    let slot_borrows = |index: usize| {
+    let borrows = |convention: Option<mojito_ast::ast::ArgConvention>| {
         !matches!(
-            declaration.param_conventions.get(index).copied().flatten(),
+            convention,
             Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
         )
     };
+    let slot_borrows =
+        |index: usize| borrows(declaration.param_conventions.get(index).copied().flatten());
+    let collected_from = declaration
+        .variadic
+        .as_ref()
+        .map(|_| declaration.variadic_index.unwrap_or(0));
     let positional = args
         .iter()
         .enumerate()
-        .filter(|(index, _)| slot_borrows(*index))
+        .filter(|(index, _)| match collected_from {
+            Some(first) if *index >= first => borrows(declaration.variadic_convention),
+            _ => slot_borrows(*index),
+        })
         .map(|(_, reg)| reg.0);
     let keyword = kwargs.iter().filter_map(|(name, reg)| {
         declaration

@@ -1383,7 +1383,14 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
+        self.record_argument_borrows(
+            &slots,
+            &effective_conventions,
+            self.read_collected_arguments(name, &overflow),
+            args,
+            kwargs,
+            None,
+        );
 
         let result = match return_ref {
             Some(mut reference) => {
@@ -1659,7 +1666,14 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.record_argument_borrows(&slots, &effective_conventions, args, kwargs, None);
+        self.record_argument_borrows(
+            &slots,
+            &effective_conventions,
+            self.read_collected_arguments(name, &overflow),
+            args,
+            kwargs,
+            None,
+        );
         let mut referent = self.canonicalize_public_tuple_types(resolve(ret)?);
         if forwarded_pack.is_some() {
             // A result naming the callee's pack elements (`Us[i]`) closes

@@ -85,6 +85,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An argument a read `*args` collector gathers is lent to the call, as a
+  `read` parameter's argument is. `show(y, 5)` against
+  `show[*Ts: Writable](*a: *Ts)` ran `y`'s destructor before `show`'s body,
+  and a temporary argument was never destroyed. Neither the ownership
+  analysis nor drop elaboration misread anything: the checker recorded no
+  borrow for a collected argument, so MIR copied the local and its last use
+  ended before the call. The native backend builds a read collector's pack
+  by lending each element instead of cloning it. A module `def`, a method,
+  and a static method behave alike, on the VM and natively
+  (`assets/ok/pack_argument_destroyed_after_call.mojo`). Reading an element
+  inside the callee still copies it (roadmap 3.1).
 - The bitwise and shift operators have their own precedence levels. They
   shared one level with `+` and `-`, so `a << 1 | b >> 1` parsed as
   `(a << 1 | b) >> 1` and printed `7` for `Int32(6)` and `Int32(3)` where

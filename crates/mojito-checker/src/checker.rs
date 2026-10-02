@@ -2711,6 +2711,8 @@ struct MethodCallResolution {
     positional_overflow: Vec<usize>,
     keyword_overflow: Vec<usize>,
     variadic_element: Option<Ty>,
+    /// The positional collector's declared convention.
+    variadic_convention: Option<ArgConvention>,
     keyword_element: Option<Ty>,
     conventions: Vec<Option<ArgConvention>>,
     self_convention: Option<ArgConvention>,
@@ -2747,6 +2749,17 @@ struct MethodCallResolution {
     declared_params: Vec<Ty>,
     /// See [`MethodSig::nested_origins`].
     nested_origins: NestedOrigins,
+}
+
+impl MethodCallResolution {
+    /// The positions the positional collector gathers, when it reads them
+    /// rather than owning them.
+    fn read_collected_arguments(&self) -> &[usize] {
+        match self.variadic_convention {
+            None | Some(ArgConvention::Imm) => &self.positional_overflow,
+            _ => &[],
+        }
+    }
 }
 
 /// One origin slot of a struct-typed view return (`-> P[origin_of(xs)]`):

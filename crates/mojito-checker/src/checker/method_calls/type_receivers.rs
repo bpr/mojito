@@ -241,6 +241,7 @@ impl Checker {
                     positional_overflow: scored.positional_overflow,
                     keyword_overflow: scored.keyword_overflow,
                     variadic_element: variadic.clone(),
+                    variadic_convention: sig.variadic_convention,
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,

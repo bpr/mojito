@@ -340,6 +340,7 @@ impl Checker {
                     positional_overflow: scored.positional_overflow,
                     keyword_overflow: scored.keyword_overflow,
                     variadic_element: variadic.clone(),
+                    variadic_convention: sig.variadic_convention,
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
@@ -613,7 +614,14 @@ impl Checker {
             args,
             kwargs,
         )?;
-        self.record_argument_borrows(&selected.slots, &effective_conventions, args, kwargs, None);
+        self.record_argument_borrows(
+            &selected.slots,
+            &effective_conventions,
+            selected.read_collected_arguments(),
+            args,
+            kwargs,
+            None,
+        );
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.overload_targets

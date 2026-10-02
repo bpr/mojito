@@ -28,11 +28,14 @@ impl Checker {
     /// the place arguments it may borrow instead of copying
     /// ([`borrowable_read_arguments`]) and the owned temporaries it borrows,
     /// which the caller destroys once the call returns
-    /// ([`read_temporary_arguments`]).
+    /// ([`read_temporary_arguments`]). `collected` holds the positions of
+    /// the arguments a read `*args` collector gathers, which bind the same
+    /// way; an owning (`var`) collector passes none.
     pub(super) fn record_argument_borrows(
         &self,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
+        collected: &[usize],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
         receiver: Option<(&Expr, Option<ArgConvention>)>,
@@ -42,15 +45,30 @@ impl Checker {
             .extend(borrowable_read_arguments(
                 slots,
                 conventions,
+                collected,
                 args,
                 kwargs,
                 receiver,
             ));
-        let read = read_temporary_arguments(slots, conventions, args, kwargs);
+        let read = read_temporary_arguments(slots, conventions, collected, args, kwargs);
         self.unconsumed_temporaries
             .borrow_mut()
             .extend(read.iter().cloned());
         self.read_temporary_arguments.borrow_mut().extend(read);
+    }
+
+    /// The positions `name`'s positional collector gathers, when it reads
+    /// them: a `var` collector owns its elements, and overloads that
+    /// disagree leave the convention unknown.
+    pub(super) fn read_collected_arguments<'a>(
+        &self,
+        name: &str,
+        overflow: &'a [usize],
+    ) -> &'a [usize] {
+        match self.owned_collectors.get(name) {
+            Some(false) => overflow,
+            _ => &[],
+        }
     }
 
     /// Record an expression whose value nothing takes ownership of: a
@@ -279,6 +297,7 @@ pub(super) fn check_receiver_aliasing(
 pub(super) fn read_temporary_arguments(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
+    collected: &[usize],
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
 ) -> Vec<SourceSpan> {
@@ -296,6 +315,7 @@ pub(super) fn read_temporary_arguments(
             ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
             ArgSlot::Default => None,
         })
+        .chain(collected_read_arguments(collected, args))
         .filter(|arg| !is_place_expr(arg) && !matches!(arg.kind, ExprKind::Transfer(_)))
         .map(Expr::source_span)
         .collect()
@@ -311,6 +331,7 @@ pub(super) fn read_temporary_arguments(
 pub(super) fn borrowable_read_arguments(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],
+    collected: &[usize],
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
     receiver: Option<(&Expr, Option<ArgConvention>)>,
@@ -353,11 +374,13 @@ pub(super) fn borrowable_read_arguments(
         exclusive.push(place);
     }
     let mut borrowable = Vec::new();
-    for (index, slot) in slots.iter().enumerate() {
-        if !read_slot(index) {
-            continue;
-        }
-        let Some(arg) = argument(slot) else { continue };
+    let reads = slots
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| read_slot(*index))
+        .filter_map(|(_, slot)| argument(slot))
+        .chain(collected_read_arguments(collected, args));
+    for arg in reads {
         // A `^` into a read slot does not consume its source, as in current
         // Mojo: the transfer node itself is recorded, and its place borrows
         // like a plain read argument.
@@ -466,4 +489,16 @@ fn places_overlap(a: &[PlaceSeg], b: &[PlaceSeg]) -> bool {
         }
     }
     true
+}
+
+/// The arguments a read `*args` collector gathers one element each from. A
+/// forwarded `*pack` is the collector's whole value, not an element.
+fn collected_read_arguments<'a>(
+    collected: &'a [usize],
+    args: &'a [Expr],
+) -> impl Iterator<Item = &'a Expr> {
+    collected
+        .iter()
+        .map(|position| &args[*position])
+        .filter(|arg| !matches!(arg.kind, ExprKind::Spread(_)))
 }

@@ -430,7 +430,28 @@ impl FnLowering<'_> {
         }
     }
 
-    /// The storage pointer of an aggregate-valued register. A compile-time
+    /// Store register `src` (checked type `ty`) to `address` for a reader
+    /// that never releases it: a borrowed heap-owning source is aliased
+    /// where [`Self::store_to`] would clone it.
+    pub(super) fn lend_to(
+        &mut self,
+        ctx: &mut Context,
+        address: Value,
+        ty: &Ty,
+        src: Reg,
+    ) -> Result<(), PlironError> {
+        if !self.owned_temps.contains_key(&src.0)
+            && let LowerTy::Aggregate { ty, layout } =
+                lower_ty(self.name, ty, &self.layout, self.reg_span(src))?
+            && !matches!(*ty, Ty::StringLiteral)
+        {
+            let ptr = self.reg_ptr(ctx, src)?;
+            self.copy_value(ctx, address, ptr, &ty, layout, src);
+            return Ok(());
+        }
+        self.store_to(ctx, address, ty, src)
+    }
+
     /// `StringLiteral` consumed as storage materializes on first use as a
     /// borrowed `MjStrDesc` over its interned constant bytes.
     pub(super) fn reg_ptr(&mut self, ctx: &mut Context, reg: Reg) -> Result<Value, PlironError> {

@@ -512,18 +512,18 @@ then one it rejects where the pin runs it, then a verdict that is right with
 the wrong words. The representation gap and the two standing ledgers are
 last.
 
-- [ ] **3.1 A local passed into a read type pack is destroyed before the call**
+- [ ] **3.1 Reading an element of a read type pack copies it**
 
-  Problem: `show(y, 5)` against `show[*Ts: Writable](*a: *Ts)` runs
-  `y.__del__` before `show`'s body, which then prints `y` anyway, where the
-  pin destroys `y` after the call returns. It is a silent wrong order.
-  - A top-level `def` and a method collector behave alike, on the VM and
-    natively; a direct `print(y, 5)` is correct.
-  - The call's last use of `y` is its pack argument, so the drop is placed
-    as if the collector had consumed it.
-  - Probe: `conformance/probes/pack_argument_destroyed_before_call.mojo`.
-  - The plan must say whether the ownership analysis or drop elaboration
-    misreads the collector's argument convention.
+  Problem: `print(a[0])` inside `show[*Ts: Writable](*a: *Ts)` runs the
+  element's copy constructor, where the pin prints the element in place. A
+  printing copy constructor makes it a visible wrong output.
+  - The VM copies once and never destroys the copy; the native backend
+    copies twice.
+  - The call site is right: the caller lends the argument and copies
+    nothing.
+  - Probe: `conformance/probes/pack_element_read_copies.mojo`.
+  - The plan must say whether the element read should borrow like a field
+    read, and who destroys a copy that is taken.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -537,8 +537,7 @@ last.
   - A top-level `def` and a method collector behave alike.
   - The unrolled `a[0]` read is taken as the whole pack's last use.
   - Probe: `conformance/probes/owned_pack_elements_destroyed_early.mojo`.
-  - Depends on 3.1, which settles what a pack argument's last use is on the
-    caller's side.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **3.3 A constructor overload set drops every generic candidate before it is
@@ -713,6 +712,8 @@ last.
   - With a regular `c: Int` in place of the pack both compilers accept the
     call, because a trivial read parameter takes a copy.
   - Mojito accepts a program the pin rejects, so this is a divergence.
+  - A `mut x: Int` parameter behaves alike: `both(k, k)` runs on Mojito and
+    the pin reports the same aliasing.
   - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
   - The plan must say whether the within-call exclusivity check or the `ref`
     mutability inference is what is missing.
