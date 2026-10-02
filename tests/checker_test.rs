@@ -1233,6 +1233,27 @@ fn rejects_assignment_to_immutable_parameter_but_allows_mut_parameter() {
 }
 
 #[test]
+fn rejects_transfer_out_of_read_parameter_but_allows_owned_and_trivial() {
+    let e = err_std("def f(x: String) -> String:\n    return x^\n");
+    assert_eq!(e, TypeError::ImmutableTransfer("x".into()));
+    let e = err_std("def f[T: Movable](x: T) -> T:\n    return x^\n");
+    assert_eq!(e, TypeError::ImmutableTransfer("x".into()));
+    let e = err_std(
+        "@fieldwise_init\nstruct Box(Movable):\n    var s: String\n\n    \
+         def take(self) -> String:\n        return self.s^\n",
+    );
+    assert_eq!(e, TypeError::ImmutableTransfer("self".into()));
+
+    ok_std("def f(var x: String) -> String:\n    return x^\n");
+    // A trivial register value transfers as a copy.
+    ok_std("def f(x: Int, b: Bool) -> Int:\n    var c = b^\n    return x^\n");
+    ok_std(
+        "@fieldwise_init\nstruct Pair(Movable):\n    var a: Int\n\n    \
+         def first(self) -> Int:\n        return self.a^\n",
+    );
+}
+
+#[test]
 fn rejects_trait_receiver_convention_mismatch() {
     let e = err(
         "trait Bumpable:\n    def bump(mut self):\n        ...\n\n@fieldwise_init\nstruct Counter(Bumpable):\n    var n: Int\n\n    def bump(self):\n        pass\n",

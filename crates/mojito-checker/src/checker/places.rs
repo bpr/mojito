@@ -135,6 +135,26 @@ impl Checker {
         }
     }
 
+    /// Reject `source^` out of a place rooted at an immutable value binding
+    /// (a parameter or `self` with no owning convention), as upstream: the
+    /// callee does not own the storage, so moving out of it would destroy
+    /// the caller's value. A trivial register value transfers as a copy.
+    pub(super) fn check_transfer_source(&self, source: &Expr, ty: &Ty) -> Result<(), TypeError> {
+        let Some(root) = field_chain_root(source) else {
+            return Ok(());
+        };
+        if self.is_binding_mutable(root)
+            || self.is_compile_time_binding(root)
+            || self
+                .lookup(root)
+                .is_none_or(|binding| matches!(binding, Ty::Ref(_)))
+            || self.is_trivial_register_passable(ty)
+        {
+            return Ok(());
+        }
+        Err(TypeError::ImmutableTransfer(root.to_string()))
+    }
+
     /// Whether `binder` is one of the enclosing declarations' own type
     /// parameters. The same `Ty::Param` at a concrete call site is the
     /// erased-dispatch spelling of a solved argument instead.
@@ -501,4 +521,14 @@ fn collected_read_arguments<'a>(
         .iter()
         .map(|position| &args[*position])
         .filter(|arg| !matches!(arg.kind, ExprKind::Spread(_)))
+}
+
+/// The binding a plain place expression (a name, or a field chain over one)
+/// is rooted at.
+fn field_chain_root(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(name),
+        ExprKind::Member { object, .. } => field_chain_root(object),
+        _ => None,
+    }
 }

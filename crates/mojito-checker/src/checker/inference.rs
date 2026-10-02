@@ -1207,6 +1207,7 @@ impl Checker {
                             .to_string(),
                     ));
                 }
+                self.check_transfer_source(inner, &ty)?;
                 Ok(ty)
             }
             // An empty list literal needs a contextual element type; the

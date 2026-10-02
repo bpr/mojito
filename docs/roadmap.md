@@ -593,23 +593,20 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.5 A `^` transfer of a read parameter is accepted and frees the
-  caller's value**
+- [ ] **3.5 A `mut` parameter may be transferred away and left empty**
 
-  Problem: `def ident(x: String) -> String: return x^` runs in Mojito and
-  fails with "use after Pointer deallocation" once the caller's `String` is
-  read again or dropped, while a read parameter cannot be transferred in
-  Mojo.
-  - The same body over a bare type parameter (`def ident[T: Movable](x: T)
-    -> T`) fails the same way for a `String` argument and prints for an
-    `Int` one.
-  - Pinned by `conformance/probes/read_parameter_transfer_returned.mojo`;
-    the pin's diagnostic is still to be observed by the sweep.
-  - The lever is the checker's transfer check on a parameter with no `var`
-    convention, which today admits the move and lets the callee's drop
-    free the caller's storage.
+  Problem: `def take(mut x: String) -> String: return x^` runs in Mojito and
+  prints `<ref 1:0>`, where the pin reports "'x' is uninitialized at return
+  from this function".
+  - A `mut` parameter is the caller's storage, so it must hold a value again
+    before the function returns.
+  - The ownership analysis treats the parameter as an owned local, whose
+    move needs no write-back.
+  - The printed value shows the transfer also yields the reference instead
+    of the `String` behind it.
+  - Probe: `conformance/probes/mut_parameter_transfer_left_uninitialized.mojo`.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Opus, Planned.
 
 - [ ] **3.6 A static call copies a place into a `var` parameter whatever its
   type**
@@ -731,15 +728,18 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.13 A comprehension element may transfer its owned binder**
+- [ ] **3.13 An indexed element that is implicitly copyable may be
+  transferred**
 
-  Problem: `[x^ for x in items^]` runs on Mojito, where the pin reports
-  "expression does not designate a value with an origin" at `x^`.
-  - The pin takes the bare binder (`[x for x in items^]`), which both run.
-  - Mojito's comprehension check consumes the element as a whole value
-    (`check_consuming` in `check_comprehension`), and a `^` on an owned
-    binder passes as the move of a local.
-  - Pinned by `conformance/probes/comprehension_binder_transfer.mojo`.
+  Problem: `return x[0]^` over a `List[P]` with an `ImplicitlyCopyable`
+  struct `P` runs on Mojito and copies the element, where the pin reports
+  "expression does not designate a value with an origin".
+  - The pin admits the transfer only for a trivial register value such as
+    `Int`, and warns that it has no effect.
+  - Mojito's `Transfer` inference (`checker/inference.rs`) admits every
+    implicitly copyable indexed element.
+  - Narrowing the test to trivial register values is the lever.
+  - Probe: `conformance/probes/indexed_copyable_element_transfer.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2707,6 +2707,24 @@ last.
     (`assets/ok/list_element_view_method_result.mojo`).
   - Probe: `conformance/probes/dict_value_view_second_lookup.mojo`.
   - Depends on 3.4, which gives the view the interior its method names.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.111 A `^` transfer of a `ref` binding fails in MIR verification, not
+  in the checker**
+
+  Problem: `ref r = s` then `var t = r^` is rejected with "unsupported
+  specialized MIR that does not verify: ... binding of ref String to a slot
+  of type String", where the pin reports "expression does not designate a
+  value with an origin".
+  - A borrowed loop binder (`for x in xs: var y = x^`) fails the same way.
+  - The program is rejected on both sides, so only the diagnostic and the
+    phase that owns it are wrong.
+  - `check_transfer_source` (`checker/places.rs`) skips a binding of
+    reference type, and is where the rejection belongs.
+  - Whether a `ref` parameter over a mutable origin may be transferred is
+    still to be observed on the pin.
+  - Probe: `conformance/probes/reference_binding_transfer.mojo`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*

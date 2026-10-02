@@ -85,6 +85,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `^` transfer out of a read parameter is rejected. `def ident(x: String)
+  -> String: return x^` moved the caller's `String` into the result, so the
+  VM stopped with "use after Pointer deallocation" or a double free once the
+  caller's value was dropped; the checker now reports "cannot transfer out
+  of immutable reference", as the pin does. The rule covers a read `self`,
+  a field of either, a bare type parameter, and a `for` or comprehension
+  binder, and leaves a trivial register value (`Int`) transferable as a
+  copy. `assets/type_error/read_parameter_transfer_returned.mojo` and four
+  sibling fixtures pin it.
 - Unpacking a tuple place copies each element into its target. `var s, n = t`
   over a `(String, Int)` tuple shared the `String` buffer between `s` and
   `t`, so the VM stopped with "use after Pointer deallocation" and the

@@ -617,7 +617,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reported as `'(expression temporary)'`. A write through a reference (a
   `ref` binding, a reference-returning call) owns no obligation of its own,
   so the checker rejects one over a non-`Deinitable` referent at the store
-  (`places.rs`'s `check_overwritten_referent`).
+  (`places.rs`'s `check_overwritten_referent`)). A `^` whose source is rooted at an
+  immutable value binding is rejected where the transfer is inferred
+  (`places.rs`'s `check_transfer_source`, `TypeError::ImmutableTransfer`).
 - `mojito-types`' `types::is_symbolic`/`ct_value_is_symbolic` answer whether a
   type still mentions something only an instantiation can resolve. MIR's
   `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into

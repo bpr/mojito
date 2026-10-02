@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	457
+# swept-count	462
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -171,6 +171,7 @@ assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	
 assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
 assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
+assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -383,6 +384,10 @@ assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: in
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/predicate_alias_in_type_position.mojo	compile-reject	agree	error: expected a type, not a value
 assets/type_error/print_unknown_keyword.mojo	compile-reject	agree	error: invalid call to 'print': unexpected keyword argument 'foo'
+assets/type_error/read_parameter_transfer_generic.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
+assets/type_error/read_parameter_transfer_into_var_argument.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
+assets/type_error/read_parameter_transfer_returned.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
+assets/type_error/read_self_field_transfer.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/rebind_generic_body_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/rebind_register_passable_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/rebind_register_passable_bound_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment

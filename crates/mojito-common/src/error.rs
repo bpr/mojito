@@ -157,6 +157,9 @@ pub enum TypeError {
     ImmutableBinding(String),
     /// An augmented assignment whose destination binding is immutable.
     ImmutableInPlaceDestination(String),
+    /// A `^` transfer out of a place rooted at an immutable binding, such as
+    /// a parameter with no owning convention.
+    ImmutableTransfer(String),
     /// A call assigned back over its destination borrows an owned interior
     /// of that destination through one of its direct arguments.
     AliasingResultArgument {
@@ -575,6 +578,9 @@ impl fmt::Display for TypeError {
                     f,
                     "expression must be mutable for in-place operator destination ('{name}')"
                 )
+            }
+            Self::ImmutableTransfer(name) => {
+                write!(f, "cannot transfer out of immutable reference ('{name}')")
             }
             Self::AliasingResultArgument {
                 parameter,
