@@ -81,6 +81,8 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `borrowed_default_argument_destructor.mojo` | Is an evaluated default handed to a borrowing parameter destroyed when the call returns? | **differs**: the pin prints `drop dflt`, Mojito's VM and native backend never run the destructor — `docs/roadmap.md` §3 |
 | `list_literal_default_argument.mojo` | Does `xs: List[Int] = [1, 2, 3]` declare? | **differs**: the pin prints `3`, Mojito rejects the default as an `Array[Int, 3]` — `docs/roadmap.md` §3 |
+| `transfer_of_unbounded_parameter.mojo` | Is `item^` over `item: Self.T` legal when `T` has no `Movable` bound? | **differs**: the pin rejects the declaration ("'T' doesn't conform to 'Movable'"), Mojito checks each instance and prints `3` — `docs/roadmap.md` §3 |
+| `implicit_conversion_bound_on_declaration.mojo` | Is an `@implicit` conversion in a generic method selected once, on the declaration? | **differs**: the pin prints `2` twice, Mojito selects again per instance and reports an ambiguity for `Box[Int]` — `docs/roadmap.md` §3 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 

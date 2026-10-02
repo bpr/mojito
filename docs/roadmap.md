@@ -47,33 +47,7 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P2) No document says what a generator guarantees its instances**
-
-  Problem: "an instance-dependent decision is a MIR operation" has no
-  inventory behind it, so removing a clone check could drop an obligation
-  nobody listed.
-  - Write `docs/notes/generator-contract.md`. The plan's §The generator
-    contract is its outline.
-  - State the guarantee: substitution that satisfies the recorded obligations
-    preserves typing, ownership, and effects, with no second inference and no
-    second overload ranking.
-  - Classify every obligation in the instantiation note's §What an instance
-    still owes: declaration-time proof, assumption from a bound, operation or
-    summary kept in MIR, instantiation-time predicate, or clone bookkeeping
-    that disappears.
-  - Audit `Specializer::speculative` in `native/mono.rs`. It drops an
-    instance that fails to materialize because a conditional member's `where`
-    clause is absent from MIR. Say what availability information the
-    generator must carry instead.
-  - List the metadata a package artifact will need from a generator, so the
-    last stage does not reshape it.
-  - Reuse `ParamRef`, `ParamExpr`, `ParamConstraint`, and callable identity.
-    Add no parallel vocabulary.
-  - This entry changes no code.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 (P2) An ordinary generic struct's methods are cloned per
+- [ ] **1.1 (P2) An ordinary generic struct's methods are cloned per
   instance**
 
   Problem: `Optional[Int].get` is an AST clone checked or derived per
@@ -81,10 +55,17 @@ correctness fix to existing behavior is allowed.
   the elaborator can substitute into it.
   - Stop minting per-instantiation method clones for a method with no
     compile-time construct in its body. Lifecycle members are included.
-  - Each instance obligation the clone check discharged goes where the
-    generator contract classified it.
-  - A conditional member carries its availability clause into MIR, and the
-    elaborator's `speculative` set goes.
+  - Each instance obligation the clone check discharged goes where
+    [`docs/notes/generator-contract.md`](notes/generator-contract.md)
+    §The inventory classified it.
+  - A conditional member carries its availability clause on its MIR
+    declaration, and the elaborator's `speculative` set goes. The
+    elaborator decides the clause, so it also needs each concrete struct's
+    conformances (the note's §Availability).
+  - An instance over a loan-carrying argument is served today by the
+    clone's origin binders. The generator's transfer summary must name the
+    argument's origin positions itself before those clones go (the note's
+    §What this contract leaves open).
   - Clone-symbol retargeting in the checker, the VM, and `native::mono` goes
     with the clones.
   - A static called on a spelled instance with no argument carrying the
@@ -94,10 +75,13 @@ correctness fix to existing behavior is allowed.
     changes the serialized `Call`
     (`assets/ok/template_method_generic_static_owner_unbound.mojo`).
   - Delete the certificate classes that exist only to derive these clones.
-  - Depends on 1.1.
+  - Depends on two section 3 entries: the `^` transfer of an unbounded
+    parameter type, and the implicit conversion selected again per instance.
+    Each is a check the declaration must make before the clone check that
+    makes it today is removed.
   - Model: Fable, Planned.
 
-- [ ] **1.3 (P2) An explicit application of a trait-bound generic `def` is
+- [ ] **1.2 (P2) An explicit application of a trait-bound generic `def` is
   cloned**
 
   Problem: `show[Int](x)` mints an AST clone, while an inferred `show(x)`
@@ -106,10 +90,10 @@ correctness fix to existing behavior is allowed.
   - The bound check the resolver makes for a dropped argument stays at the
     call.
   - Delete the function certificate classes that exist only for these clones.
-  - Depends on 1.2.
+  - Depends on 1.1.
   - Model: Fable, Planned.
 
-- [ ] **1.4 (P3) No benchmark program mints a `comptime if`, `comptime for`,
+- [ ] **1.3 (P3) No benchmark program mints a `comptime if`, `comptime for`,
   or pack body**
 
   Problem: the three programs the P0 census measured clone no `def` keyed by
@@ -125,7 +109,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.5 (P3) Nothing shows ownership can be decided on a compile-time
+- [ ] **1.4 (P3) Nothing shows ownership can be decided on a compile-time
   region**
 
   Problem: the plan says ownership analyses every arm of a `comptime if` and
@@ -152,7 +136,7 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.6 (P3) Compile-time evaluation has no path to the elaborator's
+- [ ] **1.5 (P3) Compile-time evaluation has no path to the elaborator's
   worklist**
 
   Problem: `comptime/ctfe.rs` builds an AST subprogram, checks a synthesized
@@ -178,10 +162,10 @@ correctness fix to existing behavior is allowed.
     as a design question (plan decision D2).
   - This entry is a design note and the owner's decisions. The code moves in
     the later entries that name it.
-  - Depends on 1.1.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.7 (P3) A MIR register type cannot name a parameter expression**
+- [ ] **1.6 (P3) A MIR register type cannot name a parameter expression**
 
   Problem: a heterogeneous pack needs a type that depends on a symbolic
   index, and a `DType`-keyed body needs one over a symbolic value, and
@@ -192,10 +176,10 @@ correctness fix to existing behavior is allowed.
     well-kinded. Concrete verification rejects them.
   - Layout is asked only of a concrete type, and a compile-time layout query
     names its target.
-  - Depends on 1.1.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.8 (P3a) MIR cannot express a `comptime if`**
+- [ ] **1.7 (P3a) MIR cannot express a `comptime if`**
 
   Problem: a body keyed by a `comptime if` on a value parameter exists in MIR
   only as its per-value clones, so its template is a stub that traps.
@@ -211,10 +195,10 @@ correctness fix to existing behavior is allowed.
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.4, 1.5, 1.6, and 1.7.
+  - Depends on 1.3, 1.4, 1.5, and 1.6.
   - Model: Fable, Planned.
 
-- [ ] **1.9 (P3b) MIR cannot express a `comptime for`**
+- [ ] **1.8 (P3b) MIR cannot express a `comptime for`**
 
   Problem: a `comptime for` over a compile-time range or list is unrolled in
   the AST before the check.
@@ -222,10 +206,10 @@ correctness fix to existing behavior is allowed.
     its index symbolic.
   - The elaborator unrolls it, with compile-time `break` and `continue`.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.8.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.10 (P3b) MIR cannot express a type pack**
+- [ ] **1.9 (P3b) MIR cannot express a type pack**
 
   Problem: a pack-keyed body is unrolled in the AST, per call, before the
   check.
@@ -235,10 +219,10 @@ correctness fix to existing behavior is allowed.
   - A variadic template's body is validated symbolically, which closes the
     implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.9.
+  - Depends on 1.8.
   - Model: Fable, Planned.
 
-- [ ] **1.11 (P3c) A body keyed on a `DType` or a vector width has no MIR
+- [ ] **1.10 (P3c) A body keyed on a `DType` or a vector width has no MIR
   form**
 
   Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
@@ -247,10 +231,10 @@ correctness fix to existing behavior is allowed.
   - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
     elaborator.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.8.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.12 (P3d) A value-keyed or variadic struct is specialized whole in
+- [ ] **1.11 (P3d) A value-keyed or variadic struct is specialized whole in
   the AST**
 
   Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
@@ -259,10 +243,10 @@ correctness fix to existing behavior is allowed.
   - A struct declaration is a generator in MIR, and the elaborator mints its
     instances and their members.
   - The `Tuple` and `TString` request types leave the driver.
-  - Depends on 1.10 and 1.11.
+  - Depends on 1.9 and 1.10.
   - Model: Fable, Planned.
 
-- [ ] **1.13 (P3e) A method with its own compile-time parameters is cloned per
+- [ ] **1.12 (P3e) A method with its own compile-time parameters is cloned per
   call**
 
   Problem: `isa[T]` on a specialized struct mints a per-call AST clone, 14 of
@@ -270,10 +254,10 @@ correctness fix to existing behavior is allowed.
   - The method is a generator whose binders are the struct's and its own, and
     the elaborator instantiates it per call.
   - Delete `per_call_method_clones` and the certificate class.
-  - Depends on 1.8.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.14 (P3e) A nested `def` over an enclosing compile-time parameter is
+- [ ] **1.13 (P3e) A nested `def` over an enclosing compile-time parameter is
   cloned**
 
   Problem: a nested `def` that reads its enclosing function's compile-time
@@ -282,20 +266,20 @@ correctness fix to existing behavior is allowed.
   - The nested body is a generator that names the enclosing binders, and its
     captures are part of its contract.
   - Delete the cloner's nested branch and the certificate class.
-  - Depends on 1.8.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.15 (P3e) A compile-time evaluation mints its own clones**
+- [ ] **1.14 (P3e) A compile-time evaluation mints its own clones**
 
   Problem: a generic call inside a compile-time evaluation is cloned in the
   AST subprogram that evaluation builds, outside every other instantiation
   path.
   - The evaluation requests the instance from the worklist, by the request
     path already designed.
-  - Depends on 1.8.
+  - Depends on 1.7.
   - Model: Fable, Planned.
 
-- [ ] **1.16 (P4) The driver elaborates and checks to a fixpoint**
+- [ ] **1.15 (P4) The driver elaborates and checks to a fixpoint**
 
   Problem: `compile_linked` re-elaborates and re-checks for up to five
   discovery rounds, because only a check discovers the instances the next
@@ -308,12 +292,12 @@ correctness fix to existing behavior is allowed.
   - Module-scope `comptime` values follow the boundary decision D3 set.
   - The budget is plan decision D4: a stated improvement on the workloads
     repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on 1.2, 1.3, 1.12, 1.13, 1.14, and 1.15.
+  - Depends on 1.1, 1.2, 1.11, 1.12, 1.13, and 1.14.
   - Model: Fable, Planned.
 
-- [ ] **1.17 (P5) The replaced mechanisms are still in the tree**
+- [ ] **1.16 (P5) The replaced mechanisms are still in the tree**
 
-  Problem: once 1.16 lands, the AST cloner's core, template derivation, and
+  Problem: once 1.15 lands, the AST cloner's core, template derivation, and
   the VM's erased dispatch serve nothing.
   - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
     and module-scope folding need.
@@ -327,10 +311,10 @@ correctness fix to existing behavior is allowed.
     that use it to the driver, or give the seam concrete MIR.
   - Make a last pass over `docs/architecture.md` and `AGENTS.md` invariant 3.
     Each earlier stage updated the pipeline it changed.
-  - Depends on 1.16.
+  - Depends on 1.15.
   - Model: Fable, Planned.
 
-- [ ] **1.18 (P6) The standard library is checked again in every
+- [ ] **1.17 (P6) The standard library is checked again in every
   compilation**
 
   Problem: Mojo imports a package without checking its source again, and
@@ -342,10 +326,10 @@ correctness fix to existing behavior is allowed.
   - Importing skips the source check. It still validates the artifact and
     checks each instance's obligations.
   - The bundled library is the first consumer, built once per compiler build.
-  - Depends on 1.17.
+  - Depends on 1.16.
   - Model: Fable, Planned.
 
-- [ ] **1.19 (P0) The census cannot tell an erased template from a clone that
+- [ ] **1.18 (P0) The census cannot tell an erased template from a clone that
   keeps a parameter**
 
   Problem: `--instantiation-census` counts every parametric body left in MIR
@@ -2624,6 +2608,40 @@ last.
     the default is typed without its annotation as context.
   - Probe: `conformance/probes/list_literal_default_argument.mojo`.
   - Found while evaluated defaults were lowered natively (2026-09-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.110 A `^` transfer of an unbounded parameter type is accepted**
+
+  Problem: `return item^` with `item: Self.T` and `T: Deinitable` runs when
+  every instance is movable, where the pin rejects the declaration.
+  - The pin reports "cannot transfer value into destination, because 'T'
+    doesn't conform to 'Movable'", whatever instances exist.
+  - Mojito asks `Movable` of each instance instead, so the error appears
+    only for an instance that opts out
+    (`assets/type_error/template_method_transfer_requires_movable.mojo`).
+  - The lever is the symbolic check of a transfer, which treats a bare
+    parameter as always movable.
+  - Probe: `conformance/probes/transfer_of_unbounded_parameter.mojo`.
+  - Found while classifying instance obligations
+    (`docs/notes/generator-contract.md`, row 10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.111 An implicit conversion in a generic method is selected again
+  per instance**
+
+  Problem: `var w: Wrapper[Self.T] = self.item` is rejected for `Box[Int]`
+  ("ambiguous implicit conversion from 'Int' to 'Wrapper[Int]'") when
+  `Wrapper` has `@implicit` constructors over `Int` and over `Self.T`, where
+  the pin prints 2 for every instance.
+  - The pin selects the constructor while it checks the method, where the
+    source is `Self.T`.
+  - Mojito's clone check and its derivation both repeat the selection at
+    the instance's types.
+  - Probe: `conformance/probes/implicit_conversion_bound_on_declaration.mojo`.
+  - Found while classifying instance obligations
+    (`docs/notes/generator-contract.md`, row 20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

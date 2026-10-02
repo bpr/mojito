@@ -1,7 +1,7 @@
 # Parametric MIR and One Elaborator: Staged Plan
 
-**Status:** plan recorded 2026-09-30. P0's census has landed (§P0); no stage
-after it has. The scheduled
+**Status:** plan recorded 2026-09-30. P0's census (§P0) and P1 have landed,
+and P2's gate, the generator contract, is written. The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) §1; this document is their design
 record and is updated as stages land. It was revised on 2026-09-30 after
 [`docs/parametric-mir-plan-review.md`](parametric-mir-plan-review.md).
@@ -114,8 +114,9 @@ an explicit MIR operation the elaborator resolves, never a second check.
 
 That principle needs an inventory and a preservation argument before any
 clone check is removed. Without them the certificate machinery would
-reappear inside MIR under other names. The contract is its own note, written
-before P2 (roadmap §1, the generator-contract entry).
+reappear inside MIR under other names. The contract is its own note,
+[`docs/notes/generator-contract.md`](notes/generator-contract.md), written
+2026-10-01. What follows is its outline.
 
 **The guarantee.** Substituting arguments that satisfy a generator's recorded
 obligations preserves typing, ownership, and effects. No source expression is
@@ -342,8 +343,11 @@ interleaved, debug profile, `total` from `--timings`, median of three:
 
 ### P2 — Stop cloning what the elaborator can already instantiate
 
-- Gate: the generator contract is written and every existing obligation is
-  classified (§The generator contract).
+- Gate, met 2026-10-01: the generator contract is written and every existing
+  obligation is classified
+  ([`docs/notes/generator-contract.md`](notes/generator-contract.md)). Two
+  obligations turned out to be checks the pin makes on the declaration and
+  Mojito does not. They are roadmap §3 entries, and P2 depends on them.
 - An ordinary generic struct's methods are cloned per instance only so the
   checker can check them concretely. With P1, the elaborator instantiates the
   template's MIR instead.

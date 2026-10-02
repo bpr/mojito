@@ -588,6 +588,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `comptime.rs:instance_traces` carries one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
   substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.
+  Where each instance obligation goes once clones are gone is
+  `docs/notes/generator-contract.md`.
 - `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
   (`checker.rs:check_program_for_discovery`, inside the `PassCarry` of
   `check_program_carrying`): `CheckedProgram::new`'s inputs, owned, with

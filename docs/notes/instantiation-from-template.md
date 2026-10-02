@@ -522,6 +522,10 @@ only `Movable` records nothing there, and its `Int` clone would.
 
 ## What an instance still owes
 
+Where each of these goes once the clone is gone is classified in
+[`generator-contract.md`](generator-contract.md) §The inventory, by the
+numbers below.
+
 `realize_instance_facts` substitutes and then discharges, in this order:
 
 1. **Substitution.** For a `def` clone, each baked type parameter stands for
