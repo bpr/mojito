@@ -5,7 +5,8 @@
 # again: a parameter, a sibling call's result, and a reassignment of declared
 # locals, with a discarded `_` element, derive for an `Int` and a user-struct
 # instance, and the sibling call's unpack for a `String` instance too. A
-# `String` element unpacked from a parameter is `docs/roadmap.md` 3.5.
+# `String` element unpacked from a parameter is
+# `assets/ok/tuple_unpack_place_copies.mojo`.
 @fieldwise_init
 struct Point(Equatable, ImplicitlyCopyable, Movable, Writable):
     var x: Int

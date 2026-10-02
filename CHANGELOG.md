@@ -85,6 +85,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Unpacking a tuple place copies each element into its target. `var s, n = t`
+  over a `(String, Int)` tuple shared the `String` buffer between `s` and
+  `t`, so the VM stopped with "use after Pointer deallocation" and the
+  native backend with a double free; both now print `t 6` as the pin does.
+  An element that is not `ImplicitlyCopyable` (`List[Int]`) is rejected at a
+  named target, as the pin rejects it, and a `_` target reads nothing.
+  `assets/ok/tuple_unpack_place_copies.mojo` and
+  `assets/type_error/tuple_unpack_place_element_not_implicitly_copyable.mojo`
+  pin it.
 - A view returned by a method on a container element keeps the container
   alive: `var v = ys[0].rstrip()` followed by `String(v)` prints the stripped
   text where the VM stopped with "use after Pointer deallocation". The view

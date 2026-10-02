@@ -740,6 +740,7 @@ assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_predicate_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_receiver_instance_call.mojo	-	ineligible	no-scalar-entry-shape

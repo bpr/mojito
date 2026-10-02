@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	456
+# swept-count	457
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -453,6 +453,7 @@ assets/type_error/tuple_default_element_not_defaultable.mojo	compile-reject	agre
 assets/type_error/tuple_deinit_with_abandoned_element.mojo	compile-reject	agree	error: 'element' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/tuple_literal_elements_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
 assets/type_error/tuple_unhashable_element_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Tuple[Int, Opaque]]'
+assets/type_error/tuple_unpack_place_element_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/type_argument_origin_function_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'items' argument and passed mutably to 'default' argument in 'pick' call
 assets/type_error/type_argument_origin_method_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
 assets/type_error/type_argument_origin_pointer_write_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call

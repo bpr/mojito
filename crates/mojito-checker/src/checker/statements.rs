@@ -1398,6 +1398,30 @@ impl Checker {
                         },
                     );
                 }
+                // A named target owns a copy of the element a place keeps, so
+                // the element must copy implicitly; `_` reads nothing.
+                for (target, element) in targets.iter().zip(&unpack_plan) {
+                    if element.reference.is_none()
+                        || matches!(&target.kind, ExprKind::Identifier(name) if name == "_")
+                    {
+                        continue;
+                    }
+                    let context = "unpacking a Tuple place copies each element".to_string();
+                    if !self.is_copyable(&element.ty) {
+                        return Err(TypeError::NonCopyable {
+                            ty: element.ty.to_string(),
+                            context,
+                        });
+                    }
+                    if !self.is_implicitly_copyable(&element.ty) {
+                        return Err(TypeError::ImplicitCopy {
+                            ty: element.ty.to_string(),
+                            context,
+                            transferable: false,
+                            copyable: true,
+                        });
+                    }
+                }
                 self.tuple_unpack_plans
                     .borrow_mut()
                     .insert(value.source_span(), unpack_plan);

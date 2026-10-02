@@ -2603,6 +2603,12 @@ impl Flatten<'_> {
                 // that produced the tuple.
                 let loans = self.aggregate_borrows(value);
                 for (i, (target, extraction)) in targets.iter().zip(plan).enumerate() {
+                    // `_` discards its element of a place without reading it.
+                    if extraction.reference.is_some()
+                        && matches!(&target.kind, ExprKind::Identifier(name) if name == "_")
+                    {
+                        continue;
+                    }
                     let carries_loans = extraction.carries_loans;
                     let idx = self.fresh_typed(span(target), None, Ty::Int);
                     self.emit(MirInstr::Const {
@@ -2643,16 +2649,25 @@ impl Flatten<'_> {
                         intrinsic,
                     });
                     let elem = if extraction.reference.is_some() {
+                        let element_ty = extraction.ty;
                         let value = self.fresh_typed(
                             span(target),
                             base_place.as_ref().map(|place| place.root),
-                            extraction.ty,
+                            element_ty.clone(),
                         );
                         self.emit(MirInstr::ReadRef {
                             dest: value,
                             reference: raw,
                         });
-                        value
+                        // The target owns its element independently of the
+                        // unpacked place, so a lifecycle type runs its copy
+                        // initializer rather than aliasing the place's storage.
+                        let copied = self.fresh_typed(span(target), None, element_ty);
+                        self.emit(MirInstr::CopyValue {
+                            dest: copied,
+                            value,
+                        });
+                        copied
                     } else {
                         raw
                     };
