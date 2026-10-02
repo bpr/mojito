@@ -2117,17 +2117,7 @@ impl Checker {
                 *parameter == subject
                     && (available == required
                         || self.trait_refines(available, required)
-                        || matches!(
-                            (available.as_str(), required),
-                            ("ImplicitlyCopyable", "Copyable")
-                                | (
-                                    "TrivialRegisterPassable",
-                                    "ImplicitlyCopyable" | "Copyable" | "Movable" | "Deinitable"
-                                )
-                                | ("IsTriviallyCopyable", "Copyable" | "ImplicitlyCopyable")
-                                | ("IsTriviallyMovable", "Movable")
-                                | ("IsTriviallyDeinitable", "Deinitable")
-                        ))
+                        || builtin_trait_implies(available, required))
             })
         })
     }
@@ -2515,12 +2505,12 @@ impl Checker {
             })
     }
 
-    /// Every initialized value is movable by default; only a struct that
-    /// *declares* a conditional `Movable` conformance whose predicate fails
-    /// (commonly `Movable where False`) opts out. `Ty::Param` stays movable
-    /// without a `Movable` bound — a deliberate asymmetry with
-    /// `is_deinitable`: the default-movable model means generic code moves
-    /// unbounded parameters, and only declared opt-outs are enforced.
+    /// Every initialized value of a concrete type is movable by default; only
+    /// a struct that *declares* a conditional `Movable` conformance whose
+    /// predicate fails (commonly `Movable where False`) opts out. A type
+    /// parameter is movable only where its bounds prove it, as
+    /// `is_deinitable` asks of `Deinitable`: the declaration is checked once
+    /// for every instance, an opted-out one included.
     pub(super) fn is_movable(&self, ty: &Ty) -> bool {
         if let Some(element) = self.opaque_element(ty) {
             return self.is_movable(&element);
@@ -2543,8 +2533,25 @@ impl Checker {
                     true
                 }
             }),
+            Ty::Param {
+                bounds,
+                callable_bound: None,
+                ..
+            } => self.bounds_prove_movable(bounds),
             _ => true,
         }
+    }
+
+    /// Whether a parameter's bounds prove `Movable`: the trait itself, a
+    /// trait refining it (`Copyable` and what refines that), or the
+    /// trivial-lifecycle marker that implies it.
+    pub(super) fn bounds_prove_movable(&self, bounds: &[String]) -> bool {
+        bounds.iter().any(|bound| {
+            matches!(
+                bound.as_str(),
+                "Movable" | "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
+            ) || self.trait_refines(bound, "Movable")
+        })
     }
 
     /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
@@ -2864,13 +2871,18 @@ impl Checker {
             && matches!(source.kind, ExprKind::Transfer(_))
             && !self.is_movable(ty)
         {
+            let reason = if matches!(ty, Ty::Param { .. }) {
+                "a value of a parameter type transfers only where a bound proves 'Movable'"
+            } else {
+                "its 'Movable' conformance condition is false"
+            };
             return Err(TypeError::TraitNotSatisfied {
                 param: context.to_string(),
                 ty: ty.to_string(),
                 trait_name: "Movable".to_string(),
                 reason: self
                     .trait_failure_reason(ty, "Movable")
-                    .or_else(|| Some("its 'Movable' conformance condition is false".to_string())),
+                    .or_else(|| Some(reason.to_string())),
             });
         }
         // A transfer of a Movable value and a fresh temporary (a call result,

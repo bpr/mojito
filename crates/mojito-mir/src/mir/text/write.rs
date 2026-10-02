@@ -633,6 +633,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             kwarg_places,
             capture_accesses,
             param_arg_regs,
+            receiver,
         } => record(
             tag,
             &[
@@ -648,6 +649,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     list(capture_accesses.iter().map(capture_access)),
                 ),
                 ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
+                ("receiver", option(receiver.as_ref().map(ty_value))),
             ],
         ),
         MirInstr::CallIndirect {

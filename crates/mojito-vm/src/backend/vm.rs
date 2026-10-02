@@ -422,9 +422,19 @@ impl VmBackend {
             || prog.overload_name(&source_fname, args.len().saturating_sub(1)),
             str::to_string,
         );
-        let idx = prog.index_of(&fname).ok_or_else(|| {
-            RuntimeError::Unsupported(format!("vm: struct '{sname}' has no method '{method}'"))
-        })?;
+        let Some(idx) = prog.index_of(&fname) else {
+            // `Equatable`'s default `!=`: a struct that declares `__eq__`
+            // and no `__ne__` negates its `__eq__`, which an erased body
+            // dispatches by name.
+            if method == "__ne__"
+                && let Value::Bool(equal) = self.call_dunder(prog, sname, "__eq__", args)?
+            {
+                return Ok(Value::Bool(!equal));
+            }
+            return Err(RuntimeError::Unsupported(format!(
+                "vm: struct '{sname}' has no method '{method}'"
+            )));
+        };
         self.call_function(prog, idx, args, &[])
     }
 }

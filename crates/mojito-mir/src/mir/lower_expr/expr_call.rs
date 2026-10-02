@@ -594,6 +594,7 @@ impl Flatten<'_> {
             kwarg_places,
             capture_accesses,
             param_arg_regs,
+            receiver: None,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);
@@ -791,6 +792,7 @@ impl Flatten<'_> {
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs,
+                receiver: self.static_receiver(object),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return dest;

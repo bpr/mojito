@@ -67,9 +67,10 @@ impl Checker {
                     .get(method)
                     .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
             {
-                return self
-                    .infer_struct_static_method(span.clone(), name, targs, method, call)
-                    .map(Some);
+                let ty =
+                    self.infer_struct_static_method(span.clone(), name, targs, method, call)?;
+                self.record_static_receiver(object, name, targs);
+                return Ok(Some(ty));
             }
             // No static of that name: an instance method called through the
             // type takes its receiver as the first argument.
@@ -108,9 +109,11 @@ impl Checker {
         {
             let targ = mojito_ast::ast::ParamArg::Value((**index).clone());
             if sigs.iter().any(|sig| !sig.has_self) {
-                return self
-                    .infer_struct_static_method(span.clone(), sname, &[targ], method, call)
-                    .map(Some);
+                let targs = [targ];
+                let ty =
+                    self.infer_struct_static_method(span.clone(), sname, &targs, method, call)?;
+                self.record_static_receiver(object, sname, &targs);
+                return Ok(Some(ty));
             }
             if !args.is_empty() && sigs.iter().any(|sig| sig.has_self) {
                 return self

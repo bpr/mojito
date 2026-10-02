@@ -1,6 +1,7 @@
-# A method clone derived from its checked template still owes `Movable` at
-# each `^` transfer of a value of a parameter type: the instance below opts
-# out, so its clone keeps the clone check and reports the failed conformance.
+# A `^` transfer of a value of a parameter type needs a bound that proves
+# `Movable`: the declaration is rejected whatever instances exist, as the pin
+# rejects it ("cannot transfer value into destination, because 'T' doesn't
+# conform to 'Movable'"). `Holder[Int]` alone would not save it.
 # expect: does not conform to trait 'Movable'
 struct Pinned(Deinitable, Movable where False):
     var id: Int

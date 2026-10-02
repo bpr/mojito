@@ -66,6 +66,7 @@ impl Flatten<'_> {
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs: Vec::new(),
+                receiver: self.static_receiver(object),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return d;
@@ -95,6 +96,13 @@ impl Flatten<'_> {
             },
             _ => None,
         }
+    }
+
+    /// The instance a static call's spelled receiver names (`Pair[Int]`),
+    /// which the checker recorded as the receiver expression's type.
+    pub(super) fn static_receiver(&self, object: &Expr) -> Option<Ty> {
+        self.checked_ty(object)
+            .filter(|ty| matches!(ty, Ty::Struct(_, arguments) if !arguments.is_empty()))
     }
 
     /// Method calls the checker resolved to a value operation with no callee
@@ -234,6 +242,7 @@ impl Flatten<'_> {
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
+                receiver: None,
             });
             let (recv, recv_place) = self.lower_call_receiver(writer);
             let d = self.fresh_typed(span(e), None, Ty::None);

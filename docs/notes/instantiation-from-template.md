@@ -12,6 +12,15 @@ The plan this implements is `instantiation-from-template-plan.md` (untracked,
 repository root). The remaining work is `docs/roadmap.md` section 1, one
 entry per uncovered construct.
 
+Since 2026-10-01 the mechanism serves fewer bodies. A generic struct's method
+with no compile-time construct in its body mints no clone on a plain-data
+instance: the elaborator instantiates the template's MIR
+([`generator-contract.md`](generator-contract.md) §What has landed). What
+follows still describes every clone that is minted: a `def` clone, a method
+that holds or reaches a compile-time construct, and every method of an
+instance over a loan-carrying argument. A derived clone that calls a sibling
+with no clone names the sibling's template.
+
 ## The carrier stays the AST clone
 
 HIR and MIR still walk a concrete AST plus the checked tables. Nothing below
@@ -587,10 +596,13 @@ numbers below.
    stands as a value (a parameter forwarded, a declaration handed on) is read
    under the same name by the instance (`value_callees`).
 10. **`Movable`.** Each `^` transfer of a value whose type mentioned a
-    parameter must be of a `Movable` type for the instance. A parameter is
-    always movable while it is symbolic and the demand only ever produces an
-    error, so no retained fact carries it and verification cannot see it
-    (`assets/type_error/template_method_transfer_requires_movable.mojo`).
+    parameter must be of a `Movable` type for the instance. A bare parameter
+    is movable only where its bounds prove it, so the declaration's check
+    rejects the transfer otherwise
+    (`assets/type_error/template_method_transfer_requires_movable.mojo`). The
+    instance demand remains for a type built over a parameter, whose own
+    conformance may be conditional; it only ever produces an error, so no
+    retained fact carries it and verification cannot see it.
 11. **Deletability.** A binding whose type mentions a parameter is
     deletable, linear, or neither at the instance's own type, as the
     declaration's check decides it: deletable where the type is `Deinitable`,

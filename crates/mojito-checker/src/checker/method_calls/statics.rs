@@ -170,6 +170,34 @@ impl Checker {
         Ok(ty)
     }
 
+    /// Record the instance a static call's spelled receiver names
+    /// (`Pair[Self.U]` in `Pair[Self.U].count()`) as the receiver
+    /// expression's type. No argument of such a call need carry the struct's
+    /// parameters, so lowering hands the elaborator this type.
+    pub(super) fn record_static_receiver(
+        &self,
+        object: &Expr,
+        sname: &str,
+        struct_targs: &[mojito_ast::ast::ParamArg],
+    ) {
+        let Some(info) = self.structs.get(sname) else {
+            return;
+        };
+        let instance = self
+            .partition_struct_origin_args(sname, &info.source_params, struct_targs)
+            .and_then(|partitioned| {
+                self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
+            });
+        if let Ok((_, arguments)) = instance
+            && !arguments.is_empty()
+        {
+            self.expression_types.borrow_mut().insert(
+                object.source_span(),
+                Ty::Struct(sname.to_string(), arguments),
+            );
+        }
+    }
+
     pub(super) fn infer_struct_static_method(
         &self,
         span: SourceSpan,

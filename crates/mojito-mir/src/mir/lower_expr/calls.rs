@@ -45,6 +45,7 @@ impl Flatten<'_> {
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
+            receiver: None,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         Some(dest)
@@ -544,6 +545,7 @@ impl Flatten<'_> {
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
+            receiver: None,
         });
         Some(dest)
     }

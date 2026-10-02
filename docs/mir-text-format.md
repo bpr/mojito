@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.7
+# Mojito Textual MIR Format, Version 1.8
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.7 is implemented end to end for inspection and loading: canonical
+Version 1.8 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.7
+mojito-mir 1.8
 ```
 
-The writer emits 1.7. The reader accepts 1.0 through 1.7; *Schema 1.0*
+The writer emits 1.8. The reader accepts 1.0 through 1.8; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -90,6 +90,15 @@ enclosing declaration's value binders that the argument was built from
 (`successor[n, 1 + n]()` records `1 + n`). Its `value` register is unchanged.
 A 1.6 consumer rejects the field, which is the intended failure. A 1.7
 consumer reads an older `param_arg` as recording no expression.
+
+Minor version 8 carries the spelled receiver of a static call. A `call` gains
+`receiver`: `absent`, or the type the call's receiver spells on a generic
+struct, in the caller's binder scope (`Pair[Self.U].count()` records
+`Pair[U]`). No runtime argument of such a call need carry the struct's
+parameters, so the elaborator binds them from this type; a resolved call in
+concrete MIR records `absent`. A 1.7 consumer rejects the field, which is the
+intended failure. A 1.8 consumer reads an older `call` as recording no
+receiver.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -563,7 +572,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.7
+mojito-mir 1.8
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

@@ -152,6 +152,7 @@ assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_nested_def_captures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_dispatch.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_struct_template_reach.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_bucketing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_extra_hash_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_hasher_protocol.mojo	-	ineligible	no-scalar-entry-shape
@@ -166,6 +167,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	-	ineligible	no-scalar
 assets/ok/imm_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/imm_origin_cast_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/implicit_conversion_bound_on_declaration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_exact_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape

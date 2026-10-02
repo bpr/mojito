@@ -2,8 +2,8 @@
 //! re-decided for one instance as the clone check would decide them.
 
 use super::{
-    Occurrence, TUPLE_ELEMENT_ACCESSOR, closed_differences, closed_scalar, conversion_target,
-    fact_at, names_method, note_realized_callee, set_fact, template_callee, upsert,
+    Occurrence, TUPLE_ELEMENT_ACCESSOR, closed_scalar, conversion_target, fact_at, names_method,
+    note_realized_callee, set_fact, template_callee, upsert,
 };
 use crate::checker::builtins::{is_numeric, print_keyword};
 use crate::checker::{Checker, callable_contract_target, callable_lowered_name};
@@ -11,7 +11,7 @@ use mojito_checked::templates::{
     CallParameterFact, CheckedBodyFacts, OccurrenceId, TemplateCallContract, TemplateOwner,
     TemplateReference,
 };
-use mojito_types::types::{ParamDecl, Ty, TySubst};
+use mojito_types::types::{Ty, TySubst};
 
 impl Checker {
     /// Realize one closed method call for an instance: its target, and its
@@ -532,12 +532,9 @@ impl Checker {
                 })
                 .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
                 .1;
+            // No clone of the static: the template's selected member serves
+            // the instance.
             let Some(clone) = self.instance_method_clone(owner, method, &arguments) else {
-                if info.methods.get(method).is_some_and(|family| {
-                    !closed_differences(family) && !collapses(family, &info.decls, &arguments)
-                }) {
-                    return Err("an instance has no clone of a static's overload family");
-                }
                 continue;
             };
             // A lone clone is no overload set, and its call records no member.
@@ -1201,17 +1198,9 @@ impl Checker {
             self.method_clone_target(owner, method, arguments, declared, substitution)
                 .ok_or("a called method's clone family has no member for the selected overload")?
         } else {
-            // No clone of this method. If the instance has clones of others,
-            // this one was withheld from it or collapsed.
-            let suffix = clone_name
-                .as_deref()
-                .and_then(|clone| clone.strip_prefix(method));
-            if suffix.is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix))) {
-                return Err("the instance has clones, but not of a called method");
-            }
-            // The erased callee serves the instance too; its availability
-            // condition is judged at the instance's receiver arguments, as
-            // the clone check judges it.
+            // No clone of this method: its template serves the instance. Its
+            // availability condition is judged at the instance's receiver
+            // arguments, as the clone check judges it.
             if !declared.availability.is_empty() && !substitution.is_empty() {
                 let Ty::Struct(_, bound) = self.instance_ty(
                     &Ty::Struct(owner.to_string(), arguments.to_vec()),
@@ -1570,39 +1559,6 @@ fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(Occur
         },
         method,
     ))
-}
-
-/// Whether an overload family's members differ only in closed parameter
-/// types, so that they rank alike under every instance: a parameter of the
-/// struct's parameter type is the same one in each of them.
-/// Whether an instance's struct arguments make two members of an
-/// overloaded `family` declare the same parameters, which leaves the
-/// instance no clone of the family: the elaborator mints none that would
-/// redeclare an overload.
-fn collapses(
-    family: &[crate::checker::MethodSig],
-    decls: &[ParamDecl],
-    arguments: &[mojito_types::types::TyArg],
-) -> bool {
-    let substitution = crate::checker::annotations::struct_subst(decls, arguments);
-    let shape = |member: &crate::checker::MethodSig| {
-        (
-            member.has_self,
-            member.self_convention,
-            member.positional_only,
-            member.keyword_only,
-            member.conventions.clone(),
-            member
-                .params
-                .iter()
-                .map(|ty| mojito_types::types::substitute(ty, &substitution))
-                .collect::<Vec<_>>(),
-        )
-    };
-    family.iter().enumerate().any(|(index, member)| {
-        let this = shape(member);
-        family[..index].iter().any(|earlier| shape(earlier) == this)
-    })
 }
 
 /// The generated Tuple member a tuple element's read selected, from its

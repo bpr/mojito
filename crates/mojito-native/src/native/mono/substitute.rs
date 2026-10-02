@@ -340,11 +340,13 @@ pub(super) fn substitute_instruction(
             raises,
             arg_places,
             kwarg_places,
+            receiver,
             ..
         } => {
             sub_opt_ty(raises, bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
+            sub_opt_ty(receiver, bindings)?;
         }
         // `H()` on a type parameter constructs the bound struct: once the
         // binding is concrete this is an ordinary nullary constructor call,
@@ -385,6 +387,7 @@ pub(super) fn substitute_instruction(
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
+                receiver: None,
             };
         }
         CallIndirect {

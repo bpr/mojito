@@ -334,7 +334,16 @@ impl VmBackend {
             } => {
                 let l = regs[a.0 as usize].clone();
                 let r = regs[b.0 as usize].clone();
-                regs[dest.0 as usize] = self.apply_binop(prog, *op, l, r, resolved.as_deref())?;
+                let value = self.apply_binop(prog, *op, l, r, resolved.as_deref())?;
+                // An erased body types a comparison over its parameter
+                // `Bool`, as its bound declares; sized scalars yield a mask.
+                let declared_bool = matches!(value, Value::Simd { .. })
+                    && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::Bool);
+                regs[dest.0 as usize] = if declared_bool {
+                    crate::runtime::builtin_convert("Bool", value)?
+                } else {
+                    value
+                };
             }
             MirInstr::Call {
                 dest,

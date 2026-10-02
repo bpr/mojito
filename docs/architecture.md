@@ -983,8 +983,35 @@ the erased path and therefore cannot use such a method.
 
 An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
 a plain type parameter) keeps its template in the program — checked once
-with `T` as `Ty::Param` (Mojo's generic pre-check) and still the fallback for
-symbolic receivers — and gains **per-instantiation method clones** appended
+with `T` as `Ty::Param` (Mojo's generic pre-check). A method with no
+compile-time construct in its body is a generator: its template's MIR serves
+every plain-data instance, and `native::mono` substitutes into it for both
+backends, so nothing is cloned, checked, or derived per instance. What the
+elaborator resolves there is what the instance's own check used to: the
+witness of an operator or a bound call, a `!=` served by a negated `__eq__`,
+the `Bool` conversion of a sized-scalar comparison, an arity-keyed variadic
+constructor, and the struct's parameters of a static call, which MIR records
+on the call as its spelled receiver type (`MirInstr::Call::receiver`,
+`Pair[Self.U].count()`).
+
+The methods that still clone are the ones MIR cannot express yet
+(`keyed_methods`, `comptime/specialize.rs`): a body the template stubs (a
+`comptime if`, a `comptime for`, a `rebind`), one holding a nested `def`, a
+lambda, or a type name over the struct's parameters, and one that reaches a
+compile-time-keyed `def`. The driver adds the ones only checked types show
+(`src/compiler/template_reach.rs`): a body whose types hold a tuple or a
+struct specialized whole over the struct's parameters, and one that calls an
+overloaded method with binders of its own. An instance whose argument
+carries a loan or a callable clones every method, because its clone's origin
+binders are what a transfer summary names the argument's loans by. Because
+no clone check walks a template-served body at the instance's arguments, the
+driver also reads from the template's checked types which closed instances
+that body reaches (`Box[List[Self.T]]`), transitively, and requests them, so
+a struct reached only from such a body still mints the clones it keeps;
+`native::mono` then targets that clone where a template body calls the
+method on a closed receiver (`instance_method_target`).
+
+Such a struct gains those **per-instantiation method clones** appended
 to its own method list. The checker records every closed application it
 reaches from a non-bundled source as a constructor target or method-call
 receiver (`StructInstantiation`; instances seen only inside unstamped

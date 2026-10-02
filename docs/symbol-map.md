@@ -222,7 +222,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StringSpan`, `MutPointer`/`ImmPointer`).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
-  `is_movable`, `is_copyable`, …). Deprecated lifecycle spellings
+  `is_movable`, `is_copyable`, …). A type parameter is movable or
+  destructible only where its bounds prove it (`bounds_prove_movable`,
+  `bounds_prove_deinitable`), and `overload_support::builtin_trait_implies`
+  is the one table of which built-in trait proves which, for an assumed
+  conformance and for a `where` premise alike. Deprecated lifecycle spellings
   (`ImplicitlyDeletable`/`__del__`) normalize to the canonical
   `Deinitable`/`__deinit__` vocabulary via `ast::canonical_trait_name` /
   `ast::canonical_destructor_name`, applied by the parser at the semantic
@@ -951,7 +955,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and records as `AnnotationSite::MethodSelf` for MIR; the body check reads
   that record back, and `MethodSig::receiver` keeps it so a call binds the
   clone's origin binders from its receiver, `bind_clone_receiver_origins` in
-  `checker/origins/construct.rs`).
+  `checker/origins/construct.rs`). `keyed_methods` there says which methods
+  of an instance still clone: the ones whose template body is the trap stub,
+  the ones `holds_instance_construct` finds a nested `def`, a lambda, or a
+  type name in, the stub-reaching ones, and the driver-reported ones
+  (`ElaborationInputs::keyed_methods`). Every other method of a plain-data
+  instance (`carries_loan_or_callable` is false of each argument) mints no
+  clone.
+- `src/compiler/template_reach.rs` owns what a template-served method body
+  reaches at an instance (`TemplateReach`), read from one check's facts: the
+  closed instances its checked types name once the struct's parameters are
+  bound (`instances`, requested like checker-recorded ones), and the methods
+  whose checked bodies only an instance's own check can serve
+  (`keyed_methods`). `compile_linked` consults it every discovery round, and
+  a body that reached a struct whose method becomes keyed is inferred again
+  (`ServedRequests::keyed_templates`).
 - `comptime/nested.rs` owns the lexically scoped specialization of generic
   nested functions (`monomorphize_nested_program`, the `NestedMono` registry,
   its `NESTED_MARKER_INFIX` marker names, and the runtime-pack environment).
@@ -996,7 +1014,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (the VM's `instance_dunder_symbol` in `backend/vm.rs` and the native
   monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in
   `native/mono/instances.rs` select clones through it from checked register
-  types); `instance_clone_base` recovers a clone's source method name for the
+  types, as does `instance_method_target`, which hands a template body's
+  method call on a closed receiver to that instance's clone where one
+  exists; `mono/infer.rs:bind_static_receiver` binds a struct's parameters
+  from the receiver type a static call records, which
+  `checker/method_calls/statics.rs:record_static_receiver` types and MIR
+  lowering copies into `MirInstr::Call::receiver`); `instance_clone_base` recovers a clone's source method name for the
   exact-name lifecycle gates, `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (a clone's baked
   `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,

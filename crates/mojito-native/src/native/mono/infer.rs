@@ -348,6 +348,48 @@ impl Specializer<'_> {
         Ok((target.to_string(), bindings, arguments))
     }
 
+    /// Bind the owner's parameters of a static call from its spelled
+    /// receiver (`Pair[Int].count()`), and name the instance under that
+    /// owner: no runtime argument need carry them.
+    pub(super) fn bind_static_receiver(
+        &self,
+        owner: &str,
+        target: &str,
+        receiver: &Ty,
+        bindings: &mut Bindings,
+    ) -> Result<(), MonoError> {
+        let Ty::Struct(receiver_name, arguments) = receiver else {
+            return Ok(());
+        };
+        let template = nominal_template(receiver_name);
+        let Some(struct_decl) = self.structs.get(template).copied() else {
+            return Ok(());
+        };
+        if struct_decl.param_decls.is_empty() {
+            return Ok(());
+        }
+        bind_ty_args(&struct_decl.param_decls, arguments, bindings).map_err(|e| {
+            self.error(
+                Some(owner),
+                format!("monomorphizing receiver for `{target}`: {e}"),
+            )
+        })?;
+        if bindings.self_instance.is_none() {
+            let owner_arguments = ordered_arguments(&struct_decl.param_decls, bindings, template)?;
+            let ty_arguments = owner_arguments
+                .iter()
+                .map(|argument| match argument {
+                    InstanceArg::Ty(ty) => TyArg::Ty(ty.clone()),
+                    InstanceArg::Value(value) => TyArg::Val(value.clone()),
+                })
+                .collect();
+            let instance = mojito_symbol::symbol::instance_symbol(template, &owner_arguments);
+            bindings.self_instance =
+                Some((template.to_string(), Ty::Struct(instance, ty_arguments)));
+        }
+        Ok(())
+    }
+
     /// Walk `blocks` (recursing into `try` regions) folding every `GetIter`
     /// before the main call rewrite reads iterator slot types.
     pub(super) fn rewrite_iterator_inits(

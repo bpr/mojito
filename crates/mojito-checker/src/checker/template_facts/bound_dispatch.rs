@@ -693,26 +693,9 @@ impl Checker {
                 }
             }
         } else {
-            let clone_name = mojito_symbol::symbol::instance_method_clone_name(
-                method,
-                &info.decls,
-                struct_arguments,
-            );
-            // A synthesized trait default is never cloned: the template's
-            // body serves every instance. Any other witness missing beside
-            // the instance's clones was withheld from it or collapsed.
-            let suffix = clone_name
-                .as_deref()
-                .and_then(|clone| clone.strip_prefix(method));
-            if !declared.synthesized_default
-                && suffix
-                    .is_some_and(|suffix| info.methods.keys().any(|name| name.ends_with(suffix)))
-            {
-                return Err("the instance has clones, but not of the witness");
-            }
-            // The erased witness serves the instance, its availability
-            // condition judged at the instance's arguments as the clone
-            // check judges it.
+            // No clone of the witness: its template serves the instance, its
+            // availability condition judged at the instance's arguments as
+            // the clone check judges it.
             if !declared.availability.is_empty()
                 && !struct_arguments.is_empty()
                 && !self.method_constraints_apply(declared, &[], &info.decls, struct_arguments)

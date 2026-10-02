@@ -282,6 +282,12 @@ impl Decoder {
                 param_arg_regs: self.req(value, fields, "param_arg_regs", |d, v| {
                     Some(d.mir_param_args(v))
                 })?,
+                // Schema 1.8 records the spelled receiver of a static call; an
+                // older artifact carries none.
+                receiver: self
+                    .field(fields, "receiver")
+                    .ok()
+                    .and_then(|found| self.option_ty(Some(found))),
             }),
             "call.indirect" => Some(MirInstr::CallIndirect {
                 dest: self.req(value, fields, "dest", Self::reg)?,

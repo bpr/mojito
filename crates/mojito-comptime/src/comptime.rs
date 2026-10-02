@@ -698,6 +698,10 @@ pub struct ElaborationInputs<'a> {
     pub def_requests: &'a [DefSpecializationRequest],
     pub method_requests: &'a [MethodSpecializationRequest],
     pub struct_requests: &'a [StructInstanceRequest],
+    /// Template methods of ordinary generic structs, as (struct, method),
+    /// whose checked bodies hold a type only an instance can lower: each
+    /// keeps its per-instantiation clone.
+    pub keyed_methods: &'a [(String, String)],
     /// Hashed vector types beyond the eager width-1 set.
     pub hash_leaf_types: &'a [Ty],
     pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
@@ -905,6 +909,19 @@ pub fn variadic_struct_template_names(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
+/// The struct templates the AST cloner specializes whole (a variadic struct
+/// such as `Tuple`, a struct keyed by a `DType` or a struct value).
+///
+/// A method body that applies one over its own struct's parameters has no
+/// template the MIR elaborator could instantiate.
+pub fn specialized_struct_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_specializable(program, &HashSet::new())
+        .into_iter()
+        .filter(|(_, statement)| matches!(statement.kind, StmtKind::Struct { .. }))
+        .map(|(name, _)| name)
+        .collect()
+}
+
 /// The top-level bound-generic template names of a linked program, as the
 /// elaborator will classify them. The compiler's discovery loop filters
 /// checker-recorded instantiations to these callees.
@@ -1050,6 +1067,7 @@ pub fn elaborate_prepared(
         def_requests,
         method_requests,
         struct_requests,
+        keyed_methods,
         hash_leaf_types,
         templates,
     } = inputs;
@@ -1136,6 +1154,7 @@ pub fn elaborate_prepared(
         ),
         method_requests: method_requests_by_owner,
         instance_requests,
+        keyed_methods: keyed_methods.iter().cloned().collect(),
         hash_leaf_types: hash_leaf_types.to_vec(),
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
@@ -2231,6 +2250,9 @@ struct Elab<'a> {
     /// template name: each mints per-instantiation method clones on the
     /// template.
     instance_requests: HashMap<String, Vec<Vec<TyArg>>>,
+    /// Driver-reported template methods that keep their per-instantiation
+    /// clones, as (struct, method).
+    keyed_methods: HashSet<(String, String)>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
@@ -3476,6 +3498,7 @@ fn elaborate_with_requests(
             def_requests,
             method_requests,
             struct_requests,
+            keyed_methods: &[],
             hash_leaf_types,
             templates: None,
         },

@@ -6940,8 +6940,7 @@ fn method_templates_are_identified_by_their_struct_and_body() {
 #[test]
 fn overloads_of_one_generic_method_own_distinct_binders() {
     // Two overloads of `pick` whose slots agree are two declarations: each
-    // owns its `U` under the symbol it lowers to, and the per-instantiation
-    // clone of each (`pick$y3:Int`) keeps its template's owner.
+    // owns its `U` under the symbol it lowers to.
     let source = "struct Box[T: Copyable & Deinitable](Copyable):\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def pick[U: Copyable & Deinitable](self, u: U, t: Self.T) -> Int:\n        return 1\n\n    def pick[U: Copyable & Deinitable](self, u: U, s: String) -> Int:\n        return 2\n\ndef main():\n    var b = Box[Int](3)\n    print(b.pick[Float64](1.5, 4))\n";
     let linked = mojito::link_source(source, std::path::Path::new("overload_binders.mojo"))
         .expect("link error");
@@ -6983,7 +6982,7 @@ fn overloads_of_one_generic_method_own_distinct_binders() {
             .collect()
     };
     let (by_t, by_s) = (owner_of("t"), owner_of("s"));
-    assert!(by_t.len() >= 2 && by_s.len() >= 2, "{owners:?}");
+    assert!(!by_t.is_empty() && !by_s.is_empty(), "{owners:?}");
     assert!(by_t.iter().all(|owner| *owner == by_t[0]), "{owners:?}");
     assert!(by_s.iter().all(|owner| *owner == by_s[0]), "{owners:?}");
     assert_ne!(by_t[0], by_s[0]);

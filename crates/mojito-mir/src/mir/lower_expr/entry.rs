@@ -225,6 +225,7 @@ impl Flatten<'_> {
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
+                receiver: None,
             });
             if source_place.is_some() {
                 // A view-constructor conversion result borrows its source: bind
@@ -330,6 +331,7 @@ impl Flatten<'_> {
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
+            receiver: None,
         });
         nominal
     }

@@ -101,7 +101,9 @@ struct _ListOwnedIter[T: AnyType](
     def __iter__(var self) -> Self:
         return self^
 
-    def __next__(mut self) raises StopIteration -> Self.T:
+    def __next__(mut self) raises StopIteration -> Self.T where conforms_to(
+        Self.T, Movable
+    ):
         if self.index >= self.size:
             raise StopIteration()
         var result = self.data.unsafe_offset(self.index).unsafe_take_pointee()

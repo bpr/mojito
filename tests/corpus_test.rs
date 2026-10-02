@@ -292,7 +292,12 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// The `erased_vm` trials that do not yet hold, by the `docs/roadmap.md`
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
-const ERASED_VM_RESIDUE: &[&str] = &[];
+const ERASED_VM_RESIDUE: &[&str] = &[
+    // Section 1, the methods that still clone: an erased value carries no
+    // type arguments, so a template-served body's call cannot be handed to
+    // the receiver instance's clone as the elaborator hands it.
+    "generic_struct_template_reach",
+];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one
 /// read the same line and neither inherits the test runner's stdin.

@@ -1,9 +1,12 @@
 # The generator contract
 
 **Status:** written 2026-10-01 as the gate for stage P2 of
-[`docs/parametric-mir-plan.md`](../parametric-mir-plan.md). It changes no
-code. It says what a checked generic body guarantees every instance, and
-where each check a clone makes today goes once the clone is gone.
+[`docs/parametric-mir-plan.md`](../parametric-mir-plan.md). It says what a
+checked generic body guarantees every instance, and where each check a clone
+makes goes once the clone is gone. P2's first step landed the same day: a
+generic struct's method with no compile-time construct is served by its
+template's MIR on every plain-data instance. §What has landed says which rows
+that settled and which it left.
 
 A **generator** is a generic declaration's checked body in MIR, with its
 parameters still symbolic: what `CompiledProgram::drop_elaborated_mir` holds
@@ -61,7 +64,7 @@ vocabulary.
 | Value propositions an instance owes | `ParamConstraint`: a `Bool` `ParamExpr` with its location and message, decided by `ParamConstraint::verdict` into a `ConstraintVerdict` | Not yet used above the waist; see §Predicates |
 | Selected calls | Callable identity from `mojito-symbol`: the lowered symbol on `Call.func`, `MethodCall.resolved`, `CallIndirect.resolved`, `GetIter.prepare`, and the iterator call of `TryNext` | Yes |
 | Witness requests | The abstract receiver `symbol::TRAIT_DISPATCH` (`__trait_dispatch.copy$ov$…`) on those same fields, and type-directed operations (§The inventory) | Yes |
-| Compile-time arguments of a call | `MirParamArg`, binder-keyed | Yes. The receiver's arguments of a static call are missing (roadmap §1, the struct-method entry) |
+| Compile-time arguments of a call | `MirParamArg`, binder-keyed, and the spelled receiver type of a static call (`MirInstr::Call::receiver`) | Yes |
 | Lifecycle requirements | `var.use` modes, `CopyValue`, `DropVar`, `DropPlace`, `ConsumeVar`, `ConsumePlace` over a symbolic type | Yes |
 | Origin and loan facts of a body | `EstablishLoans`, `InvalidateInteriors`, `arg_places`, `capture_accesses`, `MethodCall.reference_result` | Yes |
 | Transfer and call-through summaries | `mojito_checked::checked::{TransferEffect, CallThroughEffect}`, keyed by lowered symbol | **No.** Checker tables only |
@@ -110,7 +113,7 @@ Classes:
 | 7 | Closed method calls | D; X; P | Selection is D. Retargeting to the clone member, and the rule that an overloaded family declares closed parameters so two rankings agree, are X: there is one ranking. A callee's `where` clause is P (§Availability). |
 | 8 | Struct applications | X | The elaborator discovers a struct instance from the substituted types it meets (`discover_structs`), not from a recorded list. |
 | 9 | Effect summaries stay empty | M | Summaries belong to the callee's signature. A generator's callee is another generator or a concrete function, and neither has a per-clone summary that can grow. |
-| 10 | `Movable` at a `^` transfer | D | The pin rejects the transfer on the declaration unless the bound proves `Movable`. Mojito defers it to the instance and accepts a program the pin rejects (§Pin verdicts, roadmap §3). Once the declaration check demands the bound, nothing is owed. |
+| 10 | `Movable` at a `^` transfer | D | The pin rejects the transfer on the declaration unless the bound proves `Movable`, and so does Mojito (`Checker::bounds_prove_movable`). Nothing is owed. |
 | 11 | Deletability | D + M | Whether a binding is deletable or linear is decided from the bounds, and the pin reports an abandoned value on the declaration. The destructor a `DropVar` runs is resolved from the substituted type. A type built over a parameter (`List[T]`) answers from its own conformance, which is a witness lookup. |
 | 12 | Plain-data arguments | X | This is a limit of derivation, not a language rule: a template records no effect for a store of a symbolic value, so derivation refuses an instance that would have one. It is replaced by 14's rule. |
 | 13 | Reference calls | D; M; X | The reference's origin and mutability are D. Whether a by-value read of the result copies is M, read from the referent's substituted type. Retargeting is X. |
@@ -120,7 +123,7 @@ Classes:
 | 17 | Bound builtins | B → M | `hasher.update(x)`, `writer.write(x)`, `print`: type-directed calls resolved on the substituted type. `Hashable` and `Writable` come from the bound. A pack element is proved by the pack's bound. |
 | 18 | Constructions | D; X; P | The member is selected on the declaration. Taking the instance's `__init__` clone is X. The member's `where` clause is P. |
 | 19 | Call-through residues | M | A residue names a parameter slot and signature places, no type. It is the generator's, unchanged. The contract of a call through a callable parameter is the parameter's own. |
-| 20 | Implicit conversions | D | The pin selects the `@implicit` constructor on the declaration: with `Int` and `Self.T` overloads, `Wrapper[Self.T] = self.item` picks the `Self.T` one in every instance. Mojito repeats the selection per instance and reports an ambiguity the pin does not (§Pin verdicts, roadmap §3). The generator records the selected constructor as an ordinary call. |
+| 20 | Implicit conversions | D | The pin selects the `@implicit` constructor on the declaration: with `Int` and `Self.T` overloads, `Wrapper[Self.T] = self.item` picks the `Self.T` one in every instance. The generator records the selected constructor as an ordinary call, so a method its template serves agrees. A method that still clones repeats the selection per clone and reports an ambiguity the pin does not (§Pin verdicts, roadmap §3). |
 | 21 | Iteration protocols | B → M; D | `GetIter.prepare` and the `TryNext` call name the chain. The elaborator resolves each step on the concrete type (`mono/infer.rs:rewrite_get_iter`). The checks on a linear element are D. |
 | 22 | Truthiness conditions | B → M | `Boolable` supplies it. The mark is a conversion call on the condition, resolved on the substituted type. A condition that becomes `Bool` needs no call. |
 | 23 | Tuple unpackings | M; X | The plan is rebuilt from the substituted value type. Naming the generated `Tuple$tN` for a public one is X until struct generators (P3d). |
@@ -247,8 +250,8 @@ What the generator must carry instead:
   member that is unavailable in an instance is absent from it, and a drop
   or copy that needs it is a demand.
 
-With that, `speculative` and the rollback in `run` are deleted. That is part
-of the struct-method entry in roadmap §1, which already says so.
+With that, `speculative` and the rollback in `run` are deleted. That is
+roadmap §1's availability entry.
 
 The conformance question — does `Slot[Int]` conform to `Defaultable` — is
 the checker's `traits.rs` today. The elaborator needs the same answer for
@@ -263,12 +266,12 @@ Probes run on 2026-10-01 against Mojo `1.6.0.dev2026092105`.
 
 | Probe | Pin | Mojito | Consequence |
 |---|---|---|---|
-| `return item^` with `item: Self.T`, `T: Deinitable`, only `Holder[Int]` used | Rejects the declaration: "cannot transfer value into destination, because 'T' doesn't conform to 'Movable'" | Runs, prints 3 | Row 10 is D. Divergence filed (`conformance/probes/transfer_of_unbounded_parameter.mojo`) |
+| `return item^` with `item: Self.T`, `T: Deinitable`, only `Holder[Int]` used | Rejects the declaration: "cannot transfer value into destination, because 'T' doesn't conform to 'Movable'" | Rejects the declaration: "type 'T' … does not conform to trait 'Movable'" (it ran and printed 3 until 2026-10-01) | Row 10 is D (`assets/type_error/template_method_transfer_requires_movable.mojo`) |
 | `var other = self.item` with `T: Copyable & Deinitable` | Rejects the declaration: "value of type 'T' cannot be implicitly copied" | Same | Row 3 is D |
 | `var item: Self.T` abandoned, `T: Movable` | Rejects the declaration: "'item' abandoned without being explicitly destroyed" | Same | Row 11 is D |
 | `def inner() {var item}` capturing `item: Self.T`, `T: Copyable & Deinitable` | Rejects the declaration: "value of type 'T' cannot be implicitly copied" | Rejects the declaration: "capture convention for 'item' requires ImplicitlyCopyable" | Row 26's capability is D |
 | `rebind[Int](x)` with `x: T`, called at `String` | Rejects the instance: "function instantiation failed" | Rejects the instance | Row 2 is P |
-| `var w: Wrapper[Self.T] = self.item`, `Wrapper` with `@implicit` constructors over `Int` and `Self.T`, at `Box[Int]` | Prints 2: the `Self.T` constructor, bound once | "ambiguous implicit conversion from 'Int' to 'Wrapper[Int]'" | Row 20 is D. Divergence filed (`conformance/probes/implicit_conversion_bound_on_declaration.mojo`) |
+| `var w: Wrapper[Self.T] = self.item`, `Wrapper` with `@implicit` constructors over `Int` and `Self.T`, at `Box[Int]` | Prints 2: the `Self.T` constructor, bound once | Prints 2 where the template serves the method (`assets/ok/implicit_conversion_bound_on_declaration.mojo`); "ambiguous implicit conversion from 'Int' to 'Wrapper[Int]'" where the method still clones | Row 20 is D. The cloned case is filed (`conformance/probes/implicit_conversion_bound_on_declaration.mojo`) |
 | Conditional `__init__` and method over `conforms_to(Self.T, Defaultable)`, one instance with and one without | Runs | Runs, concrete and erased | §Availability describes working behavior |
 | Calling the conditional method on the instance without | "invalid call to 'reset': violated constraint" | Same | A demanded unavailable member is an error at the call |
 
@@ -315,6 +318,25 @@ the package list, so neither is reshaped later.
   binder, and the generator's summary must name the argument's origin
   positions itself. P2 must settle that for the instances rows 12 and 14
   describe before their clones go.
-- **Where the symbolic check is too lenient.** Rows 10 and 20 are
-  divergences today. Each is a section-3 entry, and each must close before
-  the clone check that currently catches or mis-reports it is removed.
+- **Where the symbolic check is too lenient.** Row 10 closed with P2's first
+  step. Row 20 holds for a method its template serves and is still a
+  section-3 entry for one that clones. Two more turned up when the clones
+  went, each a section-3 entry with a probe: `==` through an `Equatable`
+  bound on a type whose own `__eq__` takes another type, and an implicit
+  conversion through a consuming constructor.
+
+## What has landed
+
+P2's first step (2026-10-01) serves a generic struct's method from its
+template's MIR where the body holds no compile-time construct and the
+instance's arguments are plain data.
+
+| Rows | State |
+|---|---|
+| 1, 4, 5, 8 | Done for those methods: the elaborator binds the owner's parameters from the receiver, or from `Call.receiver` for a static call, and the driver reads the instances a template body reaches off its checked types (`src/compiler/template_reach.rs`). |
+| 3, 10, 11 | Proved on the declaration. Row 10 is new. |
+| 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. An instance over a loan-carrying argument still clones (roadmap §1). |
+| 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |
+| 18 | The template's selected constructor serves the instance, a variadic one keyed by the call's element count. |
+| 7, 16, 18 (availability) | Still decided by the checker at the call. The clause is not in MIR (roadmap §1). |
+| 2, 23, 24, 26, 27 | Unchanged: these bodies hold a compile-time construct and keep their clones until P3. |

@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method of an ordinary generic struct with no compile-time construct in
+  its body mints no clone per instance. The elaborator instantiates the
+  template's MIR for both backends, lifecycle members and constructors
+  included, and nothing is checked or derived for the instance.
+  `stdlib_heavy.mojo` mints 255 bodies where it minted 666, and 11
+  per-instantiation method clones where it minted 417. A method still clones
+  where its body holds or reaches a compile-time construct, and an instance
+  over a loan-carrying argument clones every method (roadmap section 1).
+  `assets/ok/generic_struct_template_reach.mojo` pins what a template body
+  reaches at an instance.
+- MIR records the spelled receiver of a static call on a generic struct
+  (`Pair[Self.U].count()`, `MirInstr::Call::receiver`), and the elaborator
+  binds the struct's parameters from it. The text schema is 1.8; an older
+  artifact reads as recording none.
+- The driver reads off a template's checked types which instances a
+  template-served body reaches, and which methods only an instance's own
+  check can serve (`src/compiler/template_reach.rs`).
+
 - The VM runs concrete MIR. `Compiler::execute` and `mojito exec` elaborate
   drop-elaborated MIR with `native::mono` from `main` and module
   initialization and run the result, as the native backend does, and the
@@ -53,6 +71,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `^` transfer of a value of a parameter type is rejected on the
+  declaration unless a bound proves `Movable`, as the pin rejects it, where
+  Mojito asked `Movable` of each instance
+  (`assets/type_error/template_method_transfer_requires_movable.mojo`). A
+  `where conforms_to(T, Copyable)` premise proves `Movable` too. The bundled
+  `_ListOwnedIter.__next__` gains the clause it relied on.
+- An `@implicit` conversion in a generic struct's method is selected once,
+  on the declaration, where the template serves the method
+  (`assets/ok/implicit_conversion_bound_on_declaration.mojo`). A method that
+  still clones repeats the selection (roadmap 3.110).
+- A method call that stores a parameter-typed element of the receiver back
+  into the receiver (`self.items[i] = self.items[j]`) no longer leaves a
+  loan of the receiver on itself at an instance whose element carries none.
+- An elaborated `!=` on a struct that declares only `__eq__` dispatches
+  `__eq__` and negates it, a comparison of sized scalars a template typed
+  `Bool` converts its mask, and a construction through a variadic
+  initializer names the instance keyed by its element count. The erased VM
+  answers the first two the same way.
 - A generic struct's static called on a spelled instance with no argument
   carrying the struct's parameter (`Pair[Int].count()` beside
   `def count(*values: Self.T)`, or a body-only `List[Self.T]()`) compiles

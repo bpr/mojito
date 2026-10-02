@@ -437,6 +437,9 @@ impl Checker {
             // carries the shared loans its construction took, and the
             // destination keeps them shared.
             let mut exclusive = effect.mutable;
+            // The type of a source handed over by value while its loans are
+            // still unknown: a parameter type, or a type built over one.
+            let mut symbolic_value = None;
             let mut sources = match &effect.src {
                 SigOrigin::Bound(origin) => vec![origin.clone()],
                 src => {
@@ -444,6 +447,17 @@ impl Checker {
                         continue;
                     };
                     let reference = self.infer_reference_value(src_expr);
+                    if !effect.src_is_place {
+                        symbolic_value = reference
+                            .as_ref()
+                            .map(|reference| (*reference.referent).clone())
+                            .or_else(|| self.infer(src_expr).ok())
+                            .filter(|ty| {
+                                mojito_types::types::is_symbolic(ty)
+                                    && !self.type_carries_loans(ty)
+                                    && self.type_may_carry_loans(ty)
+                            });
+                    }
                     exclusive &= effect.src_is_place
                         || reference.as_ref().is_some_and(|reference| {
                             reference.mutability == mojito_types::origin::Mutability::Mutable
@@ -577,8 +591,12 @@ impl Checker {
                                 src_is_place,
                                 mutable: effect.mutable,
                             };
+                            // A symbolic value read out of this frame's own
+                            // storage lends that storage only where an
+                            // instance's type carries a loan.
+                            let latent = symbolic_value.clone().filter(|_| src_is_place);
                             if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
-                                frame.record(derived, None);
+                                frame.record(derived, latent);
                             }
                         }
                     }

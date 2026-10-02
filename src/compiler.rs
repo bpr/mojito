@@ -27,6 +27,8 @@ use crate::{Stmt, ast::StmtKind, parse};
 use crate::{Ty, TyArg};
 use std::collections::HashSet;
 use std::fmt;
+
+mod template_reach;
 use std::path::Path;
 use std::sync::OnceLock;
 /// A program that has passed linking, comptime elaboration, semantic checking,
@@ -359,6 +361,7 @@ impl Compiler {
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
+        let mut template_demand = template_reach::TemplateDemand::new(linked);
         // Hashed vector types beyond the eager width-1 set: each demands a
         // `_update_with_simd` clone on every hasher.
         let mut hash_leaf_requests: Vec<crate::types::Ty> = Vec::new();
@@ -515,13 +518,9 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
-            for leaf in checked.result().hash_leaf_types() {
-                if !hash_leaf_requests.contains(leaf) {
-                    last_new_callee = String::from("_update_with_simd");
-                    served.hash_leaves.push(leaf.clone());
-                    hash_leaf_requests.push(leaf.clone());
-                    grew = true;
-                }
+            if served.request_hash_leaves(checked.result(), &mut hash_leaf_requests) {
+                last_new_callee = String::from("_update_with_simd");
+                grew = true;
             }
             let mut instances_grew = false;
             // An instance of a struct whose erased method body can reach a
@@ -539,6 +538,13 @@ impl Compiler {
                     instances_grew = true;
                 }
             }
+            // A template method that mints no clone is not checked at an
+            // instance's arguments, so what its body reaches there is read
+            // off the template's own checked types.
+            let reached =
+                template_demand.request(checked.result(), &mut struct_requests, &mut served);
+            grew |= reached.is_some();
+            last_new_callee = reached.unwrap_or(last_new_callee);
             drop(requests);
             timing::count("tuple_requests", tuple_requests.len() as u64);
             timing::count("tstring_requests", tstring_requests.len() as u64);
@@ -583,6 +589,7 @@ impl Compiler {
                         def_requests: &def_requests,
                         method_requests: &method_requests,
                         struct_requests: &struct_requests,
+                        keyed_methods: template_demand.keyed_methods(),
                         hash_leaf_types: &hash_leaf_requests,
                         templates: Some(&templates_catalog),
                     },
@@ -733,9 +740,27 @@ struct ServedRequests {
     methods: Vec<(String, String)>,
     hash_leaves: Vec<Ty>,
     instances: Vec<StructInstanceRequest>,
+    /// Struct templates one of whose methods mints per-instance clones from
+    /// this round on: a body that reached an instance of one names the
+    /// template's method until it is inferred again.
+    keyed_templates: Vec<String>,
 }
 
 impl ServedRequests {
+    /// Add the hashed vector types `checked` demands beyond `requests`, and
+    /// say whether any is new.
+    fn request_hash_leaves(&mut self, checked: &DiscoveryResult, requests: &mut Vec<Ty>) -> bool {
+        let new: Vec<Ty> = checked
+            .hash_leaf_types()
+            .iter()
+            .filter(|leaf| !requests.contains(leaf))
+            .cloned()
+            .collect();
+        self.hash_leaves.extend(new.iter().cloned());
+        requests.extend(new.iter().cloned());
+        !new.is_empty()
+    }
+
     /// The body sites whose facts a newly served request would change:
     /// those that reached a struct application it instantiates, hashed a
     /// leaf it clones, recorded an instantiation of a callee or method it
@@ -755,6 +780,7 @@ impl ServedRequests {
             .filter(|site| {
                 site.struct_instantiations().iter().any(|reached| {
                     instances.contains(&(reached.template.as_str(), reached.arguments.as_slice()))
+                        || self.keyed_templates.contains(&reached.template)
                 }) || site
                     .hash_leaf_types()
                     .iter()

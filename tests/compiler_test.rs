@@ -134,11 +134,12 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 #[test]
 fn generic_struct_instances_get_per_instantiation_method_clones() {
     // A closed application of an ordinary generic struct reached from user
-    // code mints one clone per available method on the template, checked
-    // with `self` bound to the instance: `_unqualified_type_name[Self]`
-    // spells the instantiation and a `comptime if` on `Self.T` folds, while
-    // the template keeps its erased pre-check and the runtime name stays the
-    // template's. Calls on the instance retarget to the clone by exact name.
+    // code mints one clone per method that holds a compile-time construct,
+    // checked with `self` bound to the instance:
+    // `_unqualified_type_name[Self]` spells the instantiation and a
+    // `comptime if` on `Self.T` folds, while the template keeps its erased
+    // pre-check and the runtime name stays the template's. Calls on the
+    // instance retarget to the clone by exact name.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -172,19 +173,21 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
 
 #[test]
 fn overloaded_constructor_family_clones_as_one_overload_set() {
-    // A generic struct's constructors clone together: each signature gets its
-    // own member of the instance's `__init__$y3:Int` family, and the checker
-    // names the member it selected — the clone family's `$ov$` suffixes key on
-    // the substituted parameter types, so they do not correspond by name to
-    // the template's.
+    // A generic struct's constructors clone together where one of them holds
+    // a construct only an instance lowers (here a nested `def`): each signature gets its own member of the
+    // instance's `__init__$y3:Int` family, and the checker names the member
+    // it selected — the clone family's `$ov$` suffixes key on the substituted
+    // parameter types, so they do not correspond by name to the template's.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
-            "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def __init__(out self, var value: Self.T, twice: Bool):\n        self.value = value^\n\n    def kind(self) -> String:\n        comptime if Self.T == Int:\n            return String(\"int\")\n        else:\n            return String(\"other\")\n\ndef main():\n    var a = Box[Int](7)\n    var b = Box[Int](8, True)\n    print(a.kind(), b.kind())\n",
+            "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def __init__(out self, var value: Self.T, twice: Bool):\n        def same(flag: Bool) -> Bool:\n            return flag\n        var kept = same(twice)\n        self.value = value^\n\n    def kind(self) -> String:\n        comptime if Self.T == Int:\n            return String(\"int\")\n        else:\n            return String(\"other\")\n\ndef main():\n    var a = Box[Int](7)\n    var b = Box[Int](8, True)\n    print(a.kind(), b.kind())\n",
             std::path::Path::new("/tmp/mojito_constructor_family_clones.mojo"),
         )
         .expect("compile the constructor family");
-    let clone_family = |name: &&String| name.starts_with("Box.__init__$y3:Int$ov$");
+    // The nested `def` lifts beside the member that declares it.
+    let clone_family =
+        |name: &&String| name.starts_with("Box.__init__$y3:Int$ov$") && !name.ends_with("$same");
     let targets = program.checked().overload_targets();
     let selected: std::collections::BTreeSet<&String> = targets
         .values()
@@ -217,12 +220,12 @@ fn overloaded_constructor_family_clones_as_one_overload_set() {
 }
 
 #[test]
-fn instance_clones_serve_operators_display_and_iteration() {
-    // Every call shape on a closed generic-struct instance reaches the
-    // instance's clone: the `==` dunder target, `len(x)`, `repr(x)` and
-    // `print(x)` (the VM formats through the clone named by the argument's
-    // checked static type), `List[Int]` subscript assignment, and the
-    // `for` loop's `__iter__` prepare symbol.
+fn instance_clones_serve_only_compile_time_members() {
+    // On a closed generic-struct instance, a member holding a compile-time
+    // construct runs as the instance's clone: `len(x)` and `repr(x)` reach
+    // it by the argument's checked static type. Every other call shape — the
+    // `==` dunder, `List[Int]` subscript assignment, the `for` loop's
+    // `__iter__` — names the template, which the elaborator instantiates.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -230,30 +233,21 @@ fn instance_clones_serve_operators_display_and_iteration() {
             std::path::Path::new("/tmp/mojito_instance_clone_dispatch.mojo"),
         )
         .expect("compile the instance dispatch program");
-    let targets = program.checked().overload_targets();
-    assert!(
-        targets.values().any(|target| target == "Box.__eq__$y3:Int"),
-        "the operator retargets to the instance clone: {targets:?}"
-    );
-    assert!(
-        targets
-            .values()
-            .any(|target| target == "List.__setitem__$y3:Int"),
-        "subscript assignment retargets to the instance clone: {targets:?}"
-    );
-    let iterates_through_clone = program.checked().expressions().iter().any(|expression| {
-        expression.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito::checked::SemanticAdjustment::Iterate(protocol)
-                    if protocol.prepare.iter().any(|symbol| symbol.starts_with("List.__iter__$y3:Int"))
-            )
-        })
-    });
-    assert!(
-        iterates_through_clone,
-        "the for loop prepares through the instance clone"
-    );
+    let mir = mojito::mir::lower_checked_program(program.checked());
+    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
+    for clone in ["Box.__len__$y3:Int", "Box.write_repr_to$y3:Int"] {
+        assert!(
+            names.iter().any(|name| *name == clone),
+            "{clone} is minted: it holds a compile-time construct"
+        );
+    }
+    for template in ["Box.__eq__", "List.__setitem__", "List.__iter__"] {
+        let clone = format!("{template}$y3:Int");
+        assert!(
+            names.iter().all(|name| !name.starts_with(&clone)),
+            "the template serves {template} for the instance"
+        );
+    }
     let output = compiler
         .execute(&program)
         .expect("run the instance dispatch program");
@@ -1079,11 +1073,17 @@ struct Box[T: Copyable & Movable & Deinitable]:
     def get(self) -> Self.T:
         return self.v.copy()
 
+    def kind(self) -> Int:
+        comptime if Self.T == Int:
+            return 1
+        else:
+            return 2
+
 def main():
     print(pick[3](2))
     print(total(1, 2, 3))
     var b = Box[Int](4)
-    print(b.get())
+    print(b.get(), b.kind())
 ";
 
 #[test]
@@ -1100,7 +1100,16 @@ fn instantiation_census_counts_each_cloned_class() {
     let minted = |class: CloneClass| classes.cloned.count(class) - baseline.cloned.count(class);
     assert_eq!(minted(CloneClass::ComptimeIfDef), 1, "pick[3]");
     assert_eq!(minted(CloneClass::PackDef), 1, "total(1, 2, 3)");
-    assert_eq!(minted(CloneClass::InstanceMethod), 1, "Box[Int].get");
+    assert_eq!(
+        minted(CloneClass::InstanceMethod),
+        0,
+        "the template serves Box[Int].get"
+    );
+    assert_eq!(
+        minted(CloneClass::InstanceMethodComptime),
+        1,
+        "Box[Int].kind"
+    );
     assert_eq!(minted(CloneClass::NestedDef), 0);
     for census in [&baseline, &classes] {
         assert_eq!(
@@ -1219,7 +1228,7 @@ fn template_method_keeps_the_symbolic_choice() {
     assert_methods_derive(
         include_str!("../assets/ok/template_overload_binding_method.mojo"),
         "2 2 2 2 1\n",
-        &[("Box.get", 2), ("Box.each", 2)],
+        &[("Box.get", 0), ("Box.each", 0)],
     );
 }
 
@@ -1735,7 +1744,9 @@ fn template_print_statement_derives() {
                     .any(|p| name.starts_with(p))
             })
             .collect();
-        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
+        // The method's template serves both `Box` instances, so only the
+        // `def` instances are cloned.
+        assert_eq!(derived.len(), 4, "every `def` instance derives: {stats:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
@@ -1767,7 +1778,9 @@ fn template_print_whole_value_derives() {
             .map(String::as_str)
             .filter(|name| ["echo$", "Box.report$"].iter().any(|p| name.starts_with(p)))
             .collect();
-        assert_eq!(derived.len(), 4, "every instance derives: {stats:?}");
+        // The method's template serves both `Box` instances, so only the
+        // `def` instances are cloned.
+        assert_eq!(derived.len(), 2, "every `def` instance derives: {stats:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "7 a\nkept 7 3\ns b\nkept s 3\n1 1\nitem 1 p\nitem x q\n4 9\n"
@@ -2488,7 +2501,8 @@ fn reference_result_read_in_method_derives() {
     // A method reads a value through a free call returning
     // `ref[origin_of(a, b)] T` and stores it into `self`: the call reads
     // through the reference as upstream does, so the local owns a copy, the
-    // store's frame effect has a union source, and every instance derives.
+    // store's frame effect has a union source, and the template serves every
+    // instance without a clone.
     let source = "def pick[T: Copyable](ref a: T, ref b: T, first: Bool) -> ref[origin_of(a, b)] T:\n    if first:\n        return a\n    return b\n\nstruct Holder[T: ImplicitlyCopyable & Deinitable](Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def choose(mut self, a: Self.T, b: Self.T, first: Bool):\n        var r = pick(a, b, first)\n        self.value = r^\n\n    def copied(mut self, a: Self.T, b: Self.T, first: Bool):\n        self.value = pick(a, b, first).copy()\n\ndef main():\n    var h = Holder(0)\n    h.choose(1, 2, True)\n    print(h.value)\n    h.copied(3, 4, False)\n    var s = Holder(String(\"x\"))\n    s.choose(String(\"a\"), String(\"b\"), False)\n    print(h.value, s.value)\n    s.copied(String(\"c\"), String(\"d\"), True)\n    print(s.value)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2503,10 +2517,9 @@ fn reference_result_read_in_method_derives() {
     for instance in ["y3:Int", "y6:String"] {
         for member in ["choose", "copied"] {
             let name = format!("Holder.{member}${instance}");
-            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
             assert!(
-                !stats.inferred_clones.contains(&name),
-                "{name} is never inferred: {stats:?}"
+                !stats.derived.contains(&name) && !stats.inferred_clones.contains(&name),
+                "{name} is never minted: {stats:?}"
             );
         }
     }
@@ -2762,8 +2775,8 @@ const METHOD_GETTERS: &str = "@fieldwise_init\nstruct Counter[T: Copyable & Mova
 #[test]
 fn template_method_instances_derive() {
     // A generic struct's method is inferred once, with the struct's
-    // parameters symbolic. Each per-instantiation clone (`size$y3:Int`)
-    // inherits the checked template's facts instead of being inferred.
+    // parameters symbolic, and its MIR serves every plain-data instance: no
+    // per-instantiation clone (`size$y3:Int`) is minted.
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, METHOD_GETTERS);
     let stats = program.template_stats();
@@ -2782,11 +2795,9 @@ fn template_method_instances_derive() {
             .iter()
             .filter(|name| name.starts_with(&clone))
             .collect();
-        assert_eq!(
-            derived.len(),
-            2,
-            "{method} derives for both instances; refused: {:?}",
-            stats.refused
+        assert!(
+            derived.is_empty(),
+            "the template serves both instances of {method}: {derived:?}"
         );
         assert!(
             stats
@@ -2800,8 +2811,10 @@ fn template_method_instances_derive() {
 
 /// Compile `source` derived and under fact verification, which fails the
 /// compilation if a derived bundle differs from the body's own check. Both
-/// must run to `expected`, and each of `methods` must derive for `instances`
-/// instances with no clone of it inferred.
+/// must run to `expected`. Each of `methods` names how many of its instances
+/// still mint a clone, every one of which must derive rather than be
+/// inferred: none where the template's MIR serves each instance, which is
+/// every method with no compile-time construct on a plain-data instance.
 fn assert_methods_derive(source: &str, expected: &str, methods: &[(&str, usize)]) {
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2829,7 +2842,7 @@ fn assert_methods_derive(source: &str, expected: &str, methods: &[(&str, usize)]
         assert_eq!(
             names.len(),
             *instances,
-            "{method} derives for every instance; refused: {:?}",
+            "{method} derives for each instance that clones it; refused: {:?}",
             stats.refused
         );
         assert!(
@@ -2852,15 +2865,15 @@ fn template_method_statements_derive() {
         include_str!("../assets/ok/template_method_statements.mojo"),
         "4 51\n0 12\n10 20\n10 55\n9 20\n64 64\n9 39\n",
         &[
-            ("Tally.size", 2),
-            ("Tally.bump", 2),
-            ("Tally.reset", 2),
-            ("Tally.fill", 2),
-            ("Tally.bump_by", 2),
-            ("Tally.triangle", 2),
-            ("Tally.clamped", 2),
-            ("Tally.spend", 2),
-            ("Tally.width", 2),
+            ("Tally.size", 0),
+            ("Tally.bump", 0),
+            ("Tally.reset", 0),
+            ("Tally.fill", 0),
+            ("Tally.bump_by", 0),
+            ("Tally.triangle", 0),
+            ("Tally.clamped", 0),
+            ("Tally.spend", 0),
+            ("Tally.width", 0),
         ],
     );
 }
@@ -2875,15 +2888,15 @@ fn template_method_moves_derive() {
         include_str!("../assets/ok/template_method_moves.mojo"),
         "1 3\n1 z\n1 9\n0 4 0 1 x\n4 q 2\n2 1 2\nr l r\n",
         &[
-            ("Cell.__init__", 2),
-            ("Cell.count", 2),
-            ("Slot.replace", 3),
-            ("Slot.cycle", 3),
-            ("Slot.take", 3),
-            ("Keep.pass_through", 2),
-            ("Pair.left", 2),
-            ("Pair.pick", 2),
-            ("Pair.flip", 2),
+            ("Cell.__init__", 0),
+            ("Cell.count", 0),
+            ("Slot.replace", 0),
+            ("Slot.cycle", 0),
+            ("Slot.take", 0),
+            ("Keep.pass_through", 0),
+            ("Pair.left", 0),
+            ("Pair.pick", 0),
+            ("Pair.flip", 0),
         ],
     );
 }
@@ -2896,9 +2909,9 @@ fn template_method_var_self_derive() {
         include_str!("../assets/ok/template_method_var_self.mojo"),
         "1 1 x 4\n4\n5\n",
         &[
-            ("Box.bumped", 2),
-            ("Box.itself", 2),
-            ("__module$std$collections$list$_ListOwnedIter.__iter__", 1),
+            ("Box.bumped", 0),
+            ("Box.itself", 0),
+            ("__module$std$collections$list$_ListOwnedIter.__iter__", 0),
         ],
     );
 }
@@ -2909,7 +2922,7 @@ fn template_method_variadic_initializer_derive() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_variadic_initializer.mojo"),
         "3 2\n2 2\n",
-        &[("Bag.__init__", 2)],
+        &[("Bag.__init__", 0)],
     );
 }
 
@@ -2921,12 +2934,12 @@ fn template_method_reference_results_derive() {
         include_str!("../assets/ok/template_method_reference_result.mojo"),
         "1 0 1\na 0 a\n3 0 3\nz y\n4 4\n",
         &[
-            ("Slot.peek", 3),
-            ("Slot.counter", 3),
-            ("Slot.guarded", 3),
-            ("List.unsafe_get", 1),
-            ("Optional.value", 1),
-            ("Optional.unsafe_value", 1),
+            ("Slot.peek", 0),
+            ("Slot.counter", 0),
+            ("Slot.guarded", 0),
+            ("List.unsafe_get", 0),
+            ("Optional.value", 0),
+            ("Optional.unsafe_value", 0),
         ],
     );
 }
@@ -2940,10 +2953,10 @@ fn template_method_reference_calls_derive() {
         include_str!("../assets/ok/template_method_reference_call.mojo"),
         "4\n3 4\n8\n9\ny\nx y\n",
         &[
-            ("Rack.at", 2),
-            ("Shelf.at", 2),
-            ("Shelf.first", 2),
-            ("Shelf.second", 2),
+            ("Rack.at", 0),
+            ("Shelf.at", 0),
+            ("Shelf.first", 0),
+            ("Shelf.second", 0),
         ],
     );
 }
@@ -2959,19 +2972,19 @@ fn template_method_subscript_stores_derive() {
         include_str!("../assets/ok/template_method_subscript_store.mojo"),
         "8 0 31\n6 3 7 11\n0 51\ny 1 z 5\n2 3 4 8\n1 3 8 w\n",
         &[
-            ("Shelf.reset", 2),
-            ("Shelf.bump", 2),
-            ("Shelf.count", 2),
-            ("Shelf.bump_count", 2),
-            ("Shelf.put_item", 2),
-            ("Shelf.put_bucket", 2),
-            ("Shelf.put_entry", 2),
-            ("Shelf.set_cell", 2),
-            ("Shelf.bump_cell", 2),
-            ("Shelf.bump_table", 2),
-            ("Shelf.bump_counter", 2),
-            ("Shelf.bump_tally", 2),
-            ("Shelf.put", 2),
+            ("Shelf.reset", 0),
+            ("Shelf.bump", 0),
+            ("Shelf.count", 0),
+            ("Shelf.bump_count", 0),
+            ("Shelf.put_item", 0),
+            ("Shelf.put_bucket", 0),
+            ("Shelf.put_entry", 0),
+            ("Shelf.set_cell", 0),
+            ("Shelf.bump_cell", 0),
+            ("Shelf.bump_table", 0),
+            ("Shelf.bump_counter", 0),
+            ("Shelf.bump_tally", 0),
+            ("Shelf.put", 0),
         ],
     );
 }
@@ -2988,10 +3001,10 @@ fn template_method_parameter_built_stores_derive() {
         include_str!("../assets/ok/template_method_parameter_built_store.mojo"),
         "2 2 6 9\n1 4 32 41\n3 21\n",
         &[
-            ("Rack.bump_box", 2),
-            ("Rack.bump_self", 2),
-            ("Rack.accumulate", 2),
-            ("Rack.fold", 2),
+            ("Rack.bump_box", 0),
+            ("Rack.bump_self", 0),
+            ("Rack.accumulate", 0),
+            ("Rack.fold", 0),
             ("add_in", 2),
         ],
     );
@@ -3008,18 +3021,18 @@ fn template_method_inplace_places_derive() {
         include_str!("../assets/ok/template_method_inplace_place.mojo"),
         "6 5 6 2 17\n8 5 8 6\nnegative 8\n5 21 1 9 4 31\n5 1 41 21\n5 5 7\nnegative 5\n9 8 13\n",
         &[
-            ("Rack.add", 2),
-            ("Rack.bump_meter", 2),
-            ("Rack.bump_meter_by", 2),
-            ("Rack.bump_tick", 2),
-            ("Rack.bump_inner", 2),
-            ("Rack.bump_checked", 2),
-            ("Rack.absorb", 2),
-            ("Rack.bumped", 2),
-            ("Rack.summed", 2),
-            ("Ledger.add", 2),
-            ("Ledger.absorb", 2),
-            ("Ledger.summed", 2),
+            ("Rack.add", 0),
+            ("Rack.bump_meter", 0),
+            ("Rack.bump_meter_by", 0),
+            ("Rack.bump_tick", 0),
+            ("Rack.bump_inner", 0),
+            ("Rack.bump_checked", 0),
+            ("Rack.absorb", 0),
+            ("Rack.bumped", 0),
+            ("Rack.summed", 0),
+            ("Ledger.add", 0),
+            ("Ledger.absorb", 0),
+            ("Ledger.summed", 0),
         ],
     );
 }
@@ -3032,11 +3045,11 @@ fn template_method_borrowed_parameters_derive() {
         include_str!("../assets/ok/template_method_borrowed_parameter.mojo"),
         "5\n1 mine\n7 held\nTrue True\n0\n",
         &[
-            ("Shelf.tally", 2),
-            ("Shelf.reset", 2),
-            ("Shelf.put", 2),
-            ("Shelf.same", 2),
-            ("Shelf.larger", 2),
+            ("Shelf.tally", 0),
+            ("Shelf.reset", 0),
+            ("Shelf.put", 0),
+            ("Shelf.same", 0),
+            ("Shelf.larger", 0),
         ],
     );
 }
@@ -3050,15 +3063,15 @@ fn template_method_reference_locals_derive() {
         include_str!("../assets/ok/template_method_reference_local.mojo"),
         "3 0 3\n5 x\n4 y\n2 2 2 2\n4 4\n9 q\n5 x\n",
         &[
-            ("Shelf.hits_at", 2),
-            ("Shelf.value_at", 2),
-            ("Shelf.item_at", 2),
-            ("Shelf.touch", 2),
-            ("Shelf.size", 2),
-            ("Shelf.mine", 2),
-            ("Shelf.doubled", 2),
-            ("Shelf.echo", 2),
-            ("Shelf.peek", 2),
+            ("Shelf.hits_at", 0),
+            ("Shelf.value_at", 0),
+            ("Shelf.item_at", 0),
+            ("Shelf.touch", 0),
+            ("Shelf.size", 0),
+            ("Shelf.mine", 0),
+            ("Shelf.doubled", 0),
+            ("Shelf.echo", 0),
+            ("Shelf.peek", 0),
         ],
     );
 }
@@ -3071,12 +3084,12 @@ fn template_method_reference_receivers_derive() {
         include_str!("../assets/ok/template_method_reference_receiver.mojo"),
         "1 0 3 2\n4 y\n10 0 4 3\n",
         &[
-            ("Shelf.key_at", 2),
-            ("Shelf.total_at", 2),
-            ("Shelf.value_at", 2),
-            ("Shelf.bump_at", 2),
-            ("Shelf.seen_at", 2),
-            ("Shelf.touch", 2),
+            ("Shelf.key_at", 0),
+            ("Shelf.total_at", 0),
+            ("Shelf.value_at", 0),
+            ("Shelf.bump_at", 0),
+            ("Shelf.seen_at", 0),
+            ("Shelf.touch", 0),
         ],
     );
 }
@@ -3090,15 +3103,15 @@ fn template_method_reference_arguments_derive() {
         include_str!("../assets/ok/template_method_reference_argument.mojo"),
         "2 1 2 1\n2 1 2 1\n2 1 2 1\n2 2 2 1\n1 1 2 2\n",
         &[
-            ("Shelf.local_entry", 2),
-            ("Shelf.call_entry", 2),
-            ("Shelf.call_item", 2),
-            ("Shelf.local_field", 2),
-            ("Shelf.call_field", 2),
-            ("Shelf.taken", 2),
-            ("Shelf.kept", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.counted_mut", 2),
+            ("Shelf.local_entry", 0),
+            ("Shelf.call_entry", 0),
+            ("Shelf.call_item", 0),
+            ("Shelf.local_field", 0),
+            ("Shelf.call_field", 0),
+            ("Shelf.taken", 0),
+            ("Shelf.kept", 0),
+            ("Shelf.counted", 0),
+            ("Shelf.counted_mut", 0),
         ],
     );
 }
@@ -3113,11 +3126,11 @@ fn template_method_sibling_views_derive() {
         include_str!("../assets/ok/template_method_sibling_view.mojo"),
         "2 1 2 1\n2 1 12 11\n2 1\n",
         &[
-            ("Shelf.view", 2),
-            ("Shelf.keys", 2),
-            ("Shelf.aliased", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.bound", 2),
+            ("Shelf.view", 0),
+            ("Shelf.keys", 0),
+            ("Shelf.aliased", 0),
+            ("Shelf.counted", 0),
+            ("Shelf.bound", 0),
         ],
     );
 }
@@ -3132,12 +3145,12 @@ fn template_method_receiver_pointers_derive() {
         include_str!("../assets/ok/template_method_receiver_pointer.mojo"),
         "1 0\n12 11\n2 1\n2 1\na 7\nk 2\n",
         &[
-            ("Shelf.cursor", 2),
-            ("Shelf.whole", 2),
-            ("Shelf.offset", 2),
-            ("Shelf.edit", 2),
-            ("Set.__iter__", 2),
-            ("Dict.__iter__", 1),
+            ("Shelf.cursor", 0),
+            ("Shelf.whole", 0),
+            ("Shelf.offset", 0),
+            ("Shelf.edit", 0),
+            ("Set.__iter__", 0),
+            ("Dict.__iter__", 0),
         ],
     );
 }
@@ -3150,7 +3163,7 @@ fn template_method_immutable_sibling_views_derive() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_immutable_sibling_view.mojo"),
         "2 1\n2 1\n",
-        &[("Shelf.keys", 2), ("Shelf.bound", 2)],
+        &[("Shelf.keys", 0), ("Shelf.bound", 0)],
     );
 }
 
@@ -3164,14 +3177,14 @@ fn template_method_temporary_receivers_derive() {
         include_str!("../assets/ok/template_method_temporary_receiver.mojo"),
         "2 1 1 0\n3 1 2 1\n4 2 2 1\n2 1 AB C\n",
         &[
-            ("Shelf.direct", 2),
-            ("Shelf.skipped", 2),
-            ("Shelf.summed", 2),
-            ("Shelf.copied", 2),
-            ("Shelf.bound", 2),
-            ("Shelf.total", 2),
-            ("Shelf.trimmed", 2),
-            ("Shelf.shout", 2),
+            ("Shelf.direct", 0),
+            ("Shelf.skipped", 0),
+            ("Shelf.summed", 0),
+            ("Shelf.copied", 0),
+            ("Shelf.bound", 0),
+            ("Shelf.total", 0),
+            ("Shelf.trimmed", 0),
+            ("Shelf.shout", 0),
         ],
     );
 }
@@ -3185,13 +3198,13 @@ fn template_method_parameter_receivers_derive() {
         include_str!("../assets/ok/template_method_parameter_receiver.mojo"),
         "True False\n4 z\n2 2\n1 1\nTrue False\n2 2 2 2\n4 4\n",
         &[
-            ("Box.same", 2),
-            ("Box.grab", 2),
-            ("Box.total", 2),
-            ("Box.count", 2),
-            ("Box.matches", 2),
-            ("Box.fill", 2),
-            ("Box.owned", 2),
+            ("Box.same", 0),
+            ("Box.grab", 0),
+            ("Box.total", 0),
+            ("Box.count", 0),
+            ("Box.matches", 0),
+            ("Box.fill", 0),
+            ("Box.owned", 0),
         ],
     );
 }
@@ -3206,16 +3219,16 @@ fn template_method_subscripted_receivers_derive() {
         include_str!("../assets/ok/template_method_subscripted_receiver.mojo"),
         "2 3 3 2\n22 2 11 1\n8 8 10 10\n6 3 k 3\n2 3 2 2 y\n",
         &[
-            ("Holder.dup", 2),
-            ("Holder.pull", 2),
-            ("Holder.push", 2),
-            ("Holder.local_elem", 2),
-            ("Holder.bump_at", 2),
-            ("Holder.get_at", 2),
-            ("Holder.take", 2),
-            ("Table.other_key", 2),
-            ("Table.total", 2),
-            ("Dict.update", 2),
+            ("Holder.dup", 0),
+            ("Holder.pull", 0),
+            ("Holder.push", 0),
+            ("Holder.local_elem", 0),
+            ("Holder.bump_at", 0),
+            ("Holder.get_at", 0),
+            ("Holder.take", 0),
+            ("Table.other_key", 0),
+            ("Table.total", 0),
+            ("Dict.update", 0),
         ],
     );
     // A scalar element of a `mut` parameter's field, stored augmented
@@ -3223,7 +3236,7 @@ fn template_method_subscripted_receivers_derive() {
     assert_methods_derive(
         "struct Tick[T: Copyable & Movable & Deinitable](Copyable, Movable):\n    var counts: List[Int]\n    var items: List[Self.T]\n\n    def __init__(out self, var items: List[Self.T]):\n        self.counts = [0, 5]\n        self.items = items^\n\n    def tick(self, mut other: Tick[Self.T], i: Int):\n        other.counts[i] += 1\n        other.counts[0] = self.counts[i]\n\ndef main():\n    var l1: List[Int] = [1]\n    var l2: List[Int] = [2]\n    var a = Tick[Int](l1^)\n    var b = Tick[Int](l2^)\n    a.tick(b, 1)\n    var l3: List[String] = [\"x\"]\n    var l4: List[String] = [\"y\"]\n    var s = Tick[String](l3^)\n    var t = Tick[String](l4^)\n    s.tick(t, 0)\n    print(b.counts[0], b.counts[1], t.counts[0], t.counts[1])\n",
         "5 6 0 5\n",
-        &[("Tick.tick", 2)],
+        &[("Tick.tick", 0)],
     );
 }
 
@@ -3235,9 +3248,9 @@ fn template_method_element_field_results_derive() {
         include_str!("../assets/ok/template_method_element_field_result.mojo"),
         "15\n20\n2\na\nbcd\n3\n7\n",
         &[
-            ("Table.value_at", 2),
-            ("Table.key_at", 2),
-            ("Dict.__getitem__", 1),
+            ("Table.value_at", 0),
+            ("Table.key_at", 0),
+            ("Dict.__getitem__", 0),
         ],
     );
 }
@@ -3251,7 +3264,7 @@ fn template_method_raises_derive() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_raises.mojo"),
         "7\nseven\n7 seven\nerror: empty slot\nerror: SlotError\n1 2 1\nerror: Exhausted\n",
-        &[("Slot.take", 2), ("Slot.peek", 2), ("Slot.use", 2)],
+        &[("Slot.take", 0), ("Slot.peek", 0), ("Slot.use", 0)],
     );
 }
 
@@ -3262,7 +3275,7 @@ fn template_method_binder_construction_derives() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_binder_construction.mojo"),
         "True False\nTrue False\nTrue False\n",
-        &[("Sealed.__hash__", 3)],
+        &[("Sealed.__hash__", 0)],
     );
 }
 
@@ -3273,7 +3286,7 @@ fn template_method_hash_leaf_derives() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_hash_leaf.mojo"),
         "True False\nFalse\nTrue False\nTrue False\n",
-        &[("Lanes.__hash__", 3)],
+        &[("Lanes.__hash__", 0)],
     );
 }
 
@@ -3287,10 +3300,10 @@ fn template_method_generic_calls_derive() {
         include_str!("../assets/ok/template_method_generic_call.mojo"),
         "True True True\nTrue True\nTrue True\nTrue True\n",
         &[
-            ("Bag.own", 3),
-            ("Bag.mixed", 3),
-            ("Bag.total", 3),
-            ("Set.__hash__", 2),
+            ("Bag.own", 0),
+            ("Bag.mixed", 0),
+            ("Bag.total", 0),
+            ("Set.__hash__", 0),
         ],
     );
 }
@@ -3299,17 +3312,17 @@ fn template_method_generic_calls_derive() {
 fn template_method_vector_hash_leaf_derives() {
     // A bound `__hash__` on a sized scalar or a multi-lane vector instance:
     // derivation's hashed leaf is the one the instance's clone check accepts.
-    // Each instance derives twice: its instance clone and the per-call clone
-    // over the hasher.
+    // An instance derives its per-call clone over the hasher. The template
+    // serves the instance itself.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_vector_hash_leaf.mojo"),
         "5089976597503910097\nTrue True\n",
-        &[("Box.digest", 4)],
+        &[("Box.digest", 2)],
     );
     assert_methods_derive(
         include_str!("../assets/ok/template_method_vector_instance.mojo"),
         "1547189026303444902\n",
-        &[("Box.digest", 2)],
+        &[("Box.digest", 1)],
     );
 }
 
@@ -3459,9 +3472,10 @@ fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() 
 }
 
 #[test]
-fn template_method_struct_binder_construction_keeps_the_clone_check() {
+fn template_method_struct_binder_construction_runs_from_the_template() {
     // A struct binder's construction (`Self.H()`) builds another type under
-    // each instance, so the body stays outside the class.
+    // each instance. The elaborator constructs the substituted type, so the
+    // template serves the instance and no clone is minted.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib.hasher import default_hasher\n\n\nstruct Mixer[H: Hasher](Movable):\n    var seed: Int\n\n    def __init__(out self, seed: Int):\n        self.seed = seed\n\n    def mix(self) -> UInt64:\n        var inner = Self.H()\n        inner.update(self.seed)\n        return inner^.finish()\n\n\ndef main():\n    var a = Mixer[default_hasher](3)\n    var b = Mixer[default_hasher](3)\n    print(a.mix() == b.mix())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
@@ -3471,11 +3485,12 @@ fn template_method_struct_binder_construction_keeps_the_clone_check() {
         "True\n"
     );
     assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Mixer.mix$") && reason == "its template is not certified"
-        }),
-        "the struct binder's construction leaves the body outside the class: {:?}",
-        stats.refused
+        stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .all(|name| !name.starts_with("Mixer.mix$")),
+        "no clone of the method is minted: {stats:?}"
     );
 }
 
@@ -3485,7 +3500,8 @@ fn template_method_value_parameter_templates_reuse() {
     // `Array`) or an origin parameter (`Span`) is never cloned whole, so its
     // methods are certified as templates and their own facts reused in every
     // later pass instead of being inferred again. A receiver origin naming
-    // the method's own binder (`ref [o] self`) derives per instance.
+    // the method's own binder (`ref [o] self`) is served by its template
+    // too.
     let source = include_str!("../assets/ok/template_method_value_parameter.mojo");
     let expected = "2 3\na 2\n5 5 3\nz 2\n4 8 False 2 6 True\n2 2\n";
     let compiler = Compiler::default();
@@ -3542,10 +3558,9 @@ fn template_method_value_parameter_templates_reuse() {
         .map(String::as_str)
         .filter(|name| name.starts_with("Cell.hits_of$"))
         .collect();
-    assert_eq!(
-        derived.len(),
-        2,
-        "both receiver-origin clones derive: {stats:?}"
+    assert!(
+        derived.is_empty(),
+        "the template serves both receiver-origin instances: {derived:?}"
     );
 }
 
@@ -3609,11 +3624,11 @@ fn template_raise_forms_derive() {
         source,
         "7 seven\nerror: empty slot\nerror: not ready\nerror: SlotError\n2 2\nerror: refused\n",
         &[
-            ("Slot.take", 2),
-            ("Slot.relay", 2),
-            ("Slot.ready", 2),
-            ("Slot.check", 2),
-            ("Slot.checked", 2),
+            ("Slot.take", 0),
+            ("Slot.relay", 0),
+            ("Slot.ready", 0),
+            ("Slot.check", 0),
+            ("Slot.checked", 0),
         ],
     );
     let (_, stats) = run_source(source);
@@ -3700,8 +3715,11 @@ fn template_method_raised_built_message_derives() {
             "empty\n"
         );
         assert!(
-            served.iter().any(|name| name.starts_with("Slot.take$")),
-            "the built message derives: {stats:?}"
+            served
+                .iter()
+                .chain(&stats.inferred_clones)
+                .all(|name| !name.starts_with("Slot.take$")),
+            "the template serves the instance: {stats:?}"
         );
     }
 }
@@ -3766,8 +3784,6 @@ fn template_def_bound_conversion_derives() {
             "masked$",
             "halved$",
             "truthy$",
-            "Holder.as_int$",
-            "Holder.local_float$",
             "__module$stat$S_ISDIR$",
             "__module$stat$S_ISREG$",
             "__module$stat$S_ISLNK$",
@@ -3888,10 +3904,10 @@ fn template_method_explicit_destroy_call_derives() {
         include_str!("../assets/ok/template_method_explicit_destroy_call.mojo"),
         "2 3 5\n6 7\n8 9\n10 22 1\n",
         &[
-            ("Desk.spend", 2),
-            ("Desk.lease", 2),
-            ("Ledger.close", 2),
-            ("Clerk.handle", 2),
+            ("Desk.spend", 0),
+            ("Desk.lease", 0),
+            ("Ledger.close", 0),
+            ("Clerk.handle", 0),
         ],
     );
 }
@@ -3906,10 +3922,10 @@ fn template_method_copied_consuming_receiver_derives() {
         include_str!("../assets/ok/template_method_copied_consuming_receiver.mojo"),
         "3 2\n3 6\n7 9\nx z\n4 60\n",
         &[
-            ("Shelf.count", 2),
-            ("Shelf.capped", 2),
-            ("Shelf.pick", 2),
-            ("Purse.total", 2),
+            ("Shelf.count", 0),
+            ("Shelf.capped", 0),
+            ("Shelf.pick", 0),
+            ("Purse.total", 0),
         ],
     );
 }
@@ -3923,9 +3939,9 @@ fn template_method_copied_receivers_derive() {
         include_str!("../assets/ok/template_method_copied_receiver.mojo"),
         "1 2 1 1\n5 q\n2 1\n2 2 3 2 b\n",
         &[
-            ("Window.shifted", 2),
-            ("Window.replaced", 2),
-            ("Window.trimmed", 2),
+            ("Window.shifted", 0),
+            ("Window.replaced", 0),
+            ("Window.trimmed", 0),
         ],
     );
 }
@@ -3941,12 +3957,12 @@ fn template_method_tuple_elements_derive() {
         include_str!("../assets/ok/template_method_tuple_element.mojo"),
         "3 5\n40 60\n7 w 7 w\n7 w\n1 2\n3 1 5 4 d a\n",
         &[
-            ("Holder.span", 2),
+            ("Holder.span", 0),
             ("Holder.tag", 2),
             ("Holder.head", 2),
             ("Holder.label", 2),
             ("Holder.front", 2),
-            ("Holder.width", 2),
+            ("Holder.width", 0),
         ],
     );
 }
@@ -3961,9 +3977,9 @@ fn template_method_discarded_values_derive() {
         "3 5\n4 6\n5 7\n6 8\n",
         &[
             ("Holder.head", 2),
-            ("Holder.field", 2),
-            ("Holder.param", 2),
-            ("Holder.moved", 2),
+            ("Holder.field", 0),
+            ("Holder.param", 0),
+            ("Holder.moved", 0),
         ],
     );
 }
@@ -4036,7 +4052,7 @@ fn template_method_defaulted_destructor_derives() {
     // (`ticket^.finish()`), which is evaluated in the callee's scope: the
     // body is inside the class, so the method derives per instance.
     let source = "@explicit_destroy(\"finish the ticket\")\nstruct Ticket(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def finish(deinit self, bonus: Int = 1) -> Int:\n        return self.id + bonus\n\n\nstruct Desk[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self):\n        self.count = 0\n\n    def spend(self, n: Int) -> Int:\n        var ticket = Ticket(n)\n        return ticket^.finish()\n\n\ndef main():\n    print(Desk[Int]().spend(1))\n";
-    assert_methods_derive(source, "2\n", &[("Desk.spend", 1)]);
+    assert_methods_derive(source, "2\n", &[("Desk.spend", 0)]);
 }
 
 #[test]
@@ -4047,7 +4063,7 @@ fn template_method_struct_argument_derives() {
     assert_methods_derive(
         "@fieldwise_init\nstruct Pair[K: Copyable & Deinitable, V: Copyable & Deinitable](Copyable):\n    var key: Self.K\n    var value: Self.V\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.uses = 0\n\n    def bump(mut self) -> Int:\n        self.uses += 1\n        return self.uses\n\n    def replace(mut self, var item: Self.T) -> Int:\n        self.item = item^\n        return self.bump()\n\n\ndef main():\n    var a = Shelf[Pair[Int, String]](Pair[Int, String](1, \"one\"))\n    var b = Shelf[Int](7)\n    print(a.bump(), b.bump())\n    print(a.replace(Pair[Int, String](2, \"two\")), b.replace(8))\n    print(a.item.key, a.item.value, b.item)\n",
         "1 1\n2 2\n2 two 8\n",
-        &[("Shelf.bump", 2), ("Shelf.replace", 2)],
+        &[("Shelf.bump", 0), ("Shelf.replace", 0)],
     );
 }
 
@@ -4062,15 +4078,15 @@ fn template_method_built_over_locals_derive() {
         include_str!("../assets/ok/template_method_built_over_local.mojo"),
         "0 0 3 3\n2 y 5 z\n4 4 1 1\n0 0 4 x 0 0\n",
         &[
-            ("Shelf.made", 2),
-            ("Shelf.fresh", 2),
-            ("Shelf.popped", 2),
-            ("Shelf.cleared", 2),
-            ("Shelf.handed", 2),
-            ("Shelf.wrapped", 2),
-            ("Shelf.inferred", 2),
-            ("Shelf.unused", 2),
-            ("Shelf.viewed", 2),
+            ("Shelf.made", 0),
+            ("Shelf.fresh", 0),
+            ("Shelf.popped", 0),
+            ("Shelf.cleared", 0),
+            ("Shelf.handed", 0),
+            ("Shelf.wrapped", 0),
+            ("Shelf.inferred", 0),
+            ("Shelf.unused", 0),
+            ("Shelf.viewed", 0),
         ],
     );
 }
@@ -4085,10 +4101,10 @@ fn template_method_explicit_applications_derive() {
         include_str!("../assets/ok/template_method_explicit_application.mojo"),
         "8\n8\n3\n",
         &[
-            ("Pool.__init__", 2),
-            ("Pool.regrow", 2),
-            ("Pool.take", 2),
-            ("Handle.__init__", 2),
+            ("Pool.__init__", 0),
+            ("Pool.regrow", 0),
+            ("Pool.take", 0),
+            ("Handle.__init__", 0),
         ],
     );
 }
@@ -4103,16 +4119,16 @@ fn template_method_constructions_derive() {
         include_str!("../assets/ok/template_method_construction.mojo"),
         "1 2 x 3 0 0\n1 x 1 2 x\n1 0 x 7\n1 1 5 y\n0 0\n",
         &[
-            ("Box.copy", 2),
-            ("Box.empty", 2),
-            ("Box.some", 2),
-            ("Box.pair", 2),
-            ("Box.tagged", 2),
-            ("Box.tagged_as", 2),
-            ("Box.reset", 2),
-            ("Box.keep", 2),
-            ("Box.__init__", 2),
-            ("Tagged.__init__", 2),
+            ("Box.copy", 0),
+            ("Box.empty", 0),
+            ("Box.some", 0),
+            ("Box.pair", 0),
+            ("Box.tagged", 0),
+            ("Box.tagged_as", 0),
+            ("Box.reset", 0),
+            ("Box.keep", 0),
+            ("Box.__init__", 0),
+            ("Tagged.__init__", 0),
         ],
     );
 }
@@ -4129,10 +4145,10 @@ fn template_method_converting_call_arguments_derive() {
         include_str!("../assets/ok/template_method_converting_call_argument.mojo"),
         "4 2 7\n4 2 7\n",
         &[
-            ("Holder.numbered", 2),
-            ("Holder.flagged", 2),
-            ("Holder.boxed", 2),
-            ("Holder.keep", 2),
+            ("Holder.numbered", 0),
+            ("Holder.flagged", 0),
+            ("Holder.boxed", 0),
+            ("Holder.keep", 0),
         ],
     );
 }
@@ -4144,7 +4160,7 @@ fn template_method_converting_closed_bindings_derive() {
     assert_methods_derive(
         include_str!("../assets/ok/template_method_converting_argument.mojo"),
         "count 4 flag True 5\ncount 4 flag True hi\n",
-        &[("Holder.write_to", 2)],
+        &[("Holder.write_to", 0)],
     );
 }
 
@@ -4159,12 +4175,12 @@ fn template_method_converting_bindings_derive() {
         include_str!("../assets/ok/template_method_converting_binding.mojo"),
         "4 6 5 0\n4 6 hi 0\n3 m 4.0 4.0\n",
         &[
-            ("Holder.labeled", 2),
-            ("Holder.counted", 2),
-            ("Holder.boxed", 2),
-            ("Holder.listed", 2),
-            ("Holder.moved", 2),
-            ("Holder.floated", 2),
+            ("Holder.labeled", 0),
+            ("Holder.counted", 0),
+            ("Holder.boxed", 0),
+            ("Holder.listed", 0),
+            ("Holder.moved", 0),
+            ("Holder.floated", 0),
         ],
     );
 }
@@ -4180,12 +4196,12 @@ fn template_method_operator_dispatch_derives() {
         include_str!("../assets/ok/template_method_operator_dispatch.mojo"),
         "False True False True\n1 2\nTrue True True False\nFalse False 1\n3 7\n",
         &[
-            ("Pair.same", 3),
-            ("Pair.differs", 3),
-            ("Pair.matches", 3),
-            ("Sorted.ordered", 2),
-            ("Sorted.bounds", 2),
-            ("Totals.merged", 2),
+            ("Pair.same", 0),
+            ("Pair.differs", 0),
+            ("Pair.matches", 0),
+            ("Sorted.ordered", 0),
+            ("Sorted.bounds", 0),
+            ("Totals.merged", 0),
         ],
     );
 }
@@ -4200,15 +4216,15 @@ fn template_method_operator_operands_derives() {
         include_str!("../assets/ok/template_method_operator_operands.mojo"),
         "True False True False\n1 5 6 8\nTrue False True False\n3 9 4 12\nFalse False True True\n",
         &[
-            ("Pair.starts", 2),
-            ("Gauge.lowered", 2),
-            ("Gauge.bumped", 2),
-            ("Gauge.is_two", 2),
-            ("Gauge.below", 2),
-            ("Gauge.spanned", 2),
-            ("Gauge.chained", 2),
-            ("Gauge.balanced", 2),
-            ("Gauge.matches_sum", 2),
+            ("Pair.starts", 0),
+            ("Gauge.lowered", 0),
+            ("Gauge.bumped", 0),
+            ("Gauge.is_two", 0),
+            ("Gauge.below", 0),
+            ("Gauge.spanned", 0),
+            ("Gauge.chained", 0),
+            ("Gauge.balanced", 0),
+            ("Gauge.matches_sum", 0),
         ],
     );
 }
@@ -4223,13 +4239,13 @@ fn template_method_reflected_operator_derives() {
         include_str!("../assets/ok/template_method_reflected_operator.mojo"),
         "2 4 2.5 7.5\n9 7 -0.5 -2.5\n3 7\n3 5 3 1\n",
         &[
-            ("Gauge.raised", 2),
-            ("Gauge.scaled", 2),
-            ("Gauge.margin", 2),
-            ("Gauge.fraction", 2),
-            ("Gauge.doubled", 2),
-            ("Gauge.shifted", 2),
-            ("Gauge.based", 2),
+            ("Gauge.raised", 0),
+            ("Gauge.scaled", 0),
+            ("Gauge.margin", 0),
+            ("Gauge.fraction", 0),
+            ("Gauge.doubled", 0),
+            ("Gauge.shifted", 0),
+            ("Gauge.based", 0),
         ],
     );
 }
@@ -4268,7 +4284,7 @@ def main():
     assert_methods_derive(
         source,
         "3 2.0\n3 2.0\n0.5 3.0\n",
-        &[("Acc.total", 2), ("Acc.bound", 2), ("Acc.ratio", 2)],
+        &[("Acc.total", 0), ("Acc.bound", 0), ("Acc.ratio", 0)],
     );
 }
 
@@ -4303,83 +4319,26 @@ def main():
     var b = Pair[Coin](Coin(3), Coin(3))
     print(a.same(), b.same())
 ";
-    assert_methods_derive(source, "False True\n", &[("Pair.same", 2)]);
+    assert_methods_derive(source, "False True\n", &[("Pair.same", 0)]);
 }
 
 #[test]
-fn template_method_converting_operand_derives() {
-    // No overload of the instance's `__eq__` takes its own type, so the
-    // operand reaches the declared one through an `@implicit` constructor.
-    // The conversion is selected at the instance's types by the same recipe a
-    // converted call argument uses, and `Bill` pins the two adaptations
-    // composed: the copy is owed at the operand's own type, the conversion at
-    // the declared one.
-    let source = r"@fieldwise_init
-struct Money(Copyable, Deinitable, Equatable, ImplicitlyCopyable, Movable):
-    var cents: Int
-
-    def __eq__(self, other: Cents) -> Bool:
-        return self.cents == other.amount
-
-@fieldwise_init
-struct Bill(Copyable, Deinitable, Equatable, ImplicitlyCopyable, Movable):
-    var notes: Int
-
-    def __eq__(self, var other: Cents) -> Bool:
-        return self.notes == other.amount
-
-struct Cents(Copyable, Deinitable, ImplicitlyCopyable, Movable):
-    var amount: Int
-
-    def __init__(out self, amount: Int):
-        self.amount = amount
-
-    @implicit
-    def __init__(out self, m: Money):
-        self.amount = m.cents
-
-    @implicit
-    def __init__(out self, b: Bill):
-        self.amount = b.notes
-
-struct Pair[T: Copyable & Equatable & Deinitable](Movable):
-    var first: Self.T
-    var second: Self.T
-
-    def __init__(out self, var first: Self.T, var second: Self.T):
-        self.first = first^
-        self.second = second^
-
-    def same(self) -> Bool:
-        return self.first == self.second
-
-def main():
-    var a = Pair[Int](1, 2)
-    var b = Pair[Money](Money(4), Money(4))
-    var c = Pair[Bill](Bill(1), Bill(2))
-    print(a.same(), b.same(), c.same())
-";
-    assert_methods_derive(source, "False True False\n", &[("Pair.same", 3)]);
-}
-
-#[test]
-fn template_method_consuming_conversion_keeps_the_clone_check() {
-    // The recipe re-selects the constructor at the instance's types, and a
-    // constructor that consumes its source records an implicit copy the
-    // template never did. The clone check takes the body back, and the
-    // program still runs.
+fn template_method_consuming_conversion_runs_from_the_template() {
+    // The conversion's constructor is selected once, on the template, and
+    // the template serves the instance: no clone re-selects it at the
+    // instance's types.
     let source = "struct Wrapper[T: Copyable & Deinitable](Copyable, Deinitable, Movable):\n    var value: Self.T\n\n    @implicit\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\nstruct Holder[T: Copyable & Deinitable](Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def keep(self, box: Wrapper[Self.T]) -> Int:\n        return 7\n\n    def boxed(self) -> Int:\n        return self.keep(self.item)\n\ndef main():\n    var number = Holder[Int](5)\n    print(number.boxed())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     let stats = program.template_stats();
     assert_eq!(compiler.execute(&program).expect("execute").output, "7\n");
     assert!(
-        stats.refused.iter().any(|(name, reason)| {
-            name.starts_with("Holder.boxed$")
-                && reason == "an implicit conversion consumes, raises, or borrows for the instance"
-        }),
-        "the consuming conversion refuses the derivation: {:?}",
-        stats.refused
+        stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .all(|name| !name.starts_with("Holder.boxed$")),
+        "no clone of the method is minted: {stats:?}"
     );
 }
 
@@ -4393,10 +4352,10 @@ fn template_method_view_bindings_derive() {
         include_str!("../assets/ok/template_method_view_binding.mojo"),
         "2 2\n2 2\n3 3\n3 3\n",
         &[
-            ("Shelf.viewed", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.grown", 2),
-            ("Shelf.measured", 2),
+            ("Shelf.viewed", 0),
+            ("Shelf.counted", 0),
+            ("Shelf.grown", 0),
+            ("Shelf.measured", 0),
         ],
     );
 }
@@ -4411,12 +4370,12 @@ fn template_method_bound_witness_shapes_derive() {
         include_str!("../assets/ok/template_method_bound_witness_shapes.mojo"),
         "T3 B3 3 s\nT3 B3 3 s\nTrue True\nTrue True\nFalse\n15\n",
         &[
-            ("Holder.__hash__", 4),
-            ("Holder.write_to", 4),
-            ("Holder.feed", 4),
-            ("Holder.show", 4),
-            ("Ledger.step", 1),
-            ("Ledger.settle", 1),
+            ("Holder.__hash__", 0),
+            ("Holder.write_to", 0),
+            ("Holder.feed", 0),
+            ("Holder.show", 0),
+            ("Ledger.step", 0),
+            ("Ledger.settle", 0),
         ],
     );
 }
@@ -4429,12 +4388,12 @@ fn template_method_same_arity_witness_overloads_derive() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n",
         "3\n",
-        &[("Ledger.sum", 1)],
+        &[("Ledger.sum", 0)],
     );
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 10\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 4\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n    def stepped(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.stepped())\n",
         "3 6\n",
-        &[("Ledger.sum", 1), ("Ledger.stepped", 1)],
+        &[("Ledger.sum", 0), ("Ledger.stepped", 0)],
     );
 }
 
@@ -4446,7 +4405,7 @@ fn template_method_ranked_witness_overloads_derive() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n    var name: String\n\n    def __init__(out self, count: Int):\n        self.count = count\n        self.name = String(\"n\")\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -1\n\n    def total(self, by: Float64, scale: Int = 3) -> Int:\n        return -2\n\n    def total[U: Copyable & Deinitable & Intable](self, var by: U) -> Int:\n        return -4\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def doubled(self) -> Int:\n        return self.step * 2\n\n    def called(self) -> Int:\n        return self.entry.total(self.doubled())\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.plain(), ledger.called())\n",
         "5 4 6\n",
-        &[("Ledger.sum", 1), ("Ledger.plain", 1), ("Ledger.called", 1)],
+        &[("Ledger.sum", 0), ("Ledger.plain", 0), ("Ledger.called", 0)],
     );
 }
 
@@ -4458,7 +4417,7 @@ fn template_method_generic_witness_rivals_derive() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n    def total[dt: DType](self, by: Scalar[dt], scale: Int = 2) -> Int:\n        return -2\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -3\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
         "4 7\n",
-        &[("Ledger.plain", 1), ("Ledger.literal", 1)],
+        &[("Ledger.plain", 0), ("Ledger.literal", 0)],
     );
 }
 
@@ -4470,7 +4429,7 @@ fn template_method_requirement_witness_beside_variadic_rivals_derives() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: Int, *more: Int) -> Int:\n        return -1\n\n    def total(self, *by: Float64) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
         "4 7\n",
-        &[("Ledger.plain", 1), ("Ledger.literal", 1)],
+        &[("Ledger.plain", 0), ("Ledger.literal", 0)],
     );
 }
 
@@ -4483,7 +4442,7 @@ fn template_method_requirement_witness_outranks_a_better_rival() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Float64) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 1\n\n    def total(self, by: Int) -> Int:\n        return -1\n\n\nstruct Tallies(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 2\n\n    def total(self, *by: Int) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def literal(self) -> Int:\n        return self.entry.total(3)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).literal(), Ledger[Tallies](Tallies(2)).literal())\n",
         "3 4\n",
-        &[("Ledger.literal", 2)],
+        &[("Ledger.literal", 0)],
     );
 }
 
@@ -4495,7 +4454,7 @@ fn template_method_requirement_witness_beside_reference_rival_derives() {
     assert_methods_derive(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[o: Origin[mut=False]](self, by: ref[o] Int) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
         "4\n",
-        &[("Ledger.plain", 1)],
+        &[("Ledger.plain", 0)],
     );
 }
 
@@ -4510,21 +4469,21 @@ fn template_method_builtin_requirement_witness_beside_generic_rival_derives() {
     assert_methods_derive(
         "from std.hashlib import Hasher\n\n\n@fieldwise_init\nstruct Twin(Copyable, Deinitable, Hashable, Movable):\n    var x: Int\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    var n = 0\n    if n > 0:\n        print(hash(Holder[Twin](Twin(3))))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
         "True\n",
-        &[("Holder.__hash__", 2)],
+        &[("Holder.__hash__", 0)],
     );
     // `Writable`'s `write_to` likewise, whether the template calls it
     // through the bound or writes into a `String`.
     assert_methods_derive(
         "@fieldwise_init\nstruct Twin(Copyable, Deinitable, Movable, Writable):\n    var x: Int\n\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"T\", self.x)\n\n    def write_to[U: Copyable](self, mut writer: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Writable](Movable, Writable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def write_to(self, mut writer: Some[Writer]):\n        self.item.write_to(writer)\n\n    def show(self) -> String:\n        var text = String()\n        self.item.write_to(text)\n        return text\n\n\ndef main():\n    var n = 0\n    if n > 0:\n        print(Holder[Twin](Twin(3)), Holder[Twin](Twin(5)).show())\n    print(Holder[Int](4), Holder[Int](6).show())\n",
         "4 6\n",
-        &[("Holder.write_to", 2), ("Holder.show", 2)],
+        &[("Holder.write_to", 0), ("Holder.show", 0)],
     );
     // A generic struct's instance clones the whole overload set, so the
     // bound call names the witness's clone by its overload qualifier.
     assert_methods_derive(
         "from std.hashlib import Hasher\n\n\n@fieldwise_init\nstruct Pair[T: Copyable & Deinitable & Hashable](Copyable, Deinitable, Hashable, Movable):\n    var x: Self.T\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    var n = 0\n    if n > 0:\n        print(hash(Holder[Pair[Int]](Pair[Int](3))))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
         "True\n",
-        &[("Holder.__hash__", 2)],
+        &[("Holder.__hash__", 0)],
     );
 }
 
@@ -4538,7 +4497,7 @@ fn template_method_origin_bearing_constructions_derive() {
     assert_methods_derive(
         include_str!("../assets/extensions/ok/ref_field_template_method_construction.mojo"),
         "4 q 2 2\n5 r 1 1\n",
-        &[("Store.view", 2), ("Store.rest", 2), ("Store.__init__", 2)],
+        &[("Store.view", 0), ("Store.rest", 0), ("Store.__init__", 0)],
     );
 }
 
@@ -4645,11 +4604,11 @@ fn clones_and_requests(program: &mojito::compiler::CompiledProgram) -> (Vec<Stri
 
 #[test]
 fn template_method_requests_match_an_inferred_run() {
-    // A derived clone must request exactly what an inferred clone requests,
-    // or discovery converges on a different program. `Outer[Int].size`
-    // reaches `Inner[Int].size` through a field, and `twice` reaches
-    // `Outer[Int].size` through `self`: both calls are retargeted per
-    // instance, and both receivers are recorded as applications.
+    // A derived run must request exactly what a verified run requests, or
+    // discovery converges on a different program. `Outer[Int].size` reaches
+    // `Inner[Int].size` through a field, and `twice` reaches
+    // `Outer[Int].size` through `self`: the templates serve both, and both
+    // receivers are still discovered as instances.
     let source = "@fieldwise_init\nstruct Inner[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n\n    def size(self) -> Int:\n        return self.count\n\n@fieldwise_init\nstruct Outer[T: Copyable & Movable & Deinitable](Copyable):\n    var inner: Inner[Self.T]\n\n    def size(self) -> Int:\n        return self.inner.size()\n\n    def twice(self) -> Int:\n        return self.size() * 2\n\ndef main():\n    var a = Outer(Inner(7, 3))\n    var b = Outer(Inner(String(\"x\"), 5))\n    print(a.twice(), b.twice())\n";
     let derived = compile_entry(
         &Compiler::default().with_template_verification(false),
@@ -4660,15 +4619,6 @@ fn template_method_requests_match_an_inferred_run() {
     let inferred = compile_entry(
         &Compiler::default().with_template_verification(true),
         source,
-    );
-    assert!(
-        derived
-            .template_stats()
-            .derived
-            .iter()
-            .any(|name| name.starts_with("Outer.twice$")),
-        "the retargeted call derives: {:?}",
-        derived.template_stats()
     );
     assert_eq!(
         clones_and_requests(&derived),
@@ -4881,7 +4831,7 @@ fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     assert_methods_derive(
         "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef run(xs: List[Int], ys: List[Int]):\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n\n\ndef main():\n    run([1, 2, 3], [4, 5, 6])\n",
         "3 2 2\n",
-        &[("Cell.put", 2)],
+        &[("Cell.put", 1)],
     );
 }
 
@@ -4889,7 +4839,7 @@ fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
 fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
     // A method whose body replays a callee's transfer summary is certified
     // once, served from its own facts in every later transfer round, and
-    // derived for each plain-data instance.
+    // its template serves each plain-data instance without a clone.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -4919,7 +4869,10 @@ fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
             .map(String::as_str)
             .filter(|derived| derived.starts_with(&format!("{name}$")))
             .collect();
-        assert_eq!(derived.len(), 2, "{name}: both instances derive: {stats:?}");
+        assert!(
+            derived.is_empty(),
+            "{name}: the template serves both instances: {derived:?}"
+        );
         assert!(
             stats
                 .inferred_clones
@@ -5118,7 +5071,7 @@ fn template_stringify_scalar_parameter_derives() {
     assert_methods_derive(
         source,
         "31 41\n,3 ;4\n",
-        &[("Shelf.named", 2), ("Shelf.joined", 2)],
+        &[("Shelf.named", 0), ("Shelf.joined", 2)],
     );
 }
 
@@ -5133,13 +5086,13 @@ fn template_generic_static_call_derives() {
         &source,
         "20 30\n7 7\n4 5\n3 x\n3 x\n3 x\n3 x\n",
         &[
-            ("Shelf.counter", 2),
-            ("Shelf.width", 2),
-            ("Shelf.checked", 2),
-            ("Shelf.spelled", 2),
-            ("Shelf.inferred", 2),
-            ("Shelf.contextual", 2),
-            ("Shelf.moved", 2),
+            ("Shelf.counter", 0),
+            ("Shelf.width", 0),
+            ("Shelf.checked", 0),
+            ("Shelf.spelled", 0),
+            ("Shelf.inferred", 0),
+            ("Shelf.contextual", 0),
+            ("Shelf.moved", 0),
         ],
     );
 }
@@ -5156,27 +5109,28 @@ fn template_generic_static_shapes_derive() {
         &source,
         "14 14\n3 x\n4 3 y x\n9 z\n6 6\n3 3 0 0\n5\n5\n1 1\n",
         &[
-            ("Shelf.width", 2),
-            ("Shelf.peeked", 2),
-            ("Shelf.swapped", 2),
-            ("Shelf.local_swap", 2),
-            ("Shelf.total", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.none", 2),
+            ("Shelf.width", 0),
+            ("Shelf.peeked", 0),
+            ("Shelf.swapped", 0),
+            ("Shelf.local_swap", 0),
+            ("Shelf.total", 0),
+            ("Shelf.counted", 0),
+            ("Shelf.none", 0),
         ],
     );
-    // Before the elaborator mints the per-call clone, the instance calls its
-    // own clone of the static, which no recipe repeats: the call derives from
-    // the round that has it.
+    // `shown` calls a lone static with a binder of its own, which the
+    // elaborator instantiates per call: its template serves every instance.
     let compiler = Compiler::default().with_template_verification(false);
     let program = compile_entry(&compiler, &source);
-    let shown: std::collections::HashSet<&String> = program
-        .template_stats()
-        .derived
-        .iter()
-        .filter(|name| name.starts_with("Shelf.shown$"))
-        .collect();
-    assert_eq!(shown.len(), 2, "Shelf.shown derives for every instance");
+    let stats = program.template_stats();
+    assert!(
+        stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .all(|name| !name.starts_with("Shelf.shown$")),
+        "the template serves Shelf.shown for every instance"
+    );
 }
 
 #[test]
@@ -5194,11 +5148,21 @@ fn template_applied_overloaded_static_derives() {
     assert_methods_derive(
         &source,
         "6 6\n6 6\n5\n5\n1 1\n7\n7\n1 1\ns\ns\n1 1\nt\nt\n1 1\n11 11\n6 6\n",
-        &[("Shelf.summed", 2), ("Shelf.valued", 2)],
+        &[("Shelf.summed", 0), ("Shelf.valued", 0)],
     );
     let compiler = Compiler::default().with_template_verification(false);
     let program = compile_entry(&compiler, &source);
-    for method in ["scaled", "twice", "picked", "applied", "worded", "spelled"] {
+    // A method that calls an overloaded static with binders of its own
+    // keeps its clone, which names the per-call clone the instance mints. One
+    // that calls a lone such static is served by its template.
+    for (method, clones) in [
+        ("scaled", 0),
+        ("twice", 0),
+        ("picked", 2),
+        ("applied", 2),
+        ("worded", 2),
+        ("spelled", 2),
+    ] {
         let derived: std::collections::HashSet<&String> = program
             .template_stats()
             .derived
@@ -5207,8 +5171,8 @@ fn template_applied_overloaded_static_derives() {
             .collect();
         assert_eq!(
             derived.len(),
-            2,
-            "Shelf.{method} derives for every instance"
+            clones,
+            "Shelf.{method} derives for each instance that clones it"
         );
     }
 }
@@ -5225,12 +5189,12 @@ fn template_overloaded_generic_static_call_derives() {
         &source,
         "3 x\n3 x\n6 7\n5 6\n3 x\n3 x\n",
         &[
-            ("Shelf.by_int", 2),
-            ("Shelf.by_float", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.checked", 2),
-            ("Shelf.inferred", 2),
-            ("Shelf.contextual", 2),
+            ("Shelf.by_int", 0),
+            ("Shelf.by_float", 0),
+            ("Shelf.counted", 0),
+            ("Shelf.checked", 0),
+            ("Shelf.inferred", 0),
+            ("Shelf.contextual", 0),
         ],
     );
 }
@@ -5246,9 +5210,9 @@ fn template_overloaded_static_on_a_parameter_type_derives() {
         &source,
         "1 1\n1 1\n2 2\n",
         &[
-            ("Shelf.picked", 2),
-            ("Shelf.given", 2),
-            ("Shelf.literal", 2),
+            ("Shelf.picked", 0),
+            ("Shelf.given", 0),
+            ("Shelf.literal", 0),
         ],
     );
 }
@@ -5265,9 +5229,9 @@ fn template_overloaded_static_keeps_the_template_member_at_every_instance() {
         &source,
         "1 1\n1 2 2\n2\n",
         &[
-            ("Shelf.picked", 3),
-            ("Shelf.given", 3),
-            ("Shelf.literal", 3),
+            ("Shelf.picked", 0),
+            ("Shelf.given", 0),
+            ("Shelf.literal", 0),
         ],
     );
 }
@@ -5283,13 +5247,13 @@ fn template_string_literal_argument_derives() {
         &source,
         "4 3\n-1 2 True True\n2 1\n2 1 a-b-a! cab!\n4 4\n",
         &[
-            ("Named.trimmed_length", 2),
-            ("Named.position", 2),
-            ("Named.has_z", 2),
-            ("Named.local_trimmed", 2),
-            ("Named.tag_count", 2),
-            ("Named.tag_joined", 2),
-            ("Named.tag_taken", 2),
+            ("Named.trimmed_length", 0),
+            ("Named.position", 0),
+            ("Named.has_z", 0),
+            ("Named.local_trimmed", 0),
+            ("Named.tag_count", 0),
+            ("Named.tag_joined", 0),
+            ("Named.tag_taken", 0),
         ],
     );
 }
@@ -5305,12 +5269,12 @@ fn template_defaulted_argument_derives() {
         &source,
         "-1 2 False True\na-b! cab! a-b!! cab!!\n24 12 4 4\n",
         &[
-            ("Named.position", 2),
-            ("Named.starts", 2),
-            ("Named.tag_joined", 2),
-            ("Named.tag_twice", 2),
-            ("Named.tripled_length", 2),
-            ("Named.reaped", 2),
+            ("Named.position", 0),
+            ("Named.starts", 0),
+            ("Named.tag_joined", 0),
+            ("Named.tag_twice", 0),
+            ("Named.tripled_length", 0),
+            ("Named.reaped", 0),
         ],
     );
 }
@@ -5328,10 +5292,10 @@ fn template_bound_defaulted_argument_derives() {
         &source,
         "x7 x4 x6 x7\nxabababababab xababab xababababab xabababababab\n",
         &[
-            ("Holder.both_default", 2),
-            ("Holder.one_default", 2),
-            ("Holder.keyword_offset", 2),
-            ("Holder.keywords_swapped", 2),
+            ("Holder.both_default", 0),
+            ("Holder.one_default", 0),
+            ("Holder.keyword_offset", 0),
+            ("Holder.keywords_swapped", 0),
         ],
     );
 }
@@ -5349,12 +5313,12 @@ fn template_bound_value_argument_derives() {
         &source,
         "y5 z4 w3 p2 t3 x3\nyabababab zababab wabab pab tabab xabab\n",
         &[
-            ("Holder.keyword_literal", 2),
-            ("Holder.positional_literal", 2),
-            ("Holder.named_local", 2),
-            ("Holder.named_parameter", 2),
-            ("Holder.field_argument", 2),
-            ("Holder.spelled_default", 2),
+            ("Holder.keyword_literal", 0),
+            ("Holder.positional_literal", 0),
+            ("Holder.named_local", 0),
+            ("Holder.named_parameter", 0),
+            ("Holder.field_argument", 0),
+            ("Holder.spelled_default", 0),
         ],
     );
 }
@@ -5372,14 +5336,14 @@ fn template_bound_self_argument_derives() {
         &source,
         "7 3 7 10 10 2.w 2.q\n5 3 5 10 10 ab-7 ab-9\n12 18\n",
         &[
-            ("Holder.merged_field", 2),
-            ("Holder.merged_parameter", 2),
-            ("Holder.merged_local", 2),
-            ("Holder.absorbed_copy", 2),
-            ("Holder.absorbed_transfer", 2),
-            ("Holder.paired_field", 2),
-            ("Implicit.absorbed_field", 1),
-            ("Implicit.absorbed_parameter", 1),
+            ("Holder.merged_field", 0),
+            ("Holder.merged_parameter", 0),
+            ("Holder.merged_local", 0),
+            ("Holder.absorbed_copy", 0),
+            ("Holder.absorbed_transfer", 0),
+            ("Holder.paired_field", 0),
+            ("Implicit.absorbed_field", 0),
+            ("Implicit.absorbed_parameter", 0),
         ],
     );
 }
@@ -5396,11 +5360,11 @@ fn template_bound_binder_result_derives() {
         &source,
         "w 7\nw w q\n7 7 9\n",
         &[
-            ("Holder.echoed_field", 2),
-            ("Holder.echoed_local", 2),
-            ("Holder.echoed_nested", 2),
-            ("Holder.echoed_discarded", 2),
-            ("Holder.echoed_parameter", 2),
+            ("Holder.echoed_field", 0),
+            ("Holder.echoed_local", 0),
+            ("Holder.echoed_nested", 0),
+            ("Holder.echoed_discarded", 0),
+            ("Holder.echoed_parameter", 0),
         ],
     );
 }
@@ -5417,10 +5381,10 @@ fn template_stringify_parameter_value_derives() {
         &source,
         "3 3 4 1\nTrue True False 4\nab ab c 2\n#7 #7 #12 2\n",
         &[
-            ("Holder.field", 4),
-            ("Holder.local", 4),
-            ("Holder.parameter", 4),
-            ("Holder.stored", 4),
+            ("Holder.field", 0),
+            ("Holder.local", 0),
+            ("Holder.parameter", 0),
+            ("Holder.stored", 0),
         ],
     );
 }
@@ -5438,11 +5402,11 @@ fn template_print_parameter_temporary_derives() {
         &source,
         "3\nTrue\nab\n#7\n3\nTrue\nab\n#7\nw = 3 3\nw = True True\nw = ab ab\nw = #7 #7\n3\nTrue\nab\n#7\n4 4\nFalse False\nc c\n#12 #12\n",
         &[
-            ("Holder.copied", 4),
-            ("Holder.echoed", 4),
-            ("Holder.mixed", 4),
-            ("Holder.nested", 4),
-            ("Holder.parameter", 4),
+            ("Holder.copied", 0),
+            ("Holder.echoed", 0),
+            ("Holder.mixed", 0),
+            ("Holder.nested", 0),
+            ("Holder.parameter", 0),
         ],
     );
 }
@@ -5457,10 +5421,10 @@ fn template_print_keywords_derive() {
         "3, 3\n3|\ndone\ns+s\ns|\ndone\n1 1\n4 - 4\nq - q\n4 <\nq <\n4/7/4;\nq::7::q;\nw 4\nw q\n",
         &[
             ("show", 2),
-            ("Holder.spaced", 2),
-            ("Holder.ended", 2),
-            ("Holder.glued", 2),
-            ("Holder.flushed", 2),
+            ("Holder.spaced", 0),
+            ("Holder.ended", 0),
+            ("Holder.glued", 0),
+            ("Holder.flushed", 0),
         ],
     );
 }
@@ -5475,9 +5439,9 @@ fn template_print_call_keywords_derive() {
         "3-3\n35\ndone\ns-s\ns6\ndone\n1 1\n4 = 4\nq = q\n47 <\nq8 <\nw:4\nw:q\n",
         &[
             ("show", 2),
-            ("Holder.spaced", 2),
-            ("Holder.ended", 2),
-            ("Holder.filed", 2),
+            ("Holder.spaced", 0),
+            ("Holder.ended", 0),
+            ("Holder.filed", 0),
         ],
     );
 }
@@ -5494,17 +5458,17 @@ fn template_bound_display_argument_derives() {
         &source,
         "13 13 22 10\n2 6 6 0\n13 13 17 12\n4 6 4 2\n13 14 18\n6 8 20\n",
         &[
-            ("Holder.leading_dot", 2),
-            ("Holder.spelled_static", 2),
-            ("Holder.constructed", 2),
-            ("Holder.tuple_display", 2),
-            ("Holder.applied", 2),
-            ("Holder.mixed_display", 2),
-            ("Holder.empty_display", 2),
-            ("Holder.word_display", 2),
-            ("Holder.set_display", 2),
-            ("Holder.dict_display", 2),
-            ("Holder.item_display", 2),
+            ("Holder.leading_dot", 0),
+            ("Holder.spelled_static", 0),
+            ("Holder.constructed", 0),
+            ("Holder.tuple_display", 0),
+            ("Holder.applied", 0),
+            ("Holder.mixed_display", 0),
+            ("Holder.empty_display", 0),
+            ("Holder.word_display", 0),
+            ("Holder.set_display", 0),
+            ("Holder.dict_display", 0),
+            ("Holder.item_display", 0),
         ],
     );
 }
@@ -5521,10 +5485,10 @@ fn witness_default_differing_from_requirement_runs_the_requirements() {
         &source,
         "11\n11\n51\n108\n10\n-104\n110\n-93\n36\n11\n1003\n",
         &[
-            ("Holder.run", 2),
-            ("Holder.run_keyword", 2),
-            ("Holder.run_explicit", 2),
-            ("Holder.run_shift", 2),
+            ("Holder.run", 0),
+            ("Holder.run_keyword", 0),
+            ("Holder.run_explicit", 0),
+            ("Holder.run_shift", 0),
         ],
     );
 }
@@ -5540,13 +5504,13 @@ fn template_field_of_field_derives() {
         &source,
         "10 20\n12 23\n20 40\n5 6 25 46\n1 s\n8 10\n6 8\n",
         &[
-            ("Holder.base", 2),
-            ("Holder.offset", 2),
-            ("Holder.count", 2),
-            ("Holder.reset", 2),
-            ("Holder.item_copy", 2),
-            ("Holder.take", 2),
-            ("Holder.peek", 2),
+            ("Holder.base", 0),
+            ("Holder.offset", 0),
+            ("Holder.count", 0),
+            ("Holder.reset", 0),
+            ("Holder.item_copy", 0),
+            ("Holder.take", 0),
+            ("Holder.peek", 0),
         ],
     );
 }

@@ -199,12 +199,56 @@ impl Specializer<'_> {
         let clone = mojito_symbol::symbol::instance_method_clone_name(
             method,
             &struct_decl.param_decls,
-            arguments,
+            &super::specializer::template_spelled_arguments(arguments),
         )?;
         let target = format!("{template}.{clone}");
         self.functions
             .contains_key(target.as_str())
             .then_some(target)
+    }
+
+    /// The per-instantiation clone that serves a call of the template method
+    /// `target` on `receiver`, when the checker minted one for the
+    /// receiver's instance: a method holding a compile-time construct keeps
+    /// its clones, and a template body that calls it names the template.
+    pub(super) fn instance_method_target(
+        &self,
+        function: &MirFunction,
+        receiver: Reg,
+        target: &str,
+        argc: usize,
+    ) -> Option<String> {
+        let Ty::Struct(name, arguments) = peel_refs(function.reg_types.get(&receiver.0)?) else {
+            return None;
+        };
+        let template = nominal_template(name);
+        let method = target.strip_prefix(template)?.strip_prefix('.')?;
+        if mojito_symbol::symbol::specialization_template(method).is_some() {
+            return None;
+        }
+        let source = mojito_symbol::symbol::overload_qualifier(method)
+            .map_or(method, |qualifier| {
+                &method[..method.len() - qualifier.len()]
+            });
+        let struct_decl = self.structs.get(template)?;
+        let clone = mojito_symbol::symbol::instance_method_clone_name(
+            source,
+            &struct_decl.param_decls,
+            &super::specializer::template_spelled_arguments(arguments),
+        )?;
+        let selected = mojito_symbol::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            template,
+            &clone,
+            None,
+            argc,
+        );
+        self.functions
+            .contains_key(selected.as_str())
+            .then_some(selected)
     }
 
     pub(super) fn enqueue_display_instance(
@@ -256,7 +300,7 @@ impl Specializer<'_> {
                 mojito_symbol::symbol::instance_method_clone_name(
                     method,
                     &struct_decl.param_decls,
-                    arguments,
+                    &super::specializer::template_spelled_arguments(arguments),
                 )
             })
             .map(|clone| format!("{}.{clone}", nominal_template(name)))

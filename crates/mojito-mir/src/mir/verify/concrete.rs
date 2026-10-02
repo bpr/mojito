@@ -171,9 +171,10 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::Call {
             raises,
             param_arg_regs,
+            receiver,
             ..
         } => {
-            if let Some(ty) = raises {
+            for ty in raises.iter().chain(receiver.iter()) {
                 require_concrete(head, "instruction", ty, errors);
             }
             require_no_parameter_slots(head, param_arg_regs, errors);

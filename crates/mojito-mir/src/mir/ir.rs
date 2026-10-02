@@ -454,6 +454,11 @@ pub enum MirInstr {
         /// before this list. Consumers bind these entries to `ParamDecl` order
         /// before applying defaults.
         param_arg_regs: Vec<MirParamArg>,
+        /// The spelled receiver of a static call on a generic struct
+        /// (`Pair[Self.U].count()`), in the caller's binder scope. No runtime
+        /// argument need carry the struct's parameters, so the elaborator
+        /// binds them from this type; a resolved call keeps none.
+        receiver: Option<Ty>,
     },
     /// A call through a runtime function value. Callable parameters use this
     /// instruction instead of treating the parameter name as a global symbol.

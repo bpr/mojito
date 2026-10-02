@@ -564,6 +564,9 @@ impl<'a> Specializer<'a> {
             // Argument loads a devirtualized capturing call needs, spliced in
             // ahead of the call once the walk over this block is done.
             let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
+            // What converts an operator's result to the `Bool` its template
+            // declared, spliced in after the operator the same way.
+            let mut conversions: Vec<(usize, MirInstr)> = Vec::new();
             for (index, instruction) in block.instrs.iter_mut().enumerate() {
                 if let MirInstr::Try {
                     body,
@@ -664,10 +667,76 @@ impl<'a> Specializer<'a> {
                         Some(Ty::Struct(..))
                     )
                 {
-                    let resolved = resolved
-                        .take()
-                        .or_else(|| self.instance_dunder_target(function, *a, method));
-                    *instruction = dunder_method_call(*dest, *a, method, resolved, vec![*b]);
+                    // A type that declares `__eq__` and no `__ne__` takes
+                    // `Equatable`'s default `!=`: dispatch `__eq__` and
+                    // negate its result.
+                    if *op == mojito_ast::ast::InfixOp::Ne
+                        && resolved.is_none()
+                        && self.negates_equality(function, *a)
+                    {
+                        let equal = Reg(function.n_regs);
+                        function.n_regs += 1;
+                        function.reg_types.insert(equal.0, Ty::Bool);
+                        conversions.push((
+                            index,
+                            MirInstr::UnOp {
+                                op: mojito_ast::ast::PrefixOp::Not,
+                                dest: *dest,
+                                a: equal,
+                            },
+                        ));
+                        let resolved = self.instance_dunder_target(function, *a, "__eq__");
+                        *instruction = dunder_method_call(equal, *a, "__eq__", resolved, vec![*b]);
+                    } else {
+                        let resolved = resolved
+                            .take()
+                            .or_else(|| self.instance_dunder_target(function, *a, method));
+                        *instruction = dunder_method_call(*dest, *a, method, resolved, vec![*b]);
+                    }
+                }
+                // A comparison a template typed `Bool` through its bound
+                // yields a mask over sized scalars: convert it, as the
+                // checker does where the operands are spelled.
+                if let MirInstr::BinOp { op, dest, a, .. } = instruction
+                    && matches!(
+                        op,
+                        mojito_ast::ast::InfixOp::Eq
+                            | mojito_ast::ast::InfixOp::Ne
+                            | mojito_ast::ast::InfixOp::Lt
+                            | mojito_ast::ast::InfixOp::Le
+                            | mojito_ast::ast::InfixOp::Gt
+                            | mojito_ast::ast::InfixOp::Ge
+                    )
+                    && function.reg_types.get(&dest.0) == Some(&Ty::Bool)
+                    && let Some(Ty::Simd { width, .. }) =
+                        function.reg_types.get(&a.0).map(peel_refs).cloned()
+                {
+                    let mask = Reg(function.n_regs);
+                    function.n_regs += 1;
+                    function.reg_types.insert(
+                        mask.0,
+                        Ty::Simd {
+                            dtype: mojito_types::types::SimdDtype::Known(
+                                mojito_ast::ast::Dtype::Bool,
+                            ),
+                            width,
+                        },
+                    );
+                    conversions.push((
+                        index,
+                        MirInstr::Call {
+                            dest: std::mem::replace(dest, mask),
+                            func: mojito_mir::mir::FuncRef::named("Bool"),
+                            raises: None,
+                            args: vec![mask],
+                            kwargs: Vec::new(),
+                            arg_places: vec![None],
+                            kwarg_places: Vec::new(),
+                            capture_accesses: Vec::new(),
+                            param_arg_regs: Vec::new(),
+                            receiver: None,
+                        },
+                    ));
                 }
                 // `**` on Int/UInt calls the bundled `_pow_int` body rather
                 // than an emitted helper, so the operator is a use of that
@@ -711,6 +780,7 @@ impl<'a> Specializer<'a> {
                         kwargs,
                         arg_places,
                         param_arg_regs,
+                        receiver: static_receiver,
                         ..
                     } => {
                         if !self.functions.contains_key(func.0.as_str()) {
@@ -786,7 +856,16 @@ impl<'a> Specializer<'a> {
                                     if let Some((_, concrete)) = &bindings.self_instance {
                                         function.reg_types.insert(dest.0, concrete.clone());
                                     }
-                                    self.enqueue(&target, bindings, arguments)?;
+                                    // An instance keyed by the call's element
+                                    // count has a symbol no by-name constructor
+                                    // lookup composes: the call names it.
+                                    let arity_keyed = bindings.variadic_arity.is_some();
+                                    let instance = self.enqueue(&target, bindings, arguments)?;
+                                    if arity_keyed {
+                                        func.0 = instance;
+                                        param_arg_regs.clear();
+                                        continue;
+                                    }
                                 }
                                 // A generic struct's output declaration is
                                 // instance-named; respell the constructor
@@ -822,6 +901,11 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                         )?;
+                        // The instance identity carries the spelled receiver
+                        // of a static call, so the resolved call keeps none.
+                        if let Some(spelled) = static_receiver.take() {
+                            self.bind_static_receiver(owner, &target, &spelled, &mut bindings)?;
+                        }
                         // A callable parameter bound to a closure with
                         // captures keeps its environment: the instance takes
                         // it as a trailing runtime parameter, so pass the
@@ -953,6 +1037,14 @@ impl<'a> Specializer<'a> {
                             }
                             continue;
                         }
+                        let target = self
+                            .instance_method_target(
+                                function,
+                                *recv,
+                                &target,
+                                args.len() + kwargs.len(),
+                            )
+                            .unwrap_or(target);
                         let (target, bindings, arguments) = self.infer_call(
                             owner,
                             function,
@@ -1050,6 +1142,7 @@ impl<'a> Specializer<'a> {
                                 kwarg_places: std::mem::take(kwarg_places),
                                 capture_accesses: std::mem::take(capture_accesses),
                                 param_arg_regs: Vec::new(),
+                                receiver: None,
                             };
                             continue;
                         }
@@ -1263,8 +1356,20 @@ impl<'a> Specializer<'a> {
                 }
             }
             block.instrs.iter_mut().for_each(close_parameter_slots);
-            for (index, prelude) in preludes.into_iter().rev() {
-                block.instrs.splice(index..index, prelude);
+            // A conversion follows instruction `index` and a prelude precedes
+            // it, so at one position the conversion comes first.
+            let mut insertions: Vec<(usize, bool, Vec<MirInstr>)> = conversions
+                .into_iter()
+                .map(|(index, conversion)| (index + 1, false, vec![conversion]))
+                .chain(
+                    preludes
+                        .into_iter()
+                        .map(|(index, prelude)| (index, true, prelude)),
+                )
+                .collect();
+            insertions.sort_by_key(|(position, prelude, _)| (*position, *prelude));
+            for (position, _, instructions) in insertions.into_iter().rev() {
+                block.instrs.splice(position..position, instructions);
             }
         }
         Ok(())
@@ -1454,6 +1559,23 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a `!=` on `receiver` is served by `Equatable`'s default: its
+    /// struct declares an `__eq__` and no `__ne__`.
+    fn negates_equality(&self, function: &MirFunction, receiver: Reg) -> bool {
+        let Some(Ty::Struct(name, _)) = function.reg_types.get(&receiver.0).map(peel_refs) else {
+            return false;
+        };
+        let declares = |method: &str| {
+            let base = format!("{}.{method}", nominal_template(name));
+            self.functions.keys().any(|symbol| {
+                symbol
+                    .strip_prefix(base.as_str())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
+            })
+        };
+        declares("__eq__") && !declares("__ne__")
     }
 
     /// The unique `__init__` overload of `init_base`'s struct whose
@@ -1648,7 +1770,7 @@ const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
 /// `arguments` with every monomorphized struct (`List$mono$TInt[Int]`)
 /// respelled as its template application (`List[Int]`), the spelling the
 /// checker mangled its per-instantiation clones over.
-fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
+pub(super) fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
     struct TemplateSpelling;
     impl mojito_types::types::TyRewrite for TemplateSpelling {
         fn whole(&mut self, ty: &Ty) -> Option<Ty> {

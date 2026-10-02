@@ -152,6 +152,7 @@ assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
+assets/ok/generic_struct_template_reach.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
 assets/ok/hashable_extra_hash_overload.mojo	main	exe-differential	sanitized
 assets/ok/hashable_hasher_protocol.mojo	main	exe-differential	sanitized
@@ -166,6 +167,7 @@ assets/ok/homogeneous_variadic_loan_carrying_element.mojo	main	exe-differential	
 assets/ok/imm_origin_binders.mojo	main	exe-differential	sanitized
 assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
+assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized

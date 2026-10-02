@@ -529,6 +529,13 @@ impl Elab<'_> {
             return Ok(());
         };
         let owed = owed_instance_clones(methods, template, values, stub_reaching);
+        let mut keyed = keyed_methods(methods, template, stub_reaching);
+        keyed.extend(
+            self.keyed_methods
+                .iter()
+                .filter(|(owner, _)| owner == template)
+                .map(|(_, method)| method.clone()),
+        );
         let constructors = methods
             .iter()
             .filter(|method| {
@@ -540,7 +547,7 @@ impl Elab<'_> {
             clones,
             mut field_types,
             withheld,
-        } = self.generate_instance_clones(template, values)?;
+        } = self.generate_instance_clones(template, values, &keyed)?;
         mono.minted_instances.push(StructInstanceRequest::new(
             template.to_string(),
             values
@@ -2465,13 +2472,15 @@ impl Elab<'_> {
 
     /// Per-instantiation method clones of an ordinary generic struct: for
     /// each checker-discovered closed application (`Optional[Int]`), every
-    /// non-lifecycle method whose `where` clause holds for the instance is
-    /// cloned from the original template with the struct's parameters baked
-    /// (`get$y3:Int`) and an explicit receiver type, so the checker binds
-    /// `self`/`Self` to the instance. A user template's lifecycle methods
-    /// clone too, a constructor family as one overload set under the shared
-    /// clone name; a bundled template's stay erased, carrying the
-    /// value-parameter reification that path relies on. Only a template whose
+    /// `keyed` method whose `where` clause holds for the instance is cloned
+    /// from the original template with the struct's parameters baked
+    /// (`kind$y3:Int`) and an explicit receiver type, so the checker binds
+    /// `self`/`Self` to the instance. Every other method's template serves a
+    /// plain-data instance, so it mints no clone; an instance over a
+    /// loan-carrying argument clones every method. A user template's
+    /// lifecycle methods clone like any other, a constructor family as one
+    /// overload set under the shared clone name; a bundled template's stay
+    /// erased, carrying the value-parameter reification that path relies on. Only a template whose
     /// parameters are all plain type parameters specializes here; value
     /// parameters, retained origin binders, and callable-bounded parameters
     /// keep the erased path.
@@ -2483,6 +2492,7 @@ impl Elab<'_> {
         &self,
         name: &str,
         values: &[CtValue],
+        keyed: &HashSet<String>,
     ) -> Result<InstanceClones, ComptimeError> {
         let Some(template) = self.program.iter().find(|statement| {
             matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
@@ -2583,6 +2593,9 @@ impl Elab<'_> {
             .get(&instance_key)
             .map_or(&[][..], Vec::as_slice);
         let bundled = mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
+        let plain_data = values
+            .iter()
+            .all(|value| matches!(value, CtValue::Type(ty) if !carries_loan_or_callable(ty)));
         // The methods this instance withholds rather than fails to clone: an
         // unavailable method cannot be called on it at all, so its erased body
         // never runs.
@@ -2625,6 +2638,13 @@ impl Elab<'_> {
                 .iter()
                 .all(|statement| statement.module.is_none())
             {
+                continue;
+            }
+            // The template serves a plain-data instance of a method that
+            // holds no compile-time construct. An instance over a
+            // loan-carrying argument still clones: its origin binders are
+            // what a transfer summary names the argument's loans by.
+            if plain_data && !keyed.contains(&method.name) {
                 continue;
             }
             // Same-name overloads all clone: they share the mangled name and
@@ -3491,6 +3511,89 @@ fn owed_instance_clones(
         .collect()
 }
 
+/// The methods of `template` whose bodies run only with the struct's
+/// parameters bound, by name: one whose template body is the trap stub (a
+/// compile-time construct folds only per instance), one that holds a
+/// construct only an instance lowers, and one whose erased body reaches a
+/// compile-time-keyed stub. Every other method's template serves each
+/// plain-data instance, so it mints no clone. An overload family is keyed
+/// whole.
+fn keyed_methods(
+    methods: &[Method],
+    template: &str,
+    stub_reaching: &HashSet<String>,
+) -> HashSet<String> {
+    methods
+        .iter()
+        .filter(|method| {
+            method.self_ty.is_none()
+                && (is_unspecialized_method_stub(&method.body)
+                    || holds_instance_construct(&method.body)
+                    || stub_reaching.contains(&super::method_owner(template, &method.name)))
+        })
+        .map(|method| method.name.clone())
+        .collect()
+}
+
+/// Whether a method body holds a construct only an instance can lower: a
+/// nested `def` or a lambda, whose lifted body is cloned per instance, or a
+/// type name, which is spelled from the instance's arguments.
+fn holds_instance_construct(body: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.found |= matches!(&statement.kind, StmtKind::Def { .. });
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.found |= match &expr.kind {
+                ExprKind::Lambda { .. } => true,
+                ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } => {
+                    name == "_unqualified_type_name"
+                }
+                _ => false,
+            };
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, body);
+    finder.found
+}
+
+/// Whether a value of `ty` may hold a loan or a callable: a reference, a
+/// pointer or a struct argument naming an origin, or a function type.
+fn carries_loan_or_callable(ty: &Ty) -> bool {
+    mojito_types::types::mentions(ty, &|ty| match ty {
+        Ty::Ref(_) | Ty::Func { .. } | Ty::GenericFunc { .. } => true,
+        Ty::Pointer { origin, .. } => origin.as_origin().is_some(),
+        Ty::Struct(_, arguments) => arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Origin(_))),
+        _ => false,
+    })
+}
+
+/// Whether `body` is [`unspecialized_method_stub`]'s trap.
+fn is_unspecialized_method_stub(body: &[Stmt]) -> bool {
+    let [statement] = body else {
+        return false;
+    };
+    let StmtKind::Expr(call) = &statement.kind else {
+        return false;
+    };
+    matches!(&call.kind, ExprKind::Call { name, args, .. }
+        if name == "_mojito_abort"
+            && matches!(args.as_slice(), [message]
+                if matches!(&message.kind, ExprKind::Str(text)
+                    if text.ends_with(METHOD_STUB_REASON))))
+}
+
+const METHOD_STUB_REASON: &str = ": unspecialized type-keyed method";
+
 /// A type-pack or compile-time-keyed `def` template reduced to its
 /// signature: the body traps with `reason`, so the retained declaration
 /// checks (an abort diverges past any return type) without specializing
@@ -3529,10 +3632,7 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
                 name: "_mojito_abort".to_string(),
                 param_args: Vec::new(),
                 args: vec![Expr::new(
-                    ExprKind::Str(format!(
-                        "{owner}.{}: unspecialized type-keyed method",
-                        method.name
-                    )),
+                    ExprKind::Str(format!("{owner}.{}{METHOD_STUB_REASON}", method.name)),
                     span,
                 )],
                 kwargs: Vec::new(),

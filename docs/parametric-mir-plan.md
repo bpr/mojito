@@ -1,7 +1,8 @@
 # Parametric MIR and One Elaborator: Staged Plan
 
 **Status:** plan recorded 2026-09-30. P0's census (§P0) and P1 have landed,
-and P2's gate, the generator contract, is written. The scheduled
+P2's gate, the generator contract, is written, and P2's first step landed
+2026-10-01 (§P2). The scheduled
 tasks are [`docs/roadmap.md`](roadmap.md) §1; this document is their design
 record and is updated as stages land. It was revised on 2026-09-30 after
 [`docs/parametric-mir-plan-review.md`](parametric-mir-plan-review.md).
@@ -359,6 +360,60 @@ interleaved, debug profile, `total` from `--timings`, median of three:
   `speculative` set goes.
 - Exit: the method and function certificate classes that exist only to derive
   these clones are deleted from `template_facts.rs`.
+
+#### The first step (2026-10-01)
+
+A method of an ordinary generic struct with no compile-time construct in its
+body mints no clone on a plain-data instance. The elaborator instantiates
+its template's MIR, lifecycle members and constructors included.
+
+- **What still clones.** A method whose body holds or reaches a compile-time
+  construct, and every method of an instance whose argument carries a loan or
+  a callable. Roadmap §1 has one entry for each reason.
+- **Discovery.** No clone check walks a template-served body at an instance's
+  arguments. The driver reads from the template's checked types which
+  instances the body reaches and which methods only an instance's own check
+  can serve (`src/compiler/template_reach.rs`), and the elaborator hands a
+  template body's call on a closed receiver to that instance's clone where
+  one exists.
+- **The declaration checks the contract named.** A `^` transfer of a
+  parameter type needs a bound proving `Movable` (row 10). An `@implicit`
+  conversion is selected once where the template serves the method (row 20);
+  a method that still clones repeats it, and that is a roadmap §3 entry.
+- **The serialized `Call`.** A static call records its spelled receiver type,
+  from which the elaborator binds the struct's parameters (text schema 1.8).
+- **The erased oracle.** It agrees on every fixture but one. An erased value
+  carries no type arguments, so the oracle cannot hand a template-served
+  body's call to the receiver instance's clone as the elaborator does. That
+  fixture is the `erased_vm` group's one expected failure.
+- **Not done.** Availability clauses in MIR and the `speculative` set, the
+  summaries of an instance over a loan-carrying argument, the explicit
+  application of a trait-bound `def`, and the exit: clone-symbol retargeting
+  and the method certificate classes still serve the clones that remain.
+
+The census on the three `benchmarks/compile` programs, before and after:
+
+| Bodies | `hello` | `generic` | `stdlib_heavy` |
+|---|---:|---:|---:|
+| Minted by the AST cloner | 244 → 244 | 329 → 249 | 666 → 255 |
+| Per-instantiation method clone, no compile-time control flow | 0 → 0 | 80 → 1 | 417 → 11 |
+| Checked: inferred | 21 → 21 | 26 → 21 | 48 → 21 |
+| Checked: derived | 223 → 223 | 303 → 228 | 618 → 234 |
+| Parametric bodies `main` reaches | 0 → 0 | 10 → 11 | 36 → 43 |
+| Instances those serve with no clone | 0 → 0 | 10 → 11 | 96 → 123 |
+
+The method clones that remain in `stdlib_heavy` spell a type name
+(`write_repr_to` on `List`, `Dict`, and `Optional`), which is roadmap §1's
+type-name entry.
+
+Measured against decision D4 on the same machine, release profile, `total`
+from `--timings`, the commit before and this one interleaved, median of five:
+
+| Program | Before | After | Ratio | Peak RSS |
+|---|---:|---:|---:|---:|
+| `hello.mojo` | 1.813 s | 1.778 s | 0.981 | 224 MB → 220 MB |
+| `generic.mojo` | 1.936 s | 1.782 s | 0.920 | 241 MB → 223 MB |
+| `stdlib_heavy.mojo` | 2.637 s | 1.863 s | 0.707 | 339 MB → 247 MB |
 
 ### P3 — Compile-time parameters and control flow in MIR
 

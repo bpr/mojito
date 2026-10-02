@@ -123,6 +123,16 @@ pub(super) fn generic_constraint_implies(
         return true;
     }
     match (premise, consequence) {
+        (
+            GenericConstraint::Conforms {
+                param: known,
+                trait_name: available,
+            },
+            GenericConstraint::Conforms {
+                param: needed,
+                trait_name: required,
+            },
+        ) if known == needed => builtin_trait_implies(available, required),
         (_, GenericConstraint::And(left, right)) => {
             generic_constraint_implies(premise, left) && generic_constraint_implies(premise, right)
         }
@@ -132,6 +142,26 @@ pub(super) fn generic_constraint_implies(
         }
         _ => false,
     }
+}
+
+/// Whether conformance to the built-in trait `available` proves conformance
+/// to `required`: the lifecycle traits refine one another, and a trivial
+/// marker implies the lifecycle it makes trivial.
+pub(super) fn builtin_trait_implies(available: &str, required: &str) -> bool {
+    matches!(
+        (available, required),
+        ("ImplicitlyCopyable", "Copyable")
+            | (
+                "Copyable" | "ImplicitlyCopyable" | "IsTriviallyMovable",
+                "Movable"
+            )
+            | (
+                "TrivialRegisterPassable",
+                "ImplicitlyCopyable" | "Copyable" | "Movable" | "Deinitable"
+            )
+            | ("IsTriviallyCopyable", "Copyable" | "ImplicitlyCopyable")
+            | ("IsTriviallyDeinitable", "Deinitable")
+    )
 }
 
 /// Fold a clause list into one right-nested conjunction for truth-only
