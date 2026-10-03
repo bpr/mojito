@@ -47,9 +47,9 @@ cannot keep:
   (`value_params`), so `rep[n - 1]()` under a runtime `if` *runs* where the
   pin expands without end (`conformance/probes/ctfe_plain_keyed_recursion.mojo`).
 - The subprogram cannot mint an instance: every compile-time-keyed `def` is
-  excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap 3.114)
+  excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap 3.113)
   and a keyed method is a trap stub
-  (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, 3.113).
+  (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, 3.112).
 - Fuel is `const FUEL: usize = 100_000` in `comptime.rs`, reset per round,
   burned by `Elab::burn` per entry and per `comptime for` iteration and by
   the VM per instruction, frame, and block (`burn_ctfe`).
@@ -280,7 +280,7 @@ The boundary:
   as at the pin. The elaborator evaluates it on first demand. Such a
   constant in a type position needs the register types over parameter
   expressions of roadmap 1.1; until they land, the source-validation
-  rejection ("not a compile-time Int constant") stays, and roadmap 3.115
+  rejection ("not a compile-time Int constant") stays, and roadmap 3.114
   records the program the pin runs.
 - Today's early folding of applied constants by the AST elaborator stays as
   an implementation until the P4 entry deletes the route. It is contained:
@@ -300,7 +300,7 @@ The boundary:
   `VmBackend::call_concrete`, and the thunk lowering, with the condition
   as the first consumer. The MIR text schema bump for `Apply` is part of
   that entry's bump.
-- **Roadmap 1.9** (clones minted during CTFE) and **3.113**, **3.114**
+- **Roadmap 1.9** (clones minted during CTFE) and **3.112**, **3.113**
   close when a demand serves a keyed instance.
 - **Roadmap 1.11** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with

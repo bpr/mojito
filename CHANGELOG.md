@@ -172,6 +172,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `@staticmethod` of a value-parameterized struct reads its struct's
+  parameter, as at the pin: `return Self.k` in `struct W[k: Int]` gives `5`
+  for `W[5].st()`, and so do a bracket slot a callee infers from
+  (`size(Counter[Self.k](a))`) and a static receiver spelled over it
+  (`W[Self.k].st()`), on concrete MIR, the erased oracle, and natively
+  (`assets/ok/static_method_reads_struct_value_parameter.mojo`). The
+  inferring call used to fail MIR verification with "required compile-time
+  value parameter 'n' is missing", and the erased oracle stopped with "field
+  access on non-struct None".
 - A collection display default takes its parameter's type as context, as
   at the pin: `def grow(var xs: List[Int] = [1, 2])` gives each call that
   leaves `xs` out a fresh list, and `[1, 2.5]` for `List[Float64]`, a set

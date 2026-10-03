@@ -1277,6 +1277,28 @@ impl ParamDecl {
             name: std::sync::Arc::from(self.name()),
         }
     }
+
+    /// The argument this binder contributes to its declaration's own `Self`
+    /// type: a type binder as its `Ty::Param`, a value binder as a reference
+    /// to itself.
+    pub fn own_argument(&self) -> TyArg {
+        match self {
+            Self::Type {
+                bounds,
+                callable_bound,
+                ..
+            } => TyArg::Ty(Ty::Param {
+                binder: self.binder(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            }),
+            Self::Value { ty, .. } => TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
+                self.id().clone(),
+                self.name().trim_start_matches('*'),
+                MetaTy::value((**ty).clone()),
+            ))),
+        }
+    }
 }
 
 /// A type substitution: the solution for each type binder, by identity.

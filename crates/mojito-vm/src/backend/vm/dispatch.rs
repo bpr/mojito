@@ -12,6 +12,9 @@ pub(super) struct CallTypes<'a> {
     pub(super) param_vals: &'a [Option<Value>],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
     pub(super) result_ty: Option<&'a mojito_types::types::Ty>,
+    /// The receiver-less `self` binding of a static method call
+    /// ([`VmBackend::static_receiver_binding`]).
+    pub(super) static_receiver: Option<&'a (String, Value)>,
 }
 
 impl VmBackend {
@@ -290,6 +293,7 @@ impl VmBackend {
             param_vals,
             arg_types,
             result_ty,
+            static_receiver,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
@@ -677,10 +681,11 @@ impl VmBackend {
                     };
                     // Reify the function's value parameters (`doubled[21]()`): pair
                     // each declared value parameter with its supplied comptime arg.
-                    let value_params: Vec<(String, Value)> = match prog.sigs.get(name) {
+                    let mut value_params: Vec<(String, Value)> = match prog.sigs.get(name) {
                         Some(sig) => reify_value_parameters(&sig.param_decls, param_vals),
                         None => Vec::new(),
                     };
+                    value_params.extend(static_receiver.cloned());
                     self.call_function(prog, idx, bound, &value_params)
                 }
                 None => Err(RuntimeError::Unsupported(format!(

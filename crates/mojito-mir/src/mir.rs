@@ -59,6 +59,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &[],
         &HashMap::new(),
         &[],
+        None,
         &[],
         &EnclosingBinders::default(),
     )
@@ -471,6 +472,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         parameter_types: ptys,
                         value_parameter_locals,
                         receiver_value_parameters: Vec::new(),
+                        static_receiver: None,
                         enclosing_origin_parameters: origin_binder_names(type_params),
                         enclosing_binders,
                         owned_parameters: owned,
@@ -682,6 +684,19 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             _ => None,
                         })
                         .collect();
+                    let static_receiver = (!m.has_self && !receiver_value_parameters.is_empty())
+                        .then(|| {
+                            let decls = checked
+                                .generic_parameters_at(&GenericSite::Struct {
+                                    module: s.module.clone(),
+                                    declaration: name.clone(),
+                                })
+                                .unwrap_or(&[]);
+                            Ty::Struct(
+                                name.clone(),
+                                decls.iter().map(ParamDecl::own_argument).collect(),
+                            )
+                        });
                     let defaults = regular
                         .iter()
                         .map(|param| {
@@ -851,6 +866,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             parameter_types: ptys,
                             value_parameter_locals,
                             receiver_value_parameters,
+                            static_receiver,
                             enclosing_origin_parameters: origin_binder_names(
                                 type_params.iter().chain(&m.type_params),
                             ),
@@ -891,6 +907,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &[],
             checked.call_transfers(),
             &[],
+            None,
             &[],
             &EnclosingBinders::default(),
         )
@@ -1007,6 +1024,7 @@ fn lower_default(
             parameter_types: Vec::new(),
             value_parameter_locals: parameter_locals,
             receiver_value_parameters: Vec::new(),
+            static_receiver: None,
             enclosing_origin_parameters: Vec::new(),
             enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
@@ -1207,6 +1225,10 @@ struct Flatten<'a> {
     /// method: `Self.n` in a bracket slot reads the receiver's reified
     /// parameter (`self.n`) instead of reifying a binder spelling.
     receiver_value_parameters: Vec<(String, Ty)>,
+    /// The enclosing struct at its own binders when lowering a static method
+    /// of a value-parameterized struct: the type of the receiver-less `self`
+    /// slot a `Self.n` read projects from, as the expression `Self.n` does.
+    static_receiver: Option<Ty>,
     /// The enclosing declaration's origin binder names: a type-shaped bracket
     /// argument naming one (`V[Self.o]`) is erased, as the checker's
     /// `EraseCompileTimeArgument` marks a value-shaped one.
@@ -2095,7 +2117,9 @@ impl Flatten<'_> {
     /// value parameter (`Counter[Self.length](i)`): read the receiver's
     /// reified parameter exactly as the expression `Self.n` does (the field
     /// projection `self.n`, which every backend's field navigation resolves
-    /// through the struct's value parameters). `None` when the frame has no
+    /// through the struct's value parameters). A static method reads it off
+    /// a receiver-less `self` slot typed as the struct at its own binders,
+    /// as the expression `Self.n` there does. `None` when the frame has no
     /// receiver or `n` is not one of its value parameters.
     fn receiver_value_parameter_read(&mut self, name: &str, site: &SourceSpan) -> Option<Reg> {
         let ty = self
@@ -2104,13 +2128,24 @@ impl Flatten<'_> {
             .find(|(candidate, _)| candidate == name)
             .map(|(_, ty)| ty.clone())?;
         if !self.vars.iter().any(|var| var == "self") {
-            return None;
+            self.intern_static_self()?;
         }
         let mut place = self.resolved_place("self");
         place.project(Proj::Field(name.to_string()), ty.clone());
         let dest = self.fresh_typed(site.clone(), Some(place.root), ty);
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)
+    }
+
+    /// The receiver-less `self` slot of a static method of a
+    /// value-parameterized struct, typed as the struct at its own binders: a
+    /// `Self.n` read projects from it, and the VM binds it from the static
+    /// call's spelled receiver. `None` outside such a method.
+    fn intern_static_self(&mut self) -> Option<VarId> {
+        let receiver = self.static_receiver.clone()?;
+        let var = self.var("self");
+        self.var_types.entry(var).or_insert(receiver);
+        Some(var)
     }
 
     /// A concrete nominal type argument may bind a runtime-constructible type
@@ -2476,6 +2511,7 @@ fn lower_cfg_nested(
     capture_bindings: &[mojito_types::origin::OwnerId],
     call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     receiver_value_parameters: &[(String, Ty)],
+    static_receiver: Option<&Ty>,
     enclosing_origin_parameters: &[String],
     enclosing_binders: &EnclosingBinders,
 ) -> MirFunction {
@@ -2524,6 +2560,7 @@ fn lower_cfg_nested(
                 .collect(),
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
+            static_receiver: static_receiver.cloned(),
             enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
             enclosing_binders: enclosing_binders.clone(),
             overloads: overloads.clone(),

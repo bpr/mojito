@@ -607,6 +607,7 @@ impl VmBackend {
             arg_places,
             kwarg_places,
             param_arg_regs,
+            receiver,
             instantiated_args,
             ..
         } = instruction
@@ -637,7 +638,7 @@ impl VmBackend {
                 (0..args.len()).map(ArgSlot::Positional).collect(),
             ),
         };
-        let value_params = prog
+        let mut value_params = prog
             .sigs
             .get(&func.0)
             .map(|signature| {
@@ -651,6 +652,12 @@ impl VmBackend {
                 reify_value_parameters(&signature.param_decls, &supplied)
             })
             .unwrap_or_default();
+        value_params.extend(self.static_receiver_binding(
+            prog,
+            caller.into(),
+            index,
+            receiver.as_ref(),
+        ));
         let function = &prog.mir.functions[index].1;
         for (parameter, is_ref) in function.ref_params.iter().enumerate() {
             let place = bound_argument_place(

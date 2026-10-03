@@ -668,7 +668,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameter to its owned reference (`annotations.rs`: `binder_owner`,
   `Checker::method_binder_owner` over `symbol::MethodBinderOwners`, which
   the elaborator's `elaborated_binder` shares,
-  `value_parameter`, `params_as_args`).
+  `value_parameter`, `params_as_args` over `ParamDecl::own_argument`).
   The same table's `call_qualifier` names the overload a per-call method
   clone request selects (the qualifier of the symbol `lowered_method_name`
   declares, which a call records verbatim): the elaborator mints only that
@@ -1049,7 +1049,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mono/infer.rs:bind_static_receiver` binds a struct's parameters
   from the receiver type a static call records, which
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR
-  lowering copies into `MirInstr::Call::receiver`, and `infer_call` binds a
+  lowering copies into `MirInstr::Call::receiver` (a static method's
+  `Self.n` reads a receiver-less `self` slot `Flatten::intern_static_self`
+  types as the struct at its own binders; the erased VM binds that slot
+  from the same field, `static_receiver_binding`), and `infer_call` binds a
   `def`'s own type parameters from the arguments the checker solved, which
   `SemanticAdjustment::InstantiatedArguments` carries into
   `MirInstr::Call::instantiated_args`); `instance_clone_base` recovers a clone's source method name for the

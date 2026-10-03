@@ -359,6 +359,7 @@ impl VmBackend {
                 arg_places,
                 kwarg_places,
                 param_arg_regs,
+                receiver,
                 instantiated_args,
                 ..
             } => {
@@ -495,11 +496,15 @@ impl VmBackend {
                         })
                     })
                     .flatten();
-                let runtime_value_params = prog
+                let static_receiver = prog.index_of(&func.0).and_then(|callee| {
+                    self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
+                });
+                let mut runtime_value_params = prog
                     .sigs
                     .get(&func.0)
                     .map(|signature| reify_value_parameters(&signature.param_decls, &pvals))
                     .unwrap_or_default();
+                runtime_value_params.extend(static_receiver.clone());
                 let result = if let Some(idx) = writeback {
                     self.call_with_writeback(
                         prog,
@@ -552,6 +557,7 @@ impl VmBackend {
                             param_vals: &pvals,
                             arg_types: &arg_types,
                             result_ty: result_ty.as_ref(),
+                            static_receiver: static_receiver.as_ref(),
                         },
                     );
                     self.restore_caller_mirror(stack_base, vars)?;

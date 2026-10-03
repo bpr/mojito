@@ -209,15 +209,7 @@ pub(super) fn type_parameter(decl: &ParamDecl) -> Option<Ty> {
 /// `Self` type while its body is checked: a type parameter as `Ty::Param`, a
 /// value parameter as a reference to its declaration.
 pub(super) fn params_as_args(decls: &[ParamDecl]) -> Vec<TyArg> {
-    decls
-        .iter()
-        .map(|decl| match decl {
-            ParamDecl::Type { .. } => {
-                TyArg::Ty(type_parameter(decl).expect("a type binder has a type parameter"))
-            }
-            ParamDecl::Value { ty, .. } => TyArg::Val(value_parameter(decl, ty)),
-        })
-        .collect()
+    decls.iter().map(ParamDecl::own_argument).collect()
 }
 
 /// The reference to the value binder `decl`, typed `ty`.

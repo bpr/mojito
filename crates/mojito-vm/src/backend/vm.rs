@@ -927,6 +927,24 @@ fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
     })
 }
 
+/// The value parameter `binder` of the struct a static method's
+/// receiver-less `self` slot carries, in the caller's frame.
+fn static_self_parameter(prog: &Prog, caller: CallerBindings<'_>, binder: &str) -> Option<Value> {
+    let function = &prog.mir.functions[caller.function].1;
+    let slot = function
+        .var_names
+        .iter()
+        .skip(function.n_params)
+        .position(|var| var == "self")?;
+    let Value::Struct { value_params, .. } = caller.variables.get(function.n_params + slot)? else {
+        return None;
+    };
+    value_params
+        .iter()
+        .find(|(name, _)| name == binder)
+        .map(|(_, value)| value.clone())
+}
+
 fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     Some(match value {
         CtValue::Int(value) => Value::Int(value),
@@ -1245,6 +1263,71 @@ fn align_parameter_arguments<T>(
 }
 
 impl VmBackend {
+    /// The receiver-less `self` slot of a static method on a
+    /// value-parameterized struct (`W[5].st()`), bound to the call's spelled
+    /// receiver with its value parameters reified, so the body's `Self.k`
+    /// reads it as an instance method reads its receiver's. A receiver
+    /// argument naming an enclosing binder (`W[Self.k]`) resolves in the
+    /// caller's frame. `None` when the callee has no such slot.
+    fn static_receiver_binding(
+        &self,
+        prog: &Prog,
+        caller: CallerBindings<'_>,
+        callee: usize,
+        receiver: Option<&Ty>,
+    ) -> Option<(String, Value)> {
+        let Some(Ty::Struct(name, arguments)) = receiver else {
+            return None;
+        };
+        let function = &prog.mir.functions[callee].1;
+        function
+            .var_names
+            .iter()
+            .skip(function.n_params)
+            .any(|var| var == "self")
+            .then_some(())?;
+        let value_params = prog
+            .structs
+            .get(name)?
+            .param_decls
+            .iter()
+            .zip(arguments)
+            .filter_map(|(declaration, argument)| {
+                let (ParamDecl::Value { name, ty, .. }, TyArg::Val(value)) =
+                    (declaration, argument)
+                else {
+                    return None;
+                };
+                let value = match value {
+                    CtValue::Expr(expression) => {
+                        let binder = &expression.as_decl_ref()?.name;
+                        self.bound_type_parameter(
+                            prog,
+                            caller.function,
+                            caller.frame,
+                            caller.variables,
+                            binder,
+                        )
+                        .or_else(|| static_self_parameter(prog, caller, binder))?
+                    }
+                    value => ct_value_as_runtime(value.clone())?,
+                };
+                Some((
+                    name.clone(),
+                    crate::runtime::coerce_checked(value, ty.as_ref()),
+                ))
+            })
+            .collect();
+        Some((
+            "self".to_string(),
+            Value::Struct {
+                name: name.clone(),
+                fields: Vec::new(),
+                value_params,
+            },
+        ))
+    }
+
     /// The supplied compile-time arguments of a call, aligned to the callee's
     /// declarations. A reified type argument spelled as the caller's own binder
     /// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)

@@ -56,6 +56,7 @@ impl Flatten<'_> {
                 .resolved_callable(e)
                 .unwrap_or_else(|| format!("{type_name}.{method}"));
             self.emit_call_invalidations(e, args, kwargs);
+            let receiver = self.static_receiver(object);
             self.emit(MirInstr::Call {
                 dest: d,
                 func: FuncRef::named(&target),
@@ -66,7 +67,7 @@ impl Flatten<'_> {
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs: Vec::new(),
-                receiver: self.static_receiver(object),
+                receiver,
                 instantiated_args: Vec::new(),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
@@ -100,10 +101,16 @@ impl Flatten<'_> {
     }
 
     /// The instance a static call's spelled receiver names (`Pair[Int]`),
-    /// which the checker recorded as the receiver expression's type.
-    pub(super) fn static_receiver(&self, object: &Expr) -> Option<Ty> {
-        self.checked_ty(object)
-            .filter(|ty| matches!(ty, Ty::Struct(_, arguments) if !arguments.is_empty()))
+    /// which the checker recorded as the receiver expression's type. Inside
+    /// a static method of a value-parameterized struct, the receiver may
+    /// spell that struct's binders (`W[Self.k]`), which the VM reads off the
+    /// method's receiver-less `self` slot, so the slot is interned.
+    pub(super) fn static_receiver(&mut self, object: &Expr) -> Option<Ty> {
+        let receiver = self
+            .checked_ty(object)
+            .filter(|ty| matches!(ty, Ty::Struct(_, arguments) if !arguments.is_empty()))?;
+        self.intern_static_self();
+        Some(receiver)
     }
 
     /// Method calls the checker resolved to a value operation with no callee

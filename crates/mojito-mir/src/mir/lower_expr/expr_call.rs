@@ -781,6 +781,7 @@ impl Flatten<'_> {
                 .resolved_callable(e)
                 .unwrap_or_else(|| format!("{name}.{field}"));
             self.emit_call_invalidations(e, args, kwargs);
+            let receiver = self.static_receiver(object);
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
@@ -791,7 +792,7 @@ impl Flatten<'_> {
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs,
-                receiver: self.static_receiver(object),
+                receiver,
                 instantiated_args: Vec::new(),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
