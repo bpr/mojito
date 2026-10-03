@@ -2156,16 +2156,19 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.79 An annotated `comptime` literal ignores its declared type**
+- [ ] **3.79 A `UInt`-annotated `comptime` literal reads as an `Int`**
 
-  Problem: `comptime ONE: Int32 = 1` binds `ONE` as an `Int`, so
-  `ONE.dtype` prints `int` where the pin prints `int32`.
-  - `comptime ONES: SIMD[DType.int32, 4] = 1` likewise prints `1` where the
-    pin prints `[1, 1, 1, 1]`.
-  - The checker binds every constant it can evaluate as `IntLiteral`
-    (`checker/statements.rs`, `StmtKind::Comptime`) and never consults the
-    annotation.
-  - Found while probing literal splats (2026-09-27).
+  Problem: `comptime U: UInt = 3` then `var u = U; u -= 4` prints `-1`
+  where the pin prints `18446744073709551615`.
+  - The elaborator inlines a module constant's value at every use, and an
+    integer value materializes as a bare literal, so each use types as
+    `Int` whatever the annotation says.
+  - Sized-scalar, vector, and `Float64` annotations already bind at their
+    declared type: their value folds to a typed SIMD constant
+    (`comptime/elab.rs`, `StmtKind::Comptime`).
+  - The fix is a `UInt` constant that materializes as `UInt(3)` at a value
+    use without changing how a `UInt` value parameter is spelled.
+  - Found while closing the annotated-constant task (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

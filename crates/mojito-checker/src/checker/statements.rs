@@ -1779,7 +1779,32 @@ impl Checker {
                 if let Some(dtype) = bound_dtype {
                     self.comptime_dtypes.insert(name.clone(), dtype);
                 }
-                if let Ok(v) = self.eval_ct(value) {
+                let annotated = ty
+                    .as_ref()
+                    .map(|annotation| {
+                        self.resolve_storage_annotation(
+                            annotation,
+                            super::StorageStrictness::AllowBare,
+                        )
+                    })
+                    .transpose()?
+                    .filter(|expected| !matches!(expected, Ty::Int | Ty::IntLiteral));
+                if let Some(expected) = annotated {
+                    // An annotation other than `Int` is the binding's type: the
+                    // literal converts to it as a `var` initializer does.
+                    if let Ok(v) = self.eval_ct(value) {
+                        self.comptimes.insert(name.clone(), v);
+                    }
+                    let found = self.infer_with_expected(value, &expected, true)?;
+                    if !self.record_implicit_conversion(value, &found, &expected)? {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: found.to_string(),
+                            context: format!("comptime '{name}'"),
+                        });
+                    }
+                    self.declare_immutable(name, expected)?;
+                } else if let Ok(v) = self.eval_ct(value) {
                     self.comptimes.insert(name.clone(), v);
                     self.declare_immutable(name, Ty::IntLiteral)?;
                 } else {

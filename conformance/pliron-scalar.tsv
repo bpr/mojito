@@ -53,6 +53,7 @@ assets/ok/comparable_ordered_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_value_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_annotated_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape

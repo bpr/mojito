@@ -115,6 +115,9 @@ impl Elab<'_> {
                         None => {}
                     }
                 }
+                if let Some(annotation) = ty {
+                    v = self.typed_by_annotation(v, annotation, env);
+                }
                 if !in_fn {
                     self.top_consts.borrow_mut().insert(name.clone(), v.clone());
                 }
@@ -1041,6 +1044,39 @@ impl Elab<'_> {
                 .map(|clone| (name.to_string(), clone.name.clone())),
         );
         clones
+    }
+
+    /// A scalar under a SIMD-valued annotation other than `Int` takes the
+    /// annotation's dtype, splatted across its width, so every materialized
+    /// use carries the declared type. Any other value is returned as is.
+    fn typed_by_annotation(
+        &self,
+        value: CtValue,
+        annotation: &Type,
+        env: &HashMap<String, CtValue>,
+    ) -> CtValue {
+        if !matches!(
+            value,
+            CtValue::Int(_)
+                | CtValue::UInt(_)
+                | CtValue::Float(_)
+                | CtValue::IntLiteral(_)
+                | CtValue::FloatLiteral(_)
+                | CtValue::Bool(_)
+        ) {
+            return value;
+        }
+        self.param_arg_type(&ParamArg::Type(annotation.clone()), env)
+            .ok()
+            .filter(|target| !matches!(target, Ty::Int | Ty::IntLiteral | Ty::UInt))
+            .and_then(|target| mojito_types::types::simd_shape(&target))
+            .and_then(|(dtype, width)| {
+                mojito_types::ct::CtLane::from_value(&value, dtype).map(|lane| CtValue::Simd {
+                    dtype,
+                    lanes: vec![lane; usize::try_from(width).unwrap_or(1)],
+                })
+            })
+            .unwrap_or(value)
     }
 }
 

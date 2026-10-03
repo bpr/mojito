@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An annotated `comptime` binds at its declared type, as at the pin:
+  `comptime ONE: Int32 = 1` prints `int32` for `ONE.dtype`,
+  `comptime ONES: SIMD[DType.int32, 4] = 1` prints `[1, 1, 1, 1]`, and
+  `comptime TWO: Float64 = 2` prints `2.0`; each used to bind as an `Int`
+  literal. A literal the annotation does not accept
+  (`comptime LABEL: String = 1`) is now rejected.
+  `assets/ok/comptime_annotated_scalar.mojo` pins it on both backends.
 - A pointer held in a generic struct's parameter-typed field dereferences in
   place as at the pin: `h.get()[]` twice over `h = Holder(Pointer(to=x))`,
   or two bound copies beside `h.item[]`, no longer conflict, because a
