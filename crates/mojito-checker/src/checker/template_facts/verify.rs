@@ -104,7 +104,7 @@ impl Checker {
                 let kept_apart = matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                        | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(_)
+                        | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace { .. }
                 ) || self.kept_element_store(&occurrence.span, adjustment)
                     || self.own_binder_construction(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {

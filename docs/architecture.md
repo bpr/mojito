@@ -1581,8 +1581,10 @@ dedicated in-place dunder rather than the binary operator: the checker selects
 `__iadd__`/`__isub__`/… as a full `mut self` `CheckedCallContract` and records it
 as an `AugmentedInPlace` adjustment on the place, so lowering emits an ordinary
 receiver-committing `MethodCall` (the mutation writes back through the receiver's
-slot, alias, or reference handle) instead of a `BinOp` read-modify-write. There
-is no fall-through to `__add__`; a missing in-place dunder is a checker error.
+slot, alias, or reference handle) instead of a `BinOp` read-modify-write. A
+module `def` call place (`text(s) += "d"`) has no selected-call contract, so the
+record also keeps the call's `ReferenceResult` it shares a span with, and MIR
+reaches the handle through it. There is no fall-through to `__add__`; a missing in-place dunder is a checker error.
 A value of a bare type parameter whose bound requires the dunder dispatches
 through the bound the same way, as the call `x.__iadd__(y)` would; a parameter
 whose bounds do not require it keeps the operator path. The call's result

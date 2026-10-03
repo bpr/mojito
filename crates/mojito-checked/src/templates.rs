@@ -298,7 +298,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ReifyTypeArgument { .. }
         | SemanticAdjustment::SelectedCall(..)
         | SemanticAdjustment::AugmentedSubscript(..)
-        | SemanticAdjustment::AugmentedInPlace(..)
+        | SemanticAdjustment::AugmentedInPlace { .. }
         | SemanticAdjustment::IndexNormalization { .. }
         | SemanticAdjustment::ParameterizedMethodCall { .. }
         | SemanticAdjustment::FieldInvocation { .. }

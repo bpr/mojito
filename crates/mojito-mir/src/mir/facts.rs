@@ -315,9 +315,10 @@ impl Flatten<'_> {
         self.checked_adjustments(expression)
             .into_iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(contract) => {
-                    Some(*contract)
-                }
+                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
+                    call: contract,
+                    ..
+                } => Some(*contract),
                 _ => None,
             })
     }

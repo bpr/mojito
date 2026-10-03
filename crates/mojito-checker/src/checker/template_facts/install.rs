@@ -674,12 +674,7 @@ impl Checker {
         >,
     ) -> Result<(), TypeError> {
         for (id, call) in &facts.inplace_updates {
-            self.operation_adjustments.borrow_mut().insert(
-                span(id)?,
-                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(Box::new(
-                    checked_contract(call)?,
-                )),
-            );
+            self.record_augmented_in_place(span(id)?, checked_contract(call)?);
         }
         Ok(())
     }

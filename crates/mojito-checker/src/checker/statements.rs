@@ -433,6 +433,30 @@ impl Checker {
         selection
     }
 
+    /// Record the in-place dunder `call` selected for the place at `span`,
+    /// keeping the `ReferenceResult` a module `def` call place recorded at the
+    /// same span, which no selected-call contract carries.
+    pub(super) fn record_augmented_in_place(
+        &self,
+        span: SourceSpan,
+        call: mojito_checked::checked::CheckedCallContract,
+    ) {
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        let place_reference = match adjustments.get(&span) {
+            Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) => {
+                Some(reference.clone())
+            }
+            _ => None,
+        };
+        adjustments.insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
+                call: Box::new(call),
+                place_reference,
+            },
+        );
+    }
+
     /// The store-outward escape rule shared by ordinary place assignment and
     /// unpack-into-place: a store whose destination roots at outliving
     /// storage (a parameter or `self`) must not smuggle a frame-local loan
@@ -1151,20 +1175,6 @@ impl Checker {
                 let inplace_operand = matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
                     || self.bound_inplace_operator(&target, *op);
                 if !nominal_subscript && inplace_operand {
-                    // A module `def`'s reference result has no selected
-                    // contract to carry it past the in-place record at its
-                    // span.
-                    if let ExprKind::Call { name, .. } = &place.kind
-                        && !self
-                            .selected_calls
-                            .borrow()
-                            .contains_key(&place.source_span())
-                    {
-                        return Err(TypeError::Unsupported(format!(
-                            "an in-place operator on the reference returned by '{name}()'; \
-                             bind it with 'ref' first"
-                        )));
-                    }
                     // A reference-returning call's facts share the place's
                     // span, so its dunder is selected on a temporary receiver.
                     let contract = if matches!(
@@ -1181,12 +1191,7 @@ impl Checker {
                             &target,
                         )?
                     };
-                    self.operation_adjustments.borrow_mut().insert(
-                        place.source_span(),
-                        mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(Box::new(
-                            contract,
-                        )),
-                    );
+                    self.record_augmented_in_place(place.source_span(), contract);
                     return Ok(());
                 }
                 // A user-struct subscript element dispatches augmented assignment

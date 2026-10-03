@@ -305,6 +305,10 @@ impl Flatten<'_> {
                         mojito_checked::checked::SemanticAdjustment::ReferenceResult {
                             reference,
                         } => Some(reference),
+                        mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
+                            place_reference,
+                            ..
+                        } => place_reference,
                         _ => None,
                     })
             })

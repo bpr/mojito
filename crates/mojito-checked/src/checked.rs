@@ -452,8 +452,14 @@ pub enum SemanticAdjustment {
     /// `mut self` receiver, argument conventions/conversions, effects, and raising
     /// type; MIR emits a receiver-committing method call instead of a `BinOp`
     /// read-modify-write. Absent for native scalar operands, which keep the
-    /// builtin operator path.
-    AugmentedInPlace(Box<CheckedCallContract>),
+    /// builtin operator path. `place_reference` is the place's own
+    /// `ReferenceResult` when the place is a module `def` call returning a
+    /// reference (`text(s) += "d"`), which has no selected-call contract to
+    /// carry it past this record at the same span.
+    AugmentedInPlace {
+        call: Box<CheckedCallContract>,
+        place_reference: Option<mojito_types::origin::RefTy>,
+    },
     /// Normalize an `Indexer` expression through the exact checked
     /// `__mlir_index__() -> Int` method before a concrete indexing operation.
     /// MIR evaluates the source expression once and emits this call explicitly;

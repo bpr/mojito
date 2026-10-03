@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An in-place operator applies through a module `def`'s reference result,
+  as through a method's: `text(s) += "d"` for `def text(ref t: String) ->
+  ref[origin_of(t)] String` calls `String.__iadd__` on `s` and prints `ad`,
+  as the pin does, where it was rejected ("an in-place operator on the
+  reference returned by 'text()'"). The operator's `AugmentedInPlace`
+  record now keeps the call's reference result, which it used to replace.
+  `assets/ok/reference_call_assignment_target.mojo` pins it.
 - A chained comparison treats its operands as the pin does: its two ends
   are read where they lie when their link's dunder reads them, and a middle
   operand, which both links read, is copied once and must be

@@ -53,6 +53,7 @@ def main():
     print(p.x)
     var s = String("a")
     text(s) = String("bc")
+    text(s) += "d"
     print(s)
     var n = Named(String("a"))
     n.name_ref() += "b"

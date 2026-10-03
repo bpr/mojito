@@ -1180,9 +1180,11 @@ impl Checker {
             .iter()
             .filter_map(|(id, adjustment)| {
                 let reference = match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
-                        reference
-                    }
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }
+                    | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
+                        place_reference: Some(reference),
+                        ..
+                    } => reference,
                     mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(plan)
                         if plan.setter.is_none()
                             && self.kept_element_store_at(occurrences, *id, adjustment) =>
@@ -1235,7 +1237,7 @@ impl Checker {
         values(occurrences, &self.operation_adjustments.borrow())
             .into_iter()
             .filter_map(|(id, adjustment)| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(call) => {
+                mojito_checked::checked::SemanticAdjustment::AugmentedInPlace { call, .. } => {
                     Some((id, *call))
                 }
                 _ => None,

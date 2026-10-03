@@ -1510,7 +1510,7 @@ const fn kept_apart(adjustment: &mojito_checked::checked::SemanticAdjustment) ->
         adjustment,
         mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
             | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(_)
-            | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace(_)
+            | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace { .. }
     )
 }
 
