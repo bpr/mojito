@@ -2175,18 +2175,20 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.80 A trait requirement's default reading more than module
-  constants is rejected**
+- [ ] **3.80 A method call whose compile-time argument names the caller's
+  value parameter fails MIR verification**
 
-  Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
-  trait is rejected as unsupported, where the pin accepts it.
-  - A requirement default is folded to a literal at the trait
-    (`requirement_default` in `checker/traits.rs`), because a call through
-    a bound spells it at the call (`checker/bound_defaults.rs`), where a
-    name may mean something else.
-  - A literal, a module constant bound to one, and a compile-time `Int`
-    expression over module constants fold; a method's own parameter, a
-    call, or a constant of another shape does not.
+  Problem: `s.scale[k](5)` inside `def run_at[k: Int](s: Doubler)`, beside
+  `def scale[n: Int](self, value: Int)`, stops with "register r6 has no
+  checked type", where the pin runs it.
+  - A free function called the same way (`twice[k](5)`) runs, and so does
+    the method call with a literal argument (`s.scale[2](5)`).
+  - The same failure meets a call through a bound (`T: Scaler`), so a
+    requirement default reading the method's parameter
+    (`checker/bound_defaults.rs`) cannot yet be shown spelled from a
+    caller's parameter.
+  - Found while accepting requirement defaults over a method's parameters
+    (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

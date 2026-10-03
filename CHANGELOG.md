@@ -172,6 +172,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait requirement's default may read the method's own value parameters
+  (`def scale[n: Int](self, value: Int, factor: Int = n)`), as at the pin: a
+  call through the bound runs it with the call's compile-time arguments, or
+  a parameter's own constant default, in their place
+  (`assets/ok/trait_requirement_parameter_default.mojo`). It was rejected as
+  unsupported. A requirement default is now also bound at a call that spells
+  compile-time arguments (`s.scale[2](5)`), where the witness's default used
+  to run instead.
 - A declaring unpack binds its names even where a module constant shares
   one: `var i, j = 100, 1` beside `comptime i = 40` declares a local `i`,
   in a generic `def` as in a plain one, where elaboration replaced the

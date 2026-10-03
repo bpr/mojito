@@ -1464,12 +1464,23 @@ fn a_witness_defaults_apart_from_its_requirement() {
         ));
     }
 
-    let error = err(
-        "trait Scaler:\n    def scale[n: Int](self, value: Int, factor: Int = n) -> Int: ...\n",
+    // A default may read the method's own value parameters, beside module
+    // constants: a call through the bound spells its compile-time
+    // arguments in their place.
+    ok(
+        "comptime TWO = 2\n\ntrait Scaler:\n    def scale[n: Int](self, value: Int, factor: Int = n * TWO - 1) -> Int: ...\n",
     );
-    assert!(
-        matches!(error, TypeError::Unsupported(feature) if feature.contains("other than a literal or a module constant"))
-    );
+
+    // A call, or a type parameter, is not folded.
+    for default in ["len(\"ab\")", "T"] {
+        let error = err(&format!(
+            "trait Scaler:\n    def scale[T: AnyType](self, value: Int, factor: Int = {default}) -> Int: ...\n"
+        ));
+        assert!(
+            matches!(error, TypeError::Unsupported(feature) if feature.contains("other than an expression over literals")),
+            "{default}"
+        );
+    }
 }
 
 #[test]

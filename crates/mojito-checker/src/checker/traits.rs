@@ -133,17 +133,6 @@ impl Checker {
                 ) {
                     return Err(TypeError::Unsupported(feature.to_string()));
                 }
-                let defaults = m
-                    .params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .default
-                            .as_ref()
-                            .map(|default| self.requirement_default(default, &m.type_params))
-                            .transpose()
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
                 if m.positional_only.is_some() || m.keyword_only.is_some() {
                     return Err(TypeError::Unsupported(
                         "positional-only/keyword-only markers on trait methods".to_string(),
@@ -179,6 +168,17 @@ impl Checker {
                         | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
                     }
                 }
+                let defaults = m
+                    .params
+                    .iter()
+                    .map(|param| {
+                        param
+                            .default
+                            .as_ref()
+                            .map(|default| self.requirement_default(default, &decls))
+                            .transpose()
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 self.push_param_scope(&decls);
                 let signature = (|| {
                     Ok::<_, TypeError>((
@@ -3312,40 +3312,70 @@ impl Checker {
             })
     }
 
-    /// A requirement's default as a literal, which means the same at a call
-    /// through the bound as in the trait's scope: a module constant, or a
-    /// compile-time `Int` expression over them, folds to the value it names
-    /// there.
-    fn requirement_default(
-        &self,
-        default: &Expr,
-        type_params: &[mojito_ast::ast::TypeParam],
-    ) -> Result<Expr, TypeError> {
-        let literal = |kind| Expr {
-            kind,
-            ..default.clone()
-        };
+    /// A requirement's default as an expression that means the same at a
+    /// call through the bound as in the trait's scope: a module constant,
+    /// or a compile-time `Int` expression over them, folds to the value it
+    /// names there. A default reading the method's own value parameters
+    /// keeps them, with each module constant it reads spelled as its
+    /// literal; the call substitutes its compile-time arguments for them
+    /// (`bound_defaults.rs`).
+    fn requirement_default(&self, default: &Expr, decls: &[ParamDecl]) -> Result<Expr, TypeError> {
         if literal_default(default) {
             return Ok(default.clone());
         }
-        if !names_only_module_constants(default, type_params) {
+        if reads_value_parameter(default, decls) {
+            return self
+                .parameter_default(default, decls)
+                .ok_or_else(unfoldable_requirement_default);
+        }
+        if decls.iter().any(|decl| reads_name(default, decl.name())) {
             return Err(unfoldable_requirement_default());
         }
+        self.folded_constant(default)
+            .ok_or_else(unfoldable_requirement_default)
+    }
+
+    /// A module constant, or a compile-time `Int` expression over them, as
+    /// the literal it names in the trait's scope.
+    fn folded_constant(&self, default: &Expr) -> Option<Expr> {
         if let ExprKind::Identifier(name) = &default.kind
             && let Some(constant) = self.comptime_literals.get(name)
         {
-            return Ok(literal(constant.kind.clone()));
+            return Some(Expr {
+                kind: constant.kind.clone(),
+                ..default.clone()
+            });
         }
-        let value = self
-            .eval_ct(default)
-            .map_err(|_| unfoldable_requirement_default())?;
-        Ok(if value.is_negative() {
-            literal(ExprKind::Prefix(
-                PrefixOp::Neg,
-                Box::new(literal(ExprKind::Int(value.neg()))),
-            ))
-        } else {
-            literal(ExprKind::Int(value))
+        let value = self.eval_ct(default).ok()?;
+        bound_defaults::constant_literal(&CtValue::IntLiteral(value), default)
+    }
+
+    /// A default over the method's value parameters and module constants,
+    /// with each constant spelled as its literal; `None` when it reads
+    /// anything else.
+    fn parameter_default(&self, default: &Expr, decls: &[ParamDecl]) -> Option<Expr> {
+        let kind = match &default.kind {
+            ExprKind::Identifier(name) => {
+                return match decls.iter().find(|decl| decl.name() == name) {
+                    Some(ParamDecl::Value { .. }) => Some(default.clone()),
+                    Some(ParamDecl::Type { .. }) => None,
+                    None => self.folded_constant(default),
+                };
+            }
+            ExprKind::Prefix(op, operand) => {
+                ExprKind::Prefix(*op, Box::new(self.parameter_default(operand, decls)?))
+            }
+            ExprKind::Infix(op, left, right) => ExprKind::Infix(
+                *op,
+                Box::new(self.parameter_default(left, decls)?),
+                Box::new(self.parameter_default(right, decls)?),
+            ),
+            _ if literal_default(default) => return Some(default.clone()),
+            _ => return None,
+        };
+        Some(Expr {
+            kind,
+            ..default.clone()
         })
     }
 }
@@ -3502,27 +3532,28 @@ pub(super) fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
     }
 }
 
+/// Whether a default reads one of the requirement's own value parameters.
+pub(super) fn reads_value_parameter(default: &mojito_ast::ast::Expr, decls: &[ParamDecl]) -> bool {
+    decls
+        .iter()
+        .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+        .any(|decl| reads_name(default, decl.name()))
+}
+
 fn unfoldable_requirement_default() -> TypeError {
     TypeError::Unsupported(
-        "a trait requirement's default value other than a literal or a module constant".to_string(),
+        "a trait requirement's default value other than an expression over literals, module constants, and the method's own value parameters".to_string(),
     )
 }
 
-/// Whether every name a compile-time `Int` default reads is a module
-/// constant rather than one of the requirement's own parameters.
-fn names_only_module_constants(
-    default: &mojito_ast::ast::Expr,
-    type_params: &[mojito_ast::ast::TypeParam],
-) -> bool {
+/// Whether a compile-time `Int` default reads `name`.
+fn reads_name(default: &mojito_ast::ast::Expr, name: &str) -> bool {
     use mojito_ast::ast::ExprKind;
     match &default.kind {
-        ExprKind::Identifier(name) => type_params.iter().all(|param| param.name != *name),
-        ExprKind::Prefix(_, operand) => names_only_module_constants(operand, type_params),
-        ExprKind::Infix(_, left, right) => {
-            names_only_module_constants(left, type_params)
-                && names_only_module_constants(right, type_params)
-        }
-        _ => true,
+        ExprKind::Identifier(read) => read == name,
+        ExprKind::Prefix(_, operand) => reads_name(operand, name),
+        ExprKind::Infix(_, left, right) => reads_name(left, name) || reads_name(right, name),
+        _ => false,
     }
 }
 

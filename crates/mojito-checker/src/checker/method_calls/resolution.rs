@@ -529,29 +529,33 @@ impl Checker {
                 declared_params: Vec::new(),
                 nested_origins: NestedOrigins::AsDeclared,
             });
-            requirements.push(sig);
+            requirements.push((sig, method_arguments));
         }
-        Ok(select_method_overload(
+        let selected = select_method_overload(
             method,
             matches,
             Some(matches!(object.kind, ExprKind::Transfer(_))),
-        )
-        .inspect(|selected| {
-            if let Some(requirement) = requirements.iter().find(|sig| {
+        );
+        if let Ok(selected) = &selected
+            && let Some((requirement, solved)) = requirements.iter().find(|(sig, _)| {
                 selected.lowered_name.as_deref()
                     == Some(&method_lowered_name("__trait_dispatch", method, sig, None))
-            }) {
-                self.record_bound_default_arguments(
+            })
+        {
+            self.record_bound_default_arguments(
+                &bound_defaults::BoundCall {
                     span,
-                    &effective_bounds,
-                    method,
-                    requirement,
-                    &selected.slots,
-                    args.len(),
-                );
-            }
-        })
-        .map(Some))
+                    slots: &selected.slots,
+                    positional: args.len(),
+                    param_args,
+                    solved,
+                },
+                &effective_bounds,
+                method,
+                requirement,
+            )?;
+        }
+        Ok(selected.map(Some))
     }
 
     /// The methods a built-in value answers with no callee: `copy`,
