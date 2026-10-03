@@ -65,6 +65,13 @@ pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 /// types, not for any template parameter.
 pub const CLONE_ORIGIN_BINDER_PREFIX: &str = "__clone_origin";
 
+/// The implicit-conversion target that splats a scalar across a vector.
+///
+/// It stands for upstream's `@implicit SIMD.__init__(Scalar[dtype])`, which
+/// the builtin `SIMD` declares no constructor to name; MIR lowers it to a
+/// one-element `MakeSimd`.
+pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
+
 /// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
 ///
 /// Every pair the native lowering routes to its integer arms does, which is

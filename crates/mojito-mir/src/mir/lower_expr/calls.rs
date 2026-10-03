@@ -617,23 +617,37 @@ impl Flatten<'_> {
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
+        if mojito_types::types::simd_shape(target).is_some_and(|(_, width)| width > 1) {
+            return self.splat_scalar(value, target, source);
+        }
         let dest = self.fresh_typed(source, None, target.clone());
-        let splat = match mojito_types::types::simd_shape(target) {
-            Some((dtype, width)) if width > 1 => usize::try_from(width).ok().map(|w| (dtype, w)),
-            _ => None,
+        self.emit(MirInstr::MaterializeLiteral {
+            dest,
+            value,
+            target: target.clone(),
+        });
+        dest
+    }
+
+    /// Splat a one-lane register across the checked multi-lane `target`, as
+    /// the one-element explicit `SIMD[dt, w](x)` construction does.
+    pub(in crate::mir) fn splat_scalar(
+        &mut self,
+        value: Reg,
+        target: &Ty,
+        source: SourceSpan,
+    ) -> Reg {
+        let Some((dtype, width)) = mojito_types::types::simd_shape(target)
+            .and_then(|(dtype, width)| usize::try_from(width).ok().map(|width| (dtype, width)))
+        else {
+            return value;
         };
-        self.emit(match splat {
-            Some((dtype, width)) => MirInstr::MakeSimd {
-                dest,
-                dtype,
-                width,
-                elems: vec![value],
-            },
-            None => MirInstr::MaterializeLiteral {
-                dest,
-                value,
-                target: target.clone(),
-            },
+        let dest = self.fresh_typed(source, None, target.clone());
+        self.emit(MirInstr::MakeSimd {
+            dest,
+            dtype,
+            width,
+            elems: vec![value],
         });
         dest
     }

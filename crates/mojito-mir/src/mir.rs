@@ -1586,6 +1586,15 @@ impl Flatten<'_> {
             })
     }
 
+    fn scalar_splat(&self, expression: &Expr) -> Option<Ty> {
+        self.checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SplatScalar(target) => Some(target),
+                _ => None,
+            })
+    }
+
     fn is_slice_descriptor(&self, expression: &Expr) -> bool {
         matches!(
             self.checked_ty(expression),

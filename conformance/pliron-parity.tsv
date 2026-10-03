@@ -541,6 +541,7 @@ assets/ok/simd_nullary_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_parameter_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_float.mojo	main	exe-differential	sanitized
 assets/ok/simd_reductions_int.mojo	main	exe-differential	sanitized
+assets/ok/simd_scalar_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_shifts_masked.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_surface.mojo	main	exe-differential	sanitized

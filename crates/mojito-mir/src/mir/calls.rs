@@ -464,6 +464,9 @@ impl Flatten<'_> {
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeLiteral {
                     target,
                 } => self.materialize_literal(value, target, site.clone()),
+                mojito_checked::checked::CheckedCallValueAdjustment::SplatScalar { target } => {
+                    self.splat_scalar(value, target, site.clone())
+                }
             };
         }
         if adjustments.is_empty()

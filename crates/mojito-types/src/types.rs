@@ -2054,6 +2054,21 @@ pub fn splats_to(ty: &Ty, dtype: &SimdDtype) -> bool {
     }
 }
 
+/// Whether the runtime scalar `from` splats across the multi-lane vector `to`.
+///
+/// Upstream's `@implicit SIMD.__init__(Scalar[dtype])`: an `Int32` into
+/// `SIMD[DType.int32, 4]`. A `Bool` is no `Scalar`, and an exact literal
+/// materializes through its own initializer instead.
+pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
+    matches!(
+        to,
+        Ty::Simd { dtype, width: SimdWidth::Known(width) }
+            if *width > 1
+                && !matches!(from, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
+                && splats_to(from, dtype)
+    )
+}
+
 /// The value-coercion policy for callable environments.
 ///
 /// Current Mojo rejects binding a capturing closure to an unqualified
@@ -3680,6 +3695,40 @@ mod simd_slot_tests {
         assert!(!coerces(&Ty::Bool, &canonical_simd_ty(Dtype::Bool, 4)));
         assert!(!coerces(&canonical_simd_ty(Dtype::Int32, 1), &int32x4));
         assert!(!coerces(&Ty::Int, &canonical_simd_ty(Dtype::Int, 4)));
+    }
+
+    #[test]
+    fn a_runtime_scalar_splats_only_into_a_vector_of_its_dtype() {
+        let int32x4 = canonical_simd_ty(Dtype::Int32, 4);
+        assert!(scalar_splats_into(
+            &canonical_simd_ty(Dtype::Int32, 1),
+            &int32x4
+        ));
+        assert!(scalar_splats_into(
+            &Ty::Int,
+            &canonical_simd_ty(Dtype::Int, 4)
+        ));
+        assert!(scalar_splats_into(
+            &Ty::Float64,
+            &canonical_simd_ty(Dtype::Float64, 2)
+        ));
+        assert!(!scalar_splats_into(
+            &canonical_simd_ty(Dtype::Int32, 1),
+            &canonical_simd_ty(Dtype::Int64, 4)
+        ));
+        assert!(!scalar_splats_into(
+            &Ty::Int,
+            &canonical_simd_ty(Dtype::Int64, 4)
+        ));
+        assert!(!scalar_splats_into(
+            &Ty::Bool,
+            &canonical_simd_ty(Dtype::Bool, 4)
+        ));
+        assert!(!scalar_splats_into(&Ty::IntLiteral, &int32x4));
+        assert!(!scalar_splats_into(
+            &canonical_simd_ty(Dtype::Int32, 1),
+            &canonical_simd_ty(Dtype::Int32, 1)
+        ));
     }
 
     #[test]

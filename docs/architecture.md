@@ -1255,6 +1255,17 @@ zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,
 typed tuple/list/set/dictionary elements, and `range` arguments all record their
 scalar boundaries rather than relying on VM container coercion.
 
+A runtime scalar meets a multi-lane vector of its dtype through upstream's
+implicit `SIMD.__init__(Scalar[dtype])`, which the builtin `SIMD` cannot
+declare. `types::scalar_splats_into` owns the rule, and the checker's
+`implicit_conversion_constructor` selects it as an ordinary implicit
+conversion under the reserved target `symbol::SCALAR_SPLAT_CONVERSION`, so
+overload filtering, template realization, and argument contracts see one
+conversion. The checked arena turns that target into
+`SemanticAdjustment::SplatScalar(vector)` (a call argument's
+`CheckedCallValueAdjustment::SplatScalar`), which MIR lowers to the
+one-element `MakeSimd` an explicit `SIMD[dt, w](x)` emits.
+
 Generic value parameters are also materialization boundaries. Their resolved
 `ParamDecl`s cross `CheckedProgram` through stable declaration-owned
 `GenericSite`s into MIR declaration metadata, so the VM reifies a value at its

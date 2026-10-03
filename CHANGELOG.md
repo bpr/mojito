@@ -434,6 +434,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A runtime scalar now builds a multi-lane vector of its own dtype wherever
+  one is expected, as upstream's implicit `SIMD.__init__(Scalar[dtype])`
+  splat does: `var v: SIMD[DType.int32, 4] = Int32(9)`, an `Int` into a
+  `DType.int` vector, a `Float64` argument at a `float64` vector parameter,
+  a field, an assignment, a return, a default, or a generic body's
+  `Scalar[dt]` (`assets/ok/simd_scalar_splat.mojo`), on the VM and
+  natively. Each was rejected with a type mismatch; a scalar of another
+  dtype and a `Bool` still are, as at the pin.
 - A view of a container element lends the interior its method's return
   origin names: `ys[0].rstrip()` lends `ys["element"]["bytes"]` instead of
   the whole subtree below the element, so a stale use is reported with the

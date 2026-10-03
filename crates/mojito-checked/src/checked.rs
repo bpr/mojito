@@ -85,6 +85,7 @@ pub enum CheckedCallValueAdjustment {
     ImplicitConversion { target: String },
     IndexNormalization { target: String },
     MaterializeLiteral { target: Box<Ty> },
+    SplatScalar { target: Box<Ty> },
 }
 
 /// Call-boundary facts for one supplied argument.
@@ -507,6 +508,9 @@ pub enum SemanticAdjustment {
     /// arithmetic is unbounded, while the resulting scalar has fixed-width
     /// runtime semantics.
     MaterializeLiteral(Ty),
+    /// Splat a runtime one-lane value across the checked multi-lane vector
+    /// type, upstream's `@implicit SIMD.__init__(Scalar[dtype])`.
+    SplatScalar(Ty),
     BorrowShared,
     BorrowMutable,
     /// Constructor arguments bound to origin-solving `ref` parameters: the
@@ -2059,6 +2063,13 @@ fn build_checked_expressions(
                     adjustments.push(SemanticAdjustment::IndexNormalization {
                         target: target.clone(),
                     });
+                } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+                    adjustments.extend(
+                        self.conversion_types
+                            .get(&span)
+                            .cloned()
+                            .map(SemanticAdjustment::SplatScalar),
+                    );
                 } else {
                     adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
                     if let Some(ty) = self.conversion_types.get(&span) {

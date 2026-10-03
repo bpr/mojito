@@ -1737,6 +1737,16 @@ impl Checker {
         from: &Ty,
         to: &Ty,
     ) -> Result<Option<SelectedConversion>, TypeError> {
+        // The builtin `SIMD` declares upstream's `@implicit
+        // SIMD.__init__(Scalar[dtype])` splat by this reserved target.
+        if mojito_types::types::scalar_splats_into(from, to) {
+            return Ok(Some(SelectedConversion {
+                target: mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string(),
+                source_borrow: None,
+                consumes_source: false,
+                error: None,
+            }));
+        }
         let Ty::Struct(name, args) = to else {
             return Ok(None);
         };

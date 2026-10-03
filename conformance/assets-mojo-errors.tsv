@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	479
+# swept-count	480
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -433,6 +433,7 @@ assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'
+assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'

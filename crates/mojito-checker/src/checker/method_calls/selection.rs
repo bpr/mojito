@@ -164,6 +164,7 @@ impl Checker {
 
         let overloads = self.overload_targets.borrow();
         let implicit = self.implicit_conversions.borrow();
+        let implicit_types = self.implicit_conversion_types.borrow();
         let operations = self.operation_adjustments.borrow();
         let expression_types = self.expression_types.borrow();
         let invalidations = self.interior_invalidations.borrow();
@@ -178,7 +179,16 @@ impl Checker {
                             target: target.clone(),
                         }]
                     } else if let Some(target) = implicit.get(&value_source) {
-                        if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+                        if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+                            implicit_types
+                                .get(&value_source)
+                                .map(|ty| {
+                                    vec![CheckedCallValueAdjustment::SplatScalar {
+                                        target: Box::new(ty.clone()),
+                                    }]
+                                })
+                                .unwrap_or_default()
+                        } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
                             vec![CheckedCallValueAdjustment::IndexNormalization {
                                 target: target.clone(),
                             }]
@@ -196,6 +206,7 @@ impl Checker {
                                 ) => Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
                                     target: Box::new(target.clone()),
                                 }]),
+
                                 _ => None,
                             })
                             .unwrap_or_default()

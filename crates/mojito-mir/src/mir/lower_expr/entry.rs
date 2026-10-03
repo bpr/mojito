@@ -277,6 +277,13 @@ impl Flatten<'_> {
             }
             return self.materialize_literal(value, &target, span(e));
         }
+        if let Some(target) = self.scalar_splat(e) {
+            let value = self.expr_unconverted(e);
+            if let Some(source) = self.checked_ty(e) {
+                self.f.reg_types.entry(value.0).or_insert(source);
+            }
+            return self.splat_scalar(value, &target, span(e));
+        }
         self.expr_unconverted(e)
     }
 

@@ -1,6 +1,6 @@
 # A `mut` capture transferred away and written back. The pin rejects the `^`
 # ("cannot consume indirect references to values"); Mojito prints `ab`.
-# `docs/roadmap.md` 3.110. When Mojito rejects it, move this to
+# `docs/roadmap.md` 3.109. When Mojito rejects it, move this to
 # `assets/type_error/`.
 def outer() -> String:
     var s = String("a")

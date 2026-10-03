@@ -167,6 +167,13 @@ pub fn derive_adjustment(
             (!mojito_types::types::is_symbolic(&target))
                 .then_some(SemanticAdjustment::MaterializeLiteral(target))
         }
+        // A splat's vector type substitutes; a symbolic one names no lane
+        // count to fill.
+        SemanticAdjustment::SplatScalar(target) => {
+            let target = substitute(target);
+            (!mojito_types::types::is_symbolic(&target))
+                .then_some(SemanticAdjustment::SplatScalar(target))
+        }
         // Element arithmetic names no type, and a take, a destroy, or a
         // write names only the pointee, which substitutes. Each is selected
         // by the method's name on a receiver that is a pointer under every
@@ -609,7 +616,8 @@ fn closed_contract(
                         // and target types, and written back here.
                         CheckedCallValueAdjustment::ImplicitConversion { .. } => values && opaque,
                         CheckedCallValueAdjustment::ResolveCallable { .. }
-                        | CheckedCallValueAdjustment::IndexNormalization { .. } => false,
+                        | CheckedCallValueAdjustment::IndexNormalization { .. }
+                        | CheckedCallValueAdjustment::SplatScalar { .. } => false,
                     })
         })
 }
