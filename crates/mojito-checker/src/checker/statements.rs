@@ -2718,7 +2718,7 @@ impl Checker {
             self.capture_contexts.borrow_mut().push(policy);
         }
         self.raising_context.push(declared_error);
-        let mut result = Ok(());
+        let mut result = self.capture_default_value_parameters(params);
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
@@ -3050,10 +3050,8 @@ impl Checker {
         result
     }
 
-    /// Resolve a parameter/field list to its types.
-    /// A default value must fit its parameter's type. Under source validation
-    /// a default may name a compile-time value parameter (`value: Int = n`),
-    /// which specialization folds before the executable check, so the value
+    /// A default value must fit its parameter's type. A default may name a
+    /// compile-time value parameter (`value: Int = n`), so the value
     /// parameters are bound around the defaults as they are in the body.
     fn check_parameter_defaults(
         &mut self,
@@ -3061,30 +3059,15 @@ impl Checker {
         param_tys: &[Ty],
         decls: &[ParamDecl],
     ) -> Result<(), TypeError> {
-        let bind_values = self.source_validation
-            && decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Value { .. }));
+        let bind_values = decls
+            .iter()
+            .any(|decl| matches!(decl, ParamDecl::Value { .. }));
         if !bind_values {
             return self.check_parameter_default_values(params, param_tys);
         }
         self.push_scope();
-        let result = decls
-            .iter()
-            .filter_map(|decl| match decl {
-                ParamDecl::Value {
-                    name, ty, variadic, ..
-                } => Some((name, ty, *variadic)),
-                ParamDecl::Type { .. } => None,
-            })
-            .try_for_each(|(name, ty, variadic)| {
-                let ty = if variadic {
-                    Ty::VariadicPack(ty.clone())
-                } else {
-                    (**ty).clone()
-                };
-                self.declare_value_parameter(name.trim_start_matches('*'), ty)
-            })
+        let result = self
+            .declare_value_parameters(decls)
             .and_then(|()| self.check_parameter_default_values(params, param_tys));
         self.pop_scope();
         result
@@ -3116,6 +3099,30 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Record each enclosing value parameter a nested function's default
+    /// reads (`x: Int = n` inside `def outer[n: Int]()`) as a capture, as a
+    /// read in its body is: the default runs per instance of the enclosing
+    /// declaration, which only a captured binder distinguishes.
+    fn capture_default_value_parameters(&self, params: &[FnParam]) -> Result<(), TypeError> {
+        struct Names(Vec<String>);
+        impl mojito_ast::visit::Visitor for Names {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Identifier(name) = &expr.kind {
+                    self.0.push(name.clone());
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        for default in params.iter().filter_map(|param| param.default.as_ref()) {
+            mojito_ast::visit::walk_expr(&mut names, default);
+        }
+        names
+            .0
+            .iter()
+            .filter(|name| self.implicit_value_parameter_capture(name).is_some())
+            .try_for_each(|name| self.check_capture_access(name, false))
     }
 
     /// The first runtime binding — an enclosing local or a parameter — a

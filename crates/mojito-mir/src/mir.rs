@@ -959,9 +959,11 @@ struct DefaultLowering<'a> {
 }
 
 /// A parameter's default metadata ([`mir_default`]), or, for any other
-/// default naming no binder, the zero-parameter function
-/// `$default$<owner>$<parameter>` lowered from the expression, which a call
-/// leaving the slot out runs.
+/// default, the zero-parameter function `$default$<owner>$<parameter>`
+/// lowered from the expression, which a call leaving the slot out runs. A
+/// default naming a binder in scope (`Self.n * 2`, an enclosing `n`) reads
+/// it as the function's own: the function declares those binders, and the
+/// elaborator instantiates it with its owner instance's arguments.
 fn lower_default(
     request: DefaultLowering<'_>,
     functions: &mut Vec<(String, MirFunction)>,
@@ -979,7 +981,17 @@ fn lower_default(
     if let Some(constant) = mir_default(checked, Some(default)) {
         return Some(constant);
     }
-    let ty = ty.filter(|_| !binders.named_by(default))?;
+    let ty = ty?;
+    let binders = if binders.named_by(default) {
+        binders.clone()
+    } else {
+        EnclosingBinders::default()
+    };
+    let parameter_locals = value_parameter_locals(&binders.declarations);
+    let parameter_names: Vec<String> = parameter_locals
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
     let function = format!("$default${owner}${}", parameter.name);
     let body = [Stmt {
         kind: StmtKind::Return(Some(default.clone())),
@@ -991,12 +1003,12 @@ fn lower_default(
         FunctionLowering {
             checked,
             name: &function,
-            parameter_names: &[],
+            parameter_names: &parameter_names,
             parameter_types: Vec::new(),
-            value_parameter_locals: Vec::new(),
+            value_parameter_locals: parameter_locals,
             receiver_value_parameters: Vec::new(),
             enclosing_origin_parameters: Vec::new(),
-            enclosing_binders: EnclosingBinders::default(),
+            enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
             reference_parameters: Vec::new(),
@@ -1025,7 +1037,7 @@ fn lower_default(
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,
-        param_decls: Vec::new(),
+        param_decls: binders.declarations,
         has_receiver: false,
         receiver_convention: None,
         param_conventions: Vec::new(),
@@ -3308,13 +3320,15 @@ struct ComprehensionPlan<'a> {
     value: &'a Expr,
 }
 
-/// The names of the `Origin`/`OriginSet` binders among `parameters`, which a
-/// type-shaped bracket argument may name (`V[Self.o]`).
+/// The binders in scope at a declaration: the enclosing struct's and
+/// functions', then its own.
 #[derive(Clone, Default)]
 struct EnclosingBinders {
     types: Vec<mojito_types::param_expr::ParamRef>,
     /// The non-callable value binders, each with its declared type.
     values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
+    /// The declarations of `types` and `values`, in scope order.
+    declarations: Vec<ParamDecl>,
 }
 
 impl EnclosingBinders {
@@ -3336,8 +3350,9 @@ impl EnclosingBinders {
                 } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
                     binders.values.push((declaration.binder(), (**ty).clone()));
                 }
-                ParamDecl::Value { .. } => {}
+                ParamDecl::Value { .. } => continue,
             }
+            binders.declarations.push(declaration.clone());
         }
         binders
     }

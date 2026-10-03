@@ -1345,27 +1345,15 @@ impl Checker {
             )?),
             _ => None,
         };
-        for param in &m.params {
-            if let Some(default) = &param.default {
-                if let Some(name) = self.dynamic_default_reference(default) {
-                    return Err(TypeError::DynamicDefault(name));
-                }
-                let expected = self.ty_from_anno(&param.ty)?;
-                let found = self.infer(default)?;
-                // Fall back to an `@implicit` converting constructor (records the
-                // ctor target for omitted-arg materialization), matching the
-                // free-function default path and the binding/argument positions.
-                if !coerces(&found, &expected)
-                    && !self.record_constructor_conversion(default, &found, &expected)?
-                {
-                    return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
-                        found: found.to_string(),
-                        context: format!("default value of method parameter '{}'", param.name),
-                    });
-                }
-            }
-        }
+        // A default may name the method's own value parameters
+        // (`x: Int = Self.n + j`), bound around the defaults as in the body.
+        let method_decls = self.classify_params(&self.method_owner(self_ty, m), &m.type_params)?;
+        self.push_scope();
+        let defaults = self
+            .declare_value_parameters(&method_decls)
+            .and_then(|()| self.check_method_defaults(m));
+        self.pop_scope();
+        defaults?;
         self.push_scope();
         self.raising_context
             .push(self.declared_error(m.raises, m.raises_type.as_ref())?);
@@ -1460,21 +1448,7 @@ impl Checker {
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
         let method_decls = self.classify_params(&self.method_owner(self_ty, m), &m.type_params)?;
-        for declaration in &method_decls {
-            if let ParamDecl::Value {
-                name, ty, variadic, ..
-            } = declaration
-            {
-                self.declare_value_parameter(
-                    name.trim_start_matches('*'),
-                    if *variadic {
-                        Ty::VariadicPack(ty.clone())
-                    } else {
-                        (**ty).clone()
-                    },
-                )?;
-            }
-        }
+        self.declare_value_parameters(&method_decls)?;
         let mut reference_type_params = self.enclosing_type_params.clone();
         reference_type_params.extend(m.type_params.iter().cloned());
         let self_writable = ref_binding_is_writable(
@@ -1739,6 +1713,34 @@ impl Checker {
                 },
             );
         }
+    }
+
+    /// Each method parameter default fits its parameter's type and names no
+    /// runtime binding.
+    fn check_method_defaults(&self, m: &Method) -> Result<(), TypeError> {
+        for param in &m.params {
+            let Some(default) = &param.default else {
+                continue;
+            };
+            if let Some(name) = self.dynamic_default_reference(default) {
+                return Err(TypeError::DynamicDefault(name));
+            }
+            let expected = self.ty_from_anno(&param.ty)?;
+            let found = self.infer(default)?;
+            // Fall back to an `@implicit` converting constructor (records the
+            // ctor target for omitted-arg materialization), matching the
+            // free-function default path and the binding/argument positions.
+            if !coerces(&found, &expected)
+                && !self.record_constructor_conversion(default, &found, &expected)?
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: found.to_string(),
+                    context: format!("default value of method parameter '{}'", param.name),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The immutable origin binders a construction's struct-typed arguments

@@ -3160,6 +3160,10 @@ impl Elab<'_> {
         for parameter in &mut clone.params {
             rewrite_type(&mut parameter.ty, value_subs);
             substitute_type_bindings_in_type(&mut parameter.ty, &type_bindings);
+            if let Some(default) = &mut parameter.default {
+                rewrite_expr(default, value_subs);
+                substitute_type_bindings_in_expr(default, &type_bindings);
+            }
         }
         if let Some(ret) = &mut clone.ret {
             rewrite_type(ret, value_subs);

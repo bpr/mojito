@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A parameter default may read a compile-time parameter in scope, as at the
+  pin: `V[3]().m()` beside `def m(self, x: Int = Self.n * 2)` in
+  `struct V[n: Int]` prints `6`, and a method's or function's own parameter,
+  an enclosing function's from a nested `def`, and a type parameter's
+  `T()` work alike (`assets/ok/default_reads_binder.mojo`). The VM used to
+  stop with "non-constant default", and `def g[n: Int](x: Int = n)` or a
+  method's `x: Int = Self.n + j` was rejected with "Undefined variable".
 - A trait requirement's default may read the method's own value parameters
   (`def scale[n: Int](self, value: Int, factor: Int = n)`), as at the pin: a
   call through the bound runs it with the call's compile-time arguments, or

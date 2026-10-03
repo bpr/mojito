@@ -95,6 +95,7 @@ assets/ok/ctfe_beside_comptime_if_struct_method.mojo	main	exe-differential	sanit
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized
+assets/ok/default_reads_binder.mojo	main	exe-differential	sanitized
 assets/ok/defines_main.mojo	main	exe-differential	sanitized
 assets/ok/deinit_body_field_last_use.mojo	main	exe-differential	sanitized
 assets/ok/deinit_param_destruction_timing.mojo	main	exe-differential	sanitized

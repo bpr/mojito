@@ -1283,10 +1283,14 @@ finite numeric values in one exact rational domain and hashes that canonical
 form, including treating positive and negative zero as numerically equal.
 
 A parameter default is declaration metadata too (`CheckedConst`): a literal,
-an `@implicit` conversion of one (`Construct`), or, for any other default
-naming no binder in scope, `Evaluate`, a zero-parameter function MIR lowers
-from the default expression (`$default$<owner>$<parameter>`) and the VM runs
-for each call leaving the slot out. The pin evaluates a default once at
+an `@implicit` conversion of one (`Construct`), or, for any other default,
+`Evaluate`, a zero-parameter function MIR lowers from the default expression
+(`$default$<owner>$<parameter>`) and the VM runs for each call leaving the
+slot out. A default reading a binder in scope (`Self.n`, an enclosing `n`,
+`T`) declares the binders in scope as its function's parameters, and
+`native::mono` instantiates it under the owner instance's arguments; a
+nested `def`'s default reading an enclosing value parameter captures it, as
+its body would. The pin evaluates a default once at
 compile time, so the checker rejects one naming runtime storage and the
 elaborator one that does I/O; for what remains, evaluating at each call is
 indistinguishable.

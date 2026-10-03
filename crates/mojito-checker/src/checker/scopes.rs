@@ -71,6 +71,26 @@ impl Checker {
         Ok(())
     }
 
+    /// Bind every value parameter among `decls`, a variadic one as its pack.
+    pub(super) fn declare_value_parameters(
+        &mut self,
+        decls: &[ParamDecl],
+    ) -> Result<(), TypeError> {
+        decls.iter().try_for_each(|decl| match decl {
+            ParamDecl::Value {
+                name, ty, variadic, ..
+            } => self.declare_value_parameter(
+                name.trim_start_matches('*'),
+                if *variadic {
+                    Ty::VariadicPack(ty.clone())
+                } else {
+                    (**ty).clone()
+                },
+            ),
+            ParamDecl::Type { .. } => Ok(()),
+        })
+    }
+
     pub(super) fn declare_with_mutability(
         &mut self,
         name: &str,
@@ -467,7 +487,10 @@ impl Checker {
     /// reads it without naming it in a capture list: an implicitly copyable
     /// value is snapshotted into the environment, any other borrows its
     /// runtime slot immutably.
-    fn implicit_value_parameter_capture(&self, name: &str) -> Option<mojito_ast::ast::CaptureKind> {
+    pub(super) fn implicit_value_parameter_capture(
+        &self,
+        name: &str,
+    ) -> Option<mojito_ast::ast::CaptureKind> {
         self.lookup_owner(name)
             .filter(|owner| self.value_parameter_owners.contains(owner))
             .map(|_| {

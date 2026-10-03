@@ -324,6 +324,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // argument to take `size_of` of a parameter from.
     "size_of_builtin",
     "template_served_def_closed_call",
+    // Section 1, the erased oracle: an erased default function has no
+    // value for a compile-time parameter it reads.
+    "default_reads_binder",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

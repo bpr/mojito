@@ -412,7 +412,7 @@ impl<'a> Specializer<'a> {
             for (parameter, ty) in promoted {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
             }
-            self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
+            self.instantiate_constructed_defaults(&key.template, &mut declaration, bindings)?;
             self.enqueue_keyword_collector(&key.template, &declaration)?;
             self.output_function_decls.push(declaration);
         }
@@ -422,7 +422,9 @@ impl<'a> Specializer<'a> {
     }
 
     /// A parameter defaulting to a lowered default function
-    /// (`s: String = String("a")`) enqueues that function. One defaulting to
+    /// (`s: String = String("a")`) enqueues that function, under the owner
+    /// instance's arguments for each binder the function declares
+    /// (`x: Int = Self.n * 2`). One defaulting to
     /// a recorded constructor over a generic
     /// struct instance (`dir: Optional[String] = None`, `x: Optional[Int] = 5`):
     /// the omitted-argument path runs the constructor's instance for the
@@ -433,13 +435,16 @@ impl<'a> Specializer<'a> {
         &mut self,
         owner: &str,
         declaration: &mut MirFunctionDeclaration,
+        bindings: &Bindings,
     ) -> Result<(), MonoError> {
         for (index, default) in declaration.defaults.iter_mut().enumerate() {
-            // A lowered default function names no binder, so it has the one
-            // instance, which only this default reaches.
+            // A lowered default function has one instance per assignment of
+            // the binders it reads, which only this default reaches.
             if let Some(CheckedConst::Evaluate { function }) = default {
                 if self.functions.contains_key(function.as_str()) {
-                    *function = self.enqueue(function, self.base_bindings(), Vec::new())?;
+                    let (default_bindings, arguments) =
+                        self.default_function_bindings(function, bindings)?;
+                    *function = self.enqueue(function, default_bindings, arguments)?;
                 }
                 continue;
             }
@@ -484,6 +489,54 @@ impl<'a> Specializer<'a> {
             *target = instance;
         }
         Ok(())
+    }
+
+    /// The bindings and instance arguments of the lowered default function
+    /// `function` under its owner's `bindings`: each binder it declares takes
+    /// the owner's solution, or a lifted body's folded capture of its name.
+    fn default_function_bindings(
+        &self,
+        function: &str,
+        bindings: &Bindings,
+    ) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
+        let mut default_bindings = self.base_bindings();
+        let mut arguments = Vec::new();
+        let scope = self
+            .declarations
+            .get(function)
+            .map_or(&[][..], |declaration| &declaration.param_decls);
+        for decl in scope {
+            let binder = decl.binder();
+            let unresolved = || {
+                self.error(
+                    Some(function),
+                    format!("default reading unresolved parameter `{}`", binder.name),
+                )
+            };
+            match decl {
+                ParamDecl::Type { .. } => {
+                    let ty = bindings.types.get(&binder).ok_or_else(unresolved)?;
+                    arguments.push(InstanceArg::Ty(ty.clone()));
+                    default_bindings.types.insert(binder, ty.clone());
+                }
+                ParamDecl::Value { .. } => {
+                    let value = bindings
+                        .values
+                        .get(&binder)
+                        .or_else(|| {
+                            bindings
+                                .folded_captures
+                                .iter()
+                                .find(|(name, _)| name.as_str() == binder.name.as_ref())
+                                .map(|(_, value)| value)
+                        })
+                        .ok_or_else(unresolved)?;
+                    arguments.push(InstanceArg::Value(value.clone()));
+                    default_bindings.values.insert(binder, value.clone());
+                }
+            }
+        }
+        Ok((default_bindings, arguments))
     }
 
     /// A `**kwargs: element` parameter binds a `StringDict[element]` the

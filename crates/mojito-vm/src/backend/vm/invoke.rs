@@ -210,9 +210,23 @@ impl VmBackend {
         // default) through the same path an explicit `f(arg=None)` takes; an
         // `Evaluate` default runs its lowered default function; scalars fold
         // directly; a default MIR could not lower errors only when its slot
-        // is actually taken.
+        // is actually taken. A default function reading a binder in scope
+        // runs only as the elaborator's instance, which binds it; the erased
+        // template has no value for it.
         let make_default = |i: usize| -> Result<Value, RuntimeError> {
             match &sig.defaults[i] {
+                Some(CheckedConst::Evaluate { function })
+                    if prog
+                        .sigs
+                        .get(function)
+                        .is_some_and(|default| !default.param_decls.is_empty()) =>
+                {
+                    Err(RuntimeError::Unsupported(format!(
+                        "vm: erased default for parameter '{}' of '{name}' reads a \
+                         compile-time parameter",
+                        sig.param_names[i]
+                    )))
+                }
                 Some(CheckedConst::Construct { target, arg }) => self.call_named(
                     prog,
                     target,
