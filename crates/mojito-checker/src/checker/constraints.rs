@@ -1334,6 +1334,10 @@ impl Checker {
                     ConstraintOperand::Type,
                 )
             }
+            // `Self.T` names the struct's binder, as in `conforms_to`.
+            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(name)) => {
+                ConstraintOperand::Param(self.self_binder(name))
+            }
             mojito_ast::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(

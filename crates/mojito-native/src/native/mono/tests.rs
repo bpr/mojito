@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
 fn specialized_main(source: &str) -> SpecializedProgram {
     let compiler = mojito::Compiler::default().with_snippet_module_scope();
@@ -844,4 +845,133 @@ fn available_member_that_does_not_materialize_is_an_error() {
         error.construct.contains("constructing type parameter"),
         "{error}"
     );
+}
+
+const TRIVIAL_AND_VALUE_MEMBERS: &str = "from std.traits import IsTriviallyCopyable\n\
+     \n\
+     @fieldwise_init\n\
+     struct Point(Copyable):\n\
+     \x20   var x: Int\n\
+     \n\
+     struct Tracked(Copyable):\n\
+     \x20   var x: Int\n\
+     \n\
+     \x20   def __init__(out self, x: Int):\n\
+     \x20       self.x = x\n\
+     \n\
+     \x20   def __init__(out self, *, copy: Self):\n\
+     \x20       self.x = copy.x\n\
+     \n\
+     struct Cell[T: Copyable & Deinitable, n: Int]:\n\
+     \x20   var item: Self.T\n\
+     \n\
+     \x20   def __init__(out self, var item: Self.T):\n\
+     \x20       self.item = item^\n\
+     \n\
+     \x20   def bits(self) -> Int where IsTriviallyCopyable[Self.T]:\n\
+     \x20       return Self.n\n\
+     \n\
+     \x20   def wide(self) -> Int where Self.n > 2:\n\
+     \x20       return Self.n\n\
+     \n\
+     \x20   def tight(self) -> Int where Self.n + 1 == 3:\n\
+     \x20       return Self.n\n\
+     \n\
+     def main():\n\
+     \x20   var a = Cell[Point, 2](Point(1))\n\
+     \x20   print(a.bits(), a.tight())\n\
+     \x20   var b = Cell[Tracked, 5](Tracked(2))\n\
+     \x20   print(b.wide())\n";
+
+#[test]
+fn trivial_value_and_pack_clauses_are_decided() {
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(
+            TRIVIAL_AND_VALUE_MEMBERS,
+            std::path::Path::new("mono_test.mojo"),
+        )
+        .expect("compile trivial and value members");
+    let specializer = Specializer::new(compiled.drop_elaborated_mir());
+    let cell = |argument: &str, n: i64| {
+        let template = specializer.structs["Cell"];
+        let mut bindings = specializer.base_bindings();
+        let arguments = [
+            TyArg::Ty(Ty::Struct(argument.into(), Vec::new())),
+            TyArg::Val(CtValue::Int(n)),
+        ];
+        bind_ty_args(&template.param_decls, &arguments, &mut bindings).unwrap();
+        bindings
+    };
+    let proven = |member: &str, bindings: &Bindings| match specializer
+        .availability(specializer.declarations[member], bindings)
+    {
+        Availability::Proven => true,
+        Availability::Disproven(_) => false,
+        Availability::Undecided => panic!("`{member}` stays undecided"),
+    };
+    assert!(
+        proven("Cell.bits", &cell("Point", 2)),
+        "fields of `Int` copy bitwise"
+    );
+    assert!(
+        !proven("Cell.bits", &cell("Tracked", 2)),
+        "a user copy is not trivial"
+    );
+    assert!(proven("Cell.wide", &cell("Point", 5)));
+    assert!(!proven("Cell.wide", &cell("Point", 2)));
+    assert!(proven("Cell.tight", &cell("Point", 2)));
+    assert!(!proven("Cell.tight", &cell("Point", 5)));
+
+    let pack = test_binder("Ts");
+    let mut bindings = specializer.base_bindings();
+    bindings.values.insert(
+        pack.clone(),
+        CtValue::Tuple(
+            [Ty::Int, Ty::Struct("Tracked".into(), Vec::new())]
+                .map(|ty| CtValue::Type(Box::new(ty)))
+                .to_vec(),
+        ),
+    );
+    let mut declaration = specializer.declarations["Cell.bits"].clone();
+    let mut decide = |clause: GenericConstraint| {
+        declaration.availability = vec![clause];
+        match specializer.availability(&declaration, &bindings) {
+            Availability::Proven => true,
+            Availability::Disproven(_) => false,
+            Availability::Undecided => panic!("a pack clause stays undecided"),
+        }
+    };
+    let trivially = |all| GenericConstraint::PackPredicate {
+        param: pack.clone(),
+        predicate: mojito_types::types::PackPredicateRef::Trivial(
+            mojito_types::types::TrivialLifecycle::Copyable,
+        ),
+        all,
+    };
+    assert!(decide(trivially(false)), "`Int` copies bitwise");
+    assert!(!decide(trivially(true)), "`Tracked` does not");
+    assert!(decide(GenericConstraint::PackContains {
+        param: pack.clone(),
+        element: ConstraintOperand::Type(Ty::Int),
+    }));
+    assert!(decide(GenericConstraint::Eq(
+        ConstraintOperand::PackLength(pack.clone()),
+        ConstraintOperand::Value(CtValue::IntLiteral(2.into())),
+    )));
+    // The variadic `Tuple` template answers by its elements.
+    let tuple = |element: &str| {
+        GenericConstraint::Trivial(
+            mojito_types::types::TrivialLifecycle::Copyable,
+            ConstraintOperand::Type(Ty::Struct(
+                "Tuple".into(),
+                vec![
+                    TyArg::Ty(Ty::Int),
+                    TyArg::Ty(Ty::Struct(element.into(), Vec::new())),
+                ],
+            )),
+        )
+    };
+    assert!(decide(tuple("Point")));
+    assert!(!decide(tuple("Tracked")));
 }

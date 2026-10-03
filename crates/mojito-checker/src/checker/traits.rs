@@ -2193,8 +2193,9 @@ impl Checker {
 
     /// The conditions under which an instance of the struct `name` conforms
     /// to `required`, each over the struct's own binders: any one holding
-    /// proves it, and none means no instance conforms. `None` where the
-    /// answer is not a function of the declared conformances (a type that
+    /// proves it, and none means no instance conforms. `required` may be an
+    /// `IsTrivially*` spelling, whose row is the predicate's. `None` where
+    /// the answer is not a function of the declared conformances (a type that
     /// answers by its elements before its specialization exists).
     fn struct_conformance_conditions(
         &self,
@@ -2203,16 +2204,17 @@ impl Checker {
         required: &str,
     ) -> Option<Vec<GenericConstraint>> {
         let always = || vec![GenericConstraint::Bool(true)];
+        let trivial = mojito_types::types::trivial_predicate_name(required);
         if info.decls.is_empty() {
             let self_ty = Ty::Struct(
                 name.to_string(),
                 info.fixed_arguments.clone().unwrap_or_default(),
             );
-            return Some(if self.conforms_to(&self_ty, required) {
-                always()
-            } else {
-                Vec::new()
-            });
+            let holds = trivial.map_or_else(
+                || self.conforms_to(&self_ty, required),
+                |kind| self.is_trivially(kind, &self_ty),
+            );
+            return Some(if holds { always() } else { Vec::new() });
         }
         let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls));
         if tuple_elements(&self_ty).is_some()
@@ -2235,6 +2237,13 @@ impl Checker {
         };
         let refining =
             |declared: &str| declared == required || self.trait_refines(declared, required);
+        if let Some(kind) = trivial {
+            let register_passable = declared(&|declared: &str| {
+                declared == "TrivialRegisterPassable"
+                    || self.trait_refines(declared, "TrivialRegisterPassable")
+            });
+            return self.trivial_lifecycle_conditions(name, info, kind, register_passable);
+        }
         if !BUILTIN_TRAITS.contains(&required) || self.traits.contains_key(required) {
             return Some(declared(&refining));
         }
@@ -2275,6 +2284,48 @@ impl Checker {
             SIMD_WILDCARD_BOUND => return None,
             _ => always(),
         })
+    }
+
+    /// The row of `IsTrivially*[Self]` for a generic struct, as
+    /// [`Self::is_trivially`] answers it: the `register_passable` conditions
+    /// of a declared `TrivialRegisterPassable`, or the base capability with
+    /// no user lifecycle member for the facet and every field trivial.
+    fn trivial_lifecycle_conditions(
+        &self,
+        name: &str,
+        info: &StructInfo,
+        kind: mojito_types::types::TrivialLifecycle,
+        mut register_passable: Vec<GenericConstraint>,
+    ) -> Option<Vec<GenericConstraint>> {
+        use mojito_types::types::TrivialLifecycle;
+        if user_lifecycle_defeats(info, kind) {
+            return Some(register_passable);
+        }
+        let base = match kind {
+            TrivialLifecycle::Movable => "Movable",
+            TrivialLifecycle::Copyable => "Copyable",
+            TrivialLifecycle::Deinitable => "Deinitable",
+        };
+        let capability = self
+            .struct_conformance_conditions(name, info, base)?
+            .into_iter()
+            .reduce(|left, right| GenericConstraint::Or(Box::new(left), Box::new(right)));
+        if let Some(capability) = capability {
+            register_passable.push(
+                info.fields
+                    .iter()
+                    .fold(capability, |joined, (_, field_ty)| {
+                        GenericConstraint::And(
+                            Box::new(joined),
+                            Box::new(GenericConstraint::Trivial(
+                                kind,
+                                ConstraintOperand::Type(field_ty.clone()),
+                            )),
+                        )
+                    }),
+            );
+        }
+        Some(register_passable)
     }
 
     /// Every trait a member's availability clause or a struct's conformance
@@ -2833,18 +2884,10 @@ impl Checker {
                     return true;
                 }
                 let result = self.structs.get(name).is_some_and(|info| {
-                    let user_defeats = match kind {
-                        TrivialLifecycle::Movable => info.methods.contains_key("__moveinit__"),
-                        TrivialLifecycle::Copyable => info.methods.contains_key("__copyinit__"),
-                        TrivialLifecycle::Deinitable => {
-                            info.methods.contains_key("__deinit__")
-                                || !info.explicit_destructors.is_empty()
-                        }
-                    };
                     // Fields are stored at the declaration's parameters;
                     // recurse at this instantiation's arguments so a generic
                     // payload field answers for the concrete element.
-                    !user_defeats
+                    !user_lifecycle_defeats(info, kind)
                         && info.fields.iter().all(|(_, field_ty)| {
                             let field_ty = substitute_at(field_ty, info, args);
                             self.trivial_lifecycle(kind, &field_ty, visiting)
@@ -3531,15 +3574,38 @@ fn builtin_requirement_witnessed(
         && fits(&member.ret, &required.ret)
 }
 
+/// Whether the struct declares the lifecycle member a trivial `kind` rules
+/// out: a user move, copy, or destroy.
+fn user_lifecycle_defeats(info: &StructInfo, kind: mojito_types::types::TrivialLifecycle) -> bool {
+    use mojito_types::types::TrivialLifecycle;
+    match kind {
+        TrivialLifecycle::Movable => info.methods.contains_key("__moveinit__"),
+        TrivialLifecycle::Copyable => info.methods.contains_key("__copyinit__"),
+        TrivialLifecycle::Deinitable => {
+            info.methods.contains_key("__deinit__") || !info.explicit_destructors.is_empty()
+        }
+    }
+}
+
 /// The traits `constraint`'s conformance atoms name.
 fn constraint_traits(
     constraint: &GenericConstraint,
     named: &mut std::collections::BTreeSet<String>,
 ) {
-    use GenericConstraint::{And, Conforms, ConformsPack, Not, Or, WithMessage};
+    use GenericConstraint::{
+        And, Conforms, ConformsPack, Not, Or, PackPredicate, Trivial, WithMessage,
+    };
+    use mojito_types::types::{PackPredicateRef, trivial_predicate_spelling};
     match constraint {
         Conforms { trait_name, .. } | ConformsPack { trait_name, .. } => {
             named.insert(trait_name.clone());
+        }
+        Trivial(kind, _)
+        | PackPredicate {
+            predicate: PackPredicateRef::Trivial(kind),
+            ..
+        } => {
+            named.insert(trivial_predicate_spelling(*kind).to_string());
         }
         WithMessage(inner, _) | Not(inner) => constraint_traits(inner, named),
         And(left, right) | Or(left, right) => {

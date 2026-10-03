@@ -234,11 +234,16 @@ How the elaborator uses it:
   empty `availability`, and an instance struct's rows hold `Bool(true)` or
   nothing. `mir::verify::verify_concrete` rejects anything else.
 
-What is undecided: a clause over `IsTrivially*`, a pack predicate, or a value
-expression, and a question asked of a struct that answers by its elements
-before its specialization exists. That is roadmap §1's entry on undecided
-clauses. The contract's rule that concrete bindings close every predicate
-(§Predicates) holds once that entry lands.
+Every clause form the checker compiles is decided. `IsTrivially*` reads a
+row under the predicate's spelling, which the checker builds per struct by
+the rule `is_trivially` applies: a declared `TrivialRegisterPassable`, or the
+base capability with no user lifecycle member and every field trivial. A
+value comparison and a `TypeList` query read the instance's bindings, and a
+`Tuple` or `TString` with no specialization answers by its elements. What
+stays undecided is an `all` or `any` through a predicate alias, whose body
+does not reach MIR. The checker rejects the only member clause that could
+ask one today (roadmap §3), so concrete bindings close every predicate
+(§Predicates) a member clause reaches.
 
 Removing the trial exposed one defect it had hidden. `Array[c_char, n]()`
 never materialized, because `T()` over a SIMD binding had no construction.

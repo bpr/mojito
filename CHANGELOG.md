@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The elaborator decides a struct member's `where` clause in every form the
+  checker compiles: an `IsTrivially*` predicate, a value comparison
+  (`where Self.n > 2`), and a `TypeList` query over a bound pack, besides
+  `conforms_to`. The checker gives each struct a trivial-lifecycle row per
+  `IsTrivially*` spelling the program names, so `MaybeUninit`'s members and
+  a conditional copy, move, or destroy member are no longer materialized on
+  the checker's word. `IsTrivially*[Self.T]` in a member's clause names the
+  struct's binder, where it used to be judged false at every call.
+  `assets/ok/conditional_member_trivial_value_clauses.mojo` pins it.
 - Every closed call of a plain trait-bound generic `def` (`show(n)`,
   `show[Int](n)`, `bytes[Int]()`) is served by its template and mints no
   clone: the elaborator instantiates the template's MIR for the VM and the

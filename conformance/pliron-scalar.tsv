@@ -81,6 +81,7 @@ assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/contextual_member_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_return.mojo	-	ineligible	no-scalar-entry-shape
