@@ -195,10 +195,16 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             raises,
             param_arg_regs,
             receiver,
+            instantiated_args,
             ..
         } => {
             for ty in raises.iter().chain(receiver.iter()) {
                 require_concrete(head, "instruction", ty, errors);
+            }
+            for argument in instantiated_args {
+                if let TyArg::Ty(ty) = argument {
+                    require_concrete(head, "instantiated argument", ty, errors);
+                }
             }
             require_no_parameter_slots(head, param_arg_regs, errors);
         }

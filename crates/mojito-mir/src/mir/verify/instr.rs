@@ -383,6 +383,11 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     "{prefix}: size_of result register has type {found}, expected Int"
                 ));
             }
+            // A template's symbolic type has a layout only once an instance
+            // substitutes it; the concrete mode checks that none remains.
+            if mojito_types::types::is_symbolic(ty) {
+                return;
+            }
             let target = mojito_native_core::target::NativeTarget::new(
                 mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
             );

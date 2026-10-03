@@ -74,9 +74,9 @@ impl Checker {
     ///   `realize_instance_facts` repeats the clone check's only concrete
     ///   decision, whether that application's clone already exists.
     ///
-    /// [`TemplateClass::BoundedOperations`] bodies also call the built-in
-    /// `len`. With `T` symbolic its bound proves the call; an instance owes
-    /// the witness and takes the concrete read-in-place fact
+    /// A [`TemplateClass::FixedCalls`] body may also call the built-in `len`.
+    /// With `T` symbolic its bound proves the call; an instance owes the
+    /// witness and takes the concrete read-in-place fact
     /// (`realize_builtin_len`).
     ///
     /// An operator is admitted only over operands whose recorded types are
@@ -426,9 +426,10 @@ impl Checker {
             TemplateClass::ScalarBranches
         } else if widened {
             TemplateClass::FunctionBody(features)
-        } else if !facts.builtin_len_calls.is_empty() {
-            TemplateClass::BoundedOperations
-        } else if !facts.call_parameters.is_empty() || !closed {
+        } else if !facts.call_parameters.is_empty()
+            || !facts.builtin_len_calls.is_empty()
+            || !closed
+        {
             TemplateClass::FixedCalls
         } else {
             TemplateClass::ClosedScalarBody

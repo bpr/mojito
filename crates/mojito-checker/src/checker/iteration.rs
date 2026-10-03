@@ -773,8 +773,9 @@ impl Checker {
 
     /// The typed error a loop over a generic bound catches through the abstract
     /// `__iterator_dispatch.__next__`: what a `__next__` requirement raises,
-    /// read from the first of the bound's own traits (or a trait they refine)
-    /// that declares one, else from the `Iterator` homed beside the loop's
+    /// read from the first of the bound's own traits (or a trait they refine,
+    /// or the bounds of an associated iterator type they declare) that
+    /// declares one, else from the `Iterator` homed beside the loop's
     /// `Iterable`/`IterableOwned` bound (a program may declare its own
     /// protocol), else from the bundled `std.iter`.
     fn generic_iterator_exhaustion(
@@ -804,6 +805,16 @@ impl Checker {
             }
             if let Some(info) = self.traits.get(name) {
                 pending.extend(info.refines.iter().map(String::as_str));
+                pending.extend(
+                    info.comptime_members
+                        .values()
+                        .filter_map(|member| match member {
+                            CtMemberReq::Type { bounds, .. } => Some(bounds),
+                            CtMemberReq::Value(_) => None,
+                        })
+                        .flatten()
+                        .map(String::as_str),
+                );
             }
         }
         let sibling = bounds

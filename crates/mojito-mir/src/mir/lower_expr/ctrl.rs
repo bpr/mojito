@@ -38,6 +38,7 @@ impl Flatten<'_> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
+            instantiated_args: Vec::new(),
         });
         dest
     }
@@ -381,6 +382,7 @@ impl Flatten<'_> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
+            instantiated_args: Vec::new(),
         });
         let collection = self.fresh_var();
         self.var_types.insert(collection, target.clone());

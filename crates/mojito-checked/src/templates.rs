@@ -348,7 +348,8 @@ pub fn derive_adjustment(
         | SemanticAdjustment::SliceDescriptors { .. }
         | SemanticAdjustment::InteriorReference { .. }
         | SemanticAdjustment::InvalidateInteriors { .. }
-        | SemanticAdjustment::InferredValueArguments(..) => None,
+        | SemanticAdjustment::InferredValueArguments(..)
+        | SemanticAdjustment::InstantiatedArguments(..) => None,
     }
 }
 
@@ -711,12 +712,9 @@ pub enum TemplateClass {
     ClosedScalarBody,
     /// [`Self::ClosedScalarBody`] plus direct calls of module-level
     /// functions that are not overloaded, passing literals, parameters, and
-    /// further such calls to read parameters, and returning a scalar.
+    /// further such calls to read parameters, the built-in `len` over a
+    /// parameter whose bound promises a length, and returning a scalar.
     FixedCalls,
-    /// [`Self::FixedCalls`] plus the built-in `len` over a parameter whose
-    /// bound promises a length, realized per instance against the concrete
-    /// type's `__len__`.
-    BoundedOperations,
     /// A module-level function source validation checks and the elaborator
     /// then stubs: keyed on scalar `Bool`/`Int` value parameters or plain
     /// type parameters through `comptime if`, or holding a `rebind`. Its body
@@ -760,7 +758,6 @@ impl TemplateClass {
             Self::MethodBody(features) => features.contains(MethodFeatures::COMPTIME_CONTROL),
             Self::ClosedScalarBody
             | Self::FixedCalls
-            | Self::BoundedOperations
             | Self::MethodScalarBody
             | Self::FunctionBody(_) => false,
         }

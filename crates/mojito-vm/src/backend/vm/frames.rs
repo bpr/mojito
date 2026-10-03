@@ -607,6 +607,7 @@ impl VmBackend {
             arg_places,
             kwarg_places,
             param_arg_regs,
+            instantiated_args,
             ..
         } = instruction
         else {
@@ -640,11 +641,12 @@ impl VmBackend {
             .sigs
             .get(&func.0)
             .map(|signature| {
-                let supplied = self.runtime_parameter_arguments(
+                let supplied = self.supplied_parameter_arguments(
                     prog,
                     caller.into(),
                     &signature.param_decls,
                     param_arg_regs,
+                    instantiated_args,
                 );
                 reify_value_parameters(&signature.param_decls, &supplied)
             })

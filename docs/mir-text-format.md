@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.12
+# Mojito Textual MIR Format, Version 1.13
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.12 is implemented end to end for inspection and loading: canonical
+Version 1.13 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.12
+mojito-mir 1.13
 ```
 
-The writer emits 1.12. The reader accepts 1.0 through 1.12; *Schema 1.0*
+The writer emits 1.13. The reader accepts 1.0 through 1.13; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -122,6 +122,13 @@ Minor version 12 carries a struct's unparameterized associated types
 struct's own binders. The elaborator solves `C.Element` from them once `C`
 is bound to an instance, and elaborated MIR carries an empty list. An
 older artifact reads as carrying none.
+
+Minor version 13 carries the compile-time arguments the checker solved for a
+call of a generic `def`: a `call` gains `instantiated_args`, a list of type
+arguments in declaration order and in the caller's binder scope
+(`bytes[Int]()` records `[Int]`). A type parameter no runtime parameter or
+result spells is bound from here by the elaborator; a resolved call in
+concrete MIR records an empty list. An older artifact reads as carrying none.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -599,7 +606,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.12
+mojito-mir 1.13
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

@@ -723,6 +723,7 @@ impl<'a> Specializer<'a> {
                             capture_accesses: Vec::new(),
                             param_arg_regs: Vec::new(),
                             receiver: None,
+                            instantiated_args: Vec::new(),
                         },
                     ));
                 }
@@ -769,6 +770,7 @@ impl<'a> Specializer<'a> {
                         arg_places,
                         param_arg_regs,
                         receiver: static_receiver,
+                        instantiated_args,
                         ..
                     } => {
                         if !self.functions.contains_key(func.0.as_str()) {
@@ -840,6 +842,7 @@ impl<'a> Specializer<'a> {
                                         args,
                                         kwargs,
                                         param_arg_regs,
+                                        &[],
                                     )?;
                                     if let Some((_, concrete)) = &bindings.self_instance {
                                         function.reg_types.insert(dest.0, concrete.clone());
@@ -888,6 +891,7 @@ impl<'a> Specializer<'a> {
                             args,
                             kwargs,
                             param_arg_regs,
+                            instantiated_args,
                         )?;
                         // The instance identity carries the spelled receiver
                         // of a static call, so the resolved call keeps none.
@@ -903,6 +907,7 @@ impl<'a> Specializer<'a> {
                             capturing.iter().map(|(binder, _)| binder.clone()).collect();
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         param_arg_regs.clear();
+                        instantiated_args.clear();
                         for (_, closure) in capturing {
                             args.push(closure);
                             arg_places.push(None);
@@ -985,7 +990,7 @@ impl<'a> Specializer<'a> {
                         // an instance-named receiver (`List$mono$TInt`) still
                         // resolves against `List.*` and gets its instance
                         // identity from `infer_call`'s receiver binding.
-                        let target = mojito_symbol::symbol::resolve_method_symbol(
+                        let mut target = mojito_symbol::symbol::resolve_method_symbol(
                             self.functions.iter().map(|(name, f)| CallableCandidate {
                                 name,
                                 n_params: f.n_params,
@@ -995,6 +1000,18 @@ impl<'a> Specializer<'a> {
                             resolved.as_deref(),
                             args.len() + kwargs.len(),
                         );
+                        if !self.functions.contains_key(target.as_str())
+                            && let Some(dispatch) = resolved
+                                .as_deref()
+                                .filter(|symbol| symbol.starts_with("__trait_dispatch."))
+                            && let Some(overload) = self.dispatched_overload_target(
+                                nominal_template(receiver_name),
+                                method,
+                                dispatch,
+                            )
+                        {
+                            target = overload;
+                        }
                         if !self.functions.contains_key(target.as_str()) {
                             // The VM-synthesized `Writer.write` dispatch calls
                             // the receiver's `write_string`; enqueue its
@@ -1053,6 +1070,7 @@ impl<'a> Specializer<'a> {
                             args,
                             kwargs,
                             param_arg_regs,
+                            &[],
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
@@ -1126,6 +1144,7 @@ impl<'a> Specializer<'a> {
                                     args,
                                     kwargs,
                                     param_arg_regs,
+                                    &[],
                                 )?;
                                 self.enqueue(&target, bindings, arguments)?
                             } else {
@@ -1142,6 +1161,7 @@ impl<'a> Specializer<'a> {
                                 capture_accesses: std::mem::take(capture_accesses),
                                 param_arg_regs: Vec::new(),
                                 receiver: None,
+                                instantiated_args: Vec::new(),
                             };
                             continue;
                         }
@@ -1183,6 +1203,7 @@ impl<'a> Specializer<'a> {
                             args,
                             kwargs,
                             param_arg_regs,
+                            &[],
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *instruction = MirInstr::MethodCall {

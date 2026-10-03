@@ -2300,9 +2300,8 @@ struct Elab<'a> {
     /// nested `def`s. The nested pass registers a nested `def` named here,
     /// so that its instances reach the callee's clone.
     stub_reaching: RefCell<HashSet<String>>,
-    /// Whether a bound-generic `def`'s template serves its calls at a
-    /// loan-carrying argument, by name, as first decided
-    /// ([`Elab::template_serves_def`]).
+    /// Whether a bound-generic `def`'s template serves its closed calls, by
+    /// name, as first decided ([`Elab::template_serves_def`]).
     template_served_defs: RefCell<HashMap<String, bool>>,
     fuel: Cell<usize>,
     /// The declaration-level trace of every `def` clone generated so far.

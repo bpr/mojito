@@ -26,7 +26,7 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamId;
-use mojito_types::types::{CallableDefault, ParamDecl, Ty};
+use mojito_types::types::{CallableDefault, ParamDecl, Ty, TyArg};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
 use std::collections::HashMap;
@@ -820,6 +820,23 @@ struct FnSig {
     param_decls: Vec<ParamDecl>,
 }
 
+/// The name a solved type argument reifies to in an erased frame: the
+/// spelling [`MirInstr::ConstructTypeParam`] constructs from. A type with no
+/// runtime constructor by name (a symbolic one, a SIMD vector) reifies to
+/// nothing, and the slot stays unsupplied.
+fn reified_type_spelling(ty: &Ty) -> Option<String> {
+    Some(match ty {
+        Ty::Struct(name, _) => name.clone(),
+        Ty::Int => "Int".to_string(),
+        Ty::UInt => "UInt".to_string(),
+        Ty::Bool => "Bool".to_string(),
+        Ty::Float64 => "Float64".to_string(),
+        Ty::StringLiteral => "StringLiteral".to_string(),
+        Ty::None => "NoneType".to_string(),
+        _ => return None,
+    })
+}
+
 /// Reify generic value parameters in declaration order. Missing source
 /// arguments are filled from checked scalar/callable defaults; callable aliases
 /// can therefore reuse an earlier runtime closure without ever converting its
@@ -1241,6 +1258,30 @@ impl VmBackend {
         clippy::needless_pass_by_value,
         reason = "borrow bundle: `From<&Frame>` builds it at each call site"
     )]
+    /// [`Self::runtime_parameter_arguments`] completed by the type arguments
+    /// the checker solved for a generic `def` call: a type parameter the
+    /// brackets spelled no struct name for (`make[Tuple[Int, Bool]]()`)
+    /// reifies as the solved struct's name.
+    fn supplied_parameter_arguments(
+        &self,
+        prog: &Prog,
+        caller: CallerBindings<'_>,
+        declarations: &[ParamDecl],
+        arguments: &[mojito_mir::mir::MirParamArg],
+        instantiated: &[TyArg],
+    ) -> Vec<Option<Value>> {
+        let mut supplied = self.runtime_parameter_arguments(prog, caller, declarations, arguments);
+        for (slot, argument) in supplied.iter_mut().zip(instantiated) {
+            if slot.is_none()
+                && let TyArg::Ty(ty) = argument
+                && let Some(spelling) = reified_type_spelling(ty)
+            {
+                *slot = Some(Value::Str(spelling));
+            }
+        }
+        supplied
+    }
+
     fn runtime_parameter_arguments(
         &self,
         prog: &Prog,
@@ -1337,6 +1378,7 @@ impl VmBackend {
     }
 }
 
+#[derive(Clone, Copy)]
 struct CallerBindings<'a> {
     function: usize,
     frame: FrameId,

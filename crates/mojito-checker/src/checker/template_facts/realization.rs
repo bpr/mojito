@@ -379,7 +379,6 @@ impl Checker {
                     // folded loop index is read back from the copy it fixed.
                     TemplateClass::ClosedScalarBody
                     | TemplateClass::FixedCalls
-                    | TemplateClass::BoundedOperations
                     | TemplateClass::ScalarBranches
                     | TemplateClass::PackElements
                     | TemplateClass::FunctionBody(_) => true,
@@ -1261,7 +1260,7 @@ impl Checker {
             self.realize_construction(&mut facts, *construction, occurrences, substitution)?;
         }
         for operator in &template.operators {
-            self.realize_operator(&mut facts, *operator, occurrences)?;
+            self.realize_operator(template, &mut facts, *operator, occurrences)?;
         }
         facts.operators.clear();
         for (call, builtin) in &template.bound_builtins {

@@ -1011,20 +1011,26 @@ substituted type. The driver adds the ones only checked types show
 (`src/compiler/template_reach.rs`): a body whose types hold a tuple or a
 struct specialized whole over the struct's parameters, and one that calls an
 overloaded method with binders of its own. An instance whose argument
-carries a loan clones no more than a plain-data one. A generic `def` called
-at a loan-carrying argument keeps its template the same way
-(`Elab::template_serves_def`): it mints a clone, over clone origin binders,
-only where its body holds or reaches such a construct. An associated type
-the signature does not spell (`C.Element` as a loop variable's type) is
-solved from `MirStructDeclaration.associated_types` once `C` is bound. Every
-other closed call of a generic `def` still clones. Because
-no clone check walks a template-served body at the instance's arguments, the
-driver also reads from the template's checked types which closed instances
-that body reaches (`Box[List[Self.T]]`), transitively, and requests them
-(a served `def`'s body is read the same way, at the types its call binds), so
-a struct reached only from such a body still mints the clones it keeps;
-`native::mono` then targets that clone where a template body calls the
-method on a closed receiver (`instance_method_target`).
+carries a loan clones no more than a plain-data one. A plain trait-bound
+generic `def` keeps its template at every closed call, inferred or explicit
+(`Elab::template_serves_def`): it mints a clone only where it carries a
+value parameter, or where its body holds or reaches such a construct, and a
+clone at a loan-carrying argument is spelled over clone origin binders. MIR
+records the compile-time arguments the checker solved on the call
+(`MirInstr::Call::instantiated_args`), so the elaborator binds a type
+parameter no runtime parameter or result spells (`bytes[Int]()`); an
+associated type the signature does not spell (`C.Element` as a loop
+variable's type) is solved from `MirStructDeclaration.associated_types` once
+`C` is bound. Because no clone check walks a template-served body at the
+instance's arguments, the driver also reads from the template's checked
+types which closed instances that body reaches (`Box[List[Self.T]]`),
+transitively, and requests them (a served `def`'s body is read the same way,
+at the types each closed call binds), so a struct reached only from such a
+body still mints the clones it keeps; `native::mono` then targets that
+clone where a template body calls the method on a closed receiver
+(`instance_method_target`), and selects the receiver's own overload where a
+bound dispatch names an overloaded method with binders of its own
+(`dispatched_overload_target`).
 
 Such a struct gains those **per-instantiation method clones** appended
 to its own method list. The checker records every closed application it
@@ -2437,6 +2443,15 @@ elaborator unifies a signature's `C.Element` against a call's types first
 (`mono/unify.rs`); one no signature spells it substitutes from the member of
 the struct `C` is bound to (`declared_associated_type`,
 `mono/substitute.rs`). Elaborated MIR carries no associated types.
+
+A generic `def` call carries the compile-time arguments the checker solved,
+in declaration order and in the caller's binder scope
+(`MirInstr::Call::instantiated_args`, text schema 1.13, from
+`SemanticAdjustment::InstantiatedArguments`). The elaborator binds the
+callee's own type parameters from them before unifying the runtime
+arguments, so a parameter no runtime parameter or result spells is bound
+too; the erased oracle reifies the struct's name from them where the
+brackets spelled none. Elaborated MIR carries none.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection

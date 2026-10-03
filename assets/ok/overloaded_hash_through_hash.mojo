@@ -1,8 +1,7 @@
-# Pin gap probe (Mojo 1.2.0.dev2026092105): `hash(x)` of a struct that
-# overloads `__hash__` on the hasher's type. The pin prints True; Mojito
-# checks the program and then stops at run time with "vm: unknown method
-# 'Twin.__hash__'": the call reaches the VM under the method's plain name,
-# which no member of the overload set is lowered under. Roadmap section 3 carries the entry.
+# `hash(x)` of a struct that overloads `__hash__` on the hasher's type: the
+# bundled `hash` is a plain trait-bound `def`, served by its template, and the
+# elaborator selects the overload the hasher instance takes. The pin prints
+# `True`.
 from std.hashlib import Hasher
 from std.hashlib._ahash import AHasher
 

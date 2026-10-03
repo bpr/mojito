@@ -149,6 +149,7 @@ assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctor_literal_materialization.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_def_static_receiver_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_nested_def_captures.mojo	-	ineligible	no-scalar-entry-shape
@@ -188,6 +189,7 @@ assets/ok/instance_constructor_symbols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/invert_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/joint_map.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/keyed_def_builds_loan_carrying_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/keyword_slice_subscripts.mojo	-	ineligible	no-scalar-entry-shape
@@ -303,6 +305,7 @@ assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overloaded_hash_through_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_owned_parameter.mojo	-	ineligible	no-scalar-entry-shape
@@ -705,6 +708,7 @@ assets/ok/template_print_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_print_whole_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_served_def_closed_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_loan_carrying_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_tuple_default_initializer.mojo	-	ineligible	no-scalar-entry-shape

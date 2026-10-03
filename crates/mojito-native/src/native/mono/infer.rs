@@ -73,6 +73,7 @@ impl Specializer<'_> {
                 actuals,
                 &[],
                 &call.param_arg_regs,
+                &[],
             )?
         } else {
             let (bindings, arguments, _) =
@@ -115,6 +116,7 @@ impl Specializer<'_> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
         param_args: &[mojito_mir::mir::MirParamArg],
+        instantiated: &[TyArg],
     ) -> Result<(String, Bindings, Vec<InstanceArg>), MonoError> {
         let declaration = self.declarations.get(target).copied().ok_or_else(|| {
             self.error(
@@ -166,6 +168,19 @@ impl Specializer<'_> {
                 })?;
             unify(receiver_pattern, actual_receiver, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        }
+        // The type arguments the checker solved for the call bind the
+        // callee's own binders first: a parameter no runtime parameter or
+        // result spells has no other source. One still symbolic here belongs
+        // to a parametric caller, which unification leaves as it stands.
+        for (decl, argument) in declaration.param_decls.iter().zip(instantiated) {
+            if let (ParamDecl::Type { .. }, TyArg::Ty(ty)) = (decl, argument)
+                && !is_symbolic(ty)
+            {
+                bind_type(&decl.binder(), ty, &mut bindings).map_err(|e| {
+                    self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                })?;
+            }
         }
         bind_explicit_value_arguments(
             &declaration.param_decls,

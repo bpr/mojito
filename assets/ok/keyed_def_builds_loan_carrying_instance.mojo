@@ -1,13 +1,7 @@
-# Probe: does a generic `def` that calls a compile-time-keyed method run when
-# only its own body names the instance, and the argument carries a loan?
-#
-# `use` reaches `Box.kind`, whose body is a `comptime if`, so `use` keeps its
-# clone, spelled over an origin binder. `Box[Pointer[...]]` is named only
-# inside that clone.
-#
-# Pin (2026-09-21): prints `2`.
-# Mojito: stops at run time ("Box.kind: unspecialized type-keyed method"):
-# the instance the clone names over its origin binder is never requested.
+# A generic `def` that builds an instance only its body names and calls its
+# compile-time-keyed method: `use` is served by its template, the driver
+# reads `Box[T]` off the template's checked types at the loan-carrying
+# argument, and the elaborator hands `b.kind()` to that instance's clone.
 struct Box[T: Copyable & Deinitable](Movable):
     var item: Self.T
 

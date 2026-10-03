@@ -296,11 +296,13 @@ the package list, so neither is reshaped later.
   bodies without them.
 - **Value-dependent register types.** Rows 23 and 27 need a type over a
   parameter expression. That is the common type vocabulary entry.
-- **A `def` the elaborator cannot instantiate.** A generic `def` called at
-  a loan-carrying argument is served by its template (§Carried sources).
-  It still clones, with clone origin binders, where its body holds or
-  reaches a compile-time construct. A clone over an origin binder that
-  stores a copy records no loan. Each is a roadmap entry.
+- **A `def` the elaborator cannot instantiate.** A plain trait-bound
+  generic `def` is served by its template at every closed call (§Carried
+  sources for the loan-carrying ones). It still clones, with clone origin
+  binders at a loan-carrying argument, where it carries a value parameter
+  or where its body holds or reaches a compile-time construct. A clone over
+  an origin binder that stores a copy records no loan. Each is a roadmap
+  entry.
 - **Where the symbolic check is too lenient.** Row 10 closed with P2's first
   step. Row 20 holds for a method its template serves and is still a
   section-3 entry for one that clones. Two more turned up when the clones
@@ -329,9 +331,9 @@ are the instance's. Its transfer summary therefore carries the stored type.
   type still symbolic at the call is carried on in the caller's own summary.
   A plain-data type names no place and records nothing.
 - **No binder.** Nothing in the summary names an origin parameter, so no
-  clone origin binder is needed to spell it. A `def` called at a
-  loan-carrying argument keeps its template, and a loan-carrying instance is
-  served by its template as a plain-data one is.
+  clone origin binder is needed to spell it. A plain trait-bound `def`
+  keeps its template at every closed call, loan-carrying or not, and a
+  loan-carrying instance is served by its template as a plain-data one is.
 - **The escape verdict** is the call's: a carried source rooted in the
   caller's frame cannot reach a destination that outlives it.
 - **A nested `def`** records none. Its summary key is its bare name in every

@@ -792,6 +792,7 @@ impl Checker {
     /// records nothing.
     pub(super) fn realize_operator(
         &self,
+        template: &CheckedBodyFacts,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
@@ -815,6 +816,20 @@ impl Checker {
         let result = fact_at(&facts.expression_types, id)
             .ok_or("an operator has no retained result type")?
             .clone();
+        // The template borrowed a named parameter-typed operand for the
+        // requirement's read dunder; an instance whose operand is nominal
+        // or scalar borrows it by its own dunder's convention, below.
+        if !matches!(left_ty, Ty::Param { .. }) {
+            let symbolic = |operand: &OccurrenceId| {
+                matches!(
+                    fact_at(&template.expression_types, *operand),
+                    Some(Ty::Param { .. })
+                )
+            };
+            facts
+                .borrowed_read_call_places
+                .retain(|borrowed| !([left, right].contains(borrowed) && symbolic(borrowed)));
+        }
         if fact_at(&facts.operation_adjustments, id)
             == Some(&mojito_checked::checked::SemanticAdjustment::ReflectedOperator)
         {

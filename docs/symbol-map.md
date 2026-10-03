@@ -966,8 +966,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry. `template_serves_def` says
-  which generic `def` keeps its template at a loan-carrying argument: one
-  with no such construct. An associated type its body names is solved below
+  which generic `def` keeps its template at every closed call: a plain
+  trait-bound one, with type parameters only and no such construct. An
+  associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type`, `native/mono/substitute.rs`).
   `checker/origins/transfer.rs`
@@ -976,8 +977,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receiver's arguments and the call's own bindings, `call_closed`).
 - `src/compiler/template_reach.rs` owns what a template-served body reaches
   once its owner's parameters are bound (`TemplateReach`): a method at an
-  instance, and a generic `def` at a loan-carrying call
-  (`loan_carrying_calls`). It is read from one check's facts: the
+  instance, and a generic `def` at a closed call (`closed_def_calls`). It is
+  read from one check's facts: the
   closed instances its checked types name once the struct's parameters are
   bound (`instances`, requested like checker-recorded ones), and the methods
   whose checked bodies only an instance's own check can serve
@@ -1030,10 +1031,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `native/mono/instances.rs` select clones through it from checked register
   types, as does `instance_method_target`, which hands a template body's
   method call on a closed receiver to that instance's clone where one
-  exists; `mono/infer.rs:bind_static_receiver` binds a struct's parameters
+  exists, and `dispatched_overload_target`, which selects the receiver's
+  own overload for a bound dispatch whose qualifier spells the requirement's
+  binders (`pick$ov$T$Copyable$Int` against `First.pick$ov$T$Int`);
+  `mono/infer.rs:bind_static_receiver` binds a struct's parameters
   from the receiver type a static call records, which
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR
-  lowering copies into `MirInstr::Call::receiver`); `instance_clone_base` recovers a clone's source method name for the
+  lowering copies into `MirInstr::Call::receiver`, and `infer_call` binds a
+  `def`'s own type parameters from the arguments the checker solved, which
+  `SemanticAdjustment::InstantiatedArguments` carries into
+  `MirInstr::Call::instantiated_args`); `instance_clone_base` recovers a clone's source method name for the
   exact-name lifecycle gates, `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (a clone's baked
   `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,

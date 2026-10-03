@@ -466,6 +466,12 @@ pub enum MirInstr {
         /// argument need carry the struct's parameters, so the elaborator
         /// binds them from this type; a resolved call keeps none.
         receiver: Option<Ty>,
+        /// The compile-time arguments the checker solved for a call of a
+        /// generic `def`, in declaration order and in the caller's binder
+        /// scope. A type argument no runtime parameter or result spells
+        /// (`bytes[Int]()`) is bound from here by the elaborator; a resolved
+        /// call keeps none.
+        instantiated_args: Vec<TyArg>,
     },
     /// A call through a runtime function value. Callable parameters use this
     /// instruction instead of treating the parameter name as a global symbol.

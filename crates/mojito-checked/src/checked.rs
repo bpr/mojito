@@ -611,6 +611,11 @@ pub enum SemanticAdjustment {
     /// with their checked values: MIR passes each as a named compile-time
     /// argument, exactly as if the brackets had spelled it.
     InferredValueArguments(Vec<(String, mojito_types::ct::CtValue)>),
+    /// Every compile-time argument a call of a generic `def` solved, in
+    /// declaration order ([`GenericInstantiation::arguments`]): the call's
+    /// MIR carries them so the elaborator binds a type parameter no runtime
+    /// parameter or result spells.
+    InstantiatedArguments(Vec<mojito_types::types::TyArg>),
     /// A consuming method receiver is a source place, but the selected type is
     /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
     /// tombstoning the caller's place. This coexists with parameterized-method
@@ -2128,12 +2133,13 @@ fn build_checked_expressions(
                     param_decls: param_decls.clone(),
                 });
             }
-            if let Some(arguments) = self
-                .generic_instantiations
-                .get(&span)
-                .and_then(GenericInstantiation::inferred_value_arguments)
-            {
-                adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
+            if let Some(instantiation) = self.generic_instantiations.get(&span) {
+                if let Some(arguments) = instantiation.inferred_value_arguments() {
+                    adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
+                }
+                adjustments.push(SemanticAdjustment::InstantiatedArguments(
+                    instantiation.arguments.clone(),
+                ));
             }
             if let Some(elements) = self.tuple_unpack_plans.get(&span) {
                 adjustments.push(SemanticAdjustment::TupleUnpack {

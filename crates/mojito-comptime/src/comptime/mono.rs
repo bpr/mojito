@@ -969,13 +969,20 @@ impl Elab<'_> {
                         };
                         (values, Vec::new(), false)
                     } else if self.bound_generics.contains(name.as_str()) {
+                        // A call the template serves is left as written,
+                        // explicit application included: the elaborator
+                        // instantiates the template's MIR.
+                        let template = self.specializable[name.as_str()];
+                        if self.template_serves_def(name, template, mono) {
+                            mono.retain_abstract(name, &source_span, false);
+                            return Ok(());
+                        }
                         // Soft resolution: only an explicit application whose
                         // arguments resolve concretely monomorphizes. A bound
                         // violation on a resolved argument is a real error;
                         // any other failure (inference, symbolic arguments)
                         // leaves the call on the template's abstract path and
                         // retains the template.
-                        let template = self.specializable[name.as_str()];
                         match self.resolve_spec_args_for(
                             template,
                             name,
@@ -1639,7 +1646,7 @@ impl Elab<'_> {
             Some(_) => self.selected_declaration(name, target.decl),
             None => *self.specializable.get(name)?,
         };
-        if self.template_serves_def(name, template, &target.vals, mono) {
+        if self.template_serves_def(name, template, mono) {
             return None;
         }
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;

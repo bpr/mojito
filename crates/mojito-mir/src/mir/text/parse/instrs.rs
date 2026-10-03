@@ -292,6 +292,13 @@ impl Decoder {
                     .field(fields, "receiver")
                     .ok()
                     .and_then(|found| self.option_ty(Some(found))),
+                // Schema 1.13 records the solved arguments of a generic
+                // `def` call; an older artifact carries none.
+                instantiated_args: self
+                    .field(fields, "instantiated_args")
+                    .ok()
+                    .map(|found| self.ty_args(found))
+                    .unwrap_or_default(),
             }),
             "call.indirect" => Some(MirInstr::CallIndirect {
                 dest: self.req(value, fields, "dest", Self::reg)?,

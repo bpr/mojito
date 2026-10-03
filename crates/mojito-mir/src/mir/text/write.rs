@@ -665,6 +665,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             capture_accesses,
             param_arg_regs,
             receiver,
+            instantiated_args,
         } => record(
             tag,
             &[
@@ -681,6 +682,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ),
                 ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
                 ("receiver", option(receiver.as_ref().map(ty_value))),
+                (
+                    "instantiated_args",
+                    list(instantiated_args.iter().map(ty_arg)),
+                ),
             ],
         ),
         MirInstr::CallIndirect {

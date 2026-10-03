@@ -605,6 +605,17 @@ impl Checker {
         }
     }
 
+    /// A read dunder reached through a bound reads a named operand of the
+    /// parameter type where it lies, as [`Self::borrow_nominal_place_argument`]
+    /// reads a struct operand: the instance's dunder takes it by `read`.
+    pub(super) fn borrow_parameter_place_argument(&self, argument: &Expr, ty: &Ty) {
+        if matches!(argument.kind, ExprKind::Identifier(_)) && matches!(ty, Ty::Param { .. }) {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(argument.source_span());
+        }
+    }
+
     /// A read-only builtin (`print`) over an element of a named tuple or
     /// pack reads the element where it lies, as it reads a field.
     pub(super) fn borrow_storage_element_argument(&self, argument: &Expr) {

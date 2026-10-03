@@ -149,6 +149,7 @@ assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	saniti
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
+assets/ok/generic_def_static_receiver_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
@@ -188,6 +189,7 @@ assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/joint_map.mojo	main	exe-differential	sanitized
+assets/ok/keyed_def_builds_loan_carrying_instance.mojo	main	exe-differential	sanitized
 assets/ok/keyword_call.mojo	main	exe-differential	sanitized
 assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
@@ -303,6 +305,7 @@ assets/ok/overload_transfer_effect_isolation.mojo	main	exe-differential	sanitize
 assets/ok/overload_var_copy_beside_generic.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_constructor.mojo	main	exe-differential	sanitized
 assets/ok/overload_var_copy_method.mojo	main	exe-differential	sanitized
+assets/ok/overloaded_hash_through_hash.mojo	main	exe-differential	sanitized
 assets/ok/overloading_arity.mojo	main	exe-differential	sanitized
 assets/ok/overloading_literal_default.mojo	main	exe-differential	sanitized
 assets/ok/overloading_owned_parameter.mojo	main	exe-differential	sanitized
@@ -705,6 +708,7 @@ assets/ok/template_print_statement.mojo	main	exe-differential	sanitized
 assets/ok/template_print_whole_value.mojo	main	exe-differential	sanitized
 assets/ok/template_raise_forms.mojo	main	exe-differential	sanitized
 assets/ok/template_scalar_loop.mojo	main	exe-differential	sanitized
+assets/ok/template_served_def_closed_call.mojo	main	exe-differential	sanitized
 assets/ok/template_served_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/template_served_loan_carrying_instance.mojo	main	exe-differential	sanitized
 assets/ok/template_tuple_default_initializer.mojo	main	exe-differential	sanitized

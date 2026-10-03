@@ -67,6 +67,7 @@ impl Flatten<'_> {
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs: Vec::new(),
                 receiver: self.static_receiver(object),
+                instantiated_args: Vec::new(),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return d;
@@ -243,6 +244,7 @@ impl Flatten<'_> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
+                instantiated_args: Vec::new(),
             });
             let (recv, recv_place) = self.lower_call_receiver(writer);
             let d = self.fresh_typed(span(e), None, Ty::None);

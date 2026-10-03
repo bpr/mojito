@@ -423,10 +423,31 @@ its template's MIR, lifecycle members and constructors included.
   construct keeps its clone. `assets/ok/unspelled_loan_carrying_type_argument.mojo`
   mints 245 clones where it minted 247. The three benchmark programs hold
   no such call and are unchanged.
-- **Not done.** The clause forms the elaborator leaves undecided, every
-  other closed call of a generic `def` (plain data clones whether the call
-  is inferred or explicit), and the exit: clone-symbol retargeting and the
-  method certificate classes still serve the clones that remain.
+- **Every closed call of a plain `def` (2026-10-02).** `show(n)` and
+  `show[Int](n)` keep the template: a uniquely named `def` with type
+  parameters only, no compile-time construct in or reached from its body,
+  and no struct specialized whole over its parameters is never cloned. The
+  call records the arguments the checker solved
+  (`MirInstr::Call::instantiated_args`, text schema 1.13), so the elaborator
+  binds a parameter no runtime parameter or result spells (`bytes[Int]()`),
+  and the erased oracle reifies a struct's name from them. The driver reads
+  what the served body reaches at every closed call. On the way the
+  elaborator selects the receiver's own overload for a bound dispatch of an
+  overloaded method with binders of its own, a comparison through a bound
+  borrows a named operand of the parameter type as the requirement's read
+  dunder does, and a loop over a bound reads its exhaustion type from the
+  bound's associated iterator. `def_type_arguments` reads 0 on all three
+  benchmark programs (12, 16 and 12 before). The `BoundedOperations`
+  certificate class served nothing afterwards and is deleted; `FixedCalls`
+  admits the built-in `len` instead.
+- **Not done.** The clause forms the elaborator leaves undecided, the
+  `def`s that still clone (a value parameter beside the type parameters, a
+  compile-time construct held or reached, a struct specialized whole over
+  the parameters, an overload family), and the exit: clone-symbol
+  retargeting and the remaining certificate classes still serve the clones
+  that remain — `ClosedScalarBody`, `FixedCalls` and `FunctionBody` now
+  only for a stub-reaching, value-keyed, or overloaded `def` and for a
+  compile-time evaluation's own subprogram.
 
 The census on the three `benchmarks/compile` programs, before and after:
 
@@ -448,6 +469,13 @@ A `def` that names an associated type only in its body (`for item in items`
 over `C: Iterable`) no longer clones at a loan-carrying argument: a struct's
 MIR declaration carries its associated types (text schema 1.12), and the
 elaborator reads `C.Element` off the struct `C` is bound to.
+
+Every closed call of a plain trait-bound `def` keeps its template since
+2026-10-02, so the `def`, type arguments only row reads 0 → 0 on all three
+programs where the table's baseline read 12, 16 and 12 (`hello`'s fixed
+cost was the `os`, `path` and `stat` module `def`s at `String` and `Int`;
+`generic`'s added `has_two_or_more` and `is_empty` at `Bag` and
+`List[Int]`). Minted by the AST cloner reads 232 on all three.
 
 Measured against decision D4 on the same machine, release profile, `total`
 from `--timings`, the commit before and this one interleaved, median of five:

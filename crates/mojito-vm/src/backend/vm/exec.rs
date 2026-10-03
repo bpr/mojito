@@ -359,6 +359,7 @@ impl VmBackend {
                 arg_places,
                 kwarg_places,
                 param_arg_regs,
+                instantiated_args,
                 ..
             } => {
                 let mut argv: Vec<Value> =
@@ -400,7 +401,13 @@ impl VmBackend {
                             .collect()
                     },
                     |declarations| {
-                        self.runtime_parameter_arguments(prog, caller, declarations, param_arg_regs)
+                        self.supplied_parameter_arguments(
+                            prog,
+                            caller,
+                            declarations,
+                            param_arg_regs,
+                            instantiated_args,
+                        )
                     },
                 );
                 // A handwritten constructor receives reference arguments as

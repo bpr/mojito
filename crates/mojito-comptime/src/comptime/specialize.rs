@@ -686,34 +686,37 @@ impl Elab<'_> {
         stubbed
     }
 
-    /// Whether the template of the `def` `name` serves a call that binds
-    /// `values`, so the call mints no clone: one of them carries a loan, the
-    /// body neither holds a construct only an instance lowers (by its syntax,
-    /// or by its checked types as the driver read them) nor reaches a
+    /// Whether the template of the `def` `name` serves every closed call of
+    /// it, so no call mints a clone: the `def` is a plain trait-bound one
+    /// whose compile-time parameters are all type parameters, and its body
+    /// neither holds a construct only an instance lowers (by its syntax, or
+    /// by its checked types as the driver read them) nor reaches a
     /// compile-time-keyed stub. The elaborator instantiates the template's
-    /// MIR for such a call, and the call's transfer summary names the loans
-    /// by the stored type. The verdict is the first one made for the name,
-    /// so every call of it agrees.
-    pub(super) fn template_serves_def(
-        &self,
-        name: &str,
-        template: &Stmt,
-        values: &[CtValue],
-        mono: &Mono,
-    ) -> bool {
-        let carries_loan = values.iter().any(
-            |value| matches!(value, CtValue::Type(ty) if self.ty_mentions_origin_slotted_struct(ty)),
-        );
-        if !carries_loan {
-            return false;
-        }
+    /// MIR for each call, and a call's transfer summary names its loans by
+    /// the stored type. A value parameter keeps the clone until the
+    /// elaborator binds one from a call. The verdict is the first one made
+    /// for the name, so every call of it agrees.
+    pub(super) fn template_serves_def(&self, name: &str, template: &Stmt, mono: &Mono) -> bool {
         if let Some(served) = self.template_served_defs.borrow().get(name) {
             return *served;
         }
-        let StmtKind::Def { body, .. } = &template.kind else {
+        let StmtKind::Def {
+            body, type_params, ..
+        } = &template.kind
+        else {
             return false;
         };
-        let served = !holds_instance_construct(body)
+        let served = self.bound_generics.contains(name)
+            && classify_ct_params(type_params, name).iter().all(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Type {
+                        variadic: false,
+                        ..
+                    }
+                )
+            })
+            && !holds_instance_construct(body)
             && !self
                 .keyed_methods
                 .contains(&(name.to_string(), String::new()))

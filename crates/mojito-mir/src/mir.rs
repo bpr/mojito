@@ -2176,6 +2176,20 @@ impl Flatten<'_> {
         registers
     }
 
+    /// The compile-time arguments the checker solved for a call of a generic
+    /// `def`, in declaration order; empty where the call recorded none.
+    fn instantiated_args(&self, call: &Expr) -> Vec<TyArg> {
+        self.checked_adjustments(call)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InstantiatedArguments(arguments) => {
+                    Some(arguments)
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
     /// The value parameters the checker inferred for a call to an erased
     /// generic `def` (`size(Counter[4](1))` binding `n = 4`), each as a named
     /// argument, just as brackets spelling it would pass it: a closed scalar

@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Every closed call of a plain trait-bound generic `def` (`show(n)`,
+  `show[Int](n)`, `bytes[Int]()`) is served by its template and mints no
+  clone: the elaborator instantiates the template's MIR for the VM and the
+  native backend alike. The call carries the compile-time arguments the
+  checker solved (`MirInstr::Call::instantiated_args`, text schema 1.13),
+  so a type parameter no runtime parameter or result spells binds too, and
+  the erased oracle reifies a struct's name from them. A `def` with a value
+  parameter, a compile-time construct held or reached, a struct specialized
+  whole over its parameters, or an overloaded name keeps its clone. Along
+  the way a bound dispatch of an overloaded method with binders of its own
+  selects the receiver's overload, a comparison through a bound borrows a
+  named operand where it lies (no copy constructor runs), and a `for` over a
+  bound reads its exhaustion type from the bound's associated iterator.
+  `assets/ok/template_served_def_closed_call.mojo` pins it; three probes
+  that now run are promoted (`overloaded_hash_through_hash`,
+  `generic_def_static_receiver_binder`,
+  `keyed_def_builds_loan_carrying_instance`). The `BoundedOperations`
+  certificate class served nothing afterwards and is deleted.
 - A generic `def` that names an associated type only in its body
   (`def count[C: Iterable](items: C) -> Int` with `for item in items`) is
   served by its template at a loan-carrying argument and mints no clone. A

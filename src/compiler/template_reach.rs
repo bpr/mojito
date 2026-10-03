@@ -1,12 +1,12 @@
 //! What a template-served body reaches once its owner's parameters are
 //! bound: a generic struct's template methods at an instance, and a generic
-//! `def` at a call whose argument carries a loan.
+//! `def` at a closed call.
 //!
 //! A method with no compile-time construct in its body mints no clone per
-//! instance, and neither does such a `def` at a loan-carrying argument: the
-//! elaborator instantiates the template's MIR. The clone's check is then no
-//! longer there to discover what the body reaches at those arguments, so
-//! the driver reads it off the template's checked types instead.
+//! instance, and neither does such a `def` at a closed call: the elaborator
+//! instantiates the template's MIR. The clone's check is then no longer
+//! there to discover what the body reaches at those arguments, so the
+//! driver reads it off the template's checked types instead.
 
 use super::{ServedRequests, StructInstanceRequest, closed_generic_argument};
 use crate::ast::{Expr, Stmt, StmtKind};
@@ -28,7 +28,7 @@ pub(super) struct TemplateDemand {
     specialized: HashSet<String>,
     /// Template methods that still clone per instance because of what their
     /// checked bodies hold, as (struct, method). A `def` that still clones
-    /// at a loan-carrying argument for the same reason is (`def`, "").
+    /// for the same reason is (`def`, "").
     keyed_methods: Vec<(String, String)>,
 }
 
@@ -57,7 +57,7 @@ impl TemplateDemand {
     ) -> Option<String> {
         let mut reach = TemplateReach::new(checked, &self.specialized);
         let mut last = None;
-        let calls = loan_carrying_calls(checked);
+        let calls = closed_def_calls(checked);
         let owners = |struct_requests: &[StructInstanceRequest]| {
             [struct_requests, calls.as_slice()].concat()
         };
@@ -337,26 +337,13 @@ fn template_applications(
     bodies.found
 }
 
-/// The closed calls of generic `def`s in `checked` that bind a loan-carrying
-/// argument and still name their template, each as its callee with the
-/// arguments it binds. Such a call may be served by the template.
-fn loan_carrying_calls(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
-    let carries_loan = |argument: &TyArg| match argument {
-        TyArg::Ty(ty) => mentions(ty, &|inner| match inner {
-            Ty::Ref(_) => true,
-            Ty::Pointer { origin, .. } => origin.as_origin().is_some(),
-            Ty::Struct(_, arguments) => arguments
-                .iter()
-                .any(|argument| matches!(argument, TyArg::Origin(_))),
-            _ => false,
-        }),
-        TyArg::Val(_) | TyArg::Origin(_) => false,
-    };
+/// The closed calls of generic `def`s in `checked` that still name their
+/// template, each as its callee with the arguments it binds. Such a call may
+/// be served by the template.
+fn closed_def_calls(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
     let mut calls: Vec<StructInstanceRequest> = Vec::new();
     for instantiation in checked.generic_instantiations.values() {
-        if !instantiation.arguments.iter().any(carries_loan)
-            || !instantiation.arguments.iter().all(closed_generic_argument)
-        {
+        if !instantiation.arguments.iter().all(closed_generic_argument) {
             continue;
         }
         let call = StructInstanceRequest::new(

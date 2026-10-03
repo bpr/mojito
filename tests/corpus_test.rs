@@ -297,9 +297,18 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // type arguments, so a template-served body's call cannot be handed to
     // the receiver instance's clone as the elaborator hands it.
     "generic_struct_template_reach",
+    "keyed_def_builds_loan_carrying_instance",
+    "overloaded_hash_through_hash",
     // Section 1, the erased oracle: an erased value carries no type
-    // argument to construct `T()` from where `T` is a SIMD type.
+    // argument to construct `T()` from where `T` is a SIMD type or a struct
+    // over value parameters.
+    "simd_nullary_construction",
     "simd_parameter_default_construction",
+    "tuple_array_defaultable",
+    // Section 1, the erased oracle: a bound dispatch of an overloaded
+    // method with binders of its own spells the requirement's qualifier,
+    // which names no lowered overload of the erased receiver.
+    "same_arity_generic_method_overloads",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to tell a place pointer bound to `T` from a reference.
     "extensions::template_served_iterable_def",
@@ -310,7 +319,12 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "generic_struct_instance_bodies",
     "generic_struct_instance_dispatch",
     "optional_raising_subscript",
+    "template_def_string_builtins",
     "template_method_string_builtins",
+    // Section 1, the erased oracle: an erased body carries no type
+    // argument to take `size_of` of a parameter from.
+    "size_of_builtin",
+    "template_served_def_closed_call",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

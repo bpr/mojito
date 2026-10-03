@@ -394,12 +394,16 @@ pub(super) fn substitute_instruction(
             arg_places,
             kwarg_places,
             receiver,
+            instantiated_args,
             ..
         } => {
             sub_opt_ty(raises, bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
             sub_opt_ty(receiver, bindings)?;
+            for arg in instantiated_args {
+                *arg = substitute_arg(arg, bindings)?;
+            }
         }
         // A type name is spelled from the instance's type; a type the
         // bindings leave symbolic stays for the verifier's concrete mode.
@@ -454,6 +458,7 @@ pub(super) fn substitute_instruction(
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
+                instantiated_args: Vec::new(),
             };
         }
         CallIndirect {

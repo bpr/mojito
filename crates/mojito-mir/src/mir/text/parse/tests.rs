@@ -652,6 +652,7 @@ fn instruction_families_reprint_byte_identically() {
                 expr: None,
             }],
             receiver: None,
+            instantiated_args: Vec::new(),
         },
         MirInstr::CallIndirect {
             dest: Reg(11),
@@ -1487,6 +1488,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
                 expr: None,
             }],
             receiver: None,
+            instantiated_args: Vec::new(),
         },
     ];
     let program = program_with(vec![(
@@ -1556,6 +1558,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
                         expr,
                     }],
                     receiver: None,
+                    instantiated_args: Vec::new(),
                 }],
             ),
         )])
@@ -1599,6 +1602,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     receiver,
+                    instantiated_args: Vec::new(),
                 }],
             ),
         )])

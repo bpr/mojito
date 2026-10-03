@@ -429,6 +429,7 @@ impl Flatten<'_> {
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
                         receiver: None,
+                        instantiated_args: Vec::new(),
                     });
                     dest
                 }

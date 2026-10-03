@@ -42,21 +42,11 @@ impl Flatten<'_> {
                 )
             })
         {
+            // A symbolic type has no layout to take the size of; the
+            // elaborator substitutes the instance's type, and only the
+            // erased oracle reaches the template's own instruction.
             let dest = self.fresh_typed(span(e), None, Ty::Int);
-            // A symbolic type has no layout to take the size of. Only
-            // a specialization can answer, and this body runs only
-            // once one exists, so the abstract template stops here.
-            if mojito_types::types::is_symbolic(&ty) {
-                self.emit(MirInstr::Unsupported(format!(
-                    "size_of of the unspecialized type '{ty}'"
-                )));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::Int(0),
-                });
-            } else {
-                self.emit(MirInstr::SizeOf { dest, ty });
-            }
+            self.emit(MirInstr::SizeOf { dest, ty });
             return dest;
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) =
@@ -591,6 +581,7 @@ impl Flatten<'_> {
         self.emit_call_invalidations(e, args, kwargs);
         let capture_accesses = self.checked_call_capture_accesses(e);
         let transfer_arg_places = arg_places.clone();
+        let instantiated_args = self.instantiated_args(e);
         self.emit(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
@@ -602,6 +593,7 @@ impl Flatten<'_> {
             capture_accesses,
             param_arg_regs,
             receiver: None,
+            instantiated_args,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);
@@ -800,6 +792,7 @@ impl Flatten<'_> {
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs,
                 receiver: self.static_receiver(object),
+                instantiated_args: Vec::new(),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return dest;

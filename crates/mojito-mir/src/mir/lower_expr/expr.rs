@@ -506,6 +506,7 @@ impl Flatten<'_> {
                     },
                 ],
                 receiver: None,
+                instantiated_args: Vec::new(),
             });
             return d;
         }
@@ -534,6 +535,7 @@ impl Flatten<'_> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
+            instantiated_args: Vec::new(),
         });
         d
     }
@@ -588,6 +590,7 @@ impl Flatten<'_> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
+            instantiated_args: Vec::new(),
         });
         d
     }
@@ -609,6 +612,7 @@ impl Flatten<'_> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
+                instantiated_args: Vec::new(),
             });
             return dest;
         }
@@ -628,6 +632,7 @@ impl Flatten<'_> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
+            instantiated_args: Vec::new(),
         });
         d
     }
@@ -667,6 +672,7 @@ impl Flatten<'_> {
                         capture_accesses: Vec::new(),
                         param_arg_regs: Vec::new(),
                         receiver: None,
+                        instantiated_args: Vec::new(),
                     });
                     register
                 }

@@ -420,6 +420,7 @@ impl FnLowering<'_> {
                 capture_accesses,
                 param_arg_regs,
                 receiver: _,
+                instantiated_args: _,
             } => {
                 // The callee's compiled signature is authoritative for the
                 // raising ABI.

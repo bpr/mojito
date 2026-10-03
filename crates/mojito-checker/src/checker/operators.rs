@@ -270,6 +270,13 @@ impl Checker {
             _ => None,
         };
         if let Some(ty) = result {
+            // A comparison through a bound dispatches the requirement's read
+            // dunder (`__eq__(self, other: Self)`), which reads a named
+            // operand where it lies, as a struct's own dunder does.
+            if span.is_some() && matches!(lt, Ty::Param { .. }) && lt == rt {
+                self.borrow_parameter_place_argument(left, &lt);
+                self.borrow_parameter_place_argument(right, &rt);
+            }
             return Ok(ty);
         }
         // Mixed literal/nominal String operands normalize onto the nominal

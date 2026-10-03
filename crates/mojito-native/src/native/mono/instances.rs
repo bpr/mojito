@@ -251,6 +251,63 @@ impl Specializer<'_> {
             .then_some(selected)
     }
 
+    /// The receiver's own overload a bound dispatch `dispatch` selects
+    /// (`__trait_dispatch.pick$ov$T$Copyable$Int` on `First`), when no
+    /// lowered symbol spells its qualifier: the call side spells the
+    /// requirement's own binders with their bounds, and a struct's lowered
+    /// symbol spells them bare (`First.pick$ov$T$Int`). The declaration whose
+    /// parameter types key as the checker keys a resolved call is the one.
+    pub(super) fn dispatched_overload_target(
+        &self,
+        template: &str,
+        method: &str,
+        dispatch: &str,
+    ) -> Option<String> {
+        let qualifier = mojito_symbol::symbol::overload_qualifier(dispatch)?;
+        let base = format!("{template}.{method}");
+        self.functions
+            .keys()
+            .filter(|name| mojito_symbol::symbol::is_overload_of(name, &base))
+            .find(|name| {
+                let Some(declaration) = self.declarations.get(*name) else {
+                    return false;
+                };
+                // The declaration lists no receiver; the function's first
+                // parameter is the struct type its `Self`-typed parameters
+                // canonicalize to.
+                let self_ty = declaration
+                    .has_receiver
+                    .then(|| self.functions.get(*name)?.param_types.first())
+                    .flatten()
+                    .map(peel_refs);
+                let params = declaration.param_types.as_slice();
+                let keywords = declaration
+                    .keyword_only
+                    .map(|index| declaration.param_names[index..].to_vec())
+                    .unwrap_or_default();
+                let signature =
+                    mojito_symbol::symbol::SignatureKey::from_tys_with_self(params, self_ty)
+                        .with_kw_variadic(declaration.kw_variadic.as_ref())
+                        .with_keyword_names(keywords);
+                let spelled = if mojito_symbol::symbol::receiver_overloaded_method(method) {
+                    if declaration.has_receiver {
+                        mojito_symbol::symbol::receiver_method_symbol(
+                            template,
+                            method,
+                            declaration.receiver_convention,
+                            &signature,
+                        )
+                    } else {
+                        mojito_symbol::symbol::static_method_symbol(template, method, &signature)
+                    }
+                } else {
+                    mojito_symbol::symbol::method_symbol(template, method, &signature)
+                };
+                mojito_symbol::symbol::overload_qualifier(&spelled) == Some(qualifier)
+            })
+            .map(|name| (*name).to_string())
+    }
+
     pub(super) fn enqueue_display_instance(
         &mut self,
         owner: &str,
