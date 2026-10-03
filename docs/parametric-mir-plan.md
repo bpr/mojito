@@ -289,7 +289,8 @@ What the counts say about the order:
   `comptime if`, a `comptime for`, or a pack. They stay first inside P3
   because P3c and P3d depend on the forms they add, not because of what they
   move. The counts are not costs: they say how many bodies a class holds, not
-  what each costs to check. A program that exercises them is roadmap §1's benchmark entry.
+  what each costs to check. `benchmarks/compile/keyed.mojo`, below, is the
+  program that exercises them.
 - **Derivation already serves nine clones in ten.** 223 of 244, 303 of 329,
   and 618 of 666 bodies are derived, so a stage's saving is mostly the clone
   and its derivation, and only seldom a second inference.
@@ -310,6 +311,45 @@ census (rustc 1.96.1):
 The release rows of [`docs/performance.md`](performance.md) predate checked
 templates. That document records this baseline too, and a stage is measured
 against whichever profile it reruns, interleaved with the commit before it.
+
+#### The P3 benchmark (2026-10-02)
+
+`benchmarks/compile/keyed.mojo` mints the bodies P3a and P3b move, which the
+three programs above do not: user `def`s folding a `comptime if` on a value
+parameter (`scale[n]`, four instances) and on a type parameter (`describe`,
+four), unrolling a `comptime for` (`unrolled_sum[n]`, three), and expanding
+a type pack (`show` and `count`, five); the bundled `rotate_bits_left`
+(three); and a generic struct's method holding a `comptime if` on `Self.T`
+(`Cell.label`, three). The census at `444f4e03` plus the benchmark, beside
+Hello World at the same revision; rows that read zero in both are left out:
+
+| Bodies | Stage | `hello` | `keyed` |
+|---|---|---:|---:|
+| **Minted by the AST cloner** | | **232** | **254** |
+| `def` holding a `comptime if` | P3a | 0 | 11 |
+| `def` holding a `comptime for` | P3b | 0 | 3 |
+| `def` expanding a type pack | P3b | 0 | 5 |
+| Member of a `DType`- or vector-keyed struct | P3c, P3d | 43 | 43 |
+| Member of a variadic struct | P3d | 175 | 175 |
+| Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 3 |
+| Per-call method clone | P3e | 14 | 14 |
+| **Checked**: inferred | | 20 | 30 |
+| **Checked**: derived from a checked template | | 212 | 224 |
+| Templates no clone replaces | | 303 | 304 |
+| … of which `main` reaches | | 0 | 14 |
+| Instances those serve with no clone | | 0 | 16 |
+| Clones that keep a parameter | | 42 | 42 |
+
+- The 22 bodies over Hello World are the 22 the program asks for; the
+  keyed `def`s add no fixed cost.
+- Ten of the 22 are inferred and twelve derived, where Hello World derives
+  eleven bodies in twelve: a keyed class pays a full check per instance far
+  more often than the fixed cost does.
+- `total` from `--timings`, debug profile, `run` on the VM, three runs
+  interleaved with Hello World on the same binary: `keyed.mojo` 8.85 s
+  (8.85–8.90) against `hello.mojo` 8.72 s (8.63–8.74). Absolute times have
+  drifted from the P0 rows above, so a P3 stage reruns both, interleaved
+  with the commit before it.
 
 ### P1 — One elaborator below the waist, for both backends
 

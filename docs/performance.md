@@ -451,6 +451,17 @@ range, rustc 1.96.1.
 Absolute times drift between sessions, so a stage reruns the commit before it
 interleaved with its own, as the measurements above do.
 
+The P3 benchmark, `benchmarks/compile/keyed.mojo`, joins the workload set on
+2026-10-02: it mints the `comptime if`, `comptime for`, and type-pack bodies
+the three programs above never do. Its census is in the plan's §P0. Taken at
+`444f4e03` plus the benchmark, interleaved with Hello World on the same
+binary, same measure:
+
+| Program | Cloned | Inferred | Derived | Debug `run` |
+|---|---:|---:|---:|---:|
+| `hello.mojo` | 232 | 20 | 212 | 8.72 s (8.63–8.74) |
+| `keyed.mojo` | 254 | 30 | 224 | 8.85 s (8.85–8.90) |
+
 ### The VM on concrete MIR (2026-10-01)
 
 Since stage P1 the VM runs the elaborator's concrete graph instead of erased

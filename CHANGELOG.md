@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `benchmarks/compile/keyed.mojo` calls `def`s keyed by a `comptime if`, a
+  `comptime for`, and a type pack, user and bundled, at several
+  instantiations, plus a generic struct method holding a `comptime if`: the
+  bodies stages P3a and P3b of the parametric-MIR plan move, which the three
+  P0 programs never mint. Its instantiation census and debug timing sit
+  beside the P0 baseline in `docs/parametric-mir-plan.md` §P0 and
+  `docs/performance.md`.
 - The elaborator decides a struct member's `where` clause in every form the
   checker compiles: an `IsTrivially*` predicate, a value comparison
   (`where Self.n > 2`), and a `TypeList` query over a bound pack, besides
@@ -150,6 +157,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A module-level compile-time evaluation no longer fails with "unsupported
+  feature: comptime if" when the program holds a generic struct whose
+  method has a `comptime if` on the struct's parameters: the evaluation's
+  subprogram carries such a method as its template stub, as it already did
+  for one holding a `rebind`.
+  `assets/ok/ctfe_beside_comptime_if_struct_method.mojo` pins it.
 - `repr` of an `Array` names its element type
   (`Array[SIMD[DType.int, 1], 2]([Int(1), Int(1)])`); it printed
   `Array[T, 2](...)`, the parameter as the template spelled it.

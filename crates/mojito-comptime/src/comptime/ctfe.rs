@@ -1460,9 +1460,10 @@ impl Elab<'_> {
         let mut program = super::rewrite::materialize_block(program, &consts, &type_names);
         // A retained struct's method that only elaborates with its own
         // compile-time parameters bound (a `comptime for` over a method pack,
-        // `FormatStruct.params`), or only lowers with them bound (a vector
-        // built at its own lane), crosses the boundary as the trap stub the
-        // pre-check elaboration installs; no compile-time program calls it
+        // `FormatStruct.params`), or with its struct's bound (a `comptime if`
+        // on `Self.T`), or only lowers with them bound (a vector built at its
+        // own lane), crosses the boundary as the trap stub the pre-check
+        // elaboration installs; no compile-time program calls it
         // unspecialized.
         for statement in &mut program {
             let StmtKind::Struct {
@@ -1475,10 +1476,11 @@ impl Elab<'_> {
                 continue;
             };
             for method in methods.iter_mut() {
-                // A `rebind` is keyed on the struct's parameters as readily
-                // as on the method's own, so either being open stubs it.
+                // Compile-time control flow and a `rebind` are keyed on the
+                // struct's parameters as readily as on the method's own, so
+                // either being open stubs it.
                 let keyed = if method.type_params.is_empty() {
-                    !type_params.is_empty() && super::block_has_rebind(&method.body)
+                    !type_params.is_empty() && super::block_keys_specialization(&method.body)
                 } else {
                     super::block_keys_specialization(&method.body)
                         || super::synth::constructs_at_own_lane(method)
