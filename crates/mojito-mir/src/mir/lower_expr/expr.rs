@@ -46,14 +46,14 @@ impl Flatten<'_> {
             // --- Operators -----------------------------------------------------
             ExprKind::Prefix(op, a) => {
                 let ra = self.expr(a);
-                // `not x` on a struct or a scalar mask is `not x.__bool__()`:
-                // convert through the explicit `Bool(x)` call so the negation
-                // is scalar on both backends.
+                // `not x` on a struct or a numeric scalar is
+                // `not x.__bool__()`: convert through the explicit `Bool(x)`
+                // call so the negation is scalar on both backends.
                 let ra = if *op == PrefixOp::Not
                     && self.checked_ty(a).is_some_and(|ty| {
                         matches!(ty, Ty::Struct(..))
-                            || mojito_types::types::scalar_simd_dtype(&ty)
-                                == Some(mojito_ast::ast::Dtype::Bool)
+                            || mojito_types::conformance::is_numeric(&ty)
+                            || mojito_types::types::is_scalar_simd(&ty)
                     }) {
                     self.bool_conversion(a.source_span(), ra)
                 } else {

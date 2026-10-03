@@ -172,6 +172,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A numeric scalar is a condition, as at the pin: `if n:`, `while n:`, a
+  conditional expression, and a comprehension filter over an `Int`, `UInt`,
+  `Float64`, or width-one lane test it through `Bool(x)`, and `not n` reads
+  it the same way, where each was rejected with "expected Bool".
+  `assets/ok/numeric_truthiness_condition.mojo` pins it on both backends.
 - A module-level compile-time evaluation no longer fails with "unsupported
   feature: comptime if" when the program holds a generic struct whose
   method has a `comptime if` on the struct's parameters: the evaluation's

@@ -2142,13 +2142,17 @@ last.
   Five divergences are retained on purpose and re-probed rather than fixed;
   they are listed in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **3.78 An `Int` condition is rejected**
+- [ ] **3.78 `and`/`or` over a non-`Bool` operand is rejected**
 
-  Problem: `if x:` over `x: Int` runs at the pin, and Mojito rejects it with
-  "type mismatch for if condition: expected Bool, found Int".
-  - A width-one bool lane is accepted through the `Bool(x)` truthiness
-    conversion; an `Int` never reaches that rule.
-  - Found while deriving a runtime `if` in a keyed `def` (2026-09-27).
+  Problem: `n or 2` over `n: Int` prints `2` at the pin, and `if n and True:`
+  runs; Mojito rejects both with "operator 'or' is not defined for Int and
+  Int".
+  - The checker types `and`/`or` only over two `Bool` operands; a numeric
+    scalar or a `Boolable` struct never reaches the `Bool(x)` truthiness
+    conversion a bare condition now takes.
+  - Same-typed operands yield that type at the pin (Python's value-producing
+    `or`), so the fix is more than a condition mark.
+  - Found while accepting a numeric condition (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -18,8 +18,9 @@ impl Checker {
                 return Ok(t);
             }
             (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
-            // A scalar mask is `Boolable`: `not (a == b)` over `UInt64`s.
-            (PrefixOp::Not, _) if scalar_simd_dtype(&t) == Some(Dtype::Bool) => {
+            // A numeric scalar is `Boolable`: `not n` over an `Int`, or
+            // `not (a == b)` over `UInt64`s.
+            (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
                 return Ok(Ty::Bool);
             }
             // Bitwise inversion keeps an integer (or `Bool`) type; float

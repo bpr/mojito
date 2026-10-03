@@ -2154,13 +2154,14 @@ impl Checker {
     }
 
     /// Whether a condition of type `ty` converts through `Bool(x)`: `false`
-    /// for a `Bool`, `true` for a width-1 bool lane (`if a == b` over
-    /// `UInt64`s) or a struct whose `__bool__` supplies its truth value
-    /// (`if collection:`), and an error for anything else.
+    /// for a `Bool`, `true` for a numeric scalar (`if n:` over an `Int`, a
+    /// `Float64`, or a width-1 lane such as `if a == b` over `UInt64`s) or a
+    /// struct whose `__bool__` supplies its truth value (`if collection:`),
+    /// and an error for anything else.
     fn condition_truthiness(&self, ty: &Ty, context: &str) -> Result<bool, TypeError> {
         if *ty == Ty::Bool {
             Ok(false)
-        } else if scalar_simd_dtype(ty) == Some(Dtype::Bool) {
+        } else if is_numeric(ty) || is_scalar_simd(ty) {
             Ok(true)
         } else if let Some(result) = self.struct_dunder(ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::Bool, "__bool__")?;
