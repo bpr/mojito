@@ -41,8 +41,12 @@ pub fn run_artifact_as(
     let mut backend = backend.instantiate().map_err(ArtifactRunError::Backend)?;
     match instantiation {
         VmInstantiation::Concrete => {
-            let concrete = specialize(&parsed.program, &entry_roots(&parsed.program))
-                .map_err(ArtifactRunError::Elaborate)?;
+            let concrete = specialize(
+                &parsed.program,
+                &entry_roots(&parsed.program),
+                crate::native::target::NativeTarget::host().as_ref(),
+            )
+            .map_err(ArtifactRunError::Elaborate)?;
             backend.run_concrete(concrete.program)
         }
         VmInstantiation::Erased => backend.run_elaborated(parsed.program),

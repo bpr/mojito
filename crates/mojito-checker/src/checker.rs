@@ -60,8 +60,8 @@ use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamId, ParamOp,
-    ParamRef, UNBOUND_BINDER_PREFIX,
+    ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamId, ParamKind,
+    ParamOp, ParamRef, UNBOUND_BINDER_PREFIX,
 };
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, ParamDecl, SimdDtype,
@@ -146,6 +146,10 @@ pub fn validate_comptime_templates_into(
     checker.param_context = catalog.param_context().clone();
     checker.template_catalog.replace(std::mem::take(catalog));
     let body_check = checker.check_program(&expanded);
+    checker
+        .template_catalog
+        .borrow_mut()
+        .set_applied_constants(checker.comptime_applied.clone());
     *catalog = checker.template_catalog.take();
     let checked = body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
@@ -628,6 +632,12 @@ pub struct Checker {
     /// Module constants declared by `comptime NAME = <literal>`, which a
     /// trait requirement's default folds to (`Float`, `Bool`, string).
     comptime_literals: HashMap<String, Expr>,
+    /// Module constants whose initializer applies a function (`comptime B =
+    /// f(A)`, `comptime S = size_of[T]()`), as the symbolic application the
+    /// pin keeps through the check (decision D3,
+    /// `docs/notes/ctfe-request-path.md`). Only source validation builds one:
+    /// the executable check sees the elaborator's folded literal.
+    comptime_applied: HashMap<String, ParamExpr>,
     /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
     /// arguments. A binding of a `[dt: DType]` parameter keys a lane
     /// symbolically, so a template body may name its own dtype through one.
@@ -1048,6 +1058,7 @@ impl Checker {
             trait_self_comptime: Vec::new(),
             comptimes: HashMap::new(),
             comptime_literals: HashMap::new(),
+            comptime_applied: HashMap::new(),
             comptime_dtypes: HashMap::new(),
             comptime_aliases: HashMap::new(),
             self_mutable: false,

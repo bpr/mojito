@@ -573,3 +573,48 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
     assert!(context.list_get(&index, &index).is_err());
     assert!(context.list_get(&pack, &literal(&context, -1)).is_err());
 }
+
+/// An application is a node by structure, never a constant, and prints as
+/// Mojo spells it: `f(3)`, `size_of[Int]()`.
+#[test]
+fn param_apply_is_structural_and_unfolded() {
+    let context = ParamContext::new();
+    let seven = literal(&context, 7);
+    let applied = context.apply("f", &[seven.clone()], MetaTy::int());
+    assert_eq!(applied, context.apply("f", &[seven.clone()], MetaTy::int()));
+    assert_ne!(applied, context.apply("g", &[seven.clone()], MetaTy::int()));
+    assert_ne!(
+        applied,
+        context.apply("f", &[literal(&context, 8)], MetaTy::int())
+    );
+    assert_eq!(
+        hash_of(&applied),
+        hash_of(&context.apply("f", &[seven], MetaTy::int()))
+    );
+    assert!(applied.is_closed());
+    assert!(applied.as_constant().is_none());
+    assert!(matches!(
+        applied.require_constant(),
+        Err(ParamError::NotConstant(_))
+    ));
+    assert_eq!(applied.to_string(), "f(7)");
+    // The chain `C = B * 2` over `B = f(3)` is one canonical node on both
+    // sides of a signature, and never the folded `8`.
+    let b = context.apply("f", &[literal(&context, 3)], MetaTy::int());
+    let c = infix(&context, InfixOp::Mul, &b, &literal(&context, 2));
+    assert_eq!(c, infix(&context, InfixOp::Mul, &literal(&context, 2), &b));
+    assert_ne!(c, literal(&context, 8));
+    assert_eq!(context.fold(&c).expect("fold rebuilds"), c);
+    // Replacement reaches the arguments; a bound argument stays applied.
+    let n = int_param(&context, "g", 0, "n");
+    let over_n = context.apply("f", &[n], MetaTy::int());
+    let three = context.constant(CtValue::Int(3)).expect("constant");
+    let mut bindings = ParamBindings::new();
+    bindings.bind_name("n", three.clone());
+    assert_eq!(
+        context.replace(&over_n, &bindings).expect("replacement"),
+        context.apply("f", &[three], MetaTy::int())
+    );
+    assert_eq!(context.size_of(Ty::Int).to_string(), "size_of[Int]()");
+    assert_eq!(*context.size_of(Ty::Int).meta(), MetaTy::int());
+}

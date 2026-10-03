@@ -60,6 +60,7 @@ mod iteration;
 mod loans;
 mod places;
 mod regs;
+mod scope;
 mod subscripts;
 mod types;
 
@@ -77,6 +78,8 @@ use loans::verify_loan_instruction;
 use places::*;
 pub use places::{instruction_places, instruction_places_mut};
 pub use regs::*;
+pub use scope::instruction_named_types;
+use scope::verify_scope;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

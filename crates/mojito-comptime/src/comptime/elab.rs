@@ -62,6 +62,15 @@ impl Elab<'_> {
         Ok(out)
     }
 
+    /// The module constants whose initializer applies a function, as source
+    /// validation classified them: each keeps its name in a type argument
+    /// of the elaborated program and folds everywhere else.
+    pub(super) fn applied_constants(&self) -> HashSet<String> {
+        self.templates
+            .map(|catalog| catalog.applied_constants().keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub(super) fn stmt(
         &self,
         stmt: &Stmt,

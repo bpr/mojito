@@ -285,17 +285,21 @@ test `param_expr_residual_is_not_false` pin this.
 
 - `TyArg::Val` may hold a residual under a checked declaration binder.
 - `Ty::Simd` holds typed slots (`SimdDtype`, `SimdWidth`): a symbolic lane
-  dtype or width is a parameter expression that never crosses the MIR waist
-  (see *SIMD slots*).
+  dtype or width is a parameter expression a generator's MIR keeps (see
+  *SIMD slots* and *Register types*).
 - MIR keeps scoped references and pure expressions that instance binding
-  supports. `validate_dependent_bindings` rejects a hole, an out-of-range or
-  mistyped signature slot, and an unbound dependent reference.
-  `types_compatible` refuses two distinct residuals over the same parameters
-  (`residual_arguments_conflict`) instead of treating a shared parameter as a
-  wildcard.
+  supports. `verify/scope.rs` checks every binder a body names and the kind
+  of every expression (*Register types*); `validate_dependent_bindings`
+  rejects a hole and an out-of-range or mistyped signature slot in a
+  callable contract. `types_compatible` refuses two distinct residuals over
+  the same parameters (`residual_arguments_conflict`) instead of treating a
+  shared parameter as a wildcard.
 - The VM materializes no residual or deferred value.
 - Native monomorphization closes a residual under the mono environment or
   reports the contextual unsupported boundary; lowering sees concrete types.
+  Layout is asked only of a concrete type (`LayoutError::Symbolic`), and the
+  elaborator answers every layout query (`MirInstr::SizeOf`) under the
+  compilation's native target, so concrete MIR carries the constant.
 - `symbol::mangle` returns `Result<String, NonConstantSpecialization>` and
   validates the whole key before writing it. `specialized_method_values`
   returns `None` for a residual value and skips only a deferred callable slot.
@@ -324,7 +328,10 @@ param_conforms  { subject, trait }
 param_trivial   { lifecycle, subject }
 param_type_shape(<type>)
 param_select    { elements: [ ... ], index }
+param_list_get  { list, index }
+param_reflect   { subject, query }
 param_pack_query { pack, query }  (`pack` a `binder` record from 1.6)
+param_apply     { function, type, args, evaluated }  (from 1.14)
 operand_expr(<param-expr>)     an arithmetic constraint operand
 ```
 
@@ -379,8 +386,9 @@ checked type sequence), which folds to the element at a constant index; a
 list that is still a parameter keeps the residual node, a constant index
 included, because the pin types `self.storage[0]` over an unbound pack as
 `Ts.values[0]`, never as a concrete type. A `comptime for` variable is the
-index's binder, owned by its loop. The node never crosses the MIR waist: the
-text writer prints `param_list_get` and the parser rejects it.
+index's binder, owned by its loop. The node is a register type a generator may
+carry (*Register types*); no body carries one into MIR before the type-pack
+stage of `docs/roadmap.md` §1.
 
 Three decisions shaped the checker side.
 
@@ -439,10 +447,12 @@ Three decisions shaped this, against the pack precedent above.
   hash leaf clone, and a SIMD construction's dimensions are recorded only for
   known slots. A body typed under a symbolic slot keeps its clone check
   (`template_certificate` refuses a `DType` binder), so the clone records
-  its own concrete facts. Below the waist a symbolic slot is an error:
-  `validate_dependent_bindings` refuses it, and the text form
-  (`simd { dtype: ct_expr(...), width: ct_expr(...) }`) only serves lossless
-  round trips.
+  its own concrete facts. A symbolic slot is a register type a generator may
+  carry (*Register types*): the parametric verifier checks its binders and
+  kind, the concrete verifier rejects it, and layout refuses it. A slot
+  holding an evaluated application (`SIMD[DType.float32, M]` over an applied
+  module constant) is concrete to every consumer that reads the lane count
+  (`SimdWidth::known`) and symbolic to type identity.
 
 What the pin licenses, probed 2026-09-22 (Mojo 1.2.0.dev2026092105) and
 pinned by `assets/ok/simd_symbolic_surface.mojo` and the eight
@@ -466,8 +476,8 @@ like `Ts[i]`. The checker never builds a node over a registered struct: at
 concrete or symbolic arguments it answers from the struct table, so
 `reflect[Self]` in a generic struct's method folds to the struct's own
 fields and `reflect[Pair]` under a symbolic loop index selects (`Select`)
-as a bound pack does. The node never crosses the MIR waist: the text writer
-prints `param_reflect` and the parser rejects it.
+as a bound pack does. The node crosses MIR text like a pack element
+(`param_reflect`); no body carries one into MIR before its stage.
 
 Three decisions shaped this, against the pack precedent.
 
@@ -499,6 +509,77 @@ from `T`'s bound; a `conforms_to` arm proves exactly its traits; `types[i]
 == Int` narrows nothing; a `var` of an opaque type needs `Deinitable`
 proved (which Mojito's destruction walk does not yet require of any opaque
 parameter, `docs/roadmap.md` §3).
+
+## Register types
+
+A register, slot, signature, place, or instruction type of a generator's MIR
+names a parameter expression through the forms above, and through nothing
+else (specified 2026-10-03 for `docs/parametric-mir-plan.md` §P3; the
+parametric verifier's rule is `crates/mojito-mir/src/mir/verify/scope.rs`):
+
+| Slot | Payload | Kind of the expression |
+|---|---|---|
+| A type binder | `Ty::Param { binder: ParamRef }` | `Type`, or `ParamList(Type)` for a variadic binder's spread |
+| A dependent type | `Ty::Dependent(DependentType::Parameter(expr))`: a finite `Select`, a pack element `ListGet`, a reflected field `Reflect` | `Type` |
+| A vector lane | `Ty::Simd { dtype: SimdDtype::Expr(expr), .. }` | `Value(DType)` |
+| A vector width | `Ty::Simd { width: SimdWidth::Expr(expr), .. }` | `Value(Int)` |
+| A struct's value argument | `TyArg::Val(CtValue::Expr(expr))` at slot *i* | `Value(T)` for the struct's declared value parameter *i* of type `T` |
+| An associated projection | `Ty::Assoc { base, .. }` | the base is one of the above |
+| A compile-time application | `ParamKind::Apply { function, args, evaluated }`, in any of the slots | a `Value` kind: the callee's declared result |
+
+**Scope.** Every `DeclRef`, `PackQuery` pack, and `Ty::Param` binder a
+body names is declared by the function's own declaration
+(`MirFunctionDeclaration.param_decls`), by the struct a method's lowered
+name is prefixed with (`MirStructDeclaration.param_decls`, since a method's
+declaration carries only its own binders), by a generic callable signature
+enclosing the occurrence (`Ty::GenericFunc.decls`), or it is a *contract
+binder*: one whose owner starts with `$` — `$contract`, `$callable`, a
+`$synthetic:Some[Trait]` witness request — bound by the construct that
+spells it. A reference's recorded kind is the binder's declared kind. A
+hole is a finding; a signature index is checked by the callable-contract
+rules as before.
+
+**Identity.** Two types are one when their slots hold one canonical node.
+The pin keeps an application symbolic through the check:
+`SIMD[.float32, size_of[Pair]()]` is a distinct type from
+`SIMD[.float32, 16]` (probed 2026-10-03,
+`conformance/probes/ctfe_layout_in_signature.mojo`), and `f(Int(7))`
+likewise (`ctfe_const_in_signature.mojo`). `ParamKind::Apply` is therefore
+never folded and equal by structure: `function` is the callable symbol,
+`args` its compile-time arguments in order, and `evaluated` the value the
+compile-time route established for it, which concrete uses read
+(`SimdWidth::known`, `require_constant`) while type identity stays the
+application — an evaluated node and an unevaluated one are two nodes,
+built in two passes that never meet. A layout query is `Apply { function:
+"size_of", args: [type] }` of kind `Int` (`ParamContext::size_of`).
+
+**An applied module constant** (decision D3,
+`docs/notes/ctfe-request-path.md`): source validation builds the
+application for `comptime B = f(A)` and the arithmetic over it
+(`Checker::applied_constant_expr`), the catalog carries the nodes to the
+executable check (`TemplateCatalog::applied_constants`), which keeps each
+constant's identity as the application with the elaborator's folded value
+on the node (`Checker::evaluated_application`), and the AST elaborator keeps
+the constant's name in every type argument while folding it everywhere
+else (`CtMarker::Applied`). So `SIMD[DType.float32, C]` matches itself on
+both sides of a call and rejects `SIMD[DType.float32, 8]`
+(`assets/ok/comptime_applied_constant_in_signature.mojo`,
+`assets/type_error/comptime_applied_constant_mismatch.mojo`). What stays
+with the AST route is in `docs/roadmap.md` §3 (3.120–3.122).
+
+**Below the waist.** The concrete verifier rejects every form in the table
+and every layout query: the elaborator answers `MirInstr::SizeOf` from the
+substituted type under the compilation's native target
+(`native::mono::answer_layout_queries`), and `LayoutCx::layout_of` refuses a
+symbolic type (`LayoutError::Symbolic`) before any per-form rule. A `def`
+with a value parameter beside its type parameters keeps its clone until the
+elaborator binds the value from the call (`Elab::template_serves_def`); every
+other plain `def` is template-served.
+
+**What the later stages add.** The `comptime if` stage lowers the thunk an
+`Apply` names and evaluates it on the worklist; the pack stage lowers a
+`ListGet` register type and expands it; the `DType` stage lowers symbolic
+vector slots and asks layout of the substituted lane.
 
 ## Measurements
 

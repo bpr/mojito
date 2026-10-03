@@ -122,8 +122,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "layout.size_of",
-        CapabilityStatus::Partial,
-        "an `Int` constant from the target layout; a type without a layout rejects",
+        CapabilityStatus::Unsupported,
+        "the elaborator answers every layout query under the target; one that survives rejects",
     ),
     (
         "type.construct",

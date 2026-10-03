@@ -17,10 +17,15 @@ use mojito_checked::templates::PackElementNode;
 pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 
 /// Materialize module-level comptime constants throughout a program.
+///
+/// `applied` names the constants whose initializer applies a function: each
+/// folds to its value in a value position and keeps its name in a type
+/// argument, where the checker reads its identity as the application.
 pub(super) fn materialize_block(
     stmts: Vec<Stmt>,
     consts: &HashMap<String, CtValue>,
     type_names: &HashSet<String>,
+    applied: &HashSet<String>,
 ) -> Vec<Stmt> {
     // Declared struct names are marked so a subscript-shaped projection on a
     // runtime local (`v[String]`) can be told from ordinary indexing.
@@ -30,7 +35,12 @@ pub(super) fn materialize_block(
         consts
             .get(n)
             .filter(|value| !value.is_runtime_collection())
-            .cloned()
+            .map(|value| match value {
+                CtValue::Int(folded) if applied.contains(n) => {
+                    CtValue::Marker(CtMarker::Applied(*folded))
+                }
+                value => value.clone(),
+            })
             .or_else(|| type_names.contains(n).then(type_name_marker))
     };
     stmts
@@ -1659,7 +1669,12 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
                 *a = mojito_ast::ast::ParamArg::Value(materialized);
             }
             mojito_ast::ast::ParamArg::Type(ty) => rewrite_type(ty, subs),
+            // An applied module constant keeps its name in a type argument.
             mojito_ast::ast::ParamArg::Value(e) => {
+                let subs: Subs = &|name| {
+                    subs(name)
+                        .filter(|value| !matches!(value, CtValue::Marker(CtMarker::Applied(_))))
+                };
                 rewrite_expr(e, subs);
                 if let ExprKind::TypeValue(ty) = &e.kind {
                     *a = mojito_ast::ast::ParamArg::Type(ty.clone());

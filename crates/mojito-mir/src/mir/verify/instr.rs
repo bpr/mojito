@@ -384,10 +384,13 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
             }
             // A template's symbolic type has a layout only once an instance
-            // substitutes it; the concrete mode checks that none remains.
+            // substitutes it; the concrete mode rejects the query itself.
             if mojito_types::types::is_symbolic(ty) {
                 return;
             }
+            // Whether a type has a layout at all is target-independent
+            // (pointer size is the one target fact, and every target has
+            // one); the elaborator answers the size under the real target.
             let target = mojito_native_core::target::NativeTarget::new(
                 mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
             );

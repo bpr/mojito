@@ -2439,12 +2439,21 @@ are typed `Ty::None` by convention. Functions additionally carry their checked
 `ret_ty`, raising contract (`raises`/`error_ty`), and per-slot `var_tys`.
 
 `mir::verify` has two modes. `verify` accepts parametric MIR, the form the
-canonical artifact and the VM's erased oracle use. `verify_concrete` is for
+canonical artifact and the VM's erased oracle use: a register, slot,
+signature, place, or instruction type may name a parameter expression — a
+type binder, a dependent type, a symbolic vector lane or width, a symbolic
+struct argument, a compile-time application — and `verify/scope.rs` checks
+that every binder it names is in scope (the function's declaration, a
+method's struct, a generic callable signature enclosing the occurrence, or a
+contract binder spelled by the contract or witness request that holds it)
+and that every expression is well-kinded for its slot
+(`docs/notes/param-expr-attributes.md` §Register types). `verify_concrete` is for
 concrete MIR, the form the VM and the native backend run: it applies the same rules and then rejects what only
 parametric MIR may carry (`verify/concrete.rs`) — a symbolic type in any
 signature, slot, register, place, instruction, or declaration; a compile-time
-parameter a declaration or a call contract still declares; and a
-`ConstructTypeParam`. A copy-reference result adapter survives elaboration
+parameter a declaration or a call contract still declares; a layout query
+(`SizeOf`), which the elaborator answers under the compilation's native
+target; and a `ConstructTypeParam`. A copy-reference result adapter survives elaboration
 only on a `__next__` step that returns a reference, where it copies the
 element out; the elaborator drops it from a step that returns the element.
 `native::mono` verifies its output in the concrete mode, and asks

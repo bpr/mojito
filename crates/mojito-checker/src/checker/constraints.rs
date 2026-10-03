@@ -254,6 +254,11 @@ impl Checker {
                 if let Some(reference) = self.value_parameter_in_scope(name) {
                     return Ok(CtValue::Expr(reference));
                 }
+                // An applied constant is its application in a type
+                // position, whatever literal the elaborator folded it to.
+                if let Some(applied) = self.comptime_applied.get(name) {
+                    return Ok(CtValue::Expr(applied.clone()));
+                }
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
                 }
@@ -469,6 +474,121 @@ impl Checker {
             CtValue::Expr(expr) => self.param_context.neg(expr).map(ParamExpr::into_value),
             concrete => mojito_types::param_expr::fold::fold_neg(concrete),
         }
+    }
+
+    /// The symbolic value of a module constant's initializer that applies a
+    /// function: an application of a module `def` with a declared result to
+    /// compile-time arguments, a layout query, an earlier applied constant,
+    /// or arithmetic over those. `None` leaves the constant to the ordinary
+    /// rejection, so nothing else changes meaning.
+    pub(super) fn applied_constant_expr(&self, expr: &Expr, module: &[Stmt]) -> Option<ParamExpr> {
+        let context = &self.param_context;
+        match &expr.kind {
+            ExprKind::Int(n) => context.constant(CtValue::IntLiteral(n.clone())).ok(),
+            ExprKind::Identifier(name) => self
+                .comptimes
+                .get(name)
+                .and_then(|n| context.constant(CtValue::IntLiteral(n.clone())).ok())
+                .or_else(|| self.comptime_applied.get(name).cloned()),
+            ExprKind::Prefix(PrefixOp::Neg, operand) => context
+                .neg(&self.applied_constant_expr(operand, module)?)
+                .ok(),
+            ExprKind::Infix(op, left, right) => context
+                .infix(
+                    *op,
+                    &self.applied_constant_expr(left, module)?,
+                    &self.applied_constant_expr(right, module)?,
+                )
+                .ok(),
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty() => {
+                if name == mojito_types::param_expr::SIZE_OF_FUNCTION {
+                    let [argument] = param_args.as_slice() else {
+                        return None;
+                    };
+                    let ty = self.type_param_argument(argument, name).ok()?;
+                    return args.is_empty().then(|| context.size_of(ty));
+                }
+                if !param_args.is_empty() {
+                    return None;
+                }
+                let result = module.iter().find_map(|statement| match &statement.kind {
+                    StmtKind::Def {
+                        name: def,
+                        type_params,
+                        ret: Some(ret),
+                        ..
+                    } if def == name && type_params.is_empty() => Some(ret),
+                    _ => None,
+                })?;
+                // An `Int` result, the one the pin's probes shape a vector
+                // width with; another result type keeps today's rejection.
+                let meta = match self.ty_from_anno(result).ok()? {
+                    Ty::Int => MetaTy::int(),
+                    _ => return None,
+                };
+                let args = args
+                    .iter()
+                    .map(|argument| self.applied_constant_expr(argument, module))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(context.apply(name, &args, meta))
+            }
+            _ => None,
+        }
+    }
+
+    /// The executable check's twin of a validated applied constant: the
+    /// same node with the folded `value` on the application it is, and the
+    /// evaluated twins of earlier constants where their applications occur.
+    /// `None` when an application inside it has no value, so the constant
+    /// stays the folded literal it is today.
+    pub(super) fn evaluated_application(
+        &self,
+        applied: &ParamExpr,
+        value: &mojito_common::literal::IntLiteral,
+        evaluated: &mut HashMap<ParamExpr, ParamExpr>,
+    ) -> Option<ParamExpr> {
+        fn rebuild(
+            context: &ParamContext,
+            node: &ParamExpr,
+            evaluated: &HashMap<ParamExpr, ParamExpr>,
+        ) -> Option<ParamExpr> {
+            if let Some(twin) = evaluated.get(node) {
+                return Some(twin.clone());
+            }
+            match node.kind() {
+                ParamKind::Constant(_) => Some(node.clone()),
+                ParamKind::Op { op, operands } => {
+                    let operands = operands
+                        .iter()
+                        .map(|operand| rebuild(context, operand, evaluated))
+                        .collect::<Option<Vec<_>>>()?;
+                    if op.is_atom() {
+                        context.rebuild(*op, &operands).ok()
+                    } else {
+                        context.op(*op, &operands).ok()
+                    }
+                }
+                _ => None,
+            }
+        }
+        let context = &self.param_context;
+        let folded = CtValue::Int(
+            mojito_types::param_expr::fold::integer_value(&CtValue::IntLiteral(value.clone()))?
+                .to_i64()?,
+        );
+        let twin = match applied.kind() {
+            ParamKind::Apply { function, args, .. } => {
+                context.apply_evaluated(function, args, applied.meta().clone(), folded)
+            }
+            _ => rebuild(context, applied, evaluated)?,
+        };
+        evaluated.insert(applied.clone(), twin.clone());
+        Some(twin)
     }
 
     /// The typed reference a bare name denotes when it is a value parameter

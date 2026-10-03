@@ -1,5 +1,9 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+
+fn host_target() -> Option<NativeTarget> {
+    NativeTarget::host()
+}
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
 fn specialized_main(source: &str) -> SpecializedProgram {
@@ -7,8 +11,12 @@ fn specialized_main(source: &str) -> SpecializedProgram {
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile iterator program");
-    specialize(compiled.drop_elaborated_mir(), &["main".to_string()])
-        .expect("specialize iterator program")
+    specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize iterator program")
 }
 
 fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
@@ -695,7 +703,8 @@ fn concrete_verification_rejects_a_forwarded_compile_time_argument() {
             .any(|finding| finding.contains("keeps compile-time argument forwarding `T`")),
         "a parametric call forwards its binder: {findings:?}"
     );
-    let specialized = specialize(parametric, &["main".to_string()]).expect("specialize");
+    let specialized =
+        specialize(parametric, &["main".to_string()], host_target().as_ref()).expect("specialize");
     assert_eq!(
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
@@ -734,7 +743,8 @@ fn concrete_verification_separates_elaborated_from_parametric_mir() {
             .any(|finding| finding.contains("keeps compile-time parameter `T`")),
         "a parametric declaration keeps its binder: {findings:?}"
     );
-    let specialized = specialize(parametric, &["main".to_string()]).expect("specialize");
+    let specialized =
+        specialize(parametric, &["main".to_string()], host_target().as_ref()).expect("specialize");
     assert_eq!(
         mojito_mir::mir::verify::verify_concrete(&specialized.program),
         Vec::<String>::new()
@@ -820,7 +830,7 @@ fn demanded_member_its_instance_disproves_is_an_error() {
     let compiled = compiler
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
-    let mut specializer = Specializer::new(compiled.drop_elaborated_mir());
+    let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     let available = slot_bindings(&specializer, Ty::Int);
     specializer
         .enqueue(NULLARY_SLOT_INIT, available, Vec::new())
@@ -841,7 +851,7 @@ fn available_member_that_does_not_materialize_is_an_error() {
     let compiled = compiler
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
-    let mut specializer = Specializer::new(compiled.drop_elaborated_mir());
+    let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     // The empty tuple is `Defaultable`, and `T()` has no construction for it.
     let bindings = slot_bindings(&specializer, Ty::Tuple(Vec::new()));
     specializer
@@ -899,7 +909,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
             std::path::Path::new("mono_test.mojo"),
         )
         .expect("compile trivial and value members");
-    let specializer = Specializer::new(compiled.drop_elaborated_mir());
+    let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     let cell = |argument: &str, n: i64| {
         let template = specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
@@ -1015,8 +1025,12 @@ fn literal_branch_fold_keeps_the_taken_arm_with_its_drops() {
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
         .expect("compile the kept region");
-    let specialized = specialize(compiled.drop_elaborated_mir(), &["main".to_string()])
-        .expect("specialize the kept region");
+    let specialized = specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize the kept region");
     let branches = |program: &MirProgram| -> usize {
         program
             .functions

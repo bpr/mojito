@@ -1954,14 +1954,10 @@ fn param_expr(value: &ParamExpr) -> String {
                 ("index", param_expr(index)),
             ],
         ),
-        // An element of an unbound pack is a source-validation type and never
-        // crosses into MIR; the parser rejects the form.
         ParamKind::ListGet { list, index } => record(
             "param_list_get",
             &[("list", param_expr(list)), ("index", param_expr(index))],
         ),
-        // A reflection query over a symbolic subject is a source-validation
-        // form and never crosses into MIR; the parser rejects it.
         ParamKind::Reflect { subject, query } => record(
             "param_reflect",
             &[
@@ -1973,8 +1969,21 @@ fn param_expr(value: &ParamExpr) -> String {
             "param_pack_query",
             &[("pack", binder_ref(pack)), ("query", pack_query(query))],
         ),
-        // A hole never crosses into MIR; `schema_findings` reports it before
-        // printing, and the token keeps the text honest if it is reached.
+        ParamKind::Apply {
+            function,
+            args,
+            evaluated,
+        } => record(
+            "param_apply",
+            &[
+                ("function", quote(function)),
+                meta,
+                ("args", list(args.iter().map(param_expr))),
+                ("evaluated", option(evaluated.as_ref().map(ct_value))),
+            ],
+        ),
+        // A hole never crosses into MIR: the parser rejects the form, and the
+        // token keeps the text honest if one is reached.
         ParamKind::Hole { kind, token } => record(
             "param_hole",
             &[
@@ -2111,6 +2120,7 @@ fn ct_marker(value: CtMarker) -> String {
                 ("mutability", mutability_value(mutability)),
             ],
         ),
+        CtMarker::Applied(value) => positional("marker_applied", &value.to_string()),
     }
 }
 

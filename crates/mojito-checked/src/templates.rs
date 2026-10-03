@@ -2442,6 +2442,12 @@ pub struct TemplateCatalog {
     /// re-elaborate the same prepared program, so a later round binds them
     /// before its first pass.
     bound_default_arguments: std::collections::HashMap<SyntaxId, BoundDefaultArguments>,
+    /// The module constants whose initializer applies a function, by name,
+    /// as the symbolic application source validation built from the
+    /// unfolded program (decision D3, `docs/notes/ctfe-request-path.md`).
+    /// The executable check, which sees the elaborator's folded literal,
+    /// keeps each constant's identity from here.
+    applied_constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2601,6 +2607,20 @@ impl TemplateCatalog {
         &self,
     ) -> &std::collections::HashMap<SyntaxId, BoundDefaultArguments> {
         &self.bound_default_arguments
+    }
+
+    pub const fn applied_constants(
+        &self,
+    ) -> &std::collections::HashMap<String, mojito_types::param_expr::ParamExpr> {
+        &self.applied_constants
+    }
+
+    /// Keep the applied module constants source validation found.
+    pub fn set_applied_constants(
+        &mut self,
+        constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
+    ) {
+        self.applied_constants = constants;
     }
 
     /// Keep the requirement defaults a pass found calls through a bound

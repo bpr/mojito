@@ -196,14 +196,13 @@ pub fn compile_mir(
 ) -> Result<NativeModule, PlironError> {
     check_invariants(program)?;
     let specialized =
-        mojito_native::native::mono::specialize(program, &options.entries).map_err(|error| {
-            PlironError {
-                function: error.function,
-                kind: PlironErrorKind::Unsupported {
-                    construct: error.construct,
-                },
-                location: None,
-            }
+        mojito_native::native::mono::specialize(program, &options.entries, Some(&options.target))
+            .map_err(|error| PlironError {
+            function: error.function,
+            kind: PlironErrorKind::Unsupported {
+                construct: error.construct,
+            },
+            location: None,
         })?;
     compile(&specialized, options)
 }

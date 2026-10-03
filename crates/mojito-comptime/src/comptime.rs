@@ -1228,7 +1228,12 @@ pub fn elaborate_prepared(
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // Materialize module-level comptime constants into runtime literals.
-    let materialized = materialize_block(elaborated, &consts, &elab.struct_names);
+    let materialized = materialize_block(
+        elaborated,
+        &consts,
+        &elab.struct_names,
+        &elab.applied_constants(),
+    );
     // Monomorphize comptime-dependent generic templates against their call sites.
     let Elaborated {
         program: mut result,

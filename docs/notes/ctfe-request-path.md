@@ -278,32 +278,38 @@ The boundary:
   request: the check types the initializer and declares the constant at
   that type; its value is `Apply(thunk)`, symbolic, equal by structure, so
   `SIMD[DType.float32, C]` matches itself and not `SIMD[DType.float32, 8]`,
-  as at the pin. The elaborator evaluates it on first demand. Such a
-  constant in a type position needs the register types over parameter
-  expressions of roadmap 1.1; until they land, the source-validation
-  rejection ("not a compile-time Int constant") stays, and roadmap 3.114
-  records the program the pin runs.
+  as at the pin. The elaborator evaluates it on first demand. Landed
+  2026-10-03 with the register types over parameter expressions: source
+  validation builds the application (`Checker::applied_constant_expr`), the
+  catalog carries it to the executable check, which keeps it as the
+  constant's identity with the folded value on the node
+  (`ParamKind::Apply::evaluated`), and the AST elaborator keeps the
+  constant's name in every type argument (`CtMarker::Applied`).
 - Today's early folding of applied constants by the AST elaborator stays as
-  an implementation until the P4 entry deletes the route. It is contained:
-  the validation pass rejects the one place where a folded `8` would type
-  what the pin's symbolic `f(Int(7))` rejects.
+  an implementation until the P4 entry deletes the route. The folded value
+  rides on the application node, so a type over the constant is still the
+  application: `SIMD[DType.float32, 8]` does not convert to
+  `SIMD[DType.float32, f(7)]` (`assets/type_error/comptime_applied_constant_mismatch.mojo`).
+  What the AST route cannot evaluate — a layout query in a constant — waits
+  for the request path.
 - A struct's associated `comptime` member is not a module constant; it is
   a member of the generator, evaluated under the instance's bindings as
   today.
 
 ## What each entry takes from this
 
-- **Roadmap 1.1** (register types over parameter expressions) specifies
+- The register types over parameter expressions (done 2026-10-03) specified
   `ParamKind::Apply` and the symbolic type of an applied module constant.
-- **Roadmap 1.2** (`comptime if`) lands the first code: the
+- **Roadmap 1.1** (`comptime if`) lands the first code: the
   `mojito-native → mojito-vm` edge, `InstanceState`, the `HashMap` index,
   the demand stack and cycle error, the evaluation cache, the shared fuel,
   `VmBackend::call_concrete`, and the thunk lowering, with the condition
-  as the first consumer. The MIR text schema bump for `Apply` is part of
-  that entry's bump.
-- **Roadmap 1.9** (clones minted during CTFE) and **3.112**, **3.113**
+  as the first consumer, and a layout query in a module constant
+  (`comptime S = size_of[Pair]()`) as the first application the AST route
+  cannot fold. `Apply` crosses MIR text since schema 1.14.
+- **Roadmap 1.8** (clones minted during CTFE) and **3.112**, **3.113**
   close when a demand serves a keyed instance.
-- **Roadmap 1.11** (P4) deletes the AST route, the early folding of applied
+- **Roadmap 1.10** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with
   it. The instance budget is reachable without exhausting memory
   (2026-10-03).

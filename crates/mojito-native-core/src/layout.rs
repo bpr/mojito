@@ -83,6 +83,11 @@ pub struct LayoutCx<'a> {
 impl LayoutCx<'_> {
     /// The layout of one checked type.
     pub fn layout_of(&self, ty: &Ty) -> Result<Layout, LayoutError> {
+        // Layout is asked only of a concrete type: a symbolic one has no
+        // runtime identity until an instantiation substitutes it.
+        if mojito_types::types::is_symbolic(ty) {
+            return Err(LayoutError::Symbolic(ty.to_string()));
+        }
         // Compiler-private inline uninit storage carries a native-only
         // presence bit followed by the payload. This preserves the VM's
         // deterministic runtime backstop for unsafe read/take/destroy while
@@ -122,9 +127,7 @@ impl LayoutCx<'_> {
             Ty::Func { .. } => Ok(compose(&[self.pointer(), self.pointer()]).layout),
             Ty::Simd { dtype, width } => {
                 let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                    return Err(LayoutError::Unsupported(format!(
-                        "a symbolic SIMD type has no native layout: {ty}"
-                    )));
+                    return Err(LayoutError::Symbolic(ty.to_string()));
                 };
                 let lane = lane_layout(dtype);
                 Ok(Layout::new(lane.size * width as u64, lane.align))
@@ -195,17 +198,22 @@ impl LayoutCx<'_> {
     }
 }
 
-/// A layout the native ABI does not define (yet). Backends must reject the
-/// construct with a contextual diagnostic; they must not guess.
+/// A layout the native ABI does not define (yet), or one asked of a type
+/// only an instantiation can close. Backends must reject the construct with
+/// a contextual diagnostic; they must not guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutError {
     Unsupported(String),
+    /// The type still names a parameter; layout is asked only of a concrete
+    /// type.
+    Symbolic(String),
 }
 
 impl std::fmt::Display for LayoutError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unsupported(message) => write!(f, "{message}"),
+            Self::Symbolic(ty) => write!(f, "a symbolic type has no layout: {ty}"),
         }
     }
 }
@@ -470,6 +478,43 @@ mod tests {
         let small = cx.variant_layout(&[Ty::Bool]).unwrap();
         assert_eq!(small.payload_offset, 4);
         assert_eq!(small.layout, Layout::new(8, 4));
+    }
+
+    /// Layout is asked only of a concrete type: a type parameter, a vector
+    /// over a symbolic width, and a struct over a symbolic argument are each
+    /// the one symbolic refusal, before any per-form rule.
+    #[test]
+    fn layout_symbolic_types_are_refused() {
+        use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
+        let context = ParamContext::detached();
+        let width = context.decl_ref(ParamId::new("f", 0), "n", MetaTy::int());
+        let binder = ParamRef {
+            id: ParamId::new("f", 1),
+            name: "T".into(),
+        };
+        for ty in [
+            Ty::Param {
+                binder,
+                bounds: Vec::new(),
+                callable_bound: None,
+            },
+            Ty::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
+                width: mojito_types::types::SimdWidth::Expr(width.clone()),
+            },
+            Ty::Struct(
+                "Buf".into(),
+                vec![mojito_types::types::TyArg::Val(
+                    mojito_types::ct::CtValue::Expr(width),
+                )]
+                .into(),
+            ),
+        ] {
+            assert!(
+                matches!(layout_of(&ty), Err(LayoutError::Symbolic(_))),
+                "{ty} should be refused as symbolic"
+            );
+        }
     }
 
     #[test]

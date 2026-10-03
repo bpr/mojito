@@ -316,7 +316,10 @@ layout.size_of { dest: %r0, type: Padded }
 
 Produces an `Int` from the shared native ABI layout engine. The checked type is
 part of the instruction, and verification rejects types without a concrete
-runtime layout; the VM does not infer layout from a runtime value.
+runtime layout; the VM does not infer layout from a runtime value. Only a
+generator carries the query: the elaborator answers it under the compilation's
+native target (`native::mono`), so concrete MIR holds the constant, and the VM
+reaches the instruction only as the erased oracle, on the host.
 
 ### `type.name` — Unqualified spelling of a parametric type
 

@@ -5,9 +5,10 @@
 use super::*;
 
 impl<'a> Specializer<'a> {
-    pub(super) fn new(source: &'a MirProgram) -> Self {
+    pub(super) fn new(source: &'a MirProgram, target: Option<&'a NativeTarget>) -> Self {
         Self {
             source,
+            target,
             functions: source
                 .functions
                 .iter()
@@ -403,7 +404,6 @@ impl<'a> Specializer<'a> {
         function.blocks = blocks;
         repair_storage_result_types(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
-        ensure_concrete_function(&key.template, &name, &function)?;
 
         if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
             let mut declaration = declaration.clone();
@@ -420,7 +420,77 @@ impl<'a> Specializer<'a> {
             self.output_function_decls.push(declaration);
         }
         self.discover_structs(&key.template, &function)?;
+        self.answer_layout_queries(&key.template, &mut function)?;
+        ensure_concrete_function(&key.template, &name, &function)?;
         self.output_functions.push((name, function));
+        Ok(())
+    }
+
+    /// Answer every layout query of the instance from its now-concrete type
+    /// under the elaboration's target: the struct instances the type names
+    /// were just discovered, so their fields lay out.
+    fn answer_layout_queries(
+        &self,
+        template: &str,
+        function: &mut MirFunction,
+    ) -> Result<(), MonoError> {
+        fn queries(blocks: &mut [MirBlock]) -> Vec<&mut MirInstr> {
+            let mut found = Vec::new();
+            for block in blocks {
+                for instruction in &mut block.instrs {
+                    match instruction {
+                        MirInstr::Try {
+                            body,
+                            handler,
+                            orelse,
+                            finalbody,
+                            ..
+                        } => {
+                            found.extend(queries(body));
+                            if let Some((_, blocks)) = handler {
+                                found.extend(queries(blocks));
+                            }
+                            if let Some(blocks) = orelse {
+                                found.extend(queries(blocks));
+                            }
+                            if let Some(blocks) = finalbody {
+                                found.extend(queries(blocks));
+                            }
+                        }
+                        MirInstr::SizeOf { .. } => found.push(instruction),
+                        _ => {}
+                    }
+                }
+            }
+            found
+        }
+        let queries = queries(&mut function.blocks);
+        if queries.is_empty() {
+            return Ok(());
+        }
+        let Some(target) = self.target else {
+            return Err(self.error(
+                Some(template),
+                "layout query: no native target for this host".to_string(),
+            ));
+        };
+        let structs = mojito_mir::mir::struct_field_index_of(&self.output_structs);
+        let layout = mojito_native_core::layout::LayoutCx {
+            target,
+            structs: &structs,
+        };
+        for query in queries {
+            let MirInstr::SizeOf { dest, ty } = query else {
+                continue;
+            };
+            let size = layout.layout_of(ty).map_err(|error| {
+                self.error(Some(template), format!("size_of of `{ty}`: {error}"))
+            })?;
+            *query = MirInstr::Const {
+                dest: *dest,
+                k: Const::Int(size.size as i64),
+            };
+        }
         Ok(())
     }
 

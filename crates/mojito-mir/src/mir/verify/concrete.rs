@@ -178,8 +178,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::TypeName { ty, .. } => {
             errors.push(format!("{head} names the type `{ty}` in elaborated MIR"));
         }
-        MirInstr::SizeOf { ty, .. }
-        | MirInstr::MaterializeLiteral { target: ty, .. }
+        MirInstr::SizeOf { ty, .. } => {
+            errors.push(format!(
+                "{head} keeps the layout query of `{ty}` in elaborated MIR"
+            ));
+        }
+        MirInstr::MaterializeLiteral { target: ty, .. }
         | MirInstr::PointerStorageTake { element: ty, .. }
         | MirInstr::PointerStorageDestroy { element: ty, .. }
         | MirInstr::UninitStorageTake { element: ty, .. }

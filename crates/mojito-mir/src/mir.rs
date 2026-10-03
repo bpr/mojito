@@ -132,8 +132,15 @@ pub struct MirDeclarations {
 pub fn struct_field_index(
     declarations: &MirDeclarations,
 ) -> mojito_native_core::layout::StructFieldIndex {
+    struct_field_index_of(&declarations.structs)
+}
+
+/// [`struct_field_index`] over the struct declarations alone.
+pub fn struct_field_index_of(
+    structs: &[MirStructDeclaration],
+) -> mojito_native_core::layout::StructFieldIndex {
     let mut index = mojito_native_core::layout::StructFieldIndex::default();
-    for decl in &declarations.structs {
+    for decl in structs {
         index.insert(
             decl.name.clone(),
             decl.fields.iter().map(|(_, ty)| ty.clone()).collect(),

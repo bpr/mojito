@@ -1457,7 +1457,8 @@ impl Elab<'_> {
                 _ => None,
             })
             .collect();
-        let mut program = super::rewrite::materialize_block(program, &consts, &type_names);
+        let mut program =
+            super::rewrite::materialize_block(program, &consts, &type_names, &HashSet::new());
         // A retained struct's method that only elaborates with its own
         // compile-time parameters bound (a `comptime for` over a method pack,
         // `FormatStruct.params`), or with its struct's bound (a `comptime if`

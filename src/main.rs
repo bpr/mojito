@@ -637,7 +637,8 @@ fn compile_native_module(
     // production pipeline, and hand the cached post-drop MIR to the backend.
     let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
     let label = file.unwrap_or("-").to_string();
-    let compiler = Compiler::new(cli.link_options.clone(), BackendKind::Vm);
+    let compiler =
+        Compiler::new(cli.link_options.clone(), BackendKind::Vm).with_target(native_target(cli)?);
     let compiled = cli_timing("frontend", || {
         match file {
             Some(path) if path != "-" => compiler.compile_source(&source, Path::new(path)),

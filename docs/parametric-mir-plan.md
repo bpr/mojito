@@ -568,11 +568,19 @@ Three prerequisites come first. None of them moves a body.
   "function instantiation in parameter domain that recursively requires
   itself". No depth bound, as upstream: the instance budget is the one
   elaboration bound, apart from VM fuel, and is reached in seconds.
-- **A common type vocabulary.** A heterogeneous pack already needs a type
-  that depends on a symbolic index, and P2's methods already need receiver
-  applications, conditional members, and lifecycle witnesses. So register
-  types over parameter expressions are specified before P3b and P3c, not in
-  P3c.
+- **A common type vocabulary.** Specified
+  ([`docs/notes/param-expr-attributes.md`](notes/param-expr-attributes.md)
+  §Register types, 2026-10-03): a register type names a parameter expression
+  through the forms that exist — a type binder, a dependent type (a pack
+  element included), a symbolic vector lane or width, a symbolic struct
+  argument, and the new `ParamKind::Apply` — and the parametric verifier
+  accepts one whose binders are in scope and whose expressions are
+  well-kinded (`verify/scope.rs`), while the concrete verifier rejects it.
+  Layout is asked only of a concrete type, and the elaborator answers every
+  layout query under the compilation's native target. A `def` with a value
+  parameter beside its type parameters keeps its clone until the elaborator
+  binds the value from the call (P3c); every other plain `def` is
+  template-served.
 
 Then one class at a time. For each: HIR and MIR gain the form, the verifiers
 and ownership analysis accept it, the elaborator resolves it, the cloner's
@@ -649,7 +657,7 @@ regions. Later forms may bump it again (decision D5).
   ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) §D2):
   `native::mono` stays in `mojito-native`, the root driver calls it for both
   backends, and `mojito-native` gains the edge to `mojito-vm` when the
-  request path lands (roadmap 1.2), so the elaborator owns its executor as
+  request path lands (roadmap 1.1), so the elaborator owns its executor as
   upstream's `Elaborator` owns its interpreter. `mojito-comptime` never
   depends on `mojito-native`; its AST route is deleted at P4, not bridged.
 - **D3. Module-scope `comptime` values.** Decided 2026-10-02 (same note,
@@ -658,9 +666,11 @@ regions. Later forms may bump it again (decision D5).
   operators, type names, predicates); one whose initializer applies
   anything is a typed request, with the symbolic value `ParamKind::Apply`,
   equal by structure and evaluated only by the elaborator, so
-  `SIMD[DType.float32, C]` matches itself and not a folded width. Early
-  folding of applied constants stays as an implementation until P4,
-  contained by the source-validation rejection in signatures.
+  `SIMD[DType.float32, C]` matches itself and not a folded width. Landed
+  2026-10-03 with the register types: the applied constant keeps its name
+  in every type argument and its node carries the folded value, so the
+  early folding stays as an implementation until P4 without losing the
+  identity.
 - **D4. The budget.** Proposed, for the owner to set:
   - A named workload set: the three P0 programs, the P3 benchmark (roadmap
     §1), and one many-instantiation program.

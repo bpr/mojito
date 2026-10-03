@@ -222,14 +222,12 @@ impl FnLowering<'_> {
                 Err(self
                     .unsupported_reg(format!("type name of `{ty}` after monomorphization"), *dest))
             }
-            MirInstr::SizeOf { dest, ty } => {
-                let size = self
-                    .layout
-                    .layout_of(ty)
-                    .map_err(|error| self.unsupported_reg(error.to_string(), *dest))?
-                    .size;
-                self.lower_const(ctx, *dest, &mojito_mir::mir::Const::Int(size as i64))
-            }
+            // The elaborator answers every layout query; concrete
+            // verification refuses one that survives.
+            MirInstr::SizeOf { dest, ty } => Err(self.unsupported_reg(
+                format!("layout query of `{ty}` after monomorphization"),
+                *dest,
+            )),
             MirInstr::MaterializeLiteral {
                 dest,
                 value,

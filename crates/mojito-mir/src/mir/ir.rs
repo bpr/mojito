@@ -364,7 +364,10 @@ pub enum MirInstr {
         dest: Reg,
         param: mojito_types::param_expr::ParamRef,
     },
-    /// Target-layout byte size of one checker-resolved type.
+    /// The byte size of one checker-resolved type: a layout query only a
+    /// generator carries. The elaborator answers it under the compilation's
+    /// native target, so elaborated MIR holds the constant and never the
+    /// query.
     SizeOf {
         dest: Reg,
         ty: Ty,

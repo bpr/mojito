@@ -420,6 +420,49 @@ impl ParamContext {
         self.make(query.meta(), ParamKind::Reflect { subject, query })
     }
 
+    /// A compile-time application, typed by the callee's declared result.
+    /// The arguments keep their order; nothing folds, since only the
+    /// elaborator evaluates an application.
+    pub fn apply(&self, function: &str, args: &[ParamExpr], meta: MetaTy) -> ParamExpr {
+        self.apply_with(function, args, meta, None)
+    }
+
+    /// [`Self::apply`] carrying the value a compile-time route established
+    /// for the application; see [`ParamKind::Apply`].
+    pub fn apply_evaluated(
+        &self,
+        function: &str,
+        args: &[ParamExpr],
+        meta: MetaTy,
+        evaluated: CtValue,
+    ) -> ParamExpr {
+        self.apply_with(function, args, meta, Some(evaluated))
+    }
+
+    fn apply_with(
+        &self,
+        function: &str,
+        args: &[ParamExpr],
+        meta: MetaTy,
+        evaluated: Option<CtValue>,
+    ) -> ParamExpr {
+        let args = args.iter().map(|arg| self.intern(arg)).collect();
+        self.make(
+            meta,
+            ParamKind::Apply {
+                function: function.to_string(),
+                args,
+                evaluated,
+            },
+        )
+    }
+
+    /// The layout query `size_of[T]()`: the application of `size_of` to one
+    /// type, answered only by the elaborator under its native target.
+    pub fn size_of(&self, ty: Ty) -> ParamExpr {
+        self.apply(SIZE_OF_FUNCTION, &[self.type_shape(ty)], MetaTy::int())
+    }
+
     /// A typed hole. Reserved: no source construct produces one, a known
     /// parameter without a binding is its reference, and a hole is a boundary
     /// error at executable facts, MIR, mangling, and the VM.
@@ -489,6 +532,17 @@ impl ParamContext {
             }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.fold(subject)?, query.clone())
+            }
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.fold(arg))
+                    .collect::<Result<_, _>>()?;
+                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
             }
             _ => expr.clone(),
         })
@@ -941,6 +995,17 @@ impl ParamContext {
                 };
                 self.pack_query(pack, query)
             }
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.replace_at(arg, bindings, depth, memo))
+                    .collect::<Result<_, _>>()?;
+                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+            }
         };
         memo.insert(key, replaced.clone());
         Ok(replaced)
@@ -1002,10 +1067,24 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
             }
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.shift(arg, cutoff, by))
+                    .collect::<Result<_, _>>()?;
+                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+            }
             _ => expr.clone(),
         })
     }
 }
+
+/// The callable symbol of a layout query ([`ParamContext::size_of`]).
+pub const SIZE_OF_FUNCTION: &str = "size_of";
 
 /// A cheap handle to an immutable, canonical expression node.
 ///
@@ -1068,7 +1147,20 @@ impl ParamExpr {
                     .collect::<Result<Vec<_>, _>>()?;
                 fold_primitive(*op, &constants.iter().collect::<Vec<_>>())
             }
+            ParamKind::Apply {
+                evaluated: Some(value),
+                ..
+            } => Ok(value.clone()),
             _ => Err(ParamError::NotConstant(self.to_string())),
+        }
+    }
+
+    /// The value established for this application, when it is an evaluated
+    /// one ([`ParamKind::Apply`]).
+    pub fn evaluated(&self) -> Option<&CtValue> {
+        match self.kind() {
+            ParamKind::Apply { evaluated, .. } => evaluated.as_ref(),
+            _ => None,
         }
     }
 
@@ -1176,6 +1268,11 @@ impl ParamExpr {
                 query: PackQuery::Contains(element),
                 ..
             } => element.visit(visitor),
+            ParamKind::Apply { args, .. } => {
+                for arg in args {
+                    arg.visit(visitor);
+                }
+            }
             ParamKind::Constant(_)
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
@@ -1215,7 +1312,8 @@ impl ParamExpr {
             ParamKind::ListGet { .. } => 9,
             ParamKind::Reflect { .. } => 10,
             ParamKind::PackQuery { .. } => 11,
-            ParamKind::Hole { .. } => 12,
+            ParamKind::Apply { .. } => 12,
+            ParamKind::Hole { .. } => 13,
         }
     }
 }
@@ -1269,6 +1367,16 @@ impl Ord for ParamExpr {
                         operands: other_operands,
                     },
                 ) => op.cmp(other_op).then_with(|| operands.cmp(other_operands)),
+                (
+                    ParamKind::Apply { function, args, .. },
+                    ParamKind::Apply {
+                        function: other_function,
+                        args: other_args,
+                        ..
+                    },
+                ) => function
+                    .cmp(other_function)
+                    .then_with(|| args.cmp(other_args)),
                 _ => Ordering::Equal,
             })
             .then_with(|| self.meta().to_string().cmp(&other.meta().to_string()))
@@ -1344,6 +1452,21 @@ pub enum ParamKind {
     /// A bound-pack query the checker's concrete pack logic resolves; the
     /// pack is named by its binder's identity.
     PackQuery { pack: ParamRef, query: PackQuery },
+    /// A compile-time application of the callable symbol `function` to
+    /// `args`, in argument order. It is never folded: two applications are
+    /// one node by structure, as the pin keeps `f(Int(7))` symbolic through
+    /// the check, so a type over one never matches the folded value. A
+    /// layout query is the application of `size_of` to one type.
+    ///
+    /// `evaluated` is the value the compile-time route established for the
+    /// application, carried so a concrete use (a lane count, a layout) reads
+    /// it while type identity does not; an application nothing has evaluated
+    /// yet carries none.
+    Apply {
+        function: String,
+        args: Vec<ParamExpr>,
+        evaluated: Option<CtValue>,
+    },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     Hole { kind: HoleKind, token: u64 },
 }
@@ -1694,7 +1817,7 @@ impl MetaTy {
 
     /// A frozen struct constant is typed by bare name, while its parameter
     /// declares the resolved instance type.
-    fn is_unresolved_struct(&self, declared: &Self) -> bool {
+    pub fn is_unresolved_struct(&self, declared: &Self) -> bool {
         matches!(
             (self.as_value(), declared.as_value()),
             (Some(Ty::Struct(found, _)), Some(Ty::Struct(expected, _)))
@@ -1770,6 +1893,27 @@ pub enum ReflectQuery {
 }
 
 impl ReflectQuery {
+    /// The inverse of the `Display` spelling, which MIR text carries.
+    pub fn from_spelling(spelling: &str) -> Option<Self> {
+        let bracketed = |prefix: &str, suffix: &str| {
+            spelling
+                .strip_prefix(prefix)?
+                .strip_suffix(suffix)?
+                .strip_prefix('"')?
+                .strip_suffix('"')
+                .map(str::to_string)
+        };
+        match spelling {
+            "is_struct()" => Some(Self::IsStruct),
+            "field_count()" => Some(Self::FieldCount),
+            "field_names()" => Some(Self::FieldNames),
+            "field_types()" => Some(Self::FieldTypes),
+            _ => bracketed("field_index[", "]()")
+                .map(Self::FieldIndex)
+                .or_else(|| bracketed("field[", "].T").map(Self::FieldNamed)),
+        }
+    }
+
     /// The meta-type of the query's answer.
     pub fn meta(&self) -> MetaTy {
         match self {
@@ -2555,11 +2699,36 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                 write!(f, "TypeList[{pack}.values]().contains[{element}]()")
             }
         },
+        // Mojo-shaped: a type argument in brackets, a value in parentheses.
+        ParamKind::Apply { function, args, .. } => {
+            let (types, values): (Vec<_>, Vec<_>) = args
+                .iter()
+                .partition(|arg| matches!(arg.meta(), MetaTy::Type));
+            write!(f, "{function}")?;
+            if !types.is_empty() {
+                write!(f, "[")?;
+                write_operands(f, &types)?;
+                write!(f, "]")?;
+            }
+            write!(f, "(")?;
+            write_operands(f, &values)?;
+            write!(f, ")")
+        }
         ParamKind::Hole { kind, token } => match kind {
             HoleKind::Unknown => write!(f, "?unknown{token}"),
             HoleKind::Unbound => write!(f, "?unbound{token}"),
         },
     }
+}
+
+fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::Result {
+    for (index, operand) in operands.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{operand}")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

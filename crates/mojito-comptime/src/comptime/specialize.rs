@@ -1107,7 +1107,12 @@ impl Elab<'_> {
         // Elaborate the body with the parameters bound, so its comptime constructs
         // select/unroll against the concrete arguments.
         let elaborated = self.block(body, &mut env, true)?;
-        let mut final_body = materialize_block(elaborated, &subs, &self.struct_names);
+        let mut final_body = materialize_block(
+            elaborated,
+            &subs,
+            &self.struct_names,
+            &self.applied_constants(),
+        );
         fold_pack_element_constructions(&mut final_body, &type_pack_values);
         for parameter in &mut specialized_params {
             if let Some(default) = &mut parameter.default {
@@ -1530,7 +1535,12 @@ impl Elab<'_> {
                         method.name
                     ))
                 })?;
-            method.body = materialize_block(elaborated, &method_subs, &self.struct_names);
+            method.body = materialize_block(
+                elaborated,
+                &method_subs,
+                &self.struct_names,
+                &self.applied_constants(),
+            );
             let method_value_subs: Subs = &|name| method_subs.get(name).cloned();
             for parameter in &mut method.params {
                 rewrite_type(&mut parameter.ty, method_value_subs);
@@ -1985,8 +1995,12 @@ impl Elab<'_> {
                     // constant; its type positions bake out below.
                     let mut overload_subs = subs.clone();
                     overload_subs.remove(&parameter_name);
-                    overload.body =
-                        materialize_block(elaborated, &overload_subs, &self.struct_names);
+                    overload.body = materialize_block(
+                        elaborated,
+                        &overload_subs,
+                        &self.struct_names,
+                        &self.applied_constants(),
+                    );
                     // The erased parameter's type positions in the body
                     // (`rebind[T](...)`) bake out like a per-call clone's.
                     substitute_type_bindings_in_block(
@@ -2055,7 +2069,12 @@ impl Elab<'_> {
                                     unrolled.name
                                 ))
                             })?;
-                    unrolled.body = materialize_block(elaborated, &subs_k, &self.struct_names);
+                    unrolled.body = materialize_block(
+                        elaborated,
+                        &subs_k,
+                        &self.struct_names,
+                        &self.applied_constants(),
+                    );
                     if let Some(ret) = &mut unrolled.ret {
                         self.fold_pack_index_annotation(ret, &binding, &source_types, &env_k)?;
                     }
@@ -2190,7 +2209,12 @@ impl Elab<'_> {
                 }
                 match self.block(&method.body, &mut env, true) {
                     Ok(elaborated) => {
-                        method.body = materialize_block(elaborated, &subs, &self.struct_names);
+                        method.body = materialize_block(
+                            elaborated,
+                            &subs,
+                            &self.struct_names,
+                            &self.applied_constants(),
+                        );
                         if let Some(body) = template_body {
                             members.push(TracedMember::whole(
                                 elaborated_methods.len(),
@@ -2210,7 +2234,12 @@ impl Elab<'_> {
                     method.name
                 ))
             })?;
-            method.body = materialize_block(elaborated, &subs, &self.struct_names);
+            method.body = materialize_block(
+                elaborated,
+                &subs,
+                &self.struct_names,
+                &self.applied_constants(),
+            );
             if let Some(body) = template_body {
                 members.push(TracedMember::whole(
                     elaborated_methods.len(),
@@ -3231,7 +3260,12 @@ impl Elab<'_> {
             }
         }
         let elaborated = self.block(&clone.body, &mut clone_env, true)?;
-        clone.body = materialize_block(elaborated, &clone_subs, &self.struct_names);
+        clone.body = materialize_block(
+            elaborated,
+            &clone_subs,
+            &self.struct_names,
+            &self.applied_constants(),
+        );
         if !type_pack_expansions.is_empty() {
             expand_pack_spreads_in_function_body(
                 &mut clone.body,

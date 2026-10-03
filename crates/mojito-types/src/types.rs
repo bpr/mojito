@@ -164,15 +164,26 @@ pub enum SimdDtype {
 }
 
 impl SimdDtype {
-    pub const fn known(&self) -> Option<Dtype> {
+    /// The dtype a concrete use reads: a known slot's, or the value an
+    /// evaluated application in the slot established.
+    pub fn known(&self) -> Option<Dtype> {
         match self {
             Self::Known(dtype) => Some(*dtype),
-            Self::Expr(_) => None,
+            Self::Expr(expr) => match expr.require_constant() {
+                Ok(CtValue::Dtype(dtype)) => Some(dtype),
+                _ => None,
+            },
         }
     }
 
     pub const fn is_expr(&self) -> bool {
         matches!(self, Self::Expr(_))
+    }
+
+    /// Whether only an instantiation can say which dtype this is: an
+    /// expression no evaluation has closed.
+    pub fn is_symbolic(&self) -> bool {
+        self.is_expr() && self.known().is_none()
     }
 
     /// Whether a dtype constraint holds here: a known dtype answers
@@ -214,15 +225,28 @@ impl SimdWidth {
         Self::Expr(context.hole(HoleKind::Unbound, MetaTy::int()))
     }
 
-    pub const fn known(&self) -> Option<i64> {
+    /// The lane count a concrete use reads: a known slot's, or the value an
+    /// evaluated application in the slot established.
+    pub fn known(&self) -> Option<i64> {
         match self {
             Self::Known(width) => Some(*width),
-            Self::Expr(_) => None,
+            Self::Expr(expr) => expr
+                .require_constant()
+                .ok()
+                .as_ref()
+                .and_then(crate::param_expr::fold::integer_value)
+                .and_then(|width| width.to_i64()),
         }
     }
 
     pub const fn is_expr(&self) -> bool {
         matches!(self, Self::Expr(_))
+    }
+
+    /// Whether only an instantiation can say how many lanes there are: an
+    /// expression no evaluation has closed.
+    pub fn is_symbolic(&self) -> bool {
+        self.is_expr() && self.known().is_none()
     }
 
     /// Whether this slot is the [`SimdWidth::inferred`] wildcard.
@@ -2107,14 +2131,13 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             },
         ) if splats_to(literal, dtype) => true,
         // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
-        // `(FloatLiteral)` splat an exact literal across every lane.
-        (
-            literal @ (Ty::IntLiteral | Ty::FloatLiteral),
-            Ty::Simd {
-                dtype,
-                width: SimdWidth::Known(_),
-            },
-        ) if splats_to(literal, dtype) => true,
+        // `(FloatLiteral)` splat an exact literal across every lane, a
+        // symbolic lane count included.
+        (literal @ (Ty::IntLiteral | Ty::FloatLiteral), Ty::Simd { dtype, width })
+            if !width.is_inferred() && splats_to(literal, dtype) =>
+        {
+            true
+        }
         (
             Ty::Simd {
                 dtype: from_dtype,
@@ -3409,7 +3432,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
             is_symbolic(element)
         }
         Ty::Ref(reference) => is_symbolic(&reference.referent),
-        Ty::Simd { dtype, width } => dtype.is_expr() || width.is_expr(),
+        Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         Ty::Dtype
         | Ty::Int
         | Ty::UInt

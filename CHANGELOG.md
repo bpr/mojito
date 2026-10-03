@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Register types over parameter expressions are specified
+  (`docs/notes/param-expr-attributes.md` §Register types): a generator's
+  MIR names a type binder, a dependent type, a symbolic vector lane or
+  width, a symbolic struct argument, or the new compile-time application
+  `ParamKind::Apply` in a register type, and `mir::verify` now checks that
+  every binder such a type names is declared by the body's declaration, its
+  struct, an enclosing callable signature, or a contract, and that every
+  expression is well-kinded for its slot (`verify/scope.rs`), while the
+  concrete mode rejects them all. A module constant whose initializer
+  applies a function is its application in a type, as at the pin (decision
+  D3): `SIMD[DType.float32, C]` over `comptime C = f(A) * 2` matches itself
+  on both sides of a call and rejects `SIMD[DType.float32, 8]`
+  (`assets/ok/comptime_applied_constant_in_signature.mojo`,
+  `assets/type_error/comptime_applied_constant_mismatch.mojo`). Layout is
+  asked only of a concrete type (`LayoutError::Symbolic`), and the
+  elaborator answers every `size_of` under the compilation's native target
+  — the host for a VM run, `--target` for a native compile — so concrete
+  MIR holds the constant on both backends. MIR text schema 1.14 carries
+  `param_apply`, and reads back a pack element and a reflection query.
+
 - `docs/notes/comptime-region-ownership.md` records the ownership rule for
   a compile-time region: a `comptime if` and a `comptime for` are decided as
   the runtime region of the same shape, with the condition opaque and the

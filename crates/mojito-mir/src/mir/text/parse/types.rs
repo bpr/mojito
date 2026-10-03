@@ -704,18 +704,54 @@ impl Decoder {
                     Some(self.context.pack_query(&pack, query))
                 }
                 "param_list_get" => {
-                    self.error(
-                        value.span,
-                        "an element of an unbound variadic pack cannot cross MIR",
-                    );
-                    None
+                    let list = self.req(value, fields, "list", Self::param_expr)?;
+                    let index = self.req(value, fields, "index", Self::param_expr)?;
+                    self.unknown(fields, &["list", "index"]);
+                    let built = self.context.list_get(&list, &index);
+                    self.built(value, built)
                 }
                 "param_reflect" => {
-                    self.error(
-                        value.span,
-                        "a reflection query over a symbolic type cannot cross MIR",
-                    );
-                    None
+                    let subject = self.req(value, fields, "subject", Self::param_expr)?;
+                    let query_value = self.required(value, fields, "query")?;
+                    let spelling = self.symbol(query_value)?;
+                    let Some(query) =
+                        mojito_types::param_expr::ReflectQuery::from_spelling(&spelling)
+                    else {
+                        self.error(
+                            query_value.span,
+                            format!("unknown reflection query `{spelling}`"),
+                        );
+                        return None;
+                    };
+                    self.unknown(fields, &["subject", "query"]);
+                    Some(self.context.reflect_query(&subject, query))
+                }
+                "param_apply" => {
+                    let function = self.req(value, fields, "function", Self::string)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    let args_value = self.required(value, fields, "args")?;
+                    let args: Vec<ParamExpr> = self
+                        .list(args_value)
+                        .ok()?
+                        .iter()
+                        .map(|arg| self.param_expr(arg))
+                        .collect::<Option<_>>()?;
+                    let evaluated = self.required(value, fields, "evaluated")?;
+                    let evaluated = self
+                        .option_value(Some(evaluated))
+                        .map(|inner| self.ct_value(inner));
+                    let evaluated = match evaluated {
+                        Some(None) => return None,
+                        Some(Some(evaluated)) => Some(evaluated),
+                        None => None,
+                    };
+                    self.unknown(fields, &["function", "type", "args", "evaluated"]);
+                    Some(match evaluated {
+                        Some(evaluated) => self
+                            .context
+                            .apply_evaluated(&function, &args, meta, evaluated),
+                        None => self.context.apply(&function, &args, meta),
+                    })
                 }
                 // A hole is a boundary error at MIR, never a parsed form.
                 "param_hole" => {
@@ -963,6 +999,9 @@ impl Decoder {
                     id: OriginParamId(id),
                     mutability,
                 })
+            }
+            ValueKind::Positional(tag, inner) if tag == "marker_applied" => {
+                self.int64(inner).map(CtMarker::Applied)
             }
             _ => {
                 self.error(value.span, "expected compile-time marker");

@@ -25,6 +25,7 @@ use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
 };
+use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
@@ -71,9 +72,13 @@ impl std::fmt::Display for MonoError {
 impl std::error::Error for MonoError {}
 
 /// Specialize the graph reachable from `entries` without modifying `program`.
+///
+/// `target` is the native target the elaboration answers layout queries
+/// for; a program that asks none elaborates without one.
 pub fn specialize(
     program: &MirProgram,
     entries: &[String],
+    target: Option<&NativeTarget>,
 ) -> Result<SpecializedProgram, MonoError> {
     // Expanding polymorphic recursion nests each instance's types one level
     // deeper than the last, and the type walks recurse on that nesting, so
@@ -83,9 +88,9 @@ pub fn specialize(
         std::thread::Builder::new()
             .name("elaborator".to_string())
             .stack_size(ELABORATOR_STACK_BYTES)
-            .spawn_scoped(scope, || Specializer::new(program).run(entries))
+            .spawn_scoped(scope, || Specializer::new(program, target).run(entries))
             .map_or_else(
-                |_| Specializer::new(program).run(entries),
+                |_| Specializer::new(program, target).run(entries),
                 |elaborator| {
                     elaborator
                         .join()
@@ -230,6 +235,8 @@ struct AssociatedTypes {
 
 struct Specializer<'a> {
     source: &'a MirProgram,
+    /// The target every layout query is answered for.
+    target: Option<&'a NativeTarget>,
     functions: HashMap<&'a str, &'a MirFunction>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,

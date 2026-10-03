@@ -211,10 +211,15 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     Value::Str(mojito_symbol::symbol::unqualified_instance_name(ty));
             }
+            // Only the erased oracle reaches a layout query: the elaborator
+            // answers every one in concrete MIR. The oracle runs on the
+            // host, so the host is its target.
             MirInstr::SizeOf { dest, ty } => {
-                let target = mojito_native_core::target::NativeTarget::new(
-                    mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
-                );
+                let target = mojito_native_core::target::NativeTarget::host().ok_or_else(|| {
+                    RuntimeError::Unsupported(
+                        "a layout query needs a native target, and this host has none".to_string(),
+                    )
+                })?;
                 let structs = mojito_mir::mir::struct_field_index(&prog.mir.declarations);
                 let size = mojito_native_core::layout::LayoutCx {
                     target: &target,

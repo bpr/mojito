@@ -1832,3 +1832,45 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
     let pack = read_pack(&older);
     assert!(pack.is_unbound() && &*pack.name == "Ts");
 }
+
+/// The three forms only a generator carries — a pack element, a reflection
+/// query, and an application — round trip through the reader.
+#[test]
+fn param_apply_list_get_and_reflect_round_trip() {
+    use mojito_types::param_expr::ReflectQuery;
+    let context = ParamContext::detached();
+    let pack = context.decl_ref(ParamId::new("Bag", 0), "Ts", MetaTy::type_list());
+    let i = int_parameter("Bag.first", 0, "i");
+    let element = context.list_get(&pack, &i).expect("element builds");
+    let reflected = context.reflect_query(
+        &context.type_shape(Ty::Param {
+            binder: mojito_types::param_expr::ParamRef {
+                id: ParamId::new("f", 0),
+                name: "T".into(),
+            },
+            bounds: vec!["AnyType".into()],
+            callable_bound: None,
+        }),
+        ReflectQuery::FieldNamed("x".into()),
+    );
+    let applied = context.apply("f", &[i.clone()], MetaTy::int());
+    let types = vec![
+        Ty::Dependent(DependentType::Parameter(element)),
+        Ty::Dependent(DependentType::Parameter(reflected)),
+        Ty::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
+            width: mojito_types::types::SimdWidth::Expr(applied),
+        },
+    ];
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(types.clone(), Vec::new()),
+    )]);
+    let text = write::program(&program);
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let registers = &parsed.program.functions[0].1.reg_types;
+    for (register, ty) in types.iter().enumerate() {
+        assert_eq!(registers[&(register as u32)], *ty);
+    }
+    assert_eq!(write::program(&parsed.program), text);
+}

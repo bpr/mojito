@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.13
+# Mojito Textual MIR Format, Version 1.14
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.13 is implemented end to end for inspection and loading: canonical
+Version 1.14 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.13
+mojito-mir 1.14
 ```
 
-The writer emits 1.13. The reader accepts 1.0 through 1.13; *Schema 1.0*
+The writer emits 1.14. The reader accepts 1.0 through 1.14; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -354,8 +354,9 @@ rational; reprinting reduces it.
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value
 parameter the VM reifies) and which is no part of generic identity, or
 `ct_marker(marker)` for an elaborator classification of a name that is no
-parameter: `marker_local`, `marker_type`, or
-`marker_tuple_origin { id, mutability }`. A deferred slot names the binder
+parameter: `marker_local`, `marker_type`,
+`marker_tuple_origin { id, mutability }`, or `marker_applied(int)`, the
+folded value of a module constant whose initializer applies a function. A deferred slot names the binder
 whose slot it fills by a `binder { owner, slot, name }` record.
 
 ### Parameter expressions
@@ -375,8 +376,19 @@ param_conforms  { subject, trait }
 param_trivial   { lifecycle, subject }
 param_type_shape(type)
 param_select    { elements: [type...], index }
+param_list_get  { list, index }
+param_reflect   { subject, query }
 param_pack_query { pack, query }
+param_apply     { function: "symbol", type: meta, args: [param-expr...], evaluated: option<ct-value> }
 ```
+
+`param_list_get` is an element of a parameter list that is still a parameter
+(a pack element), `param_reflect` a reflection query over a symbolic subject
+(`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
+`field_index["name"]()`, `field["name"].T`), and `param_apply` a compile-time
+application of a callable symbol, never folded, whose `evaluated` holds the
+value the compile-time route established for it when one has (schema 1.14;
+`docs/notes/param-expr-attributes.md` §Register types).
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
@@ -393,7 +405,8 @@ Parsing re-enters the canonicalizing constructors, so a parsed expression is
 canonical whatever order the text spelled its operands in, a bad arity or
 operand domain is a diagnostic at the expression, and a `param_expr`'s recorded
 `type` must be the type it builds to. An unknown or unbound parameter
-(`param_hole`) never crosses into MIR and is rejected.
+(`param_hole`) never crosses into MIR and is rejected; every other form is
+read back, a pack element and a reflection query included.
 
 ### Types
 
@@ -606,7 +619,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.13
+mojito-mir 1.14
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

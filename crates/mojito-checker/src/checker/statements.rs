@@ -95,6 +95,7 @@ impl Checker {
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,
         // which a trait may name wherever they are declared.
+        let mut evaluated_applications = HashMap::new();
         for statement in stmts {
             let StmtKind::Comptime {
                 name,
@@ -109,9 +110,27 @@ impl Checker {
                 continue;
             }
             if let Ok(constant) = self.eval_ct(value) {
-                self.comptimes.insert(name.clone(), constant);
+                self.comptimes.insert(name.clone(), constant.clone());
+                // The elaborator folded an applied constant to this literal;
+                // its identity stays the application (decision D3).
+                let applied = self
+                    .template_catalog
+                    .borrow()
+                    .applied_constants()
+                    .get(name)
+                    .cloned();
+                if let Some(applied) = applied
+                    && let Some(evaluated) =
+                        self.evaluated_application(&applied, &constant, &mut evaluated_applications)
+                {
+                    self.comptime_applied.insert(name.clone(), evaluated);
+                }
             } else if super::traits::literal_default(value) {
                 self.comptime_literals.insert(name.clone(), value.clone());
+            } else if self.source_validation
+                && let Some(applied) = self.applied_constant_expr(value, stmts)
+            {
+                self.comptime_applied.insert(name.clone(), applied);
             }
         }
         for statement in stmts {

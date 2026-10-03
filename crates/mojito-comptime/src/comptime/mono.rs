@@ -2224,7 +2224,7 @@ fn bind_spec_param_args<'t>(
 fn closed_instance_argument(ty: &Ty) -> bool {
     match ty {
         Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::None => true,
-        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        Ty::Simd { dtype, width } => !dtype.is_symbolic() && !width.is_symbolic(),
         Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
             TyArg::Ty(ty) => closed_instance_argument(ty),
             TyArg::Val(value) => !matches!(

@@ -48,6 +48,8 @@ pub struct CompiledProgram {
     /// Whether the compile-time regions were kept through the check, so the
     /// elaborator folds their literal branches.
     comptime_regions: ComptimeRegions,
+    /// The native target the elaborator answers layout queries for.
+    target: Option<crate::native::target::NativeTarget>,
 }
 impl CompiledProgram {
     /// Which mechanism instantiated each generic body of this compilation.
@@ -131,14 +133,15 @@ impl CompiledProgram {
             .get_or_init(|| {
                 let mir = self.drop_elaborated_mir();
                 let _elaborate = timing::span("elaborate");
-                let concrete =
-                    crate::native::mono::specialize(mir, &crate::native::mono::entry_roots(mir))
-                        .and_then(|concrete| match self.comptime_regions {
-                            ComptimeRegions::Select => Ok(concrete),
-                            ComptimeRegions::Keep => {
-                                crate::native::mono::fold_literal_branches(concrete)
-                            }
-                        });
+                let concrete = crate::native::mono::specialize(
+                    mir,
+                    &crate::native::mono::entry_roots(mir),
+                    self.target.as_ref(),
+                )
+                .and_then(|concrete| match self.comptime_regions {
+                    ComptimeRegions::Select => Ok(concrete),
+                    ComptimeRegions::Keep => crate::native::mono::fold_literal_branches(concrete),
+                });
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",
@@ -253,6 +256,10 @@ pub struct Compiler {
     /// experiment, which also folds the kept literal branches in the
     /// elaborator.
     comptime_regions: ComptimeRegions,
+    /// The native target the elaborator answers layout queries for: the
+    /// `--target` of a native compile, otherwise the host. `None` on a host
+    /// with no native target, where a program that asks a layout fails.
+    target: Option<crate::native::target::NativeTarget>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -305,7 +312,17 @@ impl Compiler {
             body_fact_reuse: None,
             vm_instantiation: None,
             comptime_regions: ComptimeRegions::Select,
+            target: match crate::native::target::Triple::host() {
+                Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
+                None => None,
+            },
         }
+    }
+    /// Elaborate for `target` instead of the host.
+    #[must_use]
+    pub const fn with_target(mut self, target: crate::native::target::NativeTarget) -> Self {
+        self.target = Some(target);
+        self
     }
     /// Keep every arm of a `comptime if` and the body of a `comptime for`
     /// through the check and the ownership analysis (the compile-time-region
@@ -712,6 +729,7 @@ impl Compiler {
             template_stats: templates_catalog.stats().clone(),
             clones,
             comptime_regions: self.comptime_regions,
+            target: self.target,
         })
     }
     /// Execute an ownership-verified program using the configured backend.
@@ -1476,7 +1494,7 @@ fn tuple_specialization_type_is_closed_in(ty: &Ty, binders: &ClosingBinders) -> 
             tuple_specialization_type_is_closed_in(element, binders)
         }
         Ty::Ref(reference) => tuple_specialization_type_is_closed_in(&reference.referent, binders),
-        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        Ty::Simd { dtype, width } => !dtype.is_symbolic() && !width.is_symbolic(),
         Ty::Int
         | Ty::UInt
         | Ty::Bool
@@ -1582,9 +1600,13 @@ fn tuple_specialization_ct_expr_is_closed(
             ParamKind::Constant(value) => tuple_specialization_value_is_closed_in(value, binders),
             ParamKind::DeclRef(reference) => binders.ids.contains(&reference.id),
             ParamKind::PackQuery { pack, .. } => binders.ids.contains(&pack.id),
-            // An element of a pack that is still a parameter, or a reflection
-            // of a symbolic type, names no instance.
-            ParamKind::Hole { .. } | ParamKind::ListGet { .. } | ParamKind::Reflect { .. } => false,
+            // An element of a pack that is still a parameter, a reflection
+            // of a symbolic type, or an application the elaborator has yet
+            // to evaluate names no instance.
+            ParamKind::Hole { .. }
+            | ParamKind::ListGet { .. }
+            | ParamKind::Reflect { .. }
+            | ParamKind::Apply { .. } => false,
             // A signature slot is bound by the contract that holds it.
             ParamKind::IndexRef { .. }
             | ParamKind::Op { .. }

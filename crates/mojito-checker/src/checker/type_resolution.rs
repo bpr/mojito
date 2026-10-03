@@ -1908,6 +1908,19 @@ impl Checker {
                         }
                         Err(error) => return Err(error),
                     };
+                    // A struct over an applied module constant is its own
+                    // type at the pin (`Buf[f(7)]` is not `Buf[8]`), which no
+                    // instance below the waist can be named by yet.
+                    if !self.source_validation
+                        && let CtValue::Expr(applied) = &value
+                        && applied.as_constant().is_none()
+                        && applied.require_constant().is_ok()
+                    {
+                        return Err(TypeError::Unsupported(format!(
+                            "a module constant that applies a function cannot be a struct \
+                             argument yet: '{applied}'"
+                        )));
+                    }
                     let actual =
                         self.ct_value_ty(&value, ty)
                             .ok_or_else(|| TypeError::TypeMismatch {
@@ -2921,7 +2934,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
     match ty {
         Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType | Ty::Infer => true,
         Ty::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
-        Ty::Simd { dtype, width } => dtype.is_expr() || width.is_expr(),
+        Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         Ty::Int
         | Ty::UInt
         | Ty::Bool

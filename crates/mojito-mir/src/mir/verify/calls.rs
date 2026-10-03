@@ -446,11 +446,16 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
             }
             Ty::Assoc { base, .. } => walk(base, bound, frames)?,
             Ty::Ref(reference) => walk(&reference.referent, bound, frames)?,
-            // A lane dtype or width still symbolic belongs to a template
-            // source validation checked; every clone below the waist is
-            // concrete.
-            Ty::Simd { dtype, width } if dtype.is_expr() || width.is_expr() => {
-                return Err(format!("a symbolic SIMD type cannot cross into MIR: {ty}"));
+            // A symbolic lane or width is a parameter expression like a
+            // struct's value argument; `verify/scope.rs` checks its binders
+            // and kind, and the concrete mode rejects it.
+            Ty::Simd { dtype, width } => {
+                if let mojito_types::types::SimdDtype::Expr(expr) = dtype {
+                    check_expr(expr, frames)?;
+                }
+                if let mojito_types::types::SimdWidth::Expr(expr) = width {
+                    check_expr(expr, frames)?;
+                }
             }
             _ => {}
         }
@@ -521,6 +526,7 @@ pub(super) fn verify_function(
             ));
         }
     }
+    verify_scope(name, function, declarations, errors);
     let context = RegionContext {
         region_len: function.blocks.len(),
         function_len: function.blocks.len(),
