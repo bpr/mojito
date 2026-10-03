@@ -135,6 +135,14 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 
 - Inspect the worktree before editing. Existing staged and unstaged changes belong
   to the user; preserve unrelated work.
+- When a decision comes down to following Mojo or not following Mojo, always
+  follow Mojo. This applies to semantics, which match the pin, and to
+  structure, which resembles Mojo's own implementation, even when the
+  Mojo-shaped option is more work. Do not ask the owner to choose between the
+  two, and do not plan a Mojito-only shortcut as the chosen path. If following
+  Mojo cannot be done now, stage it: a plan's slices must each move Mojito
+  closer to Mojo, and any gap left behind is filed as a divergence on
+  `docs/roadmap.md`.
 - Order items public-first, strictly. Rust ignores item order, but readers should
   not: put every public item at the top so a top-down read shows what the file
   exports. Layout within a file: module docs and `use`/`mod` imports; then public
