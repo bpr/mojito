@@ -172,6 +172,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An overloaded method is declared under the symbol its calls name. The
+  lowered symbol now spells the method's own binders with their bounds
+  (`First.pick$ov$T$Copyable$Int`), a callable-bounded binder by its callable
+  type, an existential `Some[Writer]` parameter, and a `Scalar[dt]` pattern
+  exactly as the checker spells a call's selected overload, where it spelled
+  them bare and no call could reach the template. `self.item.write_to(writer)`
+  beside a generic `write_to[U]` rival stopped with "vm: unknown method
+  'Twin.write_to'" and now prints the item; `self.item.__hash__(hasher)`
+  through a `Hashable` bound on such a struct runs; a struct whose
+  `write_to` has a same-arity `String` rival displays through its `Writer`
+  overload instead of the reflective default; and a call of a
+  callable-bounded overload no longer stops in elaboration. The per-call
+  clone filter no longer falls back to minting every same-named overload
+  for an unrecognized qualifier. `assets/ok/overloaded_method_own_binder_symbols.mojo`
+  pins it.
 - An in-place operator applies through a module `def`'s reference result,
   as through a method's: `text(s) += "d"` for `def text(ref t: String) ->
   ref[origin_of(t)] String` calls `String.__iadd__` on `s` and prints `ad`,

@@ -2080,7 +2080,7 @@ impl Checker {
         } else {
             self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
         }
-        .filter(|clone| self.clone_serves_overload(name, "__init__", clone, overload.as_deref()));
+        .filter(|clone| self.clone_serves_overload(name, clone, overload.as_deref()));
         if let Some(clone) = clone {
             self.overload_targets
                 .borrow_mut()
@@ -2107,7 +2107,7 @@ impl Checker {
             .lowered_name
             .as_deref()
             .and_then(mojito_symbol::symbol::overload_qualifier);
-        if !self.clone_serves_overload(name, "__init__", &clone, overload) {
+        if !self.clone_serves_overload(name, &clone, overload) {
             return None;
         }
         let family = self.structs.get(name)?.methods.get(&clone)?;

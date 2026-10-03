@@ -155,10 +155,13 @@ impl Checker {
                 let owner = mojito_symbol::symbol::lowered_method_name(
                     &format!("{}.{}", binder_owner(name), binder_owner(&m.name)),
                     &[],
-                    &m.params,
-                    m.keyword_only,
-                    true,
-                    m.self_convention,
+                    mojito_symbol::symbol::MethodShape {
+                        type_params: &m.type_params,
+                        params: &m.params,
+                        keyword_only: m.keyword_only,
+                        has_self: true,
+                        self_convention: m.self_convention,
+                    },
                     &self.overload_sets,
                 );
                 let mut decls = self.classify_params(&owner, &m.type_params)?;

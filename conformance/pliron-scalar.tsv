@@ -313,6 +313,7 @@ assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/overload_var_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloaded_hash_through_hash.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overloaded_method_own_binder_symbols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_literal_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overloading_owned_parameter.mojo	-	ineligible	no-scalar-entry-shape

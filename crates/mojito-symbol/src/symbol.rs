@@ -378,11 +378,12 @@ impl TypeKey {
     /// which is right for a lowered symbol but does not compare against a
     /// checker-resolved type.
     pub fn from_ast_in_scope(ty: &Type, type_params: &[TypeParam]) -> Self {
-        let type_bounds = type_params
-            .iter()
-            .map(|parameter| (parameter.name.clone(), parameter.bounds.clone()))
-            .collect();
-        Self(sanitize(&ast_raw(ty, &HashMap::new(), &type_bounds, None)))
+        Self(sanitize(&ast_raw(
+            ty,
+            &HashMap::new(),
+            &binder_spellings(type_params),
+            None,
+        )))
     }
 
     /// The mangled spelling. Two keys compare equal exactly when the
@@ -916,30 +917,64 @@ pub fn lowered_def_name(
     }
 }
 
+/// The signature facts of a struct method or trait requirement that its
+/// lowered symbol spells.
+#[derive(Debug, Clone, Copy)]
+pub struct MethodShape<'a> {
+    /// The method's own compile-time parameters.
+    pub type_params: &'a [TypeParam],
+    pub params: &'a [FnParam],
+    pub keyword_only: Option<usize>,
+    pub has_self: bool,
+    pub self_convention: Option<ArgConvention>,
+}
+
+impl<'a> MethodShape<'a> {
+    pub fn of(m: &'a Method) -> Self {
+        Self {
+            type_params: &m.type_params,
+            params: &m.params,
+            keyword_only: m.keyword_only,
+            has_self: m.has_self,
+            self_convention: m.self_convention,
+        }
+    }
+}
+
 /// The name a struct method lowers to, from its already-joined source name
 /// (`Type.method`): signature-qualified when overloaded, unchanged otherwise.
+///
+/// The key spells every binder in scope — the struct's `type_params`, then
+/// the method's own — with its bounds, exactly as the checker's `Ty::Param`
+/// spells a call's selected overload, so the symbol a call names is the one
+/// MIR declares.
 pub fn lowered_method_name(
     source_name: &str,
     type_params: &[TypeParam],
-    params: &[FnParam],
-    keyword_only: Option<usize>,
-    has_self: bool,
-    self_convention: Option<ArgConvention>,
+    method: MethodShape<'_>,
     sets: &OverloadSets,
 ) -> String {
+    let MethodShape {
+        type_params: method_type_params,
+        params,
+        keyword_only,
+        has_self,
+        self_convention,
+    } = method;
     if sets.method_is_overloaded(source_name, params.len()) {
         // The enclosing struct's own instance type canonicalizes to `Self` in
         // the parameter keys, so a same-arity `self`-typed overload keys as
         // `$ov$Self` and matches the call side's canonicalized key.
         let self_spelling = split_method_symbol(source_name)
             .and_then(|(type_name, _)| self_struct_spelling(type_name, type_params));
-        let signature = signature_from_ast(
-            params,
-            type_params,
-            &sets.comptimes,
-            self_spelling.as_deref(),
-        )
-        .with_keyword_names(keyword_only_names(params, keyword_only));
+        let scope: Vec<TypeParam> = type_params
+            .iter()
+            .chain(method_type_params)
+            .cloned()
+            .collect();
+        let signature =
+            signature_from_ast(params, &scope, &sets.comptimes, self_spelling.as_deref())
+                .with_keyword_names(keyword_only_names(params, keyword_only));
         match split_method_symbol(source_name)
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
@@ -989,15 +1024,12 @@ pub fn lifecycle_method_name(m: &Method) -> &str {
 #[derive(Debug, Clone, Default)]
 pub struct MethodBinderOwners {
     /// The lowered symbol of every overloaded template method, keyed by its
-    /// template struct and the byte range of its first body statement: a
-    /// clone keeps its template's body spans but not its signature, so the
-    /// owner is computed once, from the template. Beside it, the signature
-    /// qualifier a call selecting that overload records, which spells the
-    /// method's own binders with their bounds as the checker does.
-    overloaded: HashMap<(String, mojito_common::token::Span), (String, String)>,
-    /// Every such call qualifier, keyed by its template struct and source
-    /// method name.
-    qualifiers: HashSet<(String, String, String)>,
+    /// template struct and beside the byte range its body spans: a clone
+    /// keeps its template's body spans but not its signature, so the owner
+    /// is computed once, from the template, and a clone whose leading
+    /// `comptime if` folded still starts inside that range. Its signature
+    /// qualifier is the one a call selecting that overload records.
+    overloaded: HashMap<String, Vec<(mojito_common::token::Span, String)>>,
 }
 
 impl MethodBinderOwners {
@@ -1010,7 +1042,7 @@ impl MethodBinderOwners {
                     type_params,
                     methods,
                     ..
-                } if specialization_template(name).is_none() => Some((name, type_params, methods)),
+                } => Some((name, type_params, methods)),
                 _ => None,
             })
             .flat_map(|(name, type_params, methods)| {
@@ -1019,71 +1051,35 @@ impl MethodBinderOwners {
                     .filter(|m| m.self_ty.is_none() && specialization_template(&m.name).is_none())
                     .filter_map(move |m| {
                         let source = format!("{name}.{}", lifecycle_method_name(m));
-                        let lowered = lowered_method_name(
-                            &source,
-                            type_params,
-                            &m.params,
-                            m.keyword_only,
-                            m.has_self,
-                            m.self_convention,
-                            sets,
-                        );
-                        let first = m.body.first()?;
-                        (lowered != source).then(|| {
-                            let scope: Vec<TypeParam> =
-                                type_params.iter().chain(&m.type_params).cloned().collect();
-                            let selected = lowered_method_name(
-                                &source,
-                                &scope,
-                                &m.params,
-                                m.keyword_only,
-                                m.has_self,
-                                m.self_convention,
-                                sets,
-                            );
-                            let qualifier = overload_qualifier(&selected)
-                                .unwrap_or_default()
-                                .to_string();
-                            (
-                                (name.clone(), first.span),
-                                (lowered, qualifier, m.name.clone()),
-                            )
-                        })
+                        let lowered =
+                            lowered_method_name(&source, type_params, MethodShape::of(m), sets);
+                        let extent = (m.body.first()?.span.0, m.body.last()?.span.1);
+                        (lowered != source).then(|| (name.clone(), (extent, lowered)))
                     })
             })
-            .collect::<Vec<_>>();
-        let qualifiers = overloaded
-            .iter()
-            .map(|((template, _), (_, qualifier, method))| {
-                (template.clone(), method.clone(), qualifier.clone())
-            })
-            .collect();
-        let overloaded = overloaded
-            .into_iter()
-            .map(|(key, (lowered, qualifier, _))| (key, (lowered, qualifier)))
-            .collect();
-        Self {
-            overloaded,
-            qualifiers,
-        }
+            .fold(
+                HashMap::<String, Vec<_>>::new(),
+                |mut overloaded, (template, entry)| {
+                    overloaded.entry(template).or_default().push(entry);
+                    overloaded
+                },
+            );
+        Self { overloaded }
     }
 
     /// The owner of `m`'s own binders on the struct `owner` names, a
     /// template or one of its specializations.
     pub fn owner(&self, owner: &str, m: &Method) -> String {
         let template = specialization_template(owner).unwrap_or(owner);
-        m.body
-            .first()
-            .and_then(|first| self.overloaded.get(&(template.to_string(), first.span)))
-            .map_or_else(
-                || {
-                    format!(
-                        "{template}.{}",
-                        specialization_template(&m.name).unwrap_or(&m.name)
-                    )
-                },
-                |(owner, _)| owner.clone(),
-            )
+        self.lowered(template, m).map_or_else(
+            || {
+                format!(
+                    "{template}.{}",
+                    specialization_template(&m.name).unwrap_or(&m.name)
+                )
+            },
+            str::to_string,
+        )
     }
 }
 
@@ -1092,23 +1088,20 @@ impl MethodBinderOwners {
     /// (`$ov$T$Copyable$Int`), when `m` is one of several overloads on the
     /// struct `owner` names.
     pub fn call_qualifier(&self, owner: &str, m: &Method) -> Option<&str> {
-        let template = specialization_template(owner).unwrap_or(owner);
-        let first = m.body.first()?;
-        self.overloaded
-            .get(&(template.to_string(), first.span))
-            .map(|(_, qualifier)| qualifier.as_str())
+        self.lowered(owner, m)
+            .or_else(|| self.lowered(specialization_template(owner)?, m))
+            .and_then(overload_qualifier)
     }
 
-    /// Whether `qualifier` is the call qualifier of one of `method`'s
-    /// overloads on the struct `owner` names. A qualifier the call side
-    /// spells differently from every declaration names none of them.
-    pub fn declares_qualifier(&self, owner: &str, method: &str, qualifier: &str) -> bool {
-        let template = specialization_template(owner).unwrap_or(owner);
-        self.qualifiers.contains(&(
-            template.to_string(),
-            method.to_string(),
-            qualifier.to_string(),
-        ))
+    /// The lowered symbol of the overloaded template method on `template`
+    /// whose body `m`'s first statement lies in.
+    fn lowered(&self, template: &str, m: &Method) -> Option<&str> {
+        let first = m.body.first()?.span;
+        self.overloaded
+            .get(template)?
+            .iter()
+            .find(|((start, end), _)| *start <= first.0 && first.1 <= *end)
+            .map(|(_, lowered)| lowered.as_str())
     }
 }
 
@@ -1382,7 +1375,7 @@ fn encode_identifier(name: &str) -> String {
 fn ast_raw(
     ty: &Type,
     comptimes: &HashMap<String, i64>,
-    type_bounds: &HashMap<String, Vec<String>>,
+    type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
     let raw = match ty {
@@ -1436,6 +1429,52 @@ fn ast_raw(
             format!(
                 "UnsafePointer${}",
                 ast_raw(element, comptimes, type_bounds, self_spelling)
+            )
+        }
+        // A vector over a binder of the signature (`Scalar[dt]`,
+        // `SIMD[dt, width]`) spells as the checker displays the symbolic
+        // `Ty::Simd`.
+        Type::Named(name, args)
+            if (name == "Scalar" && args.len() == 1 || name == "SIMD" && args.len() == 2)
+                && args
+                    .iter()
+                    .any(|arg| simd_binder_slot(arg, type_bounds).is_some())
+                && args.iter().all(|arg| {
+                    simd_binder_slot(arg, type_bounds).is_some()
+                        || param_arg_dtype(arg).is_some()
+                        || param_arg_width(arg, comptimes).is_some()
+                }) =>
+        {
+            let slots: Vec<String> = args
+                .iter()
+                .map(|arg| {
+                    simd_binder_slot(arg, type_bounds)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            param_arg_dtype(arg).map(|dtype| format!("DType.{}", dtype.name()))
+                        })
+                        .or_else(|| param_arg_width(arg, comptimes).map(|width| width.to_string()))
+                        .unwrap_or_default()
+                })
+                .collect();
+            match slots.as_slice() {
+                [dtype, width] if width == "1" => format!("Scalar[{dtype}]"),
+                [dtype, width] => format!("SIMD[{dtype}, {width}]"),
+                [dtype] => format!("Scalar[{dtype}]"),
+                _ => unreachable!("guard established one or two slots"),
+            }
+        }
+        // Mirror the checker's synthetic binder for an existential
+        // `Some[Trait]` parameter, which `ty_raw` spells as its binder name
+        // (`Some[Writer]`) followed by its one bound.
+        Type::Named(name, args)
+            if name == "Some" && args.len() == 1 && existential_trait(&args[0]).is_some() =>
+        {
+            let trait_name = existential_trait(&args[0]).expect("guard established a trait");
+            format!(
+                "{}${}",
+                encode_identifier(&format!("Some[{trait_name}]")),
+                encode_identifier(trait_name)
             )
         }
         // The runtime-pack collector of a specialized variadic (`*args: *Ts`
@@ -1727,12 +1766,79 @@ fn erase_capture_environment(ty: &Ty) -> Ty {
     erased
 }
 
-fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> String {
+/// The trait an existential `Some[Trait]` annotation argument names, in its
+/// canonical spelling.
+fn existential_trait(arg: &ParamArg) -> Option<&str> {
+    match arg {
+        ParamArg::Type(Type::Named(trait_name, trait_args)) if trait_args.is_empty() => {
+            Some(trait_name)
+        }
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(trait_name),
+            ..
+        }) => Some(trait_name),
+        _ => None,
+    }
+    .map(|trait_name| mojito_ast::ast::canonical_trait_name(trait_name))
+}
+
+/// The binder of the signature a `Scalar`/`SIMD` annotation argument names.
+fn simd_binder_slot<'a>(
+    arg: &'a ParamArg,
+    type_bounds: &HashMap<String, BinderSpelling>,
+) -> Option<&'a str> {
+    match arg {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) if type_bounds.contains_key(name) => Some(name),
+        _ => None,
+    }
+}
+
+/// A declared compile-time parameter as its annotation spells in an overload
+/// key: its trait bounds, and a callable bound (`F: def(Int) -> Int`) as the
+/// checker's `Ty::Param` spells its `callable_bound`.
+struct BinderSpelling {
+    bounds: Vec<String>,
+    callable: Option<String>,
+}
+
+impl BinderSpelling {
+    fn of(param: &TypeParam) -> Self {
+        Self {
+            bounds: param
+                .bounds
+                .iter()
+                .filter(|bound| bound.as_str() != "<function type>")
+                .cloned()
+                .collect(),
+            callable: param
+                .callable_bound
+                .as_ref()
+                .filter(|callable| matches!(callable, Type::Func { .. }))
+                .map(func_annotation_raw),
+        }
+    }
+}
+
+fn binder_spellings(type_params: &[TypeParam]) -> HashMap<String, BinderSpelling> {
+    type_params
+        .iter()
+        .map(|param| (param.name.clone(), BinderSpelling::of(param)))
+        .collect()
+}
+
+fn parameter_raw(name: &str, type_bounds: &HashMap<String, BinderSpelling>) -> String {
     let mut result = encode_identifier(name);
-    if let Some(bounds) = type_bounds.get(name) {
-        for bound in bounds {
+    if let Some(binder) = type_bounds.get(name) {
+        for bound in &binder.bounds {
             result.push('$');
             result.push_str(&encode_identifier(bound));
+        }
+        if let Some(callable) = &binder.callable {
+            result.push_str("$Callable$");
+            result.push_str(callable);
         }
     }
     result
@@ -1741,7 +1847,10 @@ fn parameter_raw(name: &str, type_bounds: &HashMap<String, Vec<String>>) -> Stri
 /// Whether an annotation argument spells an origin: the `_`/`...` placeholder,
 /// an `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, a builtin
 /// origin name, or a parameter the signature binds by `Origin`/`OriginSet`.
-fn syntactic_origin_argument(arg: &ParamArg, type_bounds: &HashMap<String, Vec<String>>) -> bool {
+fn syntactic_origin_argument(
+    arg: &ParamArg,
+    type_bounds: &HashMap<String, BinderSpelling>,
+) -> bool {
     let ParamArg::Value(value) = arg else {
         return false;
     };
@@ -1756,7 +1865,7 @@ fn syntactic_origin_argument(arg: &ParamArg, type_bounds: &HashMap<String, Vec<S
                     | "MutUnsafeAnyOrigin"
                     | "MutUntrackedOrigin"
             ) || matches!(
-                type_bounds.get(name).map(Vec::as_slice),
+                type_bounds.get(name).map(|binder| binder.bounds.as_slice()),
                 Some([only]) if only == "Origin" || only == "OriginSet"
             )
         }
@@ -1801,10 +1910,7 @@ fn signature_from_ast(
     comptimes: &HashMap<String, i64>,
     self_spelling: Option<&str>,
 ) -> SignatureKey {
-    let type_bounds = type_params
-        .iter()
-        .map(|param| (param.name.clone(), param.bounds.clone()))
-        .collect();
+    let type_bounds = binder_spellings(type_params);
     SignatureKey {
         types: params
             .iter()
@@ -1870,9 +1976,9 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
     if !all_type_params {
         return None;
     }
-    let type_bounds: HashMap<String, Vec<String>> = retained
+    let type_bounds: HashMap<String, BinderSpelling> = retained
         .iter()
-        .map(|param| (param.name.clone(), param.bounds.clone()))
+        .map(|param| (param.name.clone(), BinderSpelling::of(param)))
         .collect();
     let mut spelling = encode_identifier(type_name);
     for param in retained {

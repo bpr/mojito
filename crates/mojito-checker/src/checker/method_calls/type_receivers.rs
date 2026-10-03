@@ -320,9 +320,7 @@ impl Checker {
                 );
                 if let Some(clone) = self
                     .specialized_method_clone(sname, method, &selected.param_decls, arguments)
-                    .filter(|clone| {
-                        self.clone_serves_overload(sname, source_method, clone, overload.as_deref())
-                    })
+                    .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()))
                 {
                     let ty = self.infer_method_call(
                         span,

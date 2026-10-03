@@ -451,9 +451,7 @@ impl Checker {
                     arguments,
                 )
             }
-            .filter(|clone| {
-                self.clone_serves_overload(sname, source_method, clone, overload.as_deref())
-            });
+            .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()));
             if let Some(clone) = clone {
                 let ty = self.infer_struct_static_method(
                     span.clone(),

@@ -1334,7 +1334,7 @@ impl Checker {
                     &request.arguments,
                 )
                 .filter(|clone| {
-                    self.clone_serves_overload(owner, method, clone, request.overload.as_deref())
+                    self.clone_serves_overload(owner, clone, request.overload.as_deref())
                 });
             let target = match clone {
                 Some(clone) => {

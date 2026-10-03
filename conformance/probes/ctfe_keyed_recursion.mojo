@@ -4,7 +4,7 @@
 # The pin (2026-10-02) prints `3`. Mojito stops with "VM CTFE failed for
 # 'rep': unsupported feature: vm: unknown compile-time function 'rep'": the
 # evaluation's subprogram excludes every compile-time-keyed `def`.
-# docs/roadmap.md 3.119.
+# docs/roadmap.md 3.118.
 def rep[n: Int]() -> Int:
     comptime if n == 0:
         return 0

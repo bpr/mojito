@@ -298,17 +298,16 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // the receiver instance's clone as the elaborator hands it.
     "generic_struct_template_reach",
     "keyed_def_builds_loan_carrying_instance",
-    "overloaded_hash_through_hash",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to construct `T()` from where `T` is a SIMD type or a struct
     // over value parameters.
     "simd_nullary_construction",
     "simd_parameter_default_construction",
     "tuple_array_defaultable",
-    // Section 1, the erased oracle: a bound dispatch of an overloaded
-    // method with binders of its own spells the requirement's qualifier,
-    // which names no lowered overload of the erased receiver.
-    "same_arity_generic_method_overloads",
+    // Section 1, the erased oracle: a bound dispatch spells the
+    // requirement's qualifier, which names no lowered overload of the erased
+    // receiver whose witness binds the parameter under a name of its own.
+    "overloaded_method_own_binder_symbols",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to tell a place pointer bound to `T` from a reference.
     "extensions::template_served_iterable_def",

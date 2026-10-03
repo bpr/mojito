@@ -137,9 +137,7 @@ impl Checker {
                     arguments,
                 )
             }
-            .filter(|clone| {
-                self.clone_serves_overload(sname, source_method, clone, overload.as_deref())
-            });
+            .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()));
             if let Some(clone) = clone {
                 return self
                     .infer_method_call(

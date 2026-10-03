@@ -946,37 +946,30 @@ impl Checker {
             .then_some(name)
     }
 
-    /// Whether the per-call clone family `clone` of `method` on `owner`
+    /// Whether the per-call clone family `clone` on `owner`
     /// holds a clone of the overload a call selected (`overload`, its
     /// signature qualifier).
     ///
     /// Two same-arity overloads specialized alike share one clone name, and
     /// each call mints only its own overload's member: a family minted for
     /// the other overload does not serve the call until its round mints the
-    /// selected one. A qualifier no declaration spells alike selects no
-    /// member, and any family serves it.
+    /// selected one.
     pub(super) fn clone_serves_overload(
         &self,
         owner: &str,
-        method: &str,
         clone: &str,
         overload: Option<&str>,
     ) -> bool {
-        overload
-            .filter(|selected| {
-                self.method_binder_owners
-                    .declares_qualifier(owner, method, selected)
-            })
-            .is_none_or(|selected| {
-                self.structs
-                    .get(owner)
-                    .and_then(|info| info.methods.get(clone))
-                    .is_some_and(|members| {
-                        members
-                            .iter()
-                            .any(|member| member.overload.as_deref() == Some(selected))
-                    })
-            })
+        overload.is_none_or(|selected| {
+            self.structs
+                .get(owner)
+                .and_then(|info| info.methods.get(clone))
+                .is_some_and(|members| {
+                    members
+                        .iter()
+                        .any(|member| member.overload.as_deref() == Some(selected))
+                })
+        })
     }
 
     /// Record a generic-struct application reached as a constructor target or

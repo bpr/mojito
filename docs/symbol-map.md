@@ -665,8 +665,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::method_binder_owner` over `symbol::MethodBinderOwners`, which
   the elaborator's `elaborated_binder` shares,
   `value_parameter`, `params_as_args`).
-  The same table's `call_qualifier`/`declares_qualifier` name the overload
-  a per-call method clone request selects: the elaborator mints only that
+  The same table's `call_qualifier` names the overload a per-call method
+  clone request selects (the qualifier of the symbol `lowered_method_name`
+  declares, which a call records verbatim): the elaborator mints only that
   overload's clone (`MethodSpecializationRequest::selects`), and the checker
   retargets a call only to a clone family holding it
   (`Checker::clone_serves_overload`).
@@ -1037,7 +1038,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method call on a closed receiver to that instance's clone where one
   exists, and `dispatched_overload_target`, which selects the receiver's
   own overload for a bound dispatch whose qualifier spells the requirement's
-  binders (`pick$ov$T$Copyable$Int` against `First.pick$ov$T$Int`);
+  parameter otherwise than the witness
+  (`__hash__$ov$Some$u5B$Hasher$u5D$$Hasher` against `Twin.__hash__$ov$H$Hasher`),
+  and `enqueue_display_instance`'s `protocol_overload`, which picks the
+  `Writer`-taking `write_to` beside a same-arity rival;
   `mono/infer.rs:bind_static_receiver` binds a struct's parameters
   from the receiver type a static call records, which
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR

@@ -252,11 +252,12 @@ impl Specializer<'_> {
     }
 
     /// The receiver's own overload a bound dispatch `dispatch` selects
-    /// (`__trait_dispatch.pick$ov$T$Copyable$Int` on `First`), when no
-    /// lowered symbol spells its qualifier: the call side spells the
-    /// requirement's own binders with their bounds, and a struct's lowered
-    /// symbol spells them bare (`First.pick$ov$T$Int`). The declaration whose
-    /// parameter types key as the checker keys a resolved call is the one.
+    /// (`__trait_dispatch.__hash__$ov$Some$u5B$Hasher$u5D$$Hasher` on
+    /// `Twin`), when no lowered symbol spells its qualifier: the requirement
+    /// spells its parameter as the trait declares it, and the witness may
+    /// bind it under a name of its own (`Twin.__hash__$ov$H$Hasher`). The
+    /// declaration whose parameter types key as the requirement's is the
+    /// one.
     pub(super) fn dispatched_overload_target(
         &self,
         template: &str,
@@ -280,30 +281,45 @@ impl Specializer<'_> {
                     .then(|| self.functions.get(*name)?.param_types.first())
                     .flatten()
                     .map(peel_refs);
-                let params = declaration.param_types.as_slice();
                 let keywords = declaration
                     .keyword_only
                     .map(|index| declaration.param_names[index..].to_vec())
                     .unwrap_or_default();
-                let signature =
-                    mojito_symbol::symbol::SignatureKey::from_tys_with_self(params, self_ty)
-                        .with_kw_variadic(declaration.kw_variadic.as_ref())
-                        .with_keyword_names(keywords);
-                let spelled = if mojito_symbol::symbol::receiver_overloaded_method(method) {
-                    if declaration.has_receiver {
-                        mojito_symbol::symbol::receiver_method_symbol(
-                            template,
-                            method,
-                            declaration.receiver_convention,
-                            &signature,
+                // A builtin trait's requirement spells its one-bound
+                // parameter existentially (`hasher: Some[Hasher]`), which a
+                // witness binding it by name (`[H: Hasher](hasher: H)`)
+                // satisfies alike.
+                let existential = declaration
+                    .param_types
+                    .iter()
+                    .map(existential_spelling)
+                    .collect::<Vec<_>>();
+                [declaration.param_types.as_slice(), existential.as_slice()]
+                    .into_iter()
+                    .any(|params| {
+                        let signature = mojito_symbol::symbol::SignatureKey::from_tys_with_self(
+                            params, self_ty,
                         )
-                    } else {
-                        mojito_symbol::symbol::static_method_symbol(template, method, &signature)
-                    }
-                } else {
-                    mojito_symbol::symbol::method_symbol(template, method, &signature)
-                };
-                mojito_symbol::symbol::overload_qualifier(&spelled) == Some(qualifier)
+                        .with_kw_variadic(declaration.kw_variadic.as_ref())
+                        .with_keyword_names(keywords.clone());
+                        let spelled = if mojito_symbol::symbol::receiver_overloaded_method(method) {
+                            if declaration.has_receiver {
+                                mojito_symbol::symbol::receiver_method_symbol(
+                                    template,
+                                    method,
+                                    declaration.receiver_convention,
+                                    &signature,
+                                )
+                            } else {
+                                mojito_symbol::symbol::static_method_symbol(
+                                    template, method, &signature,
+                                )
+                            }
+                        } else {
+                            mojito_symbol::symbol::method_symbol(template, method, &signature)
+                        };
+                        mojito_symbol::symbol::overload_qualifier(&spelled) == Some(qualifier)
+                    })
             })
             .map(|name| (*name).to_string())
     }
@@ -374,6 +390,15 @@ impl Specializer<'_> {
                 1,
             )
         });
+        // Beside a rival of the same arity (`write_to[U](self, mut writer:
+        // List[U])`), no symbol answers by arity; the overload whose first
+        // parameter is a `Writer` is the protocol's witness.
+        let target = if self.functions.contains_key(target.as_str()) {
+            target
+        } else {
+            self.protocol_overload(nominal_template(name), method)
+                .unwrap_or(target)
+        };
         if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
             return Ok(());
         }
@@ -450,6 +475,22 @@ impl Specializer<'_> {
 
     /// Whether a display method takes the `Writable` protocol's writer; any
     /// other `write_to` is an ordinary overload and never serves display.
+    /// The one overload of `template.method` whose first parameter is a
+    /// `Writer`.
+    fn protocol_overload(&self, template: &str, method: &str) -> Option<String> {
+        let base = format!("{template}.{method}");
+        let mut overloads = self.declarations.iter().filter_map(|(name, declaration)| {
+            (mojito_symbol::symbol::is_overload_of(name, &base)
+                && declaration
+                    .param_types
+                    .first()
+                    .is_some_and(mojito_types::types::is_writer_parameter))
+            .then_some(name)
+        });
+        let overload = overloads.next()?;
+        overloads.next().is_none().then(|| overload.to_string())
+    }
+
     fn writes_protocol(&self, target: &str) -> bool {
         self.declarations.get(target).is_none_or(|declaration| {
             declaration
@@ -457,5 +498,25 @@ impl Specializer<'_> {
                 .first()
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
+    }
+}
+
+/// `ty` with a one-bound binder renamed to the existential spelling of its
+/// bound (`H: Hasher` as `Some[Hasher]`).
+fn existential_spelling(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Param {
+            binder,
+            bounds,
+            callable_bound: None,
+        } if bounds.len() == 1 => Ty::Param {
+            binder: mojito_types::param_expr::ParamRef {
+                name: format!("Some[{}]", bounds[0]).into(),
+                ..binder.clone()
+            },
+            bounds: bounds.clone(),
+            callable_bound: None,
+        },
+        other => other.clone(),
     }
 }

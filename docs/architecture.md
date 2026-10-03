@@ -649,9 +649,15 @@ second expression tree.
   of one name never share a binder. An overloaded struct method is owned the
   same way, by the symbol its template lowers to (`Box.pick$ov$…`):
   `symbol::MethodBinderOwners` computes it once per template and keys it by
-  the template struct and its first body statement's range, which every
-  clone keeps, so a clone whose substituted signature lowers differently
-  still shares its template's binders. The checker and the elaborator
+  the template struct and its body's range, inside which every clone's
+  first statement lies (a folded leading `comptime if` included), so a
+  clone whose substituted signature lowers differently still shares its
+  template's binders. The lowered symbol spells the method's own binders
+  with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
+  (`F$Callable$def…`), and an existential `Some[Trait]` parameter
+  (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `Ty::Param`
+  spells a call's selected overload, so the symbol a call names is the one
+  MIR declares. The checker and the elaborator
   (`comptime/params.rs`, `elaborated_binder`) both name a method's binders
   through it, and both number a binder by `TypeParam::binder_slot` — its
   position with the erased `Origin`/`OriginSet` parameters and their
@@ -1029,8 +1035,9 @@ at the types each closed call binds), so a struct reached only from such a
 body still mints the clones it keeps; `native::mono` then targets that
 clone where a template body calls the method on a closed receiver
 (`instance_method_target`), and selects the receiver's own overload where a
-bound dispatch names an overloaded method with binders of its own
-(`dispatched_overload_target`).
+bound dispatch spells the requirement's parameter otherwise than the
+witness does (`Some[Hasher]` against `[H: Hasher]`;
+`dispatched_overload_target`).
 
 Such a struct gains those **per-instantiation method clones** appended
 to its own method list. The checker records every closed application it

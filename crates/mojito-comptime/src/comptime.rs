@@ -299,7 +299,6 @@ impl MethodSpecializationRequest {
         let same_overload = self
             .overload
             .as_deref()
-            .filter(|selected| owners.declares_qualifier(owner, &method.name, selected))
             .is_none_or(|selected| owners.call_qualifier(owner, method) == Some(selected));
         self.method == method.name
             && self.parameter_names.iter().map(String::as_str).eq(regular)

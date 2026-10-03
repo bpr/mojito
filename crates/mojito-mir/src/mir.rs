@@ -510,10 +510,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         let lowered = mojito_symbol::symbol::lowered_method_name(
                             &source,
                             type_params,
-                            &m.params,
-                            m.keyword_only,
-                            m.has_self,
-                            m.self_convention,
+                            mojito_symbol::symbol::MethodShape::of(m),
                             &overloads,
                         );
                         if lowered == source {
@@ -581,10 +578,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     let mangled = mojito_symbol::symbol::lowered_method_name(
                         &source_mangled,
                         type_params,
-                        &m.params,
-                        m.keyword_only,
-                        m.has_self,
-                        m.self_convention,
+                        mojito_symbol::symbol::MethodShape::of(m),
                         &overloads,
                     );
                     let variadic_idx = m
