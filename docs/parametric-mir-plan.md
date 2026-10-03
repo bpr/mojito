@@ -547,22 +547,28 @@ Three prerequisites come first. None of them moves a body.
   aggregate cleanup, and it never recomputes a last use. A development-only
   concrete ownership comparison checks that, because `mir::verify` alone does
   not establish ownership preservation.
-- **CTFE requests instances from the worklist.** Today
-  `comptime/ctfe.rs` builds an AST subprogram, checks a synthesized typing
-  probe, turns the result type back into source syntax, and runs a second
-  synthesized helper. Kept, that would put a checker run and AST
-  reconstruction inside the elaborator. The target path: a typed compile-time
-  application demands a concrete callable from the shared worklist, runs
-  verified MIR on the VM, and returns a validated compile-time value. An
-  evaluation may demand further instances without restarting the source
-  pipeline. The effect restrictions, value-crossing rules, and shared fuel
-  stay.
-- **The worklist has keys and states.** Requests have canonical keys and are
-  pending, active, completed, or failed. A recursive function reference is
-  valid. A cycle that demands an unfinished constant or layout is an error.
-  Expanding polymorphic recursion has its own bound, apart from VM
-  instruction fuel. `native::mono`'s instance identity and budget are the
-  starting point.
+- **CTFE requests instances from the worklist.** Designed
+  ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md),
+  2026-10-02). Today `comptime/ctfe.rs` builds an AST subprogram, checks a
+  synthesized typing probe, turns the result type back into source syntax,
+  and runs a second synthesized helper on the erased body, once per
+  discovery round, with no cache. The target path: a compile-time
+  application is `ParamKind::Apply` over a lowered thunk; the elaborator
+  demands the thunk's instance, drains its reference closure on a nested
+  worklist, runs the verified concrete fragment on the VM
+  (`VmBackend::call_concrete`), validates the result at the declared type,
+  and caches it by the instance key. The effect restrictions,
+  value-crossing rules, and shared fuel stay; the fuel becomes one counter
+  per compilation.
+- **The worklist has keys and states.** Designed in the same note.
+  `InstanceKey` stays the key, indexed; an instance is pending, active,
+  completed, or failed. A reference edge (a call in a body) never waits, so
+  recursion is valid; a demand edge (an application, a layout, a module
+  constant) materializes now, and a demand on an active key is upstream's
+  "function instantiation in parameter domain that recursively requires
+  itself". No depth bound, as upstream: the instance budget is the one
+  elaboration bound, apart from VM fuel, and roadmap 2.4 makes it reachable
+  in seconds first.
 - **A common type vocabulary.** A heterogeneous pack already needs a type
   that depends on a symbolic index, and P2's methods already need receiver
   applications, conditional members, and lifecycle witnesses. So register
@@ -603,8 +609,10 @@ regions. Later forms may bump it again (decision D5).
   elaborator finds the instances transitively.
 - CTFE's AST route is deleted. The request path designed before P3 is the
   only one.
-- Module-scope `comptime` values follow the boundary decision D3 set before
-  P3.
+- Module-scope `comptime` values follow decision D3: a constant the
+  `ParamExpr` folder closes is folded before the check; one whose
+  initializer applies anything is a typed request. The early folding of
+  applied constants goes here.
 
 ### P5 — Delete
 
@@ -638,18 +646,22 @@ regions. Later forms may bump it again (decision D5).
 - **D1. The VM runs only concrete MIR.** Recommended: yes, from P1, with the
   erased path kept as an oracle until P5. Upstream's interpreter never runs a
   generator.
-- **D2. Where the elaborator lives.** For P1, `native::mono` stays in
-  `mojito-native` and the root driver calls it for both backends, with no new
-  edge. Connecting CTFE is different: `mojito-comptime` does not depend on
-  `mojito-native` today. The CTFE protocol entry draws the call and crate
-  graphs and brings the edge or the extraction to the owner as a design
-  question, per `AGENTS.md`. Renaming the crate at P5 does not settle it.
-- **D3. Module-scope `comptime` values.** Decided before P3, not at P4. A
-  module constant can depend on a generic compile-time call whose result
-  shapes another declaration's signature, so this is about types, not module
-  initialization. The decision says which closed constants are folded before
-  the check and which dependencies stay typed requests. Early folding may
-  stay as an implementation for a while; the boundary may not stay undefined.
+- **D2. Where the elaborator lives.** Decided 2026-10-02
+  ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) §D2):
+  `native::mono` stays in `mojito-native`, the root driver calls it for both
+  backends, and `mojito-native` gains the edge to `mojito-vm` when the
+  request path lands (roadmap 1.2), so the elaborator owns its executor as
+  upstream's `Elaborator` owns its interpreter. `mojito-comptime` never
+  depends on `mojito-native`; its AST route is deleted at P4, not bridged.
+- **D3. Module-scope `comptime` values.** Decided 2026-10-02 (same note,
+  §D3), from the pin: a module constant is folded before the check when the
+  `ParamExpr` folder closes its initializer (literals, constants,
+  operators, type names, predicates); one whose initializer applies
+  anything is a typed request, with the symbolic value `ParamKind::Apply`,
+  equal by structure and evaluated only by the elaborator, so
+  `SIMD[DType.float32, C]` matches itself and not a folded width. Early
+  folding of applied constants stays as an implementation until P4,
+  contained by the source-validation rejection in signatures.
 - **D4. The budget.** Proposed, for the owner to set:
   - A named workload set: the three P0 programs, the P3 benchmark (roadmap
     §1), and one many-instantiation program.

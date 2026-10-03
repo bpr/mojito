@@ -1143,15 +1143,14 @@ to the VM as reified frame locals; type parameters remain compile-time facts in
 the elaborator's environment.
 
 Before lowering the helper for CTFE, the elaborator walks the transitive helper
-call graph and rejects runtime effects:
-
-- `print`
-- `raise`
-- pointer allocation
-- methods and user-value dunder dispatch
-- `try`
-- nested declarations
-- keyword calls and other unsupported runtime forms
+call graph (`vm_ctfe_safe_fn`) and rejects runtime effects: the effectful
+builtins `print` and `input` (`vm_ctfe_effectful_builtin`), and a nested
+`struct`, `trait`, or `import`. Loops, recursion, methods, pointers,
+collections, and `try` are allowed; a raising call is reported only where the
+expression path's typing probe sees it. This whole route is the one
+[`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) replaces: a
+compile-time application will be served by the elaborator's worklist and run
+as a concrete instance on the VM.
 
 For the accepted call graph, the elaborator clones the needed top-level `def`s.
 In the root helper body it folds compile-time-only expressions into ordinary

@@ -49,36 +49,7 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **1.1 (P3) Compile-time evaluation has no path to the elaborator's
-  worklist**
-
-  Problem: `comptime/ctfe.rs` builds an AST subprogram, checks a synthesized
-  typing probe, turns the result type back into source syntax, and runs a
-  second synthesized helper, so keeping it would put a checker run inside the
-  elaborator.
-  - Design the request path: a typed compile-time application demands a
-    concrete callable from the worklist, runs verified MIR on the VM, and
-    returns a validated compile-time value.
-  - An evaluation may demand further instances without restarting the source
-    pipeline.
-  - Give the worklist canonical keys and the states pending, active,
-    completed, and failed.
-  - Tell a valid recursive function reference from a cycle that demands an
-    unfinished constant or layout.
-  - Bound expanding polymorphic recursion apart from VM instruction fuel.
-  - Keep the effect restrictions, the value-crossing rules, and the shared
-    fuel.
-  - Decide plan decision D3 here: which closed module constants fold before
-    the check, and which dependencies stay typed requests.
-  - Draw the call and crate graphs. `mojito-comptime` does not depend on
-    `mojito-native` today, so bring the edge or the extraction to the owner
-    as a design question (plan decision D2).
-  - This entry is a design note and the owner's decisions. The code moves in
-    the later entries that name it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **1.2 (P3) A MIR register type cannot name a parameter expression**
+- [ ] **1.1 (P3) A MIR register type cannot name a parameter expression**
 
   Problem: a heterogeneous pack needs a type that depends on a symbolic
   index, and a `DType`-keyed body needs one over a symbolic value, and
@@ -93,10 +64,16 @@ correctness fix to existing behavior is allowed.
     (`rep[T: Writable, n: Int]`) keeps its clone until the elaborator binds
     the value from the call; every other plain `def` is template-served
     (`Elab::template_serves_def`).
+  - A parameter expression that applies a function is the new
+    `ParamKind::Apply` over a lowered thunk, and a module constant whose
+    initializer applies anything has that symbolic value, equal by
+    structure, as decision D3 records
+    (`docs/notes/ctfe-request-path.md` §D3). The pin runs
+    `conformance/probes/ctfe_const_chain_in_signature.mojo` on that rule.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **1.3 (P3a) MIR cannot express a `comptime if`**
+- [ ] **1.2 (P3a) MIR cannot express a `comptime if`**
 
   Problem: a body keyed by a `comptime if` on a value parameter exists in MIR
   only as its per-value clones, so its template is a stub that traps.
@@ -108,15 +85,22 @@ correctness fix to existing behavior is allowed.
     drops (`docs/notes/comptime-region-ownership.md`).
   - The elaborator evaluates the condition, through the compile-time request
     path where it calls a function, and keeps the taken arm.
-  - Version the MIR text schema here for generators and compile-time regions.
-    A later form may bump it again (plan decision D5).
+  - The request path's first code lands here, as designed in
+    `docs/notes/ctfe-request-path.md`: the `mojito-native → mojito-vm` edge
+    (decision D2), `InstanceState` and the keyed index on the worklist, the
+    demand stack and its cycle error, the evaluation cache, the shared fuel,
+    `VmBackend::call_concrete` over a `ConcreteMir` fragment, and the thunk
+    lowering of an applied compile-time expression.
+  - Version the MIR text schema here for generators, compile-time regions,
+    and `ParamKind::Apply`. A later form may bump it again (plan decision
+    D5).
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.1 and 1.2.
+  - Depends on 1.1 and 2.4.
   - Model: Fable, Planned.
 
-- [ ] **1.4 (P3b) MIR cannot express a `comptime for`**
+- [ ] **1.3 (P3b) MIR cannot express a `comptime for`**
 
   Problem: a `comptime for` over a compile-time range or list is unrolled in
   the AST before the check.
@@ -128,10 +112,10 @@ correctness fix to existing behavior is allowed.
   - The body is analysed as a loop body with its trip count unknown
     (`docs/notes/comptime-region-ownership.md`).
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.5 (P3b) MIR cannot express a type pack**
+- [ ] **1.4 (P3b) MIR cannot express a type pack**
 
   Problem: a pack-keyed body is unrolled in the AST, per call, before the
   check.
@@ -141,10 +125,10 @@ correctness fix to existing behavior is allowed.
   - A variadic template's body is validated symbolically, which closes the
     implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.4.
+  - Depends on 1.3.
   - Model: Fable, Planned.
 
-- [ ] **1.6 (P3c) A body keyed on a `DType` or a vector width has no MIR
+- [ ] **1.5 (P3c) A body keyed on a `DType` or a vector width has no MIR
   form**
 
   Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
@@ -153,10 +137,10 @@ correctness fix to existing behavior is allowed.
   - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
     elaborator.
   - Delete the cloner's branch and the certificate class.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.7 (P3d) A value-keyed or variadic struct is specialized whole in
+- [ ] **1.6 (P3d) A value-keyed or variadic struct is specialized whole in
   the AST**
 
   Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
@@ -165,10 +149,10 @@ correctness fix to existing behavior is allowed.
   - A struct declaration is a generator in MIR, and the elaborator mints its
     instances and their members.
   - The `Tuple` and `TString` request types leave the driver.
-  - Depends on 1.5 and 1.6.
+  - Depends on 1.4 and 1.5.
   - Model: Fable, Planned.
 
-- [ ] **1.8 (P3e) A method with its own compile-time parameters is cloned per
+- [ ] **1.7 (P3e) A method with its own compile-time parameters is cloned per
   call**
 
   Problem: `isa[T]` on a specialized struct mints a per-call AST clone, 14 of
@@ -176,10 +160,10 @@ correctness fix to existing behavior is allowed.
   - The method is a generator whose binders are the struct's and its own, and
     the elaborator instantiates it per call.
   - Delete `per_call_method_clones` and the certificate class.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.9 (P3e) A nested `def` over an enclosing compile-time parameter is
+- [ ] **1.8 (P3e) A nested `def` over an enclosing compile-time parameter is
   cloned**
 
   Problem: a nested `def` that reads its enclosing function's compile-time
@@ -188,20 +172,20 @@ correctness fix to existing behavior is allowed.
   - The nested body is a generator that names the enclosing binders, and its
     captures are part of its contract.
   - Delete the cloner's nested branch and the certificate class.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.10 (P3e) A compile-time evaluation mints its own clones**
+- [ ] **1.9 (P3e) A compile-time evaluation mints its own clones**
 
   Problem: a generic call inside a compile-time evaluation is cloned in the
   AST subprogram that evaluation builds, outside every other instantiation
   path.
   - The evaluation requests the instance from the worklist, by the request
     path already designed.
-  - Depends on 1.3.
+  - Depends on 1.2.
   - Model: Fable, Planned.
 
-- [ ] **1.11 (P3) A method that reaches a compile-time construct still
+- [ ] **1.10 (P3) A method that reaches a compile-time construct still
   clones per instance**
 
   Problem: a generic struct's method keeps its per-instantiation clone where
@@ -227,10 +211,10 @@ correctness fix to existing behavior is allowed.
     keyed-method and template-reach plumbing, the clone-symbol retargeting in
     the checker, the VM, and `native::mono`, and the method certificate
     classes in `checker/template_facts`.
-  - Depends on 1.3, 1.4, 1.7, 1.8, 1.9, and 3.85.
+  - Depends on 1.2, 1.3, 1.6, 1.7, 1.8, and 3.85.
   - Model: Fable, Planned.
 
-- [ ] **1.12 (P4) The driver elaborates and checks to a fixpoint**
+- [ ] **1.11 (P4) The driver elaborates and checks to a fixpoint**
 
   Problem: `compile_linked` re-elaborates and re-checks for up to five
   discovery rounds, because only a check discovers the instances the next
@@ -238,17 +222,22 @@ correctness fix to existing behavior is allowed.
   - With no clone left, the check runs once on the linked source, and source
     validation and the executable check are one pass.
   - The elaborator's worklist finds instances transitively from the entries.
-  - CTFE's AST route is deleted. The worklist's request path is the only
-    one.
-  - Module-scope `comptime` values follow the boundary decision D3 set.
+  - CTFE's AST route is deleted, `VmBackend::run_function_value` and the
+    per-round fuel reset with it. The worklist's request path
+    (`docs/notes/ctfe-request-path.md`) is the only one.
+  - Module-scope `comptime` values follow decision D3: a constant the
+    `ParamExpr` folder closes is folded before the check, and one whose
+    initializer applies anything is a typed request the elaborator
+    evaluates on first demand. The early folding of applied constants goes
+    here.
   - The budget is plan decision D4: a stated improvement on the workloads
     repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on 1.11.
+  - Depends on 1.10.
   - Model: Fable, Planned.
 
-- [ ] **1.13 (P5) The replaced mechanisms are still in the tree**
+- [ ] **1.12 (P5) The replaced mechanisms are still in the tree**
 
-  Problem: once 1.12 lands, the AST cloner's core, template derivation, and
+  Problem: once 1.11 lands, the AST cloner's core, template derivation, and
   the VM's erased dispatch serve nothing.
   - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
     and module-scope folding need.
@@ -262,10 +251,10 @@ correctness fix to existing behavior is allowed.
     that use it to the driver, or give the seam concrete MIR.
   - Make a last pass over `docs/architecture.md` and `AGENTS.md` invariant 3.
     Each earlier stage updated the pipeline it changed.
-  - Depends on 1.12.
+  - Depends on 1.11.
   - Model: Fable, Planned.
 
-- [ ] **1.14 (P6) The standard library is checked again in every
+- [ ] **1.13 (P6) The standard library is checked again in every
   compilation**
 
   Problem: Mojo imports a package without checking its source again, and
@@ -277,10 +266,10 @@ correctness fix to existing behavior is allowed.
   - Importing skips the source check. It still validates the artifact and
     checks each instance's obligations.
   - The bundled library is the first consumer, built once per compiler build.
-  - Depends on 1.13.
+  - Depends on 1.12.
   - Model: Fable, Planned.
 
-- [ ] **1.15 (P5) The erased oracle cannot default-construct a SIMD-typed
+- [ ] **1.14 (P5) The erased oracle cannot default-construct a SIMD-typed
   parameter**
 
   Problem: `Array[c_char, 4]()` runs on concrete MIR and stops under
@@ -293,12 +282,12 @@ correctness fix to existing behavior is allowed.
     so the VM's `ConstructTypeParam` has nothing to construct from.
   - `assets/ok/simd_parameter_default_construction.mojo` is the
     `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry 1.13 deletes the oracle and this row with it. Nothing else needs
+  - Entry 1.12 deletes the oracle and this row with it. Nothing else needs
     the erased path to construct one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.16 (P5) The erased oracle reads a place pointer bound to a
+- [ ] **1.15 (P5) The erased oracle reads a place pointer bound to a
   parameter as its pointee**
 
   Problem: `assets/ok/template_served_loan_carrying_instance.mojo` runs on
@@ -313,11 +302,11 @@ correctness fix to existing behavior is allowed.
   - An erased body types it `T`, so `value.copy()` and a read of the whole
     slot chase the handle to the pointee.
   - Each fixture is an `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry 1.13 deletes the oracle and these rows with it.
+  - Entry 1.12 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.17 (P5) The erased oracle spells a type name over a parameter
+- [ ] **1.16 (P5) The erased oracle spells a type name over a parameter
   as written**
 
   Problem: `_unqualified_type_name[Self]()` in a method of `Box[T]` prints
@@ -333,11 +322,11 @@ correctness fix to existing behavior is allowed.
     `optional_raising_subscript.mojo`, and
     `template_method_string_builtins.mojo` are the `ERASED_VM_RESIDUE` rows
     (`tests/corpus_test.rs`).
-  - Entry 1.13 deletes the oracle and these rows with it.
+  - Entry 1.12 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **1.18 (P5) The erased oracle cannot size a parameter or dispatch an
+- [ ] **1.17 (P5) The erased oracle cannot size a parameter or dispatch an
   overloaded requirement with binders of its own**
 
   Problem: `size_of[T]()` in a `def` its template serves runs on concrete
@@ -357,7 +346,7 @@ correctness fix to existing behavior is allowed.
     `same_arity_generic_method_overloads.mojo`,
     `simd_nullary_construction.mojo`, and `tuple_array_defaultable.mojo` are
     the `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry 1.13 deletes the oracle and these rows with it.
+  - Entry 1.12 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -441,6 +430,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **2.4 The elaborator's instance budget is not reached in reasonable
+  time on expanding polymorphic recursion**
+
+  Problem: `depth(W[T](x.copy()), n - 1)` makes `native::mono` spin for more
+  than five minutes before its 4096-instance budget stops it, where the
+  erased run finishes in eight seconds.
+  - The time goes to `enqueue` → `instance_symbol` → `encode_identifier`:
+    each nested `W[W[…]]` instance name is built from the whole of the last,
+    so the names grow with the nesting.
+  - The budget is the one elaboration bound by the owner's decision
+    (`docs/notes/ctfe-request-path.md` §Bounds and fuel): no depth bound,
+    as upstream. It is counted at enqueue, so a wide and a deep explosion
+    both stop at it, and it gets a named constant.
+  - The pin runs out of memory on the same program, so there is no verdict
+    to match, only a bound to reach in seconds.
+  - Probe: `conformance/probes/mono_polymorphic_recursion.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
 ### 3. Catch Up To Current Mojo *(recurring — reopens at every nightly re-pin)*
 
 - When the pinned nightly moves: re-pin [`docs/mojo-nightly.md`](mojo-nightly.md),
@@ -505,9 +513,9 @@ last.
   - The rule and the `--comptime-regions keep` experiment that reproduces
     the pin on today's analysis:
     `docs/notes/comptime-region-ownership.md`. The fix is the MIR
-    compile-time conditional and loop, 1.3 and 1.4; this entry withdraws
+    compile-time conditional and loop, 1.2 and 1.3; this entry withdraws
     the five fixtures when they land.
-  - Depends on 1.3 and 1.4.
+  - Depends on 1.2 and 1.3.
   - Model: Fable, Planned.
 
 - [ ] **3.3 A value read of a homogeneous collector's element copies the
@@ -1754,6 +1762,14 @@ last.
   on a numbered entry names it.
 
   Open today:
+  - `ctfe-plain-keyed-recursion`: `comptime R = rep[3]()`, where `rep[n:
+    Int]` calls `rep[n - 1]()` under a runtime `if n == 0`, prints `6` in
+    Mojito, whose compile-time evaluation runs the erased body with `n`
+    reified at run time; the pin expands the instantiation without end
+    (killed after 60 s, its depth unlimited by default). Pinned by
+    `conformance/probes/ctfe_plain_keyed_recursion.mojo`. Closes with 1.9,
+    when the evaluation demands concrete instances and the instance budget
+    (2.4) stops the expansion.
   - `len-over-pack-in-comptime-for-header`: `comptime for i in
     range(len(items))` over a runtime pack `*items: *Ts` runs in Mojito and
     is rejected upstream ("cannot use a dynamic value in call argument");
@@ -2869,11 +2885,50 @@ last.
   - The evaluation's subprogram carries `m` as its template stub and mints
     no per-instantiation clone for it, as the production elaboration does.
   - The same struct beside an evaluation that does not call `m` runs.
-  - Entry 1.10 moves the evaluation onto the elaborator's worklist, which
-    would serve the instance and close this.
+  - Entry 1.9 moves the evaluation onto the elaborator's worklist by the
+    request path of `docs/notes/ctfe-request-path.md`, which serves the
+    instance and closes this.
   - Probe: `conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **3.124 A compile-time evaluation cannot call a value-keyed generic
+  `def`**
+
+  Problem: `comptime R = rep[3]()`, where `rep[n: Int]` recurses under a
+  `comptime if n == 0`, prints `3` at the pin and stops in Mojito with
+  "unknown compile-time function 'rep'".
+  - The evaluation's subprogram excludes every compile-time-keyed `def`
+    (`is_specializable_declaration_in`), so the call finds no body.
+  - The same recursion under a runtime `if` runs in Mojito, on the erased
+    body, where the pin expands without end; that is the 3.77 ledger row
+    `ctfe-plain-keyed-recursion`.
+  - Entry 1.9 closes this: a demand serves `rep[3]`, `rep[2]`, `rep[1]`,
+    `rep[0]` from the worklist, each with its arm decided.
+  - Probe: `conformance/probes/ctfe_keyed_recursion.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **3.125 A module constant that applies a function cannot shape a
+  signature**
+
+  Problem: `comptime B = f(A)`, `comptime C = B * 2`, and `def g(x:
+  SIMD[DType.float32, C])` called with `SIMD[DType.float32, C](1.0)` prints
+  at the pin and stops in Mojito with "not a compile-time Int constant: C".
+  - At the pin `C` is the symbolic expression `mul(f(3), 2)` on both sides,
+    equal by structure, and never evaluated during the check.
+  - Source validation resolves a signature only through folded constants,
+    and an applied constant is not one.
+  - The fix is decision D3 with the register types over parameter
+    expressions: the constant's symbolic value is `ParamKind::Apply`, and
+    a type over it matches itself (`docs/notes/ctfe-request-path.md` §D3).
+  - A folded `8` must not stand in: the pin rejects `SIMD[DType.float32,
+    8]` against `SIMD[DType.float32, f(Int(7))]`
+    (`conformance/probes/ctfe_const_in_signature.mojo`), and so must
+    Mojito.
+  - Probe: `conformance/probes/ctfe_const_chain_in_signature.mojo`.
+  - Depends on 1.1.
+  - Model: Fable, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 
