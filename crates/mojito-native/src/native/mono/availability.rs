@@ -67,7 +67,7 @@ impl Specializer<'_> {
             .collect()
     }
 
-    fn constraint_holds(
+    pub(super) fn constraint_holds(
         &self,
         constraint: &GenericConstraint,
         bindings: &Bindings,

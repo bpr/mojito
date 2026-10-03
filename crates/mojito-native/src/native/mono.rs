@@ -20,7 +20,6 @@ use unify::*;
 use availability::Availability;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
-use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
@@ -28,8 +27,13 @@ use mojito_mir::mir::{
 use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
-use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
-use mojito_types::types::{ParamDecl, Ty, TyArg};
+use mojito_types::param_expr::{
+    ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
+};
+use mojito_types::types::{
+    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg,
+};
+use mojito_vm::backend::VmBackend;
 
 /// A concrete program and the concrete identity of every requested public
 /// entry.
@@ -100,48 +104,6 @@ pub fn specialize(
     })
 }
 
-/// Fold every branch of a concrete program whose condition is a literal
-/// the same block defines, keeping the taken successor.
-///
-/// This is the elaborator's half of the compile-time-region experiment
-/// (`docs/notes/comptime-region-ownership.md`): the regions reached this
-/// graph as runtime branches on literal conditions, the ownership analysis
-/// and drop elaboration decided them as such, and the fold keeps the taken
-/// arm with the destroys drop elaboration placed in it. It recomputes no
-/// last use. The untaken arm's blocks stay in the function, unreachable.
-pub fn fold_literal_branches(
-    specialized: SpecializedProgram,
-) -> Result<SpecializedProgram, MonoError> {
-    let SpecializedProgram {
-        program,
-        entries,
-        parametric,
-    } = specialized;
-    let mut program = program.into_program();
-    for (_, function) in &mut program.functions {
-        for block in &mut function.blocks {
-            if let MirTerm::Branch {
-                cond,
-                then_b,
-                else_b,
-            } = block.term
-                && let Some(taken) = literal_branch_target(&block.instrs, cond, then_b, else_b)
-            {
-                block.term = MirTerm::Jump(taken);
-            }
-        }
-    }
-    let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
-        function: None,
-        construct: format!("folded literal branches: {}", findings.join("; ")),
-    })?;
-    Ok(SpecializedProgram {
-        program,
-        entries,
-        parametric,
-    })
-}
-
 /// The entry roots of a whole program.
 ///
 /// They are `main` and the module initializer `__toplevel__`, each when the
@@ -172,6 +134,32 @@ pub fn parametric_bodies(program: &MirProgram) -> HashSet<&str> {
 /// expanding polymorphic recursion (`f[W[T]]` calling `f[W[W[T]]]`), which
 /// would otherwise never terminate.
 const INSTANCE_BUDGET: usize = 4096;
+
+/// Where an instance stands on the worklist.
+///
+/// A reference edge (a call in a body) enqueues and never waits, so
+/// recursion through references is valid; a demand edge (a compile-time
+/// application the elaborator must evaluate now) materializes the instance
+/// at once, and a demand on an `Active` instance is upstream's "function
+/// instantiation in parameter domain that recursively requires itself".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstanceState {
+    Pending,
+    Active,
+    Completed,
+    Failed,
+}
+
+/// The per-function scratch state `materialize` overwrites, saved around a
+/// nested materialization a compile-time demand performs.
+#[derive(Default)]
+struct FunctionFrame {
+    constant_values: HashMap<u32, CtValue>,
+    callable_targets: HashMap<u32, (String, bool)>,
+    closure_captures: HashMap<String, Vec<MirClosureCapture>>,
+    enclosing: Bindings,
+    folded_slots: HashSet<u32>,
+}
 
 /// The elaborator thread's stack: enough for the type walks at the nesting
 /// depth the instance budget admits. Untouched pages are never committed.
@@ -225,6 +213,33 @@ struct Bindings {
     /// The enclosing value parameters a lifted body's instance folds in
     /// place of its leading captures, by name, in capture order.
     folded_captures: Vec<(String, CtValue)>,
+    /// What answers a layout application (`size_of[T]()`) a type of the
+    /// instance carries: the target, and the struct declarations known when
+    /// the instance was materialized. `None` where no layout is answered.
+    layout: Option<Rc<LayoutOracle>>,
+}
+
+/// The layout answers available to one instance's substitution.
+struct LayoutOracle {
+    target: NativeTarget,
+    structs: mojito_native_core::layout::StructFieldIndex,
+}
+
+impl LayoutOracle {
+    /// The size of the concrete `ty`, or the layout error naming why not.
+    fn size_of(&self, ty: &Ty) -> Result<i64, MonoError> {
+        let layout = mojito_native_core::layout::LayoutCx {
+            target: &self.target,
+            structs: &self.structs,
+        };
+        layout
+            .layout_of(ty)
+            .map(|layout| layout.size as i64)
+            .map_err(|error| MonoError {
+                function: None,
+                construct: format!("size_of of `{ty}`: {error}"),
+            })
+    }
 }
 
 /// A struct's own parameters and its associated types over them.
@@ -246,6 +261,19 @@ struct Specializer<'a> {
     instances: Vec<(InstanceKey, String)>,
     /// Each demanded key's position in `instances`.
     instance_index: HashMap<InstanceKey, usize>,
+    /// The state of each instance, by its position in `instances`.
+    states: Vec<InstanceState>,
+    /// The instances a compile-time evaluation is waiting on, outermost
+    /// first: a demand on one of them is a cycle in the parameter domain.
+    demand_stack: Vec<String>,
+    /// Every compile-time application evaluated so far, by instance name:
+    /// the same application under the same bindings runs once.
+    evaluations: HashMap<String, CtValue>,
+    /// The compile-time execution steps left to this compilation.
+    fuel: usize,
+    /// The executor of compile-time applications, as upstream's elaborator
+    /// owns its interpreter.
+    vm: VmBackend,
     /// The struct types [`Specializer::discover_structs`] has walked: a type
     /// met again in a later body has nothing left to discover.
     discovered_types: HashSet<Ty>,
@@ -277,32 +305,6 @@ mod specializer;
 mod substitute;
 mod symbolic;
 mod unify;
-
-/// The successor a branch on `cond` takes when the last instruction of its
-/// block defining `cond` is a `Bool` literal.
-fn literal_branch_target(
-    instrs: &[MirInstr],
-    cond: Reg,
-    then_b: usize,
-    else_b: usize,
-) -> Option<usize> {
-    let mut results = Vec::new();
-    instrs
-        .iter()
-        .rev()
-        .find(|instr| {
-            results.clear();
-            instruction_result_regs(instr, &mut results);
-            results.contains(&cond)
-        })
-        .and_then(|instr| match instr {
-            MirInstr::Const {
-                k: Const::Bool(value),
-                ..
-            } => Some(if *value { then_b } else { else_b }),
-            _ => None,
-        })
-}
 
 #[cfg(test)]
 mod tests;

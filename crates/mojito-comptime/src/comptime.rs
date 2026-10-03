@@ -45,11 +45,11 @@ pub use mojito_symbol::symbol::{
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
 use mojito_common::token::{SourceSpan, Span};
-use mojito_types::ct::{CtLane, CtMarker, CtValue};
+use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use mojito_vm::backend::VmBackend;
-use mojito_vm::runtime::{SimdLanes, Value};
+use mojito_vm::runtime::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -692,8 +692,6 @@ pub struct Elaborated {
 /// first elaboration outside the driver.
 #[derive(Clone, Copy, Default)]
 pub struct ElaborationInputs<'a> {
-    /// How a `comptime if` and a `comptime for` reach the check.
-    pub comptime_regions: ComptimeRegions,
     pub tuple_requests: &'a [TupleSpecializationRequest],
     pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
@@ -706,28 +704,6 @@ pub struct ElaborationInputs<'a> {
     /// Hashed vector types beyond the eager width-1 set.
     pub hash_leaf_types: &'a [Ty],
     pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
-}
-
-/// How elaboration hands a `comptime if` and a `comptime for` to the check.
-///
-/// `Select` is the production path: the taken arm is spliced in and the
-/// loop is unrolled, so the check and the ownership analysis see one arm.
-/// `Keep` is the compile-time-region ownership experiment
-/// (`docs/notes/comptime-region-ownership.md`): in a function body of the
-/// module that declares `main`, every arm is kept as a runtime `if` whose
-/// conditions are the evaluated literals, and a `comptime for` over a
-/// `range(...)` is kept as a runtime `for` over the evaluated bounds, so the
-/// ownership analysis decides the region as it decides the runtime region
-/// of the same shape, and the elaborator folds the literal branch after
-/// drop elaboration. Every kept arm must check under the instantiation,
-/// which only an arm independent of the condition's type facts does; a
-/// region that does not even elaborate kept is selected as in production,
-/// and the bundled library's bodies always are.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ComptimeRegions {
-    #[default]
-    Select,
-    Keep,
 }
 
 /// The declarations an elaboration generated.
@@ -1085,7 +1061,6 @@ pub fn elaborate_prepared(
     inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
     let ElaborationInputs {
-        comptime_regions,
         tuple_requests,
         tstring_requests,
         def_requests,
@@ -1202,18 +1177,7 @@ pub fn elaborate_prepared(
         tuple_transforms,
         materialized_callables,
         fuel: Cell::new(FUEL),
-        keep_regions_in: match comptime_regions {
-            ComptimeRegions::Select => KeptRegions::None,
-            ComptimeRegions::Keep => program
-                .iter()
-                .find_map(|statement| match &statement.kind {
-                    StmtKind::Def { name, .. } if name == "main" => {
-                        Some(KeptRegions::Module(statement.module.clone()))
-                    }
-                    _ => None,
-                })
-                .unwrap_or(KeptRegions::None),
-        },
+        template_binders: RefCell::new(Vec::new()),
         def_traces: RefCell::new(Vec::new()),
         method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
@@ -1470,6 +1434,12 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     })
 }
 
+/// Whether a block directly contains a `comptime for`, under the same scope
+/// rule as [`block_has_comptime`].
+fn block_has_comptime_for(stmts: &[Stmt]) -> bool {
+    block_has_statement(stmts, |kind| matches!(kind, StmtKind::ComptimeFor { .. }))
+}
+
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
 /// `def` included: that nested body specializes per call, so the body holding
 /// it has to reach it through a clone of its own.
@@ -1496,11 +1466,21 @@ pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
     finder.found
 }
 
-/// Whether a parametric body can only check once its own parameters are
-/// bound: it holds compile-time control flow, or a `rebind` assertion over
-/// them. Either way the template is stubbed and every instantiation clones.
+/// Whether a method's or a nested `def`'s body can only check once its own
+/// parameters are bound: it holds compile-time control flow, or a `rebind`
+/// assertion over them. Either way the template is stubbed and every
+/// instantiation clones.
 fn block_keys_specialization(stmts: &[Stmt]) -> bool {
     block_has_comptime(stmts) || block_has_rebind(stmts)
+}
+
+/// Whether a top-level `def`'s body keys a clone per instantiation: it
+/// unrolls a `comptime for`, or asserts a `rebind` over its parameters. A
+/// `comptime if` does not: the template keeps the region, the check types
+/// every arm with the binders symbolic, and the elaborator below MIR
+/// selects.
+fn def_body_keys_specialization(stmts: &[Stmt]) -> bool {
+    block_has_comptime_for(stmts) || block_has_rebind(stmts)
 }
 
 fn collect_reference_origin_parameters(
@@ -2033,130 +2013,23 @@ impl Elab<'_> {
     }
 }
 
+/// A compile-time value as the runtime value the VM takes
+/// (`mojito_vm::crossing`), a refusal reported as a compile-time error.
 fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
-    match value {
-        CtValue::Int(n) => Ok(Value::Int(*n)),
-        CtValue::UInt(n) => Ok(Value::UInt(*n)),
-        CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
-        CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),
-        CtValue::FloatLiteral(value) => Ok(Value::FloatLiteral(value.clone())),
-        CtValue::Bool(b) => Ok(Value::Bool(*b)),
-        CtValue::Str(s) => Ok(Value::Str(s.clone())),
-        CtValue::Tuple(items) => Ok(Value::Tuple(
-            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
-        )),
-        CtValue::List(items) => Ok(Value::ComptimeList(
-            items.iter().map(ct_to_vm).collect::<Result<Vec<_>, _>>()?,
-        )),
-        CtValue::Struct { name, fields } => Ok(Value::Struct {
-            name: name.clone(),
-            fields: fields
-                .iter()
-                .map(|(field, value)| Ok::<_, ComptimeError>((field.clone(), ct_to_vm(value)?)))
-                .collect::<Result<Vec<_>, _>>()?,
-            value_params: Vec::new(),
-        }),
-        CtValue::Simd { dtype, lanes } => {
-            let lanes = match lanes.first() {
-                Some(CtLane::Float(_)) => SimdLanes::Float(
-                    lanes
-                        .iter()
-                        .map(|lane| match lane {
-                            CtLane::Float(bits) => Some(f64::from_bits(*bits)),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or_else(|| {
-                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
-                        })?,
-                ),
-                Some(CtLane::Bool(_)) => SimdLanes::Bool(
-                    lanes
-                        .iter()
-                        .map(|lane| match lane {
-                            CtLane::Bool(value) => Some(*value),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or_else(|| {
-                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
-                        })?,
-                ),
-                _ => SimdLanes::Int(
-                    lanes
-                        .iter()
-                        .map(|lane| match lane {
-                            CtLane::Int(value) => Some(*value),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or_else(|| {
-                            ComptimeError::NotComptime("mixed SIMD lane kinds".to_string())
-                        })?,
-                ),
-            };
-            Ok(Value::Simd {
-                dtype: *dtype,
-                lanes,
-            })
-        }
-        CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
-        CtValue::Type(_)
-        | CtValue::Reflected(_)
-        | CtValue::Expr(_)
-        | CtValue::Deferred(_)
-        | CtValue::Marker(_) => Err(ComptimeError::NotComptime(
-            "type-valued or symbolic values cannot cross into VM CTFE".to_string(),
-        )),
-        // A collection crosses into VM CTFE only as its materialized display
-        // in a synthesized entry, never as a runtime value.
-        CtValue::Dict { .. } | CtValue::Set { .. } => Err(ComptimeError::NotComptime(
-            "a compile-time collection crosses into VM CTFE only through a synthesized entry"
-                .to_string(),
-        )),
-    }
+    mojito_vm::crossing::ct_to_vm(value).map_err(crossing_error)
 }
 
+/// A runtime value the VM produced as a compile-time value
+/// (`mojito_vm::crossing`), a refusal reported as a compile-time error.
 fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
-    match value {
-        Value::Int(n) => Ok(CtValue::Int(n)),
-        Value::UInt(n) => Ok(CtValue::UInt(n)),
-        Value::Float64(value) => Ok(CtValue::Float(value.to_bits())),
-        Value::IntLiteral(value) => Ok(CtValue::IntLiteral(value)),
-        Value::FloatLiteral(value) => Ok(CtValue::FloatLiteral(value)),
-        Value::Bool(b) => Ok(CtValue::Bool(b)),
-        Value::Str(s) => Ok(CtValue::Str(s)),
-        Value::Tuple(items) => Ok(CtValue::Tuple(
-            items
-                .into_iter()
-                .map(vm_to_ct)
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        Value::ComptimeList(items) => Ok(CtValue::List(
-            items
-                .into_iter()
-                .map(vm_to_ct)
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        Value::Simd { dtype, lanes } => Ok(CtValue::Simd {
-            dtype,
-            lanes: match lanes {
-                SimdLanes::Int(values) => values.into_iter().map(CtLane::Int).collect(),
-                SimdLanes::Float(values) => values
-                    .into_iter()
-                    .map(|x| CtLane::Float(x.to_bits()))
-                    .collect(),
-                SimdLanes::Bool(values) => values.into_iter().map(CtLane::Bool).collect(),
-            },
-        }),
-        Value::Dtype(dtype) => Ok(CtValue::Dtype(dtype)),
-        Value::None => Err(ComptimeError::NotComptime(
-            "VM CTFE function returned None; a compile-time value is required".to_string(),
-        )),
-        other => Err(ComptimeError::NotComptime(format!(
-            "VM CTFE returned unsupported runtime value {other}"
-        ))),
-    }
+    mojito_vm::crossing::vm_to_ct(value).map_err(crossing_error)
+}
+
+fn crossing_error(error: mojito_vm::runtime::RuntimeError) -> ComptimeError {
+    ComptimeError::NotComptime(match error {
+        mojito_vm::runtime::RuntimeError::Unsupported(text) => text,
+        other => other.to_string(),
+    })
 }
 
 /// A CTFE-callable function: a pure top-level `def`, optionally with compile-time
@@ -2204,7 +2077,7 @@ fn is_specializable_declaration_in(
             type_params, body, ..
         } => {
             !type_params.is_empty()
-                && (block_keys_specialization(body)
+                && (def_body_keys_specialization(body)
                     || type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
@@ -2239,16 +2112,7 @@ fn is_specializable_declaration_in(
 /// The maximum number of compile-time "steps" (loop iterations, statements
 /// executed, function calls) across a whole program — a hard bound so compile-time
 /// execution can't hang the compiler (cf. Zig's quota).
-const FUEL: usize = 100_000;
-
-/// Where the compile-time-region experiment keeps `comptime if` arms and
-/// `comptime for` bodies through the check ([`ComptimeRegions::Keep`]).
-enum KeptRegions {
-    /// Nowhere: every region is selected and unrolled.
-    None,
-    /// In the bodies of the module declaring `main`, by its provenance.
-    Module(Option<String>),
-}
+const FUEL: usize = mojito_vm::crossing::CTFE_FUEL;
 
 /// The compile-time elaboration engine: the CTFE-callable functions and a shared
 /// fuel budget. `top_consts` captures module-level constants for materialization;
@@ -2354,9 +2218,11 @@ struct Elab<'a> {
     /// name, as first decided ([`Elab::template_serves_def`]).
     template_served_defs: RefCell<HashMap<String, bool>>,
     fuel: Cell<usize>,
-    /// Where the compile-time-region experiment keeps regions
-    /// ([`ComptimeRegions::Keep`]).
-    keep_regions_in: KeptRegions,
+    /// The compile-time parameter names of each generic `def` whose body is
+    /// being elaborated as a template, innermost last. A `comptime if`
+    /// whose condition names one is kept for the check: its arms are the
+    /// template's, and the elaborator below MIR selects.
+    template_binders: RefCell<Vec<HashSet<String>>>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.
@@ -2997,11 +2863,79 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
     else {
         return false;
     };
-    block_keys_specialization(body)
+    def_body_keys_specialization(body)
         && admits_comptime_keying(statement)
         && type_params
             .iter()
             .any(|parameter| !retained_specialization_param(parameter, type_params))
+}
+
+/// The nested form of [`is_specializable_declaration`]: a nested `def`
+/// holding a `comptime if` still clones per call, since its body is minted
+/// with the enclosing clone (roadmap: nested definitions over compile-time
+/// parameters).
+pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
+    is_specializable_declaration(statement)
+        || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
+            if !type_params.is_empty() && block_has_comptime(body))
+}
+
+/// Whether every compile-time parameter of a `def` is one its template
+/// serves: a non-variadic type parameter, or a scalar (`Int`/`Bool`) value
+/// parameter that no runtime parameter type names, so an application spells
+/// it and the elaborator binds it from the call's recorded arguments. A
+/// value a call must infer from an argument type keeps the clone until the
+/// elaborator binds one from the call.
+pub(super) fn template_serves_binders(
+    type_params: &[TypeParam],
+    params: &[FnParam],
+    owner: &str,
+) -> bool {
+    !type_params.is_empty()
+        && type_params.iter().all(|parameter| {
+            match classify_ct_param(parameter, type_params, owner) {
+                Some(ParamDecl::Type {
+                    variadic: false, ..
+                }) => true,
+                Some(ParamDecl::Value {
+                    ty,
+                    variadic: false,
+                    ..
+                }) => {
+                    matches!(ty.as_ref(), Ty::Int | Ty::Bool)
+                        && !params
+                            .iter()
+                            .any(|param| type_names(&param.ty, &parameter.name))
+                }
+                _ => false,
+            }
+        })
+}
+
+/// Whether the annotation `ty` spells `name`, as a type or in a value slot.
+fn type_names(ty: &Type, name: &str) -> bool {
+    struct Finder<'a> {
+        name: &'a str,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(&expr.kind, ExprKind::Identifier(found) if found == self.name) {
+                self.found = true;
+            }
+        }
+
+        fn visit_type(&mut self, ty: &Type) {
+            if matches!(ty, Type::Named(found, _) | Type::SelfParam(found) if found == self.name) {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder { name, found: false };
+    mojito_ast::visit::walk_type(&mut finder, ty);
+    finder.found
 }
 
 /// Whether a declaration's own parameters permit the compile-time-keyed class.
@@ -3121,20 +3055,22 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
             else {
                 return None;
             };
+            let StmtKind::Def { params, .. } = &statement.kind else {
+                return None;
+            };
             if is_specializable_declaration(statement) || def_counts[name.as_str()] != 1 {
                 return None;
             }
-            type_params
-                .iter()
-                .any(|parameter| {
-                    matches!(
-                        classify_ct_param(parameter, type_params, name),
-                        Some(ParamDecl::Type {
-                            variadic: false,
-                            ..
-                        })
-                    )
-                })
+            let has_type_binder = type_params.iter().any(|parameter| {
+                matches!(
+                    classify_ct_param(parameter, type_params, name),
+                    Some(ParamDecl::Type {
+                        variadic: false,
+                        ..
+                    })
+                )
+            });
+            (has_type_binder || template_serves_binders(type_params, params, name))
                 .then(|| name.clone())
         })
         .collect()

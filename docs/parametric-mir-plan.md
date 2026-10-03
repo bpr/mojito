@@ -341,7 +341,9 @@ Hello World at the same revision; rows that read zero in both are left out:
 | Clones that keep a parameter | | 42 | 42 |
 
 - The 22 bodies over Hello World are the 22 the program asks for; the
-  keyed `def`s add no fixed cost.
+  keyed `def`s add no fixed cost. At P3a (2026-10-03) the `def holding a
+  comptime if` row reads 0 and the cloned total 243: `scale`, `describe`,
+  and the bundled `rotate_bits_left` are served by their templates.
 - Ten of the 22 are inferred and twelve derived, where Hello World derives
   eleven bodies in twelve: a keyed class pays a full check per instance far
   more often than the fixed cost does.
@@ -537,11 +539,11 @@ Three prerequisites come first. None of them moves a body.
   what upstream's `Mojo/lib/LowerLIT/CheckLifetimes.cpp` does on its
   structured `ComptimeIfOp` and `ComptimeForOp`. Nineteen pin probes
   (`conformance/probes/comptime_region_*.mojo`) observe it, and the
-  `--comptime-regions keep` experiment reproduces every verdict and every
-  destructor order on today's analysis, with the elaborator folding the
-  literal branch after drop elaboration. P3a and P3b therefore add no join
-  rule: a parameter-expression condition is opaque to the ownership
-  analysis, and the elaborator keeps the taken arm with its drops.
+  `--comptime-regions keep` experiment (since deleted) reproduced every
+  verdict and every destructor order on the analysis of the day. P3a and P3b
+  therefore add no join rule: a parameter-expression condition is opaque to
+  the ownership analysis, and the elaborator keeps the taken arm with its
+  drops — which is how P3a landed.
 - **Legality is not lifecycle glue.** Symbolic ownership decides legality and
   last use once. Substitution may resolve a destructor witness or expand
   aggregate cleanup, and it never recomputes a last use. A development-only
@@ -586,9 +588,15 @@ Then one class at a time. For each: HIR and MIR gain the form, the verifiers
 and ownership analysis accept it, the elaborator resolves it, the cloner's
 branch for the class is deleted, and so is its certificate class.
 
-- **P3a. `comptime if` on a value parameter.** MIR gains a structured
-  compile-time conditional, as `Try` is a structured instruction today. The
-  elaborator keeps the taken arm.
+- **P3a. `comptime if` on a value parameter.** Done 2026-10-03: MIR carries
+  the region as the `ComptimeBranch` terminator — the `if` diamond with a
+  constraint over the body's binders as its condition, which the ownership
+  analysis decides as a `Branch` — and the elaborator decides it under the
+  instance's bindings and prunes the untaken arm. The request path's first
+  code landed with it (`docs/notes/ctfe-request-path.md`). The cloner's
+  `comptime if` class is gone for every top-level `def`, uniquely named or an
+  overload family's member; a method's and a nested `def`'s stay with their
+  entries.
 - **P3b. `comptime for` over a value index**, then **heterogeneous pack
   expansion**. They share the loop form and differ in their correctness
   conditions, so they are two steps.
@@ -656,8 +664,8 @@ regions. Later forms may bump it again (decision D5).
 - **D2. Where the elaborator lives.** Decided 2026-10-02
   ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) §D2):
   `native::mono` stays in `mojito-native`, the root driver calls it for both
-  backends, and `mojito-native` gains the edge to `mojito-vm` when the
-  request path lands (roadmap 1.1), so the elaborator owns its executor as
+  backends, and `mojito-native` gained the edge to `mojito-vm` with the
+  request path (2026-10-03), so the elaborator owns its executor as
   upstream's `Elaborator` owns its interpreter. `mojito-comptime` never
   depends on `mojito-native`; its AST route is deleted at P4, not bridged.
 - **D3. Module-scope `comptime` values.** Decided 2026-10-02 (same note,
@@ -684,9 +692,9 @@ regions. Later forms may bump it again (decision D5).
   - P4 owes a stated improvement on the workloads repeated checking
     dominates, and bounded regressions elsewhere. It does not owe a faster
     time on every row.
-- **D5. The MIR text schema.** Either reserve the complete generator format
-  at P3a or allow further versioned bumps through P3. Recommended: allow the
-  bumps. Whether pre-P3 artifacts stay readable is decided at P3a.
+- **D5. The MIR text schema.** Decided at P3a (2026-10-03): the bumps are
+  allowed, and every earlier minor stays readable. Schema 1.15 carries the
+  `comptime_branch` terminator; the reader accepts 1.0 through 1.15.
 
 ## What would stop the plan
 

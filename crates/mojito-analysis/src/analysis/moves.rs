@@ -333,7 +333,9 @@ pub(super) fn join_node(a: &Node, b: &Node) -> Node {
 pub(super) fn successors(term: &MirTerm) -> Vec<usize> {
     match term {
         MirTerm::Jump(t) => vec![*t],
-        MirTerm::Branch { then_b, else_b, .. } => vec![*then_b, *else_b],
+        MirTerm::Branch { then_b, else_b, .. } | MirTerm::ComptimeBranch { then_b, else_b, .. } => {
+            vec![*then_b, *else_b]
+        }
         // `EscapeJump` only appears inside a `try` region (never a function body),
         // so this — which walks function-body successors — never sees it; it leaves
         // this CFG like a `Return`.
@@ -708,7 +710,7 @@ where
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
                 add_state(&mut flow.exits, &Some(state));
             }
-            MirTerm::Jump(_) | MirTerm::Branch { .. } => {}
+            MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::ComptimeBranch { .. } => {}
         }
     }
     Ok(flow)

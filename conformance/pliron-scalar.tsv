@@ -67,6 +67,7 @@ assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_abstract_body_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_arm_destroy_joins.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_condition_applies_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_specialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_struct_ctor_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_generic_struct_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
@@ -82,7 +83,9 @@ assets/ok/comptime_if_overload_pack_plain_triple.mojo	-	ineligible	no-scalar-ent
 assets/ok/comptime_if_overload_pack_zero_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_overloaded_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_overloaded_def_explicit.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape

@@ -156,6 +156,11 @@ fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
             }
             concrete_instruction(&head, instruction, errors);
         }
+        if let MirTerm::ComptimeBranch { cond, .. } = &block.term {
+            errors.push(format!(
+                "{head} keeps a compile-time branch on `{cond:?}` in elaborated MIR"
+            ));
+        }
     }
 }
 

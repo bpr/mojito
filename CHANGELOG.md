@@ -8,6 +8,35 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def` holding a `comptime if` is served by its template, the first
+  compile-time construct to cross the MIR waist as itself: the checker types
+  every arm with the binders symbolic and records each condition it compiles
+  as a constraint, HIR and MIR lower the region as the `if` diamond with the
+  new `ComptimeBranch` terminator (MIR text schema 1.15, `comptime_branch`),
+  the ownership analysis and drop elaboration decide it as the `if` of the
+  same shape — so a move in an untaken arm with a use after the join, an
+  untaken arm's read of a moved value, and an unused declaration that moves
+  now reject as the pin rejects them, and a value one arm alone consumes is
+  destroyed at the other arm's entry — and `native::mono` decides the
+  condition under each instance's bindings, keeps the taken arm with its
+  drops, and prunes the other before any call in it is enqueued. The
+  cloner's `comptime if` class, its trap stub, and the `--comptime-regions
+  keep` experiment are gone; a scalar value parameter an application binds
+  is served by the template too. The compile-time request path landed with
+  it: a condition that applies a function is a thunk the elaborator demands
+  — every pending instance materialized, the completed output verified as
+  the fragment `VmBackend::call_concrete` runs, an effectful callee refused,
+  fuel one counter per compilation, the result cached by instance, a demand
+  on an instance being materialized the pin's parameter-domain cycle — and a
+  module constant whose initializer is `size_of[Pair]()` stays the
+  application through the check and is answered by the elaborator under the
+  target (`assets/ok/comptime_if_template_served.mojo`,
+  `comptime_if_condition_applies_def.mojo`, `comptime_layout_constant.mojo`;
+  `assets/ownership_error/comptime_if_untaken_*.mojo`,
+  `assets/type_error/comptime_layout_constant_mismatch.mojo`;
+  `conformance/probes/p3_mixed.mojo`). `mojito-native` now depends on
+  `mojito-vm`.
+
 - Register types over parameter expressions are specified
   (`docs/notes/param-expr-attributes.md` §Register types): a generator's
   MIR names a type binder, a dependent type, a symbolic vector lane or

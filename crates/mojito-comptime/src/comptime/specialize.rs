@@ -693,29 +693,25 @@ impl Elab<'_> {
     /// by its checked types as the driver read them) nor reaches a
     /// compile-time-keyed stub. The elaborator instantiates the template's
     /// MIR for each call, and a call's transfer summary names its loans by
-    /// the stored type. A value parameter keeps the clone until the
-    /// elaborator binds one from a call. The verdict is the first one made
-    /// for the name, so every call of it agrees.
+    /// the stored type. A scalar value parameter an application spells is
+    /// served too; one a call must infer from an argument type keeps the
+    /// clone until the elaborator binds it from the call. The verdict is the
+    /// first one made for the name, so every call of it agrees.
     pub(super) fn template_serves_def(&self, name: &str, template: &Stmt, mono: &Mono) -> bool {
         if let Some(served) = self.template_served_defs.borrow().get(name) {
             return *served;
         }
         let StmtKind::Def {
-            body, type_params, ..
+            body,
+            type_params,
+            params,
+            ..
         } = &template.kind
         else {
             return false;
         };
         let served = self.bound_generics.contains(name)
-            && classify_ct_params(type_params, name).iter().all(|decl| {
-                matches!(
-                    decl,
-                    ParamDecl::Type {
-                        variadic: false,
-                        ..
-                    }
-                )
-            })
+            && template_serves_binders(type_params, params, name)
             && !holds_instance_construct(body)
             && !self
                 .keyed_methods

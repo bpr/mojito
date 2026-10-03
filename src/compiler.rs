@@ -4,7 +4,7 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
-    ComptimeError, ComptimeRegions, DefSpecializationRequest, Elaborated, ElaborationInputs,
+    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
     MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
     TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
     UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
@@ -45,9 +45,6 @@ pub struct CompiledProgram {
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     template_stats: crate::templates::TemplateStats,
     clones: crate::census::CloneCensus,
-    /// Whether the compile-time regions were kept through the check, so the
-    /// elaborator folds their literal branches.
-    comptime_regions: ComptimeRegions,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
 }
@@ -137,11 +134,7 @@ impl CompiledProgram {
                     mir,
                     &crate::native::mono::entry_roots(mir),
                     self.target.as_ref(),
-                )
-                .and_then(|concrete| match self.comptime_regions {
-                    ComptimeRegions::Select => Ok(concrete),
-                    ComptimeRegions::Keep => crate::native::mono::fold_literal_branches(concrete),
-                });
+                );
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",
@@ -251,11 +244,6 @@ pub struct Compiler {
     /// Which MIR phase the VM runs. `None` defers to
     /// [`VmInstantiation::from_env`].
     vm_instantiation: Option<VmInstantiation>,
-    /// How a `comptime if`/`comptime for` reaches the check:
-    /// [`ComptimeRegions::Keep`] is the compile-time-region ownership
-    /// experiment, which also folds the kept literal branches in the
-    /// elaborator.
-    comptime_regions: ComptimeRegions,
     /// The native target the elaborator answers layout queries for: the
     /// `--target` of a native compile, otherwise the host. `None` on a host
     /// with no native target, where a program that asks a layout fails.
@@ -311,7 +299,6 @@ impl Compiler {
             verify_template_facts: None,
             body_fact_reuse: None,
             vm_instantiation: None,
-            comptime_regions: ComptimeRegions::Select,
             target: match crate::native::target::Triple::host() {
                 Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
                 None => None,
@@ -322,14 +309,6 @@ impl Compiler {
     #[must_use]
     pub const fn with_target(mut self, target: crate::native::target::NativeTarget) -> Self {
         self.target = Some(target);
-        self
-    }
-    /// Keep every arm of a `comptime if` and the body of a `comptime for`
-    /// through the check and the ownership analysis (the compile-time-region
-    /// experiment, `docs/notes/comptime-region-ownership.md`).
-    #[must_use]
-    pub const fn with_comptime_regions(mut self, regions: ComptimeRegions) -> Self {
-        self.comptime_regions = regions;
         self
     }
     /// Choose the MIR phase the VM runs, whatever the environment says.
@@ -470,7 +449,7 @@ impl Compiler {
                 clones: minted_clones,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_prepared(&prepared, self.elaboration_inputs(&templates_catalog))
+                elaborate_prepared(&prepared, elaboration_inputs(&templates_catalog))
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
@@ -640,7 +619,7 @@ impl Compiler {
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
                         hash_leaf_types: &hash_leaf_requests,
-                        ..self.elaboration_inputs(&templates_catalog)
+                        ..elaboration_inputs(&templates_catalog)
                     },
                 )
                 .map_err(CompilerError::Comptime)?
@@ -728,7 +707,6 @@ impl Compiler {
             concrete: OnceLock::new(),
             template_stats: templates_catalog.stats().clone(),
             clones,
-            comptime_regions: self.comptime_regions,
             target: self.target,
         })
     }
@@ -781,18 +759,12 @@ impl Compiler {
     }
 }
 
-impl Compiler {
-    /// This compilation's elaboration inputs apart from the discovery
-    /// requests: the template catalog and the compile-time-region mode.
-    fn elaboration_inputs<'a>(
-        &self,
-        templates: &'a crate::templates::TemplateCatalog,
-    ) -> ElaborationInputs<'a> {
-        ElaborationInputs {
-            comptime_regions: self.comptime_regions,
-            templates: Some(templates),
-            ..ElaborationInputs::default()
-        }
+/// A compilation's elaboration inputs apart from the discovery requests:
+/// the template catalog.
+fn elaboration_inputs(templates: &crate::templates::TemplateCatalog) -> ElaborationInputs<'_> {
+    ElaborationInputs {
+        templates: Some(templates),
+        ..ElaborationInputs::default()
     }
 }
 

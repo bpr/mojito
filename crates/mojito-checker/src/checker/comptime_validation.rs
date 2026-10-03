@@ -120,24 +120,54 @@ impl Checker {
     /// `conforms_to(T, Copyable)`, a `TypeList` proposition, a predicate
     /// alias), or an ordinary `Bool` expression over compile-time bindings
     /// (a `comptime for` variable, a `Bool` parameter). It is typed, never
-    /// evaluated: selection is the elaborator's.
+    /// evaluated: selection is the elaborator's. A condition, or a leaf of
+    /// one under `not`/`and`/`or`, that the constraint compiler closes is
+    /// recorded on its span (`SemanticAdjustment::ComptimeCondition`) for the
+    /// MIR branch; a leaf it does not close — an application, a `Bool`
+    /// binding — MIR lowers as a thunk the elaborator runs.
     pub(super) fn check_comptime_condition(&mut self, cond: &Expr) -> Result<(), TypeError> {
-        let cond = self.inline_local_comptime_values(cond);
-        self.check_ct_bool(&cond)
+        let inlined = self.inline_local_comptime_values(cond);
+        if let Some(constraint) = self.check_ct_bool(&inlined)? {
+            self.record_comptime_condition(cond, &constraint);
+        }
+        Ok(())
+    }
+
+    /// Record `constraint` as the compile-time reading of `cond`, each
+    /// operand naming its binder by identity: the innermost open scope's,
+    /// else the enclosing struct's.
+    fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
+        let bound = self.bind_constraint(constraint, &[]);
+        self.operation_adjustments.borrow_mut().insert(
+            cond.source_span(),
+            mojito_checked::checked::SemanticAdjustment::ComptimeCondition(bound),
+        );
     }
 
     /// The recursive form of [`Self::check_comptime_condition`]: a
     /// connective recurses so a concrete conformance fact can sit beside a
     /// symbolic constraint; a leaf is a generic constraint over the
     /// parameters in scope, a conformance of a concrete type, or a `Bool`
-    /// value expression.
-    fn check_ct_bool(&mut self, cond: &Expr) -> Result<(), TypeError> {
+    /// value expression. The constraint the condition compiles to, when every
+    /// leaf does.
+    fn check_ct_bool(&mut self, cond: &Expr) -> Result<Option<GenericConstraint>, TypeError> {
         match &cond.kind {
-            ExprKind::Bool(_) => return Ok(()),
-            ExprKind::Prefix(PrefixOp::Not, inner) => return self.check_ct_bool(inner),
-            ExprKind::Infix(InfixOp::And | InfixOp::Or, left, right) => {
-                self.check_ct_bool(left)?;
-                return self.check_ct_bool(right);
+            ExprKind::Bool(value) => return Ok(Some(GenericConstraint::Bool(*value))),
+            ExprKind::Prefix(PrefixOp::Not, inner) => {
+                return Ok(self
+                    .check_ct_bool(inner)?
+                    .map(|inner| GenericConstraint::Not(Box::new(inner))));
+            }
+            ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), left, right) => {
+                let left = self.check_ct_bool(left)?;
+                let right = self.check_ct_bool(right)?;
+                return Ok(left.zip(right).map(|(left, right)| {
+                    if *op == InfixOp::And {
+                        GenericConstraint::And(Box::new(left), Box::new(right))
+                    } else {
+                        GenericConstraint::Or(Box::new(left), Box::new(right))
+                    }
+                }));
             }
             // `conforms_to(MaybeUninit[Int], RegisterPassable)`: a fact about
             // a concrete type, which the constraint compiler reserves for
@@ -154,9 +184,10 @@ impl Checker {
                             .to_string(),
                     ));
                 };
-                return trait_names
+                trait_names
                     .into_iter()
-                    .try_for_each(|trait_name| self.check_trait_name(trait_name));
+                    .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
+                return Ok(None);
             }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
@@ -175,9 +206,12 @@ impl Checker {
                     .map(|()| constraint)
             });
         match constraint {
-            Ok(_) => Ok(()),
+            Ok(constraint) => {
+                self.record_comptime_condition(cond, &constraint);
+                Ok(Some(constraint))
+            }
             Err(constraint_error) => match self.expect_bool(cond, "comptime if condition") {
-                Ok(()) => Ok(()),
+                Ok(()) => Ok(None),
                 // A condition over types or a `TypeList` has no value
                 // reading; its constraint diagnosis is the one that names
                 // the problem.

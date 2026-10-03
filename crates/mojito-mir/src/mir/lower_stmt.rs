@@ -1758,6 +1758,7 @@ impl Flatten<'_> {
                 static_receiver: self.static_receiver.clone(),
                 enclosing_origin_parameters: self.enclosing_origin_parameters.clone(),
                 enclosing_binders: self.enclosing_binders.clone(),
+                comptime_thunks: std::mem::take(&mut self.comptime_thunks),
                 overloads: self.overloads.clone(),
                 checked: std::sync::Arc::clone(&self.checked),
                 active_semantics: Vec::new(),
@@ -1786,6 +1787,7 @@ impl Flatten<'_> {
             self.vars.clone_from(&fl.vars);
             self.var_types.clone_from(&fl.var_types);
             self.owner_vars.clone_from(&fl.owner_vars);
+            self.comptime_thunks = std::mem::take(&mut fl.comptime_thunks);
         }
         self.f.spans = std::mem::take(&mut region.spans);
         self.f.reg_types = std::mem::take(&mut region.reg_types);
@@ -2811,6 +2813,15 @@ impl Flatten<'_> {
                     else_b: map[else_b],
                 }
             }
+            Terminator::ComptimeBranch {
+                cond,
+                then_b,
+                else_b,
+            } => MirTerm::ComptimeBranch {
+                cond: Box::new(self.comptime_condition(cond)),
+                then_b: map[then_b],
+                else_b: map[else_b],
+            },
             Terminator::Return(expression) => {
                 let value = expression.as_ref().map(|e| self.lower_return_value(e));
                 self.flush_argument_anchors();

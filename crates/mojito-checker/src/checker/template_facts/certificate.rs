@@ -157,13 +157,13 @@ impl Checker {
             return outside("a body reading a reflection handle keeps its clone check");
         }
         // One producer per body: source validation owns every body it
-        // checks (keyed by compile-time control flow or a `rebind`), the
+        // checks (keyed by a `comptime for`, a pack, or a `rebind`), the
         // executable check the surviving ones, a value-keyed body with
-        // neither among them.
+        // neither among them. A `comptime if` keys nothing: the template
+        // keeps the region, and the elaborator below MIR selects.
         let keyed = self.source_validation;
         if !keyed
             && (!pack_binders.is_empty()
-                || body.iter().any(holds_comptime_if)
                 || crate::checker::rebind::body_keys_rebind(body, &self.rebind_keyed_bodies))
         {
             return outside("a compile-time-keyed body is source validation's to certify");
@@ -1422,8 +1422,4 @@ fn summary_callees(facts: &CheckedBodyFacts) -> impl Iterator<Item = &String> {
 /// holds under.
 const fn effect_derives(effects: &mojito_checked::checked::EffectFacts) -> bool {
     !effects.may_suspend && !effects.diverges
-}
-
-const fn holds_comptime_if(statement: &Stmt) -> bool {
-    matches!(statement.kind, StmtKind::ComptimeIf { .. })
 }

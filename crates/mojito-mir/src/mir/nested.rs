@@ -90,6 +90,7 @@ pub(super) fn lower_fn_nested(
             .expect("value parameter was seeded into the function CFG");
         cfg.var_types.insert(slot as VarId, ty.clone());
     }
+    let mut thunks = ComptimeThunks::for_owner(name);
     let mut f = lower_cfg_nested(
         &cfg,
         &registry,
@@ -102,7 +103,9 @@ pub(super) fn lower_fn_nested(
         static_receiver.as_ref(),
         &enclosing_origin_parameters,
         &enclosing_binders,
+        &mut thunks,
     );
+    thunks.lower(checked, overloads, &enclosing_binders, out, declarations);
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
         f.var_tys.entry(slot as VarId).or_insert_with(|| ty.clone());
@@ -557,6 +560,7 @@ fn lower_nested_node(
                 .expect("nested value parameter was seeded into the function CFG");
             ncfg.var_types.insert(slot as VarId, ty.clone());
         }
+        let mut thunks = ComptimeThunks::for_owner(mangled);
         let mut nf = lower_cfg_nested(
             &ncfg,
             &registry,
@@ -572,7 +576,9 @@ fn lower_nested_node(
             None,
             &[],
             enclosing_binders,
+            &mut thunks,
         );
+        thunks.lower(checked, overloads, enclosing_binders, out, declarations);
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {
             nf.var_tys

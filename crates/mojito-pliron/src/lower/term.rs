@@ -28,6 +28,11 @@ impl FnLowering<'_> {
                 self.append(ctx, branch.get_operation(), Some(*cond));
                 Ok(())
             }
+            // Concrete MIR carries none: the elaborator keeps the taken arm.
+            MirTerm::ComptimeBranch { cond, .. } => Err(self.unsupported(
+                format!("a compile-time branch on `{cond:?}` reached native lowering"),
+                None,
+            )),
             MirTerm::Return(value) => self.lower_return_edge(ctx, value.as_ref().copied(), &[]),
             MirTerm::ReturnWithCleanup { value, cleanup } => {
                 self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)

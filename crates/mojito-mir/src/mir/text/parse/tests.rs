@@ -972,6 +972,33 @@ fn instruction_families_reprint_byte_identically() {
 }
 
 #[test]
+fn comptime_branch_terminator_reprints() {
+    use mojito_types::types::{ConstraintOperand, GenericConstraint};
+    let mut function = function_with(vec![Ty::Int], Vec::new());
+    function.blocks[0].term = MirTerm::ComptimeBranch {
+        cond: Box::new(GenericConstraint::And(
+            Box::new(GenericConstraint::Eq(
+                ConstraintOperand::Value(CtValue::Int(1)),
+                ConstraintOperand::Value(CtValue::IntLiteral(2.into())),
+            )),
+            Box::new(GenericConstraint::Bool(true)),
+        )),
+        then_b: 1,
+        else_b: 2,
+    };
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Return(None),
+    });
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Return(None),
+    });
+    let program = program_with(vec![("comptime_branch".into(), function)]);
+    assert_reprints(&program);
+}
+
+#[test]
 fn nested_try_regions_reprint_without_region_source_marks() {
     let region_block = |term: MirTerm| MirBlock {
         instrs: vec![MirInstr::KeepAlive { var: 0 }],

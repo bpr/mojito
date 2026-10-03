@@ -1,8 +1,9 @@
-# Ledgered divergence (docs/roadmap.md 3.2): the untaken arm of a
-# `comptime if` consumes `a`, and `a` is used after the join. The pin
-# decides the region as an `if` with its condition opaque and rejects the
-# use; Mojito selects the arm before the move analysis and runs it.
+# The untaken arm of a `comptime if` consumes `a`, and `a` is used after the
+# join. The region is decided as an `if` with its condition opaque, as the
+# pin decides it: the template keeps both arms through the move analysis,
+# and the use after the join is rejected whichever arm an instance takes.
 # Rule and probes: docs/notes/comptime-region-ownership.md.
+# expect: use of uninitialized value 'a'
 struct Thing(Movable):
     var s: String
 

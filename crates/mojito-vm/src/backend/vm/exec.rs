@@ -2206,6 +2206,21 @@ impl VmBackend {
                         *else_b
                     };
                 }
+                MirTerm::ComptimeBranch {
+                    cond,
+                    then_b,
+                    else_b,
+                } => {
+                    // A region runs apart from its frame, so only a binder
+                    // the body also reads as a local is in reach here.
+                    block =
+                        if comptime_branch_holds(cond, &prog.mir.functions[function].1, vars, &[])?
+                        {
+                            *then_b
+                        } else {
+                            *else_b
+                        };
+                }
                 MirTerm::Return(r) => {
                     let v = r
                         .as_ref()

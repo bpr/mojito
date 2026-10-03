@@ -28,6 +28,73 @@ impl Flatten<'_> {
         result
     }
 
+    /// A `comptime if` condition as the constraint its branch carries: the
+    /// one the checker compiled and recorded on the expression, else its
+    /// connectives over the leaves, each a recorded constraint or the thunk
+    /// this function's lowering lifts for it.
+    pub(in crate::mir) fn comptime_condition(
+        &mut self,
+        expression: &mojito_hir::hir::HirExpr,
+    ) -> mojito_types::types::GenericConstraint {
+        let mut index = HashMap::new();
+        index_hir_expression(&expression.syntax, expression, &mut index);
+        self.active_semantics.push(index);
+        let constraint = self.comptime_condition_of(&expression.syntax);
+        self.active_semantics.pop();
+        constraint
+    }
+
+    fn comptime_condition_of(
+        &mut self,
+        expression: &Expr,
+    ) -> mojito_types::types::GenericConstraint {
+        use mojito_types::types::GenericConstraint;
+        let recorded = self
+            .checked_adjustments(expression)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ComptimeCondition(constraint) => {
+                    Some(constraint)
+                }
+                _ => None,
+            });
+        if let Some(constraint) = recorded {
+            // A binder the condition names is the enclosing declaration's
+            // of that spelling: a fact carried from an earlier discovery
+            // round may spell the declaration under its overload-qualified
+            // symbol, and the body is lowered under the symbol it has now.
+            return constraint.map(
+                &|reference| {
+                    self.enclosing_binders
+                        .declarations
+                        .iter()
+                        .rev()
+                        .find(|declaration| declaration.name() == reference.name.as_ref())
+                        .map_or_else(|| reference.clone(), ParamDecl::binder)
+                },
+                &Clone::clone,
+            );
+        }
+        match &expression.kind {
+            ExprKind::Bool(value) => GenericConstraint::Bool(*value),
+            ExprKind::Prefix(PrefixOp::Not, inner) => {
+                GenericConstraint::Not(Box::new(self.comptime_condition_of(inner)))
+            }
+            ExprKind::Infix(InfixOp::And, left, right) => GenericConstraint::And(
+                Box::new(self.comptime_condition_of(left)),
+                Box::new(self.comptime_condition_of(right)),
+            ),
+            ExprKind::Infix(InfixOp::Or, left, right) => GenericConstraint::Or(
+                Box::new(self.comptime_condition_of(left)),
+                Box::new(self.comptime_condition_of(right)),
+            ),
+            _ => {
+                let binders = &self.enclosing_binders;
+                self.comptime_thunks.request(expression, binders)
+            }
+        }
+    }
+
     pub(in crate::mir) fn reference_handle_hir(
         &mut self,
         expression: &mojito_hir::hir::HirExpr,

@@ -694,6 +694,11 @@ impl Decoder {
                 then_b: self.req(value, fields, "then", Self::block_id)?,
                 else_b: self.req(value, fields, "else", Self::block_id)?,
             }),
+            "comptime_branch" => Some(MirTerm::ComptimeBranch {
+                cond: Box::new(self.req(value, fields, "condition", Self::constraint)?),
+                then_b: self.req(value, fields, "then", Self::block_id)?,
+                else_b: self.req(value, fields, "else", Self::block_id)?,
+            }),
             "return" => Some(MirTerm::Return(self.req(
                 value,
                 fields,

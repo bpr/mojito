@@ -125,6 +125,17 @@ impl Checker {
                 {
                     self.comptime_applied.insert(name.clone(), evaluated);
                 }
+            } else if let Some(applied) = self
+                .template_catalog
+                .borrow()
+                .applied_constants()
+                .get(name)
+                .cloned()
+            {
+                // The elaborator could not fold the application (a layout
+                // query): the constant is the application, evaluated below
+                // MIR.
+                self.comptime_applied.insert(name.clone(), applied);
             } else if super::traits::literal_default(value) {
                 self.comptime_literals.insert(name.clone(), value.clone());
             } else if self.source_validation
@@ -1846,17 +1857,19 @@ impl Checker {
                 Ok(())
             }
 
-            // Compile-time control flow reaches the checker only under source
-            // validation, where every arm is checked with the declaration's
-            // parameters symbolic; the executable check sees the elaborated
-            // selection, so a surviving construct is an elaboration defect.
-            StmtKind::ComptimeIf { branches, orelse } if self.source_validation => {
+            // A `comptime if` is checked with every arm open and the
+            // declaration's parameters symbolic, under source validation and
+            // in a template body the executable check keeps: the condition is
+            // recorded for the MIR branch, and the elaborator selects. A
+            // `comptime for` reaches the checker only under source
+            // validation; the executable check sees its unrolling, so a
+            // surviving loop is an elaboration defect.
+            StmtKind::ComptimeIf { branches, orelse } => {
                 self.check_conditional(branches, orelse.as_deref(), ret, in_loop, true)
             }
             StmtKind::ComptimeFor { var, iter, body } if self.source_validation => {
                 self.check_comptime_for(var, iter, body, ret, in_loop)
             }
-            StmtKind::ComptimeIf { .. } => Err(TypeError::Unsupported("comptime if".to_string())),
             StmtKind::ComptimeFor { .. } => Err(TypeError::Unsupported("comptime for".to_string())),
             // A kept compile-time block is straight-line code, so what it
             // initializes stays initialized after it.

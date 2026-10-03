@@ -663,6 +663,10 @@ pub enum SemanticAdjustment {
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
     /// struct's `__bool__`.
     Truthiness,
+    /// A `comptime if` condition the checker compiled as a constraint over
+    /// the binders in scope: MIR carries it on the branch, and the elaborator
+    /// decides it. A condition with no such record is lowered as a thunk.
+    ComptimeCondition(mojito_types::types::GenericConstraint),
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),

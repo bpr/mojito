@@ -1496,10 +1496,18 @@ impl Checker {
             });
         }
         Ok(match &expr.kind {
-            ExprKind::Identifier(name) => scalar_type_name(name).map_or_else(
-                || ConstraintOperand::Param(ParamRef::unbound(name)),
-                ConstraintOperand::Type,
-            ),
+            // A type name is the type it resolves to — `String` the nominal
+            // struct, as a `T == String` comparison means it; any other
+            // identifier names a parameter.
+            ExprKind::Identifier(name)
+                if self.lookup_tparam(name).is_none()
+                    && (scalar_type_name(name).is_some() || self.structs.contains_key(name)) =>
+            {
+                ConstraintOperand::Type(
+                    self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
+                )
+            }
+            ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(self.self_binder(field))
             }

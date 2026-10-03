@@ -153,6 +153,7 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
+            comptime: Vec::new(),
         });
         stack_base
     }

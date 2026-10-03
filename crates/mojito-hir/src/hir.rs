@@ -225,6 +225,13 @@ pub enum Terminator {
         then_b: BlockId,
         else_b: BlockId,
     },
+    /// A `comptime if` arm boundary: the condition is a compile-time
+    /// expression MIR lowers as a parameter expression, not a value.
+    ComptimeBranch {
+        cond: HirExpr,
+        then_b: BlockId,
+        else_b: BlockId,
+    },
     Return(Option<HirExpr>),
     /// A return nested in one or more iterator-driven loops. The value is
     /// evaluated before `cleanup` is destroyed (innermost iterator first), so
@@ -743,7 +750,7 @@ fn collect_function_implicit_names(
             | StmtKind::Raise(value)
             | StmtKind::Expr(value) => collect_named_expr(value, names),
             StmtKind::Return(Some(value)) => collect_named_expr(value, names),
-            StmtKind::If { branches, orelse } => {
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 for (condition, body) in branches {
                     collect_named_expr(condition, names);
                     collect_function_implicit_names(body, explicit, names);
@@ -926,7 +933,8 @@ impl Lower {
             Terminator::Jump(to) => {
                 self.g.add_edge(self.cur, *to, ());
             }
-            Terminator::Branch { then_b, else_b, .. } => {
+            Terminator::Branch { then_b, else_b, .. }
+            | Terminator::ComptimeBranch { then_b, else_b, .. } => {
                 self.g.add_edge(self.cur, *then_b, ());
                 self.g.add_edge(self.cur, *else_b, ());
             }
@@ -1082,15 +1090,28 @@ impl Lower {
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
-            StmtKind::If { branches, orelse } => {
+            // A `comptime if` is the same diamond with a compile-time
+            // condition: the elaborator keeps one arm, after ownership has
+            // decided both.
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                let comptime = matches!(s.kind, StmtKind::ComptimeIf { .. });
                 let join = self.new_block();
                 for (cond, body) in branches {
                     let then_b = self.new_block();
                     let else_b = self.new_block();
-                    self.seal(Terminator::Branch {
-                        cond: self.expr(cond),
-                        then_b,
-                        else_b,
+                    let cond = self.expr(cond);
+                    self.seal(if comptime {
+                        Terminator::ComptimeBranch {
+                            cond,
+                            then_b,
+                            else_b,
+                        }
+                    } else {
+                        Terminator::Branch {
+                            cond,
+                            then_b,
+                            else_b,
+                        }
                     });
                     self.cur = then_b;
                     self.scoped_block(body);
@@ -1491,7 +1512,7 @@ fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
                 StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
                     names.insert(name.clone());
                 }
-                StmtKind::If { branches, orelse } => {
+                StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                     for (_, body) in branches {
                         walk(body, names);
                     }

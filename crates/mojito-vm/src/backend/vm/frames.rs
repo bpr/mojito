@@ -34,6 +34,7 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
+            comptime: Vec::new(),
         };
         self.frames.push(shadow);
         let result = self.call_frame_with_id(prog, fidx, args, &[]);
@@ -132,6 +133,7 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation,
+            comptime: value_params.to_vec(),
         })
     }
 
@@ -208,6 +210,25 @@ impl VmBackend {
                     else_b,
                 } => {
                     frame.block = if is_true(&frame.registers[cond.0 as usize]) {
+                        *then_b
+                    } else {
+                        *else_b
+                    };
+                    frame.instruction = 0;
+                    self.frames.push(frame);
+                    continue;
+                }
+                MirTerm::ComptimeBranch {
+                    cond,
+                    then_b,
+                    else_b,
+                } => {
+                    frame.block = if comptime_branch_holds(
+                        cond,
+                        &prog.mir.functions[frame.function].1,
+                        &frame.variables,
+                        &frame.comptime,
+                    )? {
                         *then_b
                     } else {
                         *else_b

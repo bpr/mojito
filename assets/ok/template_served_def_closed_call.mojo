@@ -4,8 +4,9 @@
 # parameter or result spells (`bytes[Int]()`) binds from the arguments the
 # call records in MIR. Defaults, `raises`, a `var` parameter transferred out,
 # a generic struct built over the parameter, and a call from another served
-# `def` all run on the template. `rep` keeps its clone for its value
-# parameter, and `total` for the `Tuple` it applies over `T`.
+# `def` all run on the template, `rep[T, n]` included: a scalar value
+# parameter an application spells binds from the call's recorded arguments.
+# `total` keeps its clone for the `Tuple` it applies over `T`.
 from std.sys import size_of
 @fieldwise_init
 struct Box[T: Copyable & Deinitable](Copyable, Movable, Deinitable):

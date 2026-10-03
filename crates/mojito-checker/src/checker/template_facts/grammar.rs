@@ -579,13 +579,6 @@ impl BodyShape<'_> {
                     })
             }
             StmtKind::Pass => true,
-            // A condition is typed, never evaluated, by the check that
-            // produced these facts, and no instance keeps its occurrences.
-            StmtKind::ComptimeIf { branches, orelse } if self.keyed => branches
-                .iter()
-                .map(|(_, arm)| arm)
-                .chain(orelse)
-                .all(|arm| self.block(arm)),
             // An unrolled body is copied once per iteration, every copy
             // sharing the bindings around the loop; a local declared inside
             // is one binding per copy (`renumber_locals`). The loop variable
@@ -612,18 +605,22 @@ impl BodyShape<'_> {
                 self.locals.borrow_mut().push((name.clone(), kind));
                 scalar || mask || (element && self.holds(MethodFeatures::ELEMENT_CONSTRUCTIONS))
             }
-            // A validated method keeps its compile-time control flow: every
-            // arm is checked once, and an instance keeps the arms the
-            // elaborator selected, once per unrolled copy, and drops the
-            // rest with their facts (`COMPTIME_CONTROL`).
+            // A condition is typed, never evaluated, by the check that
+            // produced these facts. A `def`'s template keeps the region and
+            // its branch carries the condition to the elaborator; a
+            // validated method keeps its compile-time control flow too, and
+            // an instance keeps the arms the elaborator selected, once per
+            // unrolled copy, and drops the rest with their facts
+            // (`COMPTIME_CONTROL`).
             StmtKind::ComptimeIf { branches, orelse } => {
                 branches
                     .iter()
                     .map(|(_, arm)| arm)
                     .chain(orelse)
                     .all(|arm| self.block(arm))
-                    && self.holds(MethodFeatures::STATEMENTS)
-                    && self.holds(MethodFeatures::COMPTIME_CONTROL)
+                    && (self.keyed
+                        || (self.holds(MethodFeatures::STATEMENTS)
+                            && self.holds(MethodFeatures::COMPTIME_CONTROL)))
             }
             StmtKind::ComptimeFor { var, body, .. } => {
                 self.loop_vars.borrow_mut().push(var.clone());

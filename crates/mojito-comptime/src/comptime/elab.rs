@@ -2,8 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::LoopBindingMode;
-use mojito_common::literal::IntLiteral;
 
 impl Elab<'_> {
     pub(super) fn burn(&self) -> Result<(), ComptimeError> {
@@ -71,6 +69,30 @@ impl Elab<'_> {
             .unwrap_or_default()
     }
 
+    /// The type a module constant's recorded initializer asks the layout of
+    /// (`comptime S = size_of[Pair]()`), which only the elaborator answers.
+    fn applied_layout(&self, name: &str) -> Option<Ty> {
+        let catalog = self.templates?;
+        let applied = catalog.applied_constants().get(name)?;
+        let mojito_types::param_expr::ParamKind::Apply { function, args, .. } = applied.kind()
+        else {
+            return None;
+        };
+        if function != mojito_types::param_expr::SIZE_OF_FUNCTION {
+            return None;
+        }
+        match args.as_slice() {
+            [subject] => match subject.kind() {
+                mojito_types::param_expr::ParamKind::TypeShape(ty) => Some((**ty).clone()),
+                mojito_types::param_expr::ParamKind::Constant(CtValue::Type(ty)) => {
+                    Some((**ty).clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub(super) fn stmt(
         &self,
         stmt: &Stmt,
@@ -98,6 +120,9 @@ impl Elab<'_> {
                             .insert(name.clone(), (type_params.clone(), (*value).clone()));
                     }
                     out.push(stmt.clone());
+                    return Ok(());
+                }
+                if !in_fn && self.keep_layout_constant(stmt, name, env, out) {
                     return Ok(());
                 }
                 let mut v = self.eval(value, env)?;
@@ -156,7 +181,7 @@ impl Elab<'_> {
                 }
             }
             StmtKind::ComptimeIf { branches, orelse } => {
-                if self.keep_comptime_if(stmt, env, in_fn, out)? {
+                if self.keep_template_comptime_if(stmt, env, in_fn, out)? {
                     return Ok(());
                 }
                 for (cond, body) in branches {
@@ -170,9 +195,6 @@ impl Elab<'_> {
                 }
             }
             StmtKind::ComptimeFor { var, iter, body } => {
-                if self.keep_comptime_for(stmt, env, in_fn, out)? {
-                    return Ok(());
-                }
                 let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
                     if env.contains_key(&pack_binding_marker(name)));
                 if !is_pack
@@ -301,7 +323,7 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let body = self.block(body, env, true)?;
+                let body = self.def_body(type_params, body, env)?;
                 let params = fold_default_bindings(params, env);
                 out.push(rebuilt(
                     stmt,
@@ -893,131 +915,6 @@ pub(super) fn pack_binding_marker(binding: &str) -> String {
 }
 
 impl Elab<'_> {
-    /// Whether the compile-time-region experiment keeps `stmt`'s region: it
-    /// is on, the statement sits in a function body, and it comes from the
-    /// module declaring `main`.
-    fn keeps_regions_of(&self, stmt: &Stmt, in_fn: bool) -> bool {
-        in_fn
-            && matches!(&self.keep_regions_in, KeptRegions::Module(module) if *module == stmt.module)
-    }
-
-    /// The compile-time-region experiment's form of a `comptime if`
-    /// ([`ComptimeRegions::Keep`]): every arm kept, as a runtime `if` whose
-    /// conditions are the evaluated literals. The taken arm elaborates in the
-    /// block's environment, as the selected arm does; an untaken arm's
-    /// bindings stay its own, and a condition after the taken one is not
-    /// evaluated, as it is not when the arm is selected. Returns `false`,
-    /// emitting nothing, when an untaken arm does not elaborate under this
-    /// instantiation (it reads a type fact the condition established): such
-    /// a region is outside the experiment and is selected as in production.
-    fn keep_comptime_if(
-        &self,
-        stmt: &Stmt,
-        env: &mut HashMap<String, CtValue>,
-        in_fn: bool,
-        out: &mut Vec<Stmt>,
-    ) -> Result<bool, ComptimeError> {
-        let StmtKind::ComptimeIf { branches, orelse } = &stmt.kind else {
-            return Ok(false);
-        };
-        if !self.keeps_regions_of(stmt, in_fn) {
-            return Ok(false);
-        }
-        let mut taken = false;
-        let mut kept = Vec::with_capacity(branches.len());
-        let mut untaken = env.clone();
-        for (cond, body) in branches {
-            let selected = !taken && self.eval(cond, env)?.as_bool("comptime if condition")?;
-            let body = if selected {
-                taken = true;
-                self.block(body, env, true)?
-            } else {
-                let Ok(body) = self.block(body, &mut untaken, true) else {
-                    return Ok(false);
-                };
-                body
-            };
-            kept.push((Expr::new(ExprKind::Bool(selected), cond.span), body));
-        }
-        let orelse = match orelse.as_deref() {
-            Some(body) if taken => match self.block(body, &mut untaken, true) {
-                Ok(body) => Some(body),
-                Err(_) => return Ok(false),
-            },
-            Some(body) => Some(self.block(body, env, true)?),
-            None => None,
-        };
-        out.push(rebuilt(
-            stmt,
-            StmtKind::If {
-                branches: kept,
-                orelse,
-            },
-        ));
-        Ok(true)
-    }
-
-    /// The experiment's form of a `comptime for` over a `range(...)`: a
-    /// runtime `for` over the evaluated bounds, its body kept once with the
-    /// index a runtime `Int`, so the ownership analysis decides the body as
-    /// a loop body with its trip count unknown. Returns `false`, emitting
-    /// nothing, when the body does not elaborate with its index a runtime
-    /// value (it indexes a pack or a tuple with it): such a loop is outside
-    /// the experiment and unrolls as in production.
-    fn keep_comptime_for(
-        &self,
-        stmt: &Stmt,
-        env: &HashMap<String, CtValue>,
-        in_fn: bool,
-        out: &mut Vec<Stmt>,
-    ) -> Result<bool, ComptimeError> {
-        let StmtKind::ComptimeFor { var, iter, body } = &stmt.kind else {
-            return Ok(false);
-        };
-        let ExprKind::Call {
-            name, args: bounds, ..
-        } = &iter.kind
-        else {
-            return Ok(false);
-        };
-        if name != "range" || !self.keeps_regions_of(stmt, in_fn) {
-            return Ok(false);
-        }
-        let args = bounds
-            .iter()
-            .map(|bound| {
-                let value = self.eval(bound, env)?.as_int("range argument")?;
-                Ok(Expr::new(
-                    ExprKind::Int(IntLiteral::from(value)),
-                    bound.span,
-                ))
-            })
-            .collect::<Result<Vec<_>, ComptimeError>>()?;
-        let iter = Expr::new(
-            ExprKind::Call {
-                name: "range".to_string(),
-                param_args: Vec::new(),
-                args,
-                kwargs: Vec::new(),
-            },
-            iter.span,
-        );
-        let Ok(body) = self.block(body, &mut env.clone(), true) else {
-            return Ok(false);
-        };
-        out.push(rebuilt(
-            stmt,
-            StmtKind::For {
-                var: var.clone(),
-                binding: LoopBindingMode::Immutable,
-                iter,
-                body,
-                orelse: None,
-            },
-        ));
-        Ok(true)
-    }
-
     /// The per-call clones a non-generic struct's own generic methods mint
     /// for the checker-discovered requests against it, each recorded as
     /// generated and traced to its template.
@@ -1117,6 +1014,135 @@ fn fold_default_bindings(
 /// `comptime if` selected, or one unrolled copy of a `comptime for` body — to
 /// `out`. Each is a scope of its own, so a block that declares a binding is
 /// wrapped in one; a block that declares nothing is spliced as it is.
+impl Elab<'_> {
+    /// Elaborate a `def`'s body. A generic body is a template: its binders
+    /// are in scope for [`Self::keep_template_comptime_if`], so a `comptime
+    /// if` over them stays for the check and the elaborator.
+    fn def_body(
+        &self,
+        type_params: &[TypeParam],
+        body: &[Stmt],
+        env: &mut HashMap<String, CtValue>,
+    ) -> Result<Vec<Stmt>, ComptimeError> {
+        if type_params.is_empty() {
+            return self.block(body, env, true);
+        }
+        self.template_binders.borrow_mut().push(
+            type_params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect(),
+        );
+        let body = self.block(body, env, true);
+        self.template_binders.borrow_mut().pop();
+        body
+    }
+
+    /// Keep a module constant whose initializer is a layout application
+    /// symbolic (`CtMarker::Layout`): the elaborator answers it under its
+    /// target, where the AST route cannot. Whether the statement was kept.
+    fn keep_layout_constant(
+        &self,
+        stmt: &Stmt,
+        name: &str,
+        env: &mut HashMap<String, CtValue>,
+        out: &mut Vec<Stmt>,
+    ) -> bool {
+        let Some(subject) = self.applied_layout(name) else {
+            return false;
+        };
+        let marker = CtValue::Marker(CtMarker::Layout(Box::new(subject)));
+        self.top_consts
+            .borrow_mut()
+            .insert(name.to_string(), marker.clone());
+        env.insert(name.to_string(), marker);
+        out.push(stmt.clone());
+        true
+    }
+
+    /// Keep a `comptime if` whose condition names a binder of the generic
+    /// `def` being elaborated as a template: every arm is elaborated in the
+    /// block's environment (a binding an arm declares stays the arm's), and
+    /// the statement is rebuilt for the check, which types every arm with
+    /// the binders symbolic and records the condition for the MIR branch the
+    /// elaborator below MIR decides. Returns `false`, emitting nothing, for
+    /// a condition over no template binder, which is selected here.
+    fn keep_template_comptime_if(
+        &self,
+        stmt: &Stmt,
+        env: &HashMap<String, CtValue>,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> Result<bool, ComptimeError> {
+        let StmtKind::ComptimeIf { branches, orelse } = &stmt.kind else {
+            return Ok(false);
+        };
+        let symbolic = in_fn
+            && self
+                .template_binders
+                .borrow()
+                .last()
+                .is_some_and(|binders| {
+                    branches
+                        .iter()
+                        .any(|(cond, _)| expression_names_any(cond, binders))
+                });
+        if !symbolic {
+            return Ok(false);
+        }
+        let branches = branches
+            .iter()
+            .map(|(cond, body)| Ok((cond.clone(), self.block(body, &mut env.clone(), true)?)))
+            .collect::<Result<Vec<_>, ComptimeError>>()?;
+        let orelse = orelse
+            .as_deref()
+            .map(|body| self.block(body, &mut env.clone(), true))
+            .transpose()?;
+        out.push(rebuilt(stmt, StmtKind::ComptimeIf { branches, orelse }));
+        Ok(true)
+    }
+}
+
+/// Whether `expression` spells one of `names` as an identifier, a call, a
+/// type, or a `Self.`-qualified parameter.
+fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
+    struct Finder<'a> {
+        names: &'a HashSet<String>,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::Identifier(name) | ExprKind::Call { name, .. } => {
+                    self.found |= self.names.contains(name);
+                }
+                ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") =>
+                {
+                    self.found |= self.names.contains(field);
+                }
+                _ => {}
+            }
+        }
+
+        fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
+            match ty {
+                mojito_ast::ast::Type::Named(name, _) | mojito_ast::ast::Type::SelfParam(name) => {
+                    self.found |= self.names.contains(name.trim_start_matches('*'));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        names,
+        found: false,
+    };
+    mojito_ast::visit::walk_expr(&mut finder, expression);
+    finder.found
+}
+
 fn splice_selected_block(source: &Stmt, block: Vec<Stmt>, out: &mut Vec<Stmt>) {
     if block.iter().any(declares_binding) {
         out.push(rebuilt(source, StmtKind::Scope(block)));

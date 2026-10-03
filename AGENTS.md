@@ -74,7 +74,8 @@ mojito-checker     semantic checking (+ explicit_destroy)
 mojito-mir         MIR lowering, verifier, textual round-trip
 mojito-analysis    ownership/liveness + drop elaboration
 mojito-vm          register VM + Backend enum (re-checks: seam contract)
-mojito-native      the elaborator (mono, for both backends) + mangling
+mojito-native      the elaborator (mono, for both backends) + mangling;
+                   runs compile-time applications on mojito-vm
 mojito-pliron      Pliron/LLVM backend (only crate that may need LLVM)
 mojito-comptime    elaboration + CTFE (ABOVE the VM: CTFE runs VmBackend)
 mojito (root)      facade: compiler driver, CLI, re-exports, tests/

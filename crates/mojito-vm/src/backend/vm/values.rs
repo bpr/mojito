@@ -785,6 +785,7 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
+            comptime: Vec::new(),
         });
 
         let mut returned_variables = returned_frame.map(|(id, variables)| {
@@ -798,6 +799,7 @@ impl VmBackend {
                 block: 0,
                 instruction: 0,
                 continuation: None,
+                comptime: Vec::new(),
             });
             variables
         });

@@ -13,7 +13,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 
 | Stage | Owning symbols | Output / invariant |
 |---|---|---|
-| Driver | `compiler::Compiler::{compile_path, compile_source, execute}`, `compiler::CompiledProgram::{mir, drop_elaborated_mir, concrete_mir, emit_mir}`, `compiler::VmInstantiation`, `Compiler::with_comptime_regions` (the `--comptime-regions keep` experiment, `comptime::ComptimeRegions`) | The only whole-program stage ordering. Holds the three MIR phases apart, each computed once: parametric MIR (`mir`), drop-elaborated MIR (`drop_elaborated_mir`, what `emit_mir` serializes), and concrete MIR (`concrete_mir`, the elaborator's cached output every backend consumes). |
+| Driver | `compiler::Compiler::{compile_path, compile_source, execute}`, `compiler::CompiledProgram::{mir, drop_elaborated_mir, concrete_mir, emit_mir}`, `compiler::VmInstantiation` | The only whole-program stage ordering. Holds the three MIR phases apart, each computed once: parametric MIR (`mir`), drop-elaborated MIR (`drop_elaborated_mir`, what `emit_mir` serializes), and concrete MIR (`concrete_mir`, the elaborator's cached output every backend consumes). |
 | Lex | `lexer::Lexer`, crate-level `lex` | Spanned token stream. |
 | Parse | `parser::Parser::{parse_program, parse_program_diagnostic}`, crate-level `parse` | Spanned AST; diagnostic partial AST is quarantined. |
 | Link | `module::{link_with_options, link_source_with_options, LinkOptions, ModuleError}` | Dependency-first flat program with `SourceSpan` module identity, explicit-binding collision checks, canonical self-import checks, and provisional exports for mutual cycles. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes and the `std.hashlib` `Hashable`/`Hasher` homes their builtin identity exports. |
@@ -57,7 +57,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | Native compile (`backend-pliron`) | `backend::pliron::{compile, compile_mir, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. `compile` takes the driver's cached concrete graph and elaborates nothing; `compile_mir` elaborates drop-elaborated MIR from the entries a caller names. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, LayoutError, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the elaborator's answer to a layout query (`native::mono`, under the compilation's target; `LayoutError::Symbolic` is the one refusal of a type that still names a parameter), the erased oracle's `SizeOf` on the host, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
-| The elaborator | `native::mono::{specialize, fold_literal_branches, entry_roots, SpecializedProgram, MonoError}`, `mir::ConcreteMir` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
+| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
 
 ## Source Versus Checked Naming
 
@@ -880,10 +880,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declarations without selecting or cloning, `elaborate_prepared` is the
   already-validated request-driven route the driver re-elaborates each
   discovery round, `elaborate` composes prepare → validate → elaborate for
-  the stage seam), `ComptimeRegions` (`ElaborationInputs::comptime_regions`:
-  `Keep` is the compile-time-region ownership experiment, which `elab.rs`'s
-  `keep_comptime_if`/`keep_comptime_for` serve in the module declaring
-  `main`), the `Elab` elaboration driver (`block`/`stmt`), type
+  the stage seam), the `Elab` elaboration driver (`block`/`stmt`; its
+  `keep_template_comptime_if` keeps a `comptime if` over a generic `def`'s
+  own binders (`Elab::template_binders`) for the check, where every other
+  one is selected), type
   resolution, the template classifications (`bound_generic_template_names`,
   `pack_generic_template_names` for type-pack defs whose non-evident calls
   specialize from checker-recorded instantiations, and
@@ -1084,3 +1084,34 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 | Runtime behavior | `backend/vm.rs` or `runtime/mod.rs` | VM tests and file fixtures. |
 | Pipeline ordering | `compiler.rs` | CLI, architecture doc, compiler tests. |
 | Support status | `docs/features.md` | Roadmap/todo only if future work changes. |
+
+## The compile-time branch and the request path (2026-10-03)
+
+- `MirTerm::ComptimeBranch { cond: GenericConstraint, .. }` (`mir/ir.rs`) is
+  the `comptime if`: HIR's `Terminator::ComptimeBranch`, lowered by
+  `Flatten::comptime_condition` (`mir/lower_expr/entry.rs`) from the
+  checker's `SemanticAdjustment::ComptimeCondition` (recorded by
+  `Checker::check_comptime_condition`, `checker/comptime_validation.rs`, per
+  leaf under `not`/`and`/`or`) or, for a leaf with no constraint, from the
+  thunk `ComptimeThunks::request` registers and `lower_expression_thunk`
+  lowers (`mir.rs`, shared with `lower_default`). `verify/scope.rs`
+  (`ScopeCx::constraint`) checks its binders; `verify/concrete.rs` rejects a
+  survivor; the text form is `comptime_branch` (schema 1.15).
+- `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` and `CTFE_FUEL`;
+  `VmBackend::{call_concrete, freeze}` run a verified fragment for the
+  elaborator; `comptime_branch_holds` (`backend/vm.rs`) decides a value
+  condition on the erased path from the frame's reified parameters
+  (`Frame::comptime`).
+- `native::mono`: `InstanceState`, `Specializer::drain`,
+  `demand_application` (the demand edge: materialize every pending instance,
+  verify the output as the fragment, refuse an effectful callee, burn fuel,
+  run, freeze, cache by instance name; a demand on an `Active` instance is
+  the parameter-domain cycle), `resolve_applications` over a branch
+  condition, `demand_layout` and `LayoutOracle` (`Bindings::layout`, read by
+  `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
+  `FunctionFrame` around a nested materialization. The cloner's
+  `comptime if` class is gone: `def_body_keys_specialization` keys a
+  top-level `def` on a `comptime for` or a `rebind` only, and
+  `template_serves_binders` admits a scalar value parameter an application
+  binds (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Layout` keeps
+  a layout constant symbolic through elaboration.

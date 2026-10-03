@@ -995,12 +995,10 @@ fn trivial_value_and_pack_clauses_are_decided() {
 }
 
 #[test]
-fn literal_branch_fold_keeps_the_taken_arm_with_its_drops() {
-    // The compile-time-region experiment: both arms of the `comptime if`
-    // reach MIR as a runtime branch on a literal, the ownership analysis
-    // and drop elaboration decide them as such, and the elaborator's fold
-    // leaves a jump to the taken arm. The source's own `if` on a runtime
-    // value stays a branch.
+fn comptime_branch_selection_keeps_the_taken_arm() {
+    // The template carries the region as a `comptime_branch`; each instance
+    // keeps the taken arm alone, with the destroy drop elaboration placed at
+    // its entry, and the untaken arm's blocks are gone.
     let source = "struct Thing(Movable):\n\
          \x20   var s: String\n\
          \x20   def __init__(out self, var s: String):\n\
@@ -1019,40 +1017,47 @@ fn literal_branch_fold_keeps_the_taken_arm_with_its_drops() {
          \x20       print(\"flag\")\n\
          def main():\n\
          \x20   f[1](True)\n";
-    let compiler = mojito::Compiler::default()
-        .with_snippet_module_scope()
-        .with_comptime_regions(mojito::ComptimeRegions::Keep);
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, std::path::Path::new("mono_test.mojo"))
-        .expect("compile the kept region");
+        .expect("compile the region");
+    let template = compiled
+        .drop_elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "f")
+        .map(|(_, function)| function)
+        .expect("the template is lowered");
+    let comptime_branches = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.term, MirTerm::ComptimeBranch { .. }))
+            .count()
+    };
+    assert_eq!(comptime_branches(template), 1);
     let specialized = specialize(
         compiled.drop_elaborated_mir(),
         &["main".to_string()],
         host_target().as_ref(),
     )
-    .expect("specialize the kept region");
-    let branches = |program: &MirProgram| -> usize {
-        program
-            .functions
+    .expect("specialize the region");
+    let instance = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("f$"))
+        .map(|(_, function)| function)
+        .expect("the instance is emitted");
+    assert_eq!(comptime_branches(instance), 0);
+    assert!(instance.blocks.len() < template.blocks.len());
+    assert_eq!(
+        instance
+            .blocks
             .iter()
-            .filter(|(name, _)| name.starts_with("f$"))
-            .flat_map(|(_, function)| &function.blocks)
             .filter(|block| matches!(block.term, MirTerm::Branch { .. }))
-            .count()
-    };
-    assert_eq!(
-        branches(&specialized.program),
-        2,
-        "the region and the runtime `if`"
-    );
-    let folded = fold_literal_branches(specialized).expect("fold the literal branch");
-    assert_eq!(
-        branches(&folded.program),
+            .count(),
         1,
         "only the runtime `if` remains"
-    );
-    assert_eq!(
-        mojito_mir::mir::verify::verify_concrete(&folded.program),
-        Vec::<String>::new()
     );
 }

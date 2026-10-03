@@ -167,6 +167,18 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     && let Some(ty) = source_type_from_ty(ty)
                 {
                     e.kind = ExprKind::TypeValue(ty);
+                } else if let CtValue::Marker(CtMarker::Layout(ty)) = &value
+                    && let Some(ty) = source_type_from_ty(ty)
+                {
+                    // A value read of a layout constant is the layout query
+                    // itself, which the checker lowers and the elaborator
+                    // answers.
+                    e.kind = ExprKind::Call {
+                        name: mojito_types::param_expr::SIZE_OF_FUNCTION.to_string(),
+                        param_args: vec![mojito_ast::ast::ParamArg::Type(ty)],
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                    };
                 } else if let Some(mut materialized) = value.materialize(e.span) {
                     // A folded loop variable keeps the identifier's identity:
                     // that is the occurrence-level trace a checked template's
@@ -1672,8 +1684,12 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
             // An applied module constant keeps its name in a type argument.
             mojito_ast::ast::ParamArg::Value(e) => {
                 let subs: Subs = &|name| {
-                    subs(name)
-                        .filter(|value| !matches!(value, CtValue::Marker(CtMarker::Applied(_))))
+                    subs(name).filter(|value| {
+                        !matches!(
+                            value,
+                            CtValue::Marker(CtMarker::Applied(_) | CtMarker::Layout(_))
+                        )
+                    })
                 };
                 rewrite_expr(e, subs);
                 if let ExprKind::TypeValue(ty) = &e.kind {

@@ -124,7 +124,7 @@ evaluates by demanding a concrete instance and running it on the VM.**
 
 - `ParamKind::Apply { function: String, args: Vec<ParamExpr> }` is the one
   new node, specified with the register types over parameter expressions
-  (roadmap 1.1). `function` is a callable symbol; `args` are its
+  (2026-10-03). `function` is a callable symbol; `args` are its
   compile-time arguments, the binders in scope that the body reads.
 - The checker lowers a compile-time expression that applies anything — a
   call, a constructor, a static method, a method chain on a compile-time
@@ -237,8 +237,8 @@ Decided 2026-10-02: **`mojito-native` depends on `mojito-vm`.** The
 elaborator owns its executor, as upstream's `Elaborator` owns its
 `BytecodeInterpreter`. The edge is allowed by the crate order in
 `AGENTS.md`, where `mojito-native` is already listed below `mojito-vm`; it
-is new, and it makes `mojito-checker` a transitive dependency of the
-elaborator until the VM's `Backend::run(&CheckedProgram)` seam goes at P5.
+landed 2026-10-03, and it makes `mojito-checker` a transitive dependency of
+the elaborator until the VM's `Backend::run(&CheckedProgram)` seam goes at P5.
 `mojito-comptime`'s edge to `mojito-vm` is the same relationship one level
 up and goes with the AST route. No `mojito-comptime → mojito-native` edge
 is ever added: the AST route is deleted at the P4 entry, not bridged.
@@ -300,13 +300,22 @@ The boundary:
 
 - The register types over parameter expressions (done 2026-10-03) specified
   `ParamKind::Apply` and the symbolic type of an applied module constant.
-- **Roadmap 1.1** (`comptime if`) lands the first code: the
-  `mojito-native → mojito-vm` edge, `InstanceState`, the `HashMap` index,
-  the demand stack and cycle error, the evaluation cache, the shared fuel,
-  `VmBackend::call_concrete`, and the thunk lowering, with the condition
-  as the first consumer, and a layout query in a module constant
-  (`comptime S = size_of[Pair]()`) as the first application the AST route
-  cannot fold. `Apply` crosses MIR text since schema 1.14.
+- **The `comptime if` entry landed the first code (2026-10-03)**: the
+  `mojito-native → mojito-vm` edge, `InstanceState`, the demand stack and
+  its cycle error, the evaluation cache (`Specializer::evaluations`, by
+  instance name), the shared fuel (`mojito_vm::crossing::CTFE_FUEL`, one
+  counter on the `Specializer`), `VmBackend::call_concrete` and `freeze`,
+  the crossing in `mojito_vm::crossing`, and the thunk lowering
+  (`ComptimeThunks`, `lower_expression_thunk`, shared with `lower_default`),
+  with a `comptime if` condition that applies a function as the first
+  consumer (`Specializer::demand_application`). A layout query in a module
+  constant stays symbolic through elaboration (`CtMarker::Layout`) and is
+  answered by `Bindings::layout` (`LayoutOracle`) in `eval_ct`. Two
+  simplifications of this note's design stand in the first landing: a demand
+  materializes every pending instance, not the thunk's reference closure
+  alone, and verifies the whole completed output as the fragment; and an
+  application is evaluated only as a whole condition operand (roadmap
+  3.121). `Apply` crosses MIR text since schema 1.14, the branch since 1.15.
 - **Roadmap 1.8** (clones minted during CTFE) and **3.112**, **3.113**
   close when a demand serves a keyed instance.
 - **Roadmap 1.10** (P4) deletes the AST route, the early folding of applied

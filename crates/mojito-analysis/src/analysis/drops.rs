@@ -811,7 +811,7 @@ pub(super) fn region_block_live_out(
     seeds: &RegionSeeds,
 ) -> HashSet<VarId> {
     match &blocks[b].term {
-        MirTerm::Jump(_) | MirTerm::Branch { .. } => {
+        MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::ComptimeBranch { .. } => {
             let mut out = HashSet::new();
             for s in successors(&blocks[b].term) {
                 if let Some(live) = live_in.get(s) {
@@ -1314,7 +1314,7 @@ pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
                 *t = new;
             }
         }
-        MirTerm::Branch { then_b, else_b, .. } => {
+        MirTerm::Branch { then_b, else_b, .. } | MirTerm::ComptimeBranch { then_b, else_b, .. } => {
             if *then_b == old {
                 *then_b = new;
             }

@@ -21,12 +21,14 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace,
-    MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
+    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamId;
-use mojito_types::types::{CallableDefault, ParamDecl, Ty, TyArg};
+use mojito_types::types::{
+    CallableDefault, ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg,
+};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
 use std::collections::HashMap;
@@ -490,6 +492,43 @@ impl VmBackend {
     /// verification, so this entry verifies nothing again.
     pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
         self.run_elaborated(mir.into_program())
+    }
+
+    /// Call `name` in a verified concrete fragment for its result, under
+    /// `fuel`: the elaborator's compile-time evaluation. The remaining fuel
+    /// comes back with the value, which [`Self::freeze`] turns into a
+    /// compile-time value while this VM still owns its heap.
+    pub fn call_concrete(
+        &mut self,
+        mir: &ConcreteMir,
+        name: &str,
+        args: Vec<Value>,
+        fuel: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        let mir: &MirProgram = mir;
+        let prog = Prog {
+            structs: build_structs(&mir.declarations),
+            sigs: build_sigs(&mir.declarations),
+            mir: mir.clone(),
+        };
+        self.configure_lifecycle(&prog);
+        let index = prog
+            .index_of(name)
+            .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
+        self.ctfe_fuel = Some(fuel);
+        let result = self.call_function(&prog, index, args, &[]);
+        let remaining = self.ctfe_fuel.take().unwrap_or(0);
+        Ok((result?, remaining))
+    }
+
+    /// A compile-time evaluation's result as a compile-time value: a nominal
+    /// `String` becomes its text, anything else crosses as
+    /// [`crate::crossing::vm_to_ct`] admits it.
+    pub fn freeze(&self, value: Value) -> Result<CtValue, RuntimeError> {
+        match self.nominal_string_text(&value) {
+            Some(text) => Ok(CtValue::Str(text)),
+            None => crate::crossing::vm_to_ct(value),
+        }
     }
 
     /// Captured standard output.
@@ -1011,6 +1050,66 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     })
 }
 
+/// Decide a `comptime if` on the erased path from the frame's reified value
+/// parameters: a comparison over value binders, constants, and expressions
+/// of them. A condition over a type binder has no erased reading, since an
+/// erased frame carries no type argument.
+fn comptime_branch_holds(
+    cond: &GenericConstraint,
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> Result<bool, RuntimeError> {
+    use GenericConstraint::{And, Bool, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, WithMessage};
+    use mojito_ast::ast::InfixOp;
+    let unsupported = || {
+        RuntimeError::Unsupported(format!(
+            "the erased oracle cannot decide the comptime if condition `{cond:?}`"
+        ))
+    };
+    let named: HashMap<String, CtValue> = function
+        .var_names
+        .iter()
+        .zip(variables)
+        .chain(comptime.iter().map(|(name, value)| (name, value)))
+        .filter_map(|(name, value)| runtime_value_as_ct(value).map(|value| (name.clone(), value)))
+        .collect();
+    let operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Param(param) => named.get(param.name.as_ref()).cloned(),
+        ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
+            expr.evaluate_named(&named).ok()
+        }
+        ConstraintOperand::Value(value) => Some(value.clone()),
+        ConstraintOperand::Type(_) | ConstraintOperand::PackLength(_) => None,
+    };
+    let compare = |op, left, right| {
+        let (left, right) = (
+            operand(left).ok_or_else(unsupported)?,
+            operand(right).ok_or_else(unsupported)?,
+        );
+        mojito_types::param_expr::fold::compare(op, &left, &right).map_err(|_| unsupported())
+    };
+    let holds = |inner| comptime_branch_holds(inner, function, variables, comptime);
+    match cond {
+        Bool(value) => Ok(*value),
+        WithMessage(inner, _) => holds(inner),
+        Not(inner) => Ok(!holds(inner)?),
+        And(left, right) => Ok(holds(left)? && holds(right)?),
+        Or(left, right) => Ok(holds(left)? || holds(right)?),
+        Eq(left, right) => compare(InfixOp::Eq, left, right),
+        Ne(left, right) => Ok(!compare(InfixOp::Eq, left, right)?),
+        Lt(left, right) => compare(InfixOp::Lt, left, right),
+        Le(left, right) => compare(InfixOp::Le, left, right),
+        Gt(left, right) => compare(InfixOp::Gt, left, right),
+        Ge(left, right) => compare(InfixOp::Ge, left, right),
+        GenericConstraint::Conforms { .. }
+        | GenericConstraint::ConformsPack { .. }
+        | GenericConstraint::PackPredicate { .. }
+        | GenericConstraint::PackContains { .. }
+        | GenericConstraint::Trivial(..) => Err(unsupported()),
+    }
+}
+
 fn resolve_callable_default(
     default: &CallableDefault,
     runtime: &HashMap<ParamId, Value>,
@@ -1125,6 +1224,9 @@ struct Frame {
     block: usize,
     instruction: usize,
     continuation: Option<ReturnContinuation>,
+    /// The reified value parameters of an erased generic body, by name:
+    /// what a `comptime if` over a value binder reads on the erased path.
+    comptime: Vec<(String, Value)>,
 }
 
 struct WritebackCall<'a> {

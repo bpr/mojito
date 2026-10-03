@@ -167,7 +167,11 @@ fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
                     *var = renumber(*var);
                 }
             }
-            MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::Return(_) | MirTerm::FallOff => {}
+            MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::Return(_)
+            | MirTerm::FallOff => {}
         }
     }
 }

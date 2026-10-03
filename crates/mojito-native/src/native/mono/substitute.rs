@@ -798,6 +798,25 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             ref_return: ref_return.clone(),
             transfers: transfers.clone(),
         },
+        // A symbolic lane or width the bindings close — a layout application
+        // the instance's oracle answers — becomes the known slot; one they do
+        // not close stays as spelled, for the concreteness check to name.
+        Ty::Simd { dtype, width } => Ty::Simd {
+            dtype: match dtype {
+                SimdDtype::Expr(expr) => match eval_ct(expr, bindings) {
+                    Ok(CtValue::Dtype(known)) => SimdDtype::Known(known),
+                    _ => dtype.clone(),
+                },
+                SimdDtype::Known(known) => SimdDtype::Known(*known),
+            },
+            width: match width {
+                SimdWidth::Expr(expr) => match eval_ct(expr, bindings) {
+                    Ok(CtValue::Int(known)) => SimdWidth::Known(known),
+                    _ => width.clone(),
+                },
+                SimdWidth::Known(known) => SimdWidth::Known(*known),
+            },
+        },
         other => other.clone(),
     })
 }

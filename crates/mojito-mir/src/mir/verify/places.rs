@@ -34,6 +34,15 @@ pub(super) fn verify_terminator(
                 errors.push(format!("{prefix}: branch condition has type {found}"));
             }
         }
+        MirTerm::ComptimeBranch { then_b, else_b, .. } => {
+            for target in [then_b, else_b] {
+                if *target >= context.region_len {
+                    errors.push(format!(
+                        "{prefix}: compile-time branch to invalid block {target}"
+                    ));
+                }
+            }
+        }
         MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } => {
             // `Return(None)` doubles as the lowering placeholder terminator, so
             // only value-carrying returns are checked.

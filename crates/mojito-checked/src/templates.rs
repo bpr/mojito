@@ -331,6 +331,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::NegatedEquality
         | SemanticAdjustment::ReceiverFromFirstArgument { .. }
         | SemanticAdjustment::Truthiness
+        | SemanticAdjustment::ComptimeCondition(..)
         | SemanticAdjustment::Move
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)
@@ -724,11 +725,12 @@ pub enum TemplateClass {
     /// parameter whose bound promises a length, and returning a scalar.
     FixedCalls,
     /// A module-level function source validation checks and the elaborator
-    /// then stubs: keyed on scalar `Bool`/`Int` value parameters or plain
-    /// type parameters through `comptime if`, or holding a `rebind`. Its body
-    /// is `comptime if` over arms of the statements above. Every arm is
-    /// checked once; an instance inherits the facts of the arms the
-    /// elaborator selected and owes the `rebind` equalities they hold.
+    /// then stubs, keyed on scalar `Bool`/`Int` value parameters or plain
+    /// type parameters through a `rebind` it holds; its body is the
+    /// statements above, under `comptime if` arms or not. An instance
+    /// inherits the facts of the arms it keeps and owes the `rebind`
+    /// equalities they hold. A `def` keyed through a `comptime if` alone is
+    /// its template's, and no longer this class's.
     ScalarBranches,
     /// A module-level function source validation checks and the elaborator
     /// then stubs, keyed on a type pack: its body is `comptime for` over the

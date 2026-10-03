@@ -15,8 +15,11 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
-use mojito_types::types::{DependentType, SimdDtype, SimdWidth};
+use mojito_types::types::{
+    ConstraintOperand, DependentType, GenericConstraint, SimdDtype, SimdWidth,
+};
 
 /// The scope and kind findings of one function body.
 pub(super) fn verify_scope(
@@ -200,7 +203,8 @@ impl Scope {
     }
 }
 
-fn declared_kind(decl: &ParamDecl) -> MetaTy {
+/// The kind a declaration's binder is referenced at.
+pub fn declared_kind(decl: &ParamDecl) -> MetaTy {
     match decl {
         ParamDecl::Value { ty, .. } => MetaTy::value((**ty).clone()),
         ParamDecl::Type { variadic: true, .. } => MetaTy::type_list(),
@@ -251,6 +255,57 @@ impl ScopeCx<'_> {
                     self.walk(&format!("block {index} {what}"), ty);
                 }
             }
+            if let MirTerm::ComptimeBranch { cond, .. } = &block.term {
+                self.constraint(&format!("block {index} compile-time branch"), cond);
+            }
+        }
+    }
+
+    /// A compile-time branch condition: every binder it names is in scope,
+    /// and every expression it holds is well-kinded.
+    fn constraint(&mut self, role: &str, constraint: &GenericConstraint) {
+        use GenericConstraint::{
+            And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+            PackPredicate, Trivial, WithMessage,
+        };
+        match constraint {
+            Bool(_) => {}
+            WithMessage(inner, _) | Not(inner) => self.constraint(role, inner),
+            And(left, right) | Or(left, right) => {
+                self.constraint(role, left);
+                self.constraint(role, right);
+            }
+            Conforms { param, .. } | ConformsPack { param, .. } | PackPredicate { param, .. } => {
+                self.reference(role, &param.id, &param.name, None, &[]);
+            }
+            PackContains { param, element } => {
+                self.reference(role, &param.id, &param.name, None, &[]);
+                self.operand(role, element);
+            }
+            Trivial(_, operand) => self.operand(role, operand),
+            Eq(left, right)
+            | Ne(left, right)
+            | Lt(left, right)
+            | Le(left, right)
+            | Gt(left, right)
+            | Ge(left, right) => {
+                self.operand(role, left);
+                self.operand(role, right);
+            }
+        }
+    }
+
+    fn operand(&mut self, role: &str, operand: &ConstraintOperand) {
+        let mut nested = Vec::new();
+        match operand {
+            ConstraintOperand::Param(param) | ConstraintOperand::PackLength(param) => {
+                self.reference(role, &param.id, &param.name, None, &nested);
+            }
+            ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
+                self.expr_nodes(role, "compile-time condition", expr, &mut nested);
+            }
+            ConstraintOperand::Value(_) => {}
+            ConstraintOperand::Type(ty) => self.walk_in(role, ty, &mut nested),
         }
     }
 
@@ -523,8 +578,8 @@ impl ScopeCx<'_> {
             .or_else(|| self.scope.kinds.get(id));
         match declared {
             None => self.errors.push(format!(
-                "{} {role} names parameter `{name}` that no enclosing declaration binds",
-                self.head
+                "{} {role} names parameter `{name}` of `{}` that no enclosing declaration binds",
+                self.head, id.owner
             )),
             Some(declared) => {
                 // A pack spread is the pack's own `Ty::Param`

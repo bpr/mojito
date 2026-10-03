@@ -1233,6 +1233,18 @@ fn term_value(term: &MirTerm) -> String {
                 ("else", format!("bb{else_b}")),
             ],
         ),
+        MirTerm::ComptimeBranch {
+            cond,
+            then_b,
+            else_b,
+        } => record(
+            tag,
+            &[
+                ("condition", constraint(cond)),
+                ("then", format!("bb{then_b}")),
+                ("else", format!("bb{else_b}")),
+            ],
+        ),
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
         MirTerm::ReturnWithCleanup { value, cleanup } => record(
             tag,
@@ -2105,11 +2117,11 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Reflected(v) => positional("ct_reflected", &ty_value(v)),
         CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),
         CtValue::Deferred(v) => positional("ct_deferred", &binder_ref(v)),
-        CtValue::Marker(v) => positional("ct_marker", &ct_marker(*v)),
+        CtValue::Marker(v) => positional("ct_marker", &ct_marker(v)),
     }
 }
 
-fn ct_marker(value: CtMarker) -> String {
+fn ct_marker(value: &CtMarker) -> String {
     match value {
         CtMarker::RuntimeLocal => "marker_local".into(),
         CtMarker::TypeName => "marker_type".into(),
@@ -2117,10 +2129,11 @@ fn ct_marker(value: CtMarker) -> String {
             "marker_tuple_origin",
             &[
                 ("id", id.0.to_string()),
-                ("mutability", mutability_value(mutability)),
+                ("mutability", mutability_value(*mutability)),
             ],
         ),
         CtMarker::Applied(value) => positional("marker_applied", &value.to_string()),
+        CtMarker::Layout(ty) => positional("marker_layout", &ty_value(ty)),
     }
 }
 

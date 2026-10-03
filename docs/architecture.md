@@ -35,7 +35,9 @@ Dependency direction is enforced by Cargo. Bottom-up: `mojito-common`
 `mojito-comptime`} → the root facade. Note that the crate DAG is not the
 pipeline order: `mojito-comptime` sits **above** the VM because CTFE compiles
 and executes sub-programs through `VmBackend`, which itself re-runs checking
-(the stage-composed seam contract). `crates/mojito-runtime` remains the
+(the stage-composed seam contract), and `mojito-native` sits above it too
+because the elaborator owns its compile-time executor
+(`VmBackend::call_concrete`), as upstream's elaborator owns its interpreter. `crates/mojito-runtime` remains the
 independently versioned native C-ABI runtime, depending on nothing above.
 
 ## Big Picture
@@ -458,8 +460,21 @@ comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 
 `comptime` is implemented as a phase distinction before type checking. The
 elaborator rewrites compile-time constructs into ordinary AST so the checker,
-HIR, MIR, and VM do not need to carry special `comptime if` or `comptime for`
-semantics.
+HIR, MIR, and VM do not need to carry special `comptime for` semantics. A
+`comptime if` in a generic `def`'s body is the exception, and the first
+construct that crosses the waist as itself: the template keeps the region,
+the checker types every arm with the binders symbolic and records each
+condition it compiles as a constraint (`SemanticAdjustment::ComptimeCondition`),
+HIR and MIR lower it as the `if` diamond with the `ComptimeBranch` terminator
+— a branch whose condition is a `GenericConstraint` over the function's
+binders, not a register — and `native::mono` decides it under the instance's
+bindings after drop elaboration (`select_comptime_branches`), keeping the
+taken arm and pruning the other (`mir::prune_unreachable_blocks`) before any
+call in it is enqueued. A condition the constraint compiler does not close
+(an application) is lowered as a zero-parameter thunk over the function's
+binders (`ComptimeThunks`, `lower_expression_thunk`), and its branch carries
+the thunk's application, which the elaborator evaluates on the VM
+([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)).
 
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
@@ -3119,11 +3134,12 @@ intersects the arms, and a value consumed in a loop body without a refill is
 consumed on the back edge. Substitution keeps the taken arm with the drops the
 analysis placed and never recomputes a last use
 ([`docs/notes/comptime-region-ownership.md`](notes/comptime-region-ownership.md)).
-The production elaborator still selects the arm and unrolls the loop before
-the check, so today's move analysis sees one arm; the `comptime if` and
-`comptime for` entries of the roadmap bring the region to MIR. The
-`--comptime-regions keep` experiment keeps a program's own regions as runtime
-regions through the check and folds their literal branches in the elaborator.
+A `comptime if` in a generic `def` reaches the analysis as that region: the
+`ComptimeBranch` terminator joins like a `Branch`, and the elaborator keeps the
+taken arm with the destroys the analysis placed at its entry. The production
+elaborator still unrolls a `comptime for` before the check, so the move
+analysis sees its body once; the `comptime for` entry of the roadmap brings the
+loop to MIR.
 
 ### Persistent local loans
 

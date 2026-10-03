@@ -55,6 +55,11 @@ impl<'a> Specializer<'a> {
             queue: VecDeque::new(),
             instances: Vec::new(),
             instance_index: HashMap::new(),
+            states: Vec::new(),
+            demand_stack: Vec::new(),
+            evaluations: HashMap::new(),
+            fuel: mojito_vm::crossing::CTFE_FUEL,
+            vm: VmBackend::new(),
             discovered_types: HashSet::new(),
             output_functions: Vec::new(),
             output_function_decls: Vec::new(),
@@ -86,17 +91,7 @@ impl<'a> Specializer<'a> {
             let name = self.enqueue(entry, self.base_bindings(), Vec::new())?;
             entry_map.insert(entry.clone(), name);
         }
-        while let Some((key, bindings)) = self.queue.pop_front() {
-            let name = self.instance_name(&key);
-            if self
-                .output_functions
-                .iter()
-                .any(|(output, _)| output == name)
-            {
-                continue;
-            }
-            self.materialize(&key, &bindings)?;
-        }
+        self.drain()?;
         let function_order = self
             .source
             .functions
@@ -292,8 +287,21 @@ impl<'a> Specializer<'a> {
         self.instance_index
             .insert(key.clone(), self.instances.len());
         self.instances.push((key.clone(), name.clone()));
+        self.states.push(InstanceState::Pending);
         self.queue.push_back((key, bindings));
         Ok(name)
+    }
+
+    /// Materialize every pending instance on the queue, the instances their
+    /// bodies enqueue included.
+    fn drain(&mut self) -> Result<(), MonoError> {
+        while let Some((key, bindings)) = self.queue.pop_front() {
+            if self.states[self.instance_index[&key]] != InstanceState::Pending {
+                continue;
+            }
+            self.materialize(&key, &bindings)?;
+        }
+        Ok(())
     }
 
     pub(super) fn instance_name(&self, key: &InstanceKey) -> &str {
@@ -330,6 +338,22 @@ impl<'a> Specializer<'a> {
         key: &InstanceKey,
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
+        let index = self.instance_index[key];
+        self.states[index] = InstanceState::Active;
+        let result = self.materialize_body(key, bindings);
+        self.states[index] = if result.is_ok() {
+            InstanceState::Completed
+        } else {
+            InstanceState::Failed
+        };
+        result
+    }
+
+    fn materialize_body(
+        &mut self,
+        key: &InstanceKey,
+        bindings: &Bindings,
+    ) -> Result<(), MonoError> {
         let name = self.instance_name(key).to_string();
         let mut function = self
             .functions
@@ -346,11 +370,16 @@ impl<'a> Specializer<'a> {
             .declarations
             .get(key.template.as_str())
             .map_or(&[][..], |declaration| &declaration.param_decls);
+        let bindings = &Bindings {
+            layout: self.layout_oracle(),
+            ..bindings.clone()
+        };
         default_construct_simd_parameters(&mut function, bindings);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        self.select_comptime_branches(&key.template, &mut function, bindings)?;
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
                 .folded_captures
@@ -424,6 +453,425 @@ impl<'a> Specializer<'a> {
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_functions.push((name, function));
         Ok(())
+    }
+
+    /// The condition with every compile-time application in it evaluated:
+    /// an application under the instance's bindings is demanded and run on
+    /// the VM, a layout query is answered under the target. The
+    /// application is the operand itself (`f(n) == True`, `size_of[T]()`);
+    /// one nested in an arithmetic operand waits for a later entry.
+    fn resolve_applications(
+        &mut self,
+        template: &str,
+        cond: &GenericConstraint,
+        bindings: &Bindings,
+    ) -> Result<GenericConstraint, MonoError> {
+        let mut resolved: Vec<(ParamExpr, CtValue)> = Vec::new();
+        for expr in constraint_expressions(cond) {
+            if let Some(value) = self.resolve_application(template, &expr, bindings)? {
+                resolved.push((expr, value));
+            }
+        }
+        if resolved.is_empty() {
+            return Ok(cond.clone());
+        }
+        Ok(cond.map(&Clone::clone, &|operand| match operand {
+            ConstraintOperand::Expr(expr) | ConstraintOperand::Value(CtValue::Expr(expr)) => {
+                resolved
+                    .iter()
+                    .find(|(application, _)| application == expr)
+                    .map_or_else(
+                        || operand.clone(),
+                        |(_, value)| ConstraintOperand::Value(value.clone()),
+                    )
+            }
+            other => other.clone(),
+        }))
+    }
+
+    /// The value of a condition operand that is a compile-time application
+    /// not yet evaluated, or `None` for any other operand.
+    fn resolve_application(
+        &mut self,
+        template: &str,
+        expr: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<Option<CtValue>, MonoError> {
+        let ParamKind::Apply {
+            function,
+            args,
+            evaluated: None,
+        } = expr.kind()
+        else {
+            let mut nested = false;
+            expr.visit(&mut |node| {
+                nested |= matches!(
+                    node.kind(),
+                    ParamKind::Apply {
+                        evaluated: None,
+                        ..
+                    }
+                );
+            });
+            if nested {
+                return Err(self.error(
+                    Some(template),
+                    format!(
+                        "compile-time application nested in `{expr}`, which the elaborator \
+                         evaluates only as a whole operand"
+                    ),
+                ));
+            }
+            return Ok(None);
+        };
+        if function == SIZE_OF_FUNCTION {
+            let [subject] = args.as_slice() else {
+                return Err(self.error(
+                    Some(template),
+                    format!("layout query `{expr}` applies to {} arguments", args.len()),
+                ));
+            };
+            let ty = match subject.kind() {
+                ParamKind::TypeShape(ty) => substitute_ty(ty, bindings),
+                ParamKind::Constant(CtValue::Type(ty)) => Ok((**ty).clone()),
+                _ => {
+                    return Err(self.error(
+                        Some(template),
+                        format!("layout query `{expr}` applies to a value"),
+                    ));
+                }
+            }
+            .map_err(|mut error| {
+                error.function.get_or_insert_with(|| template.to_string());
+                error
+            })?;
+            return self.demand_layout(template, &ty).map(Some);
+        }
+        self.demand_application(template, function, args, bindings)
+            .map(Some)
+    }
+
+    /// Evaluate the application of `function` to `args` under `bindings` by
+    /// demanding its instance: the instance and every pending instance are
+    /// materialized now, the completed output is verified as the fragment the
+    /// VM runs, and the frozen result is cached by the instance's name. A
+    /// demand on an instance being materialized is a cycle in the parameter
+    /// domain.
+    fn demand_application(
+        &mut self,
+        template: &str,
+        function: &str,
+        args: &[ParamExpr],
+        bindings: &Bindings,
+    ) -> Result<CtValue, MonoError> {
+        let declaration = self.declarations.get(function).copied().ok_or_else(|| {
+            self.error(
+                Some(template),
+                format!("compile-time application of `{function}`, which has no MIR declaration"),
+            )
+        })?;
+        if declaration.param_decls.len() != args.len() {
+            return Err(self.error(
+                Some(template),
+                format!(
+                    "compile-time application of `{function}` binds {} of its {} parameters",
+                    args.len(),
+                    declaration.param_decls.len()
+                ),
+            ));
+        }
+        let mut instance_bindings = self.base_bindings();
+        let mut arguments = Vec::new();
+        for (decl, arg) in declaration.param_decls.iter().zip(args) {
+            let binder = decl.binder();
+            let unresolved = |what: &str| {
+                self.error(
+                    Some(template),
+                    format!("compile-time application `{function}` reads {what} `{arg}`"),
+                )
+            };
+            match decl {
+                ParamDecl::Type { .. } => {
+                    let ty = match arg.kind() {
+                        ParamKind::DeclRef(reference) => bindings.types.get(reference).cloned(),
+                        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings).ok(),
+                        ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
+                        _ => None,
+                    }
+                    .ok_or_else(|| unresolved("an unresolved type"))?;
+                    arguments.push(InstanceArg::Ty(ty.clone()));
+                    instance_bindings.types.insert(binder, ty);
+                }
+                ParamDecl::Value { .. } => {
+                    let value = match arg.kind() {
+                        ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
+                        _ => eval_ct(arg, bindings).ok(),
+                    }
+                    .ok_or_else(|| unresolved("an unresolved value"))?;
+                    arguments.push(InstanceArg::Value(value.clone()));
+                    instance_bindings.values.insert(binder, value);
+                }
+            }
+        }
+        let name = self.enqueue(function, instance_bindings, arguments)?;
+        if let Some(value) = self.evaluations.get(&name) {
+            return Ok(value.clone());
+        }
+        let index = self
+            .instances
+            .iter()
+            .position(|(_, instance)| *instance == name)
+            .expect("an enqueued instance is recorded");
+        match self.states[index] {
+            InstanceState::Active => {
+                let path = self
+                    .demand_stack
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::once(name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                return Err(self.error(
+                    Some(template),
+                    format!(
+                        "function instantiation in parameter domain that recursively requires \
+                         itself: {path}"
+                    ),
+                ));
+            }
+            InstanceState::Failed => {
+                return Err(self.error(
+                    Some(template),
+                    format!("compile-time application `{name}` failed to elaborate"),
+                ));
+            }
+            // The fragment the VM runs must hold every callee the thunk can
+            // reach, and a callee may be pending from an earlier body, so
+            // every pending instance is materialized before the call: the
+            // whole worklist, which the run would materialize anyway.
+            InstanceState::Pending => {
+                let key = self.instances[index].0.clone();
+                let position = self
+                    .queue
+                    .iter()
+                    .position(|(queued, _)| *queued == key)
+                    .expect("a pending instance is queued");
+                let (_, demanded) = self.queue.remove(position).expect("position is in range");
+                let frame = self.take_frame();
+                self.demand_stack.push(name.clone());
+                let drained = self
+                    .materialize(&key, &demanded)
+                    .and_then(|()| self.drain());
+                self.demand_stack.pop();
+                self.restore_frame(frame);
+                drained?;
+            }
+            InstanceState::Completed => {
+                let frame = self.take_frame();
+                self.demand_stack.push(name.clone());
+                let drained = self.drain();
+                self.demand_stack.pop();
+                self.restore_frame(frame);
+                drained?;
+            }
+        }
+        let fragment = ConcreteMir::verified(MirProgram {
+            functions: self.output_functions.clone(),
+            declarations: MirDeclarations {
+                structs: self.output_structs.clone(),
+                functions: self.output_function_decls.clone(),
+                traits: self.source.declarations.traits.clone(),
+            },
+            invariant_errors: Vec::new(),
+        })
+        .map_err(|findings| {
+            self.error(
+                Some(template),
+                format!(
+                    "compile-time application `{name}` over MIR that does not verify: {}",
+                    findings.join("; ")
+                ),
+            )
+        })?;
+        if let Some(effectful) = effectful_callee(&fragment, &name) {
+            return Err(self.error(
+                Some(template),
+                format!(
+                    "'{name}' is not safe for VM-backed compile-time execution: it reaches \
+                     `{effectful}`"
+                ),
+            ));
+        }
+        self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
+            self.error(
+                Some(template),
+                "compile-time execution exceeded the VM CTFE fuel quota".to_string(),
+            )
+        })?;
+        let (value, remaining) = self
+            .vm
+            .call_concrete(&fragment, &name, Vec::new(), self.fuel)
+            .map_err(|error| {
+                self.error(
+                    Some(template),
+                    format!("VM CTFE failed for '{name}': {error}"),
+                )
+            })?;
+        self.fuel = remaining;
+        let value = self.vm.freeze(value).map_err(|error| {
+            self.error(
+                Some(template),
+                format!("VM CTFE failed for '{name}': {error}"),
+            )
+        })?;
+        self.evaluations.insert(name, value.clone());
+        Ok(value)
+    }
+
+    /// The size of the concrete `ty` under the elaboration's target: the
+    /// layout application `size_of[ty]()` a type or a condition carries.
+    fn demand_layout(&self, template: &str, ty: &Ty) -> Result<CtValue, MonoError> {
+        let Some(target) = self.target else {
+            return Err(self.error(
+                Some(template),
+                "layout query: no native target for this host".to_string(),
+            ));
+        };
+        let structs: Vec<MirStructDeclaration> = self
+            .output_structs
+            .iter()
+            .chain(
+                self.source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|declaration| declaration.param_decls.is_empty()),
+            )
+            .cloned()
+            .collect();
+        let structs = mojito_mir::mir::struct_field_index_of(&structs);
+        let layout = mojito_native_core::layout::LayoutCx {
+            target,
+            structs: &structs,
+        };
+        layout
+            .layout_of(ty)
+            .map(|size| CtValue::Int(size.size as i64))
+            .map_err(|error| self.error(Some(template), format!("size_of of `{ty}`: {error}")))
+    }
+
+    /// What answers a layout application in the instance being
+    /// materialized: the target and every struct declaration known so far —
+    /// the instances discovered before it and the source's non-generic
+    /// structs. `None` on a host with no native target.
+    fn layout_oracle(&self) -> Option<Rc<LayoutOracle>> {
+        let target = *self.target?;
+        let structs: Vec<MirStructDeclaration> = self
+            .output_structs
+            .iter()
+            .chain(
+                self.source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|declaration| declaration.param_decls.is_empty()),
+            )
+            .cloned()
+            .collect();
+        Some(Rc::new(LayoutOracle {
+            target,
+            structs: mojito_mir::mir::struct_field_index_of(&structs),
+        }))
+    }
+
+    fn take_frame(&mut self) -> FunctionFrame {
+        FunctionFrame {
+            constant_values: std::mem::take(&mut self.constant_values),
+            callable_targets: std::mem::take(&mut self.callable_targets),
+            closure_captures: std::mem::take(&mut self.closure_captures),
+            enclosing: std::mem::take(&mut self.enclosing),
+            folded_slots: std::mem::take(&mut self.folded_slots),
+        }
+    }
+
+    fn restore_frame(&mut self, frame: FunctionFrame) {
+        self.constant_values = frame.constant_values;
+        self.callable_targets = frame.callable_targets;
+        self.closure_captures = frame.closure_captures;
+        self.enclosing = frame.enclosing;
+        self.folded_slots = frame.folded_slots;
+    }
+
+    /// Decide every `comptime if` of the instance under its bindings and keep
+    /// the taken arm: the branch becomes a jump, and the untaken arm's blocks
+    /// go with the destroys drop elaboration placed at their entry, before
+    /// any call in them is enqueued or any type in them verified. The taken
+    /// arm keeps its own entry destroys; no last use is recomputed.
+    fn select_comptime_branches(
+        &mut self,
+        template: &str,
+        function: &mut MirFunction,
+        bindings: &Bindings,
+    ) -> Result<(), MonoError> {
+        if self.select_comptime_branches_in(template, &mut function.blocks, bindings)? {
+            mojito_mir::mir::prune_unreachable_blocks(function);
+        }
+        Ok(())
+    }
+
+    /// [`Self::select_comptime_branches`] over one block list and the
+    /// regions below it; whether any branch was decided.
+    fn select_comptime_branches_in(
+        &mut self,
+        template: &str,
+        blocks: &mut [MirBlock],
+        bindings: &Bindings,
+    ) -> Result<bool, MonoError> {
+        let mut decided = false;
+        for block in blocks {
+            if let MirTerm::ComptimeBranch {
+                cond,
+                then_b,
+                else_b,
+            } = &block.term
+            {
+                let (then_b, else_b) = (*then_b, *else_b);
+                let cond = self.resolve_applications(template, cond, bindings)?;
+                let taken = match self.constraint_holds(&cond, bindings, &mut HashSet::new()) {
+                    Some(true) => then_b,
+                    Some(false) => else_b,
+                    None => {
+                        return Err(self.error(
+                            Some(template),
+                            format!(
+                                "comptime if condition `{cond:?}` the instance does not decide"
+                            ),
+                        ));
+                    }
+                };
+                block.term = MirTerm::Jump(taken);
+                decided = true;
+            }
+            for instruction in &mut block.instrs {
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    let regions = std::iter::once(body)
+                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter_mut())
+                        .chain(finalbody.iter_mut());
+                    for region in regions {
+                        decided |= self.select_comptime_branches_in(template, region, bindings)?;
+                    }
+                }
+            }
+        }
+        Ok(decided)
     }
 
     /// Answer every layout query of the instance from its now-concrete type
@@ -2045,5 +2493,92 @@ fn close_parameter_slots(instruction: &mut MirInstr) {
     for slot in slots {
         slot.binder = None;
         slot.expr = None;
+    }
+}
+
+/// The first effectful builtin (`print`, `input`) a call from `entry`
+/// reaches in `program`, through its call edges.
+fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
+    let mut pending = vec![entry.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some((_, function)) = program.functions.iter().find(|(known, _)| *known == name) else {
+            continue;
+        };
+        let mut callees = Vec::new();
+        for block in &function.blocks {
+            collect_callees(&block.instrs, &mut callees);
+        }
+        for callee in callees {
+            if matches!(callee.as_str(), "print" | "input") {
+                return Some(callee);
+            }
+            pending.push(callee);
+        }
+    }
+    None
+}
+
+fn collect_callees(instructions: &[MirInstr], callees: &mut Vec<String>) {
+    for instruction in instructions {
+        match instruction {
+            MirInstr::Call { func, .. } => callees.push(func.0.clone()),
+            MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } => {
+                let regions = std::iter::once(body)
+                    .chain(handler.iter().map(|(_, blocks)| blocks))
+                    .chain(orelse.iter())
+                    .chain(finalbody.iter());
+                for region in regions {
+                    for block in region {
+                        collect_callees(&block.instrs, callees);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Every expression operand of a constraint, in reading order.
+fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
+    use GenericConstraint::{
+        And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
+        PackPredicate, Trivial, WithMessage,
+    };
+    let of_operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Expr(expr) | ConstraintOperand::Value(CtValue::Expr(expr)) => {
+            vec![expr.clone()]
+        }
+        _ => Vec::new(),
+    };
+    match constraint {
+        Bool(_) | Conforms { .. } | ConformsPack { .. } | PackPredicate { .. } => Vec::new(),
+        WithMessage(inner, _) | Not(inner) => constraint_expressions(inner),
+        And(left, right) | Or(left, right) => {
+            let mut expressions = constraint_expressions(left);
+            expressions.extend(constraint_expressions(right));
+            expressions
+        }
+        PackContains { element, .. } => of_operand(element),
+        Trivial(_, operand) => of_operand(operand),
+        Eq(left, right)
+        | Ne(left, right)
+        | Lt(left, right)
+        | Le(left, right)
+        | Gt(left, right)
+        | Ge(left, right) => {
+            let mut expressions = of_operand(left);
+            expressions.extend(of_operand(right));
+            expressions
+        }
     }
 }

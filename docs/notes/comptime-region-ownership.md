@@ -90,10 +90,25 @@ Two findings beside the rule:
   and a raise in an `else` arm; only a value dead at the raise is
   destroyed). It is a drop-elaboration defect on the roadmap.
 
-## The experiment
+## What landed (2026-10-03)
 
-`mojito run --comptime-regions keep` takes the probes through the whole
-path with the rule in force, on today's representation:
+A `comptime if` in a generic `def` follows the rule on the production path:
+the template keeps the region, the checker types every arm with the binders
+symbolic and records the condition, MIR carries it as the `ComptimeBranch`
+terminator — the `if` diamond with a parameter-expression condition — the
+move analysis and drop elaboration decide it as the `if` of the same shape,
+and the elaborator decides the condition under the instance's bindings,
+keeps the taken arm with the destroys placed at its entry, and prunes the
+other arm. `c2`, `c4`, and `c5` reject and are `assets/ownership_error/`
+fixtures; `c3` destroys `a` at the `else` arm's entry, the pin's order;
+`c7`'s leak is the raise-path entry of the roadmap, unchanged. A `comptime
+for` is still unrolled first (roadmap 3.2), and the `--comptime-regions
+keep` flag below is gone: what it reproduced is the production path.
+
+## The experiment (superseded)
+
+`mojito run --comptime-regions keep` took the probes through the whole
+path with the rule in force, on the representation of 2026-10-02:
 
 1. The elaborator (`comptime::ComptimeRegions::Keep`) keeps every arm of a
    `comptime if` as a runtime `if` whose conditions are the evaluated
@@ -120,7 +135,7 @@ symbolic validation of the template rejects a compile-time `break` and
 `comptime for` entry of the roadmap covers. The fold changes no output: the
 `--erased` run of each probe prints the same lines.
 
-## What P3a and P3b take from this
+## What P3a took and P3b takes from this
 
 - The structured compile-time conditional and loop lower to HIR as a branch
   and a loop whose condition is a parameter expression, not a value. The

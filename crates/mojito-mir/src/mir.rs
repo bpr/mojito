@@ -29,8 +29,11 @@ use mojito_checked::checked::{CheckedConst, CheckedProgram, StructConformance};
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
+use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
-use mojito_types::types::{GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements};
+use mojito_types::types::{
+    ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
+};
 use std::collections::{HashMap, HashSet};
 
 mod ir;
@@ -62,6 +65,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         None,
         &[],
         &EnclosingBinders::default(),
+        &mut ComptimeThunks::default(),
     )
 }
 
@@ -905,7 +909,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 
     let mut toplevel_fn = {
         let _toplevel = timing::span("toplevel");
-        lower_cfg_nested(
+        let mut thunks = ComptimeThunks::for_owner("__toplevel__");
+        let function = lower_cfg_nested(
             &Cfg::build_checked_fn(checked, &[], &toplevel),
             &HashMap::new(),
             &overloads,
@@ -917,7 +922,16 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             None,
             &[],
             &EnclosingBinders::default(),
-        )
+            &mut thunks,
+        );
+        thunks.lower(
+            checked,
+            &overloads,
+            &EnclosingBinders::default(),
+            &mut functions,
+            &mut declarations,
+        );
+        function
     };
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
@@ -1011,22 +1025,66 @@ fn lower_default(
     } else {
         EnclosingBinders::default()
     };
+    let function = format!("$default${owner}${}", parameter.name);
+    lower_expression_thunk(
+        ExpressionThunk {
+            checked,
+            overloads,
+            name: &function,
+            expression: default,
+            binders: &binders,
+            ty,
+        },
+        functions,
+        declarations,
+    );
+    Some(CheckedConst::Evaluate { function })
+}
+
+/// A zero-parameter function returning one checked expression over the
+/// binders in scope: an evaluated default (`$default$…`) or a `comptime if`
+/// condition the elaborator runs (`$comptime$…`).
+#[derive(Clone, Copy)]
+struct ExpressionThunk<'a> {
+    checked: &'a CheckedProgram,
+    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    name: &'a str,
+    expression: &'a Expr,
+    binders: &'a EnclosingBinders,
+    ty: &'a Ty,
+}
+
+/// Lower `return <expression>` as the function `name`, whose compile-time
+/// parameters are the binders and whose value binders are frame locals, and
+/// declare it.
+fn lower_expression_thunk(
+    thunk: ExpressionThunk<'_>,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) {
+    let ExpressionThunk {
+        checked,
+        overloads,
+        name,
+        expression,
+        binders,
+        ty,
+    } = thunk;
     let parameter_locals = value_parameter_locals(&binders.declarations);
     let parameter_names: Vec<String> = parameter_locals
         .iter()
         .map(|(name, _)| name.clone())
         .collect();
-    let function = format!("$default${owner}${}", parameter.name);
     let body = [Stmt {
-        kind: StmtKind::Return(Some(default.clone())),
-        span: default.span,
-        module: default.source.clone(),
-        syntax_id: mojito_common::token::SyntaxId::derived(default.syntax_id, DEFAULT_RETURN),
+        kind: StmtKind::Return(Some(expression.clone())),
+        span: expression.span,
+        module: expression.source.clone(),
+        syntax_id: mojito_common::token::SyntaxId::derived(expression.syntax_id, DEFAULT_RETURN),
     }];
     lower_fn_nested(
         FunctionLowering {
             checked,
-            name: &function,
+            name,
             parameter_names: &parameter_names,
             parameter_types: Vec::new(),
             value_parameter_locals: parameter_locals,
@@ -1049,7 +1107,7 @@ fn lower_default(
         declarations,
     );
     declarations.functions.push(MirFunctionDeclaration {
-        lowered_name: function.clone(),
+        lowered_name: name.to_string(),
         param_names: Vec::new(),
         param_types: Vec::new(),
         defaults: Vec::new(),
@@ -1062,7 +1120,7 @@ fn lower_default(
         kw_variadic_index: None,
         positional_only: None,
         keyword_only: None,
-        param_decls: binders.declarations,
+        param_decls: binders.declarations.clone(),
         has_receiver: false,
         receiver_convention: None,
         param_conventions: Vec::new(),
@@ -1074,7 +1132,79 @@ fn lower_default(
         param_writes: Vec::new(),
         availability: Vec::new(),
     });
-    Some(CheckedConst::Evaluate { function })
+}
+
+/// The `comptime if` conditions one function's lowering lifts as thunks: a
+/// condition the checker compiled to no constraint (it applies a function,
+/// or reads a `Bool` binding) becomes the zero-parameter function
+/// `$comptime$<owner>$<k>` over the owner's binders, and its branch carries
+/// the application of that thunk, which the elaborator demands and runs.
+#[derive(Default)]
+struct ComptimeThunks {
+    owner: String,
+    requests: Vec<(String, Expr)>,
+}
+
+impl ComptimeThunks {
+    fn for_owner(owner: &str) -> Self {
+        Self {
+            owner: owner.to_string(),
+            requests: Vec::new(),
+        }
+    }
+
+    /// Register `condition` and give back the constraint its branch carries:
+    /// the thunk applied to every binder in scope, equal to `True`.
+    fn request(&mut self, condition: &Expr, binders: &EnclosingBinders) -> GenericConstraint {
+        let name = format!("$comptime${}${}", self.owner, self.requests.len());
+        self.requests.push((name.clone(), condition.clone()));
+        let context = mojito_types::param_expr::ParamContext::detached();
+        let args: Vec<_> = binders
+            .declarations
+            .iter()
+            .map(|declaration| {
+                let binder = declaration.binder();
+                context.decl_ref(
+                    binder.id.clone(),
+                    &binder.name,
+                    verify::declared_kind(declaration),
+                )
+            })
+            .collect();
+        GenericConstraint::Eq(
+            ConstraintOperand::Expr(context.apply(
+                &name,
+                &args,
+                mojito_types::param_expr::MetaTy::bool(),
+            )),
+            ConstraintOperand::Value(CtValue::Bool(true)),
+        )
+    }
+
+    /// Lower every requested thunk, each `return <condition>` typed `Bool`.
+    fn lower(
+        self,
+        checked: &CheckedProgram,
+        overloads: &mojito_symbol::symbol::OverloadSets,
+        binders: &EnclosingBinders,
+        functions: &mut Vec<(String, MirFunction)>,
+        declarations: &mut MirDeclarations,
+    ) {
+        for (name, condition) in &self.requests {
+            lower_expression_thunk(
+                ExpressionThunk {
+                    checked,
+                    overloads,
+                    name,
+                    expression: condition,
+                    binders,
+                    ty: &Ty::Bool,
+                },
+                functions,
+                declarations,
+            );
+        }
+    }
 }
 
 /// The derivation ordinal of an evaluated default's `return` statement under
@@ -1246,6 +1376,8 @@ struct Flatten<'a> {
     /// expression over them, the innermost declaration winning a shared
     /// spelling.
     enclosing_binders: EnclosingBinders,
+    /// The `comptime if` conditions this function lifts as thunks.
+    comptime_thunks: ComptimeThunks,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -2521,6 +2653,7 @@ fn lower_cfg_nested(
     static_receiver: Option<&Ty>,
     enclosing_origin_parameters: &[String],
     enclosing_binders: &EnclosingBinders,
+    comptime_thunks: &mut ComptimeThunks,
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -2570,6 +2703,7 @@ fn lower_cfg_nested(
             static_receiver: static_receiver.cloned(),
             enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
             enclosing_binders: enclosing_binders.clone(),
+            comptime_thunks: std::mem::take(comptime_thunks),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
@@ -2606,6 +2740,7 @@ fn lower_cfg_nested(
         fl.f.n_vars = fl.vars.len();
         fl.f.var_names.clone_from(&fl.vars);
         fl.f.var_tys.clone_from(&fl.var_types);
+        *comptime_thunks = std::mem::take(&mut fl.comptime_thunks);
     } // `fl` (the &mut borrow of `mir`) ends here
 
     mir

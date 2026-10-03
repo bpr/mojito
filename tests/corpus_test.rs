@@ -327,6 +327,22 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // Section 1, the erased oracle: an erased default function has no
     // value for a compile-time parameter it reads.
     "default_reads_binder",
+    // Section 1, the erased oracle: an erased frame carries no type
+    // argument to decide a `comptime if` over a type binder with, and runs
+    // no thunk for a condition that applies a function.
+    "comptime_if_abstract_body_call",
+    "comptime_if_arm_destroy_joins",
+    "comptime_if_condition_applies_def",
+    "comptime_if_generic_struct_ctor_overloads",
+    "comptime_if_generic_struct_lifecycle",
+    "comptime_if_generic_struct_method_call",
+    "comptime_if_inferred_def",
+    "comptime_if_nested_def_call",
+    "comptime_if_overload_beside_plain",
+    "comptime_if_overloaded_def",
+    "comptime_if_overloaded_def_explicit",
+    "comptime_if_template_served",
+    "type_predicate_comptime_if",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.14
+# Mojito Textual MIR Format, Version 1.15
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.14 is implemented end to end for inspection and loading: canonical
+Version 1.15 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.14
+mojito-mir 1.15
 ```
 
-The writer emits 1.14. The reader accepts 1.0 through 1.14; *Schema 1.0*
+The writer emits 1.15. The reader accepts 1.0 through 1.15; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -129,6 +129,12 @@ arguments in declaration order and in the caller's binder scope
 (`bytes[Int]()` records `[Int]`). A type parameter no runtime parameter or
 result spells is bound from here by the elaborator; a resolved call in
 concrete MIR records an empty list. An older artifact reads as carrying none.
+
+Minor version 15 adds the `comptime_branch` terminator: a `comptime if` a
+generic body keeps, whose condition is a constraint over the body's binders
+rather than a register. A 1.14 consumer rejects it at the terminator, which
+is the intended failure; every other spelling is unchanged, and the reader
+still accepts every earlier minor.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -609,6 +615,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 |---|---|
 | `Jump(target)` | `jump { target: bbN }` |
 | `Branch` | `branch { condition: %rN, then: bbN, else: bbN }` |
+| `ComptimeBranch` | `comptime_branch { condition: <constraint>, then: bbN, else: bbN }` — a `comptime if` on a parameter expression over the function's binders (the `availability` constraint grammar), decided by the elaborator; concrete MIR carries none |
 | `Return` | `return { value: option<reg> }` |
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` |
 | `FallOff` | `falloff {}` |
@@ -619,7 +626,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.14
+mojito-mir 1.15
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

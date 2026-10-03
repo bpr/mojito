@@ -4,4 +4,5 @@
 
 pub mod backend;
 pub mod builtins;
+pub mod crossing;
 pub mod runtime;

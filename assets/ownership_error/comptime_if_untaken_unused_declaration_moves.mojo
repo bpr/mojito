@@ -1,7 +1,8 @@
-# Ledgered divergence (docs/roadmap.md 3.2): `a` is consumed before
-# the `comptime if`, and the untaken arm reads it. The pin checks every arm
-# and rejects the read; Mojito selects the arm before the move analysis.
+# The untaken arm declares `var t = a^` and never uses `t`; `a` is used
+# after the join. The move into the unused binding consumes `a` in that arm,
+# so the use after the join is rejected, as the pin rejects it.
 # Rule and probes: docs/notes/comptime-region-ownership.md.
+# expect: use of uninitialized value 'a'
 struct Thing(Movable):
     var s: String
 
@@ -19,11 +20,11 @@ def look(t: Thing):
 
 def f[n: Int]():
     var a = Thing(String("a"))
-    consume(a^)
     comptime if n > 0:
         print("then")
     else:
-        look(a)
+        var t = a^
+    look(a)
 
 def main():
     f[1]()

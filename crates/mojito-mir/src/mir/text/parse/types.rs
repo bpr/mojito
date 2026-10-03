@@ -1003,6 +1003,9 @@ impl Decoder {
             ValueKind::Positional(tag, inner) if tag == "marker_applied" => {
                 self.int64(inner).map(CtMarker::Applied)
             }
+            ValueKind::Positional(tag, inner) if tag == "marker_layout" => {
+                self.ty(inner).map(|ty| CtMarker::Layout(Box::new(ty)))
+            }
             _ => {
                 self.error(value.span, "expected compile-time marker");
                 None

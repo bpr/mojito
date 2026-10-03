@@ -18,6 +18,27 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
         function: None,
         construct: error.to_string(),
     })?;
+    // A layout application the instance's oracle answers under its target.
+    if let ParamKind::Apply {
+        function,
+        args,
+        evaluated: None,
+    } = replaced.kind()
+        && function == SIZE_OF_FUNCTION
+        && let Some(oracle) = &bindings.layout
+        && let [subject] = args.as_slice()
+    {
+        let ty = match subject.kind() {
+            ParamKind::TypeShape(ty) => Some(substitute_ty(ty, bindings)?),
+            ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
+            _ => None,
+        };
+        if let Some(ty) = ty
+            && !is_symbolic(&ty)
+        {
+            return oracle.size_of(&ty).map(CtValue::Int);
+        }
+    }
     replaced.require_constant().map_err(|error| MonoError {
         function: None,
         construct: replaced.free_parameters().first().map_or_else(

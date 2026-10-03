@@ -529,7 +529,7 @@ impl NestedMono {
         // erased body has no concrete argument to select the callee's arm
         // with, so only an instance per call can run.
         let specializable = definition_depth == 0
-            && (is_specializable_declaration(statement)
+            && (is_specializable_nested_declaration(statement)
                 || self
                     .stub_reaching
                     .contains(&nested_body_owner(&statement.source_span())));
