@@ -172,6 +172,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Expanding polymorphic recursion now stops at the elaborator's instance
+  budget in seconds: `depth(W[T](x.copy()), n - 1)` is rejected with
+  "instantiation past the 1024-instance budget" after about twelve seconds
+  of elaboration in a debug build, where it used to spin for more than five
+  minutes (the pin runs out of memory). A nested instance's symbol now
+  spells the level below once, as its own symbol (`W$mono$TW$mono$TInt`),
+  where it used to re-encode the whole of it and repeat its arguments, so
+  the names grew threefold per level. The budget is the named
+  `INSTANCE_BUDGET`, counted where an instance is demanded, and lowered
+  from 4096 because a nested type's size grows quadratically with its
+  depth (roadmap 2.2). The elaborator runs on its own thread with a deep
+  stack, and its instance lookup is indexed.
 - A collector indexed by a runtime value compiles natively: `sum += xs[i]`
   in `def total(*xs: Int) -> Int` gives `6` for `total(1, 2, 3)` under
   `--backend pliron`, as on the VM and at the pin, and so does a method

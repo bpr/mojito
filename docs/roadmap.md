@@ -97,7 +97,7 @@ correctness fix to existing behavior is allowed.
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.1 and 2.2.
+  - Depends on 1.1.
   - Model: Fable, Planned.
 
 - [ ] **1.3 (P3b) MIR cannot express a `comptime for`**
@@ -441,21 +441,22 @@ change that needs a new `MJRT_ABI_VERSION`.
     entry instead of waiting on it.
   - Model: Fable, Planned.
 
-- [ ] **2.2 The elaborator's instance budget is not reached in reasonable
-  time on expanding polymorphic recursion**
+- [ ] **2.2 A nested instance type repeats every inner instance, so deep
+  elaboration costs memory cubic in its nesting**
 
-  Problem: `depth(W[T](x.copy()), n - 1)` makes `native::mono` spin for more
-  than five minutes before its 4096-instance budget stops it, where the
-  erased run finishes in eight seconds.
-  - The time goes to `enqueue` → `instance_symbol` → `encode_identifier`:
-    each nested `W[W[…]]` instance name is built from the whole of the last,
-    so the names grow with the nesting.
-  - The budget is the one elaboration bound by the owner's decision
-    (`docs/notes/ctfe-request-path.md` §Bounds and fuel): no depth bound,
-    as upstream. It is counted at enqueue, so a wide and a deep explosion
-    both stop at it, and it gets a named constant.
-  - The pin runs out of memory on the same program, so there is no verdict
-    to match, only a bound to reach in seconds.
+  Problem: the instance budget is 1024 rather than 4096 only because
+  4096 instances of `depth(W[T](x.copy()), n - 1)` do not fit in memory.
+  - Each level of `W[W[…]]` is a `Ty::Struct` whose name spells the whole
+    level below and whose arguments hold that level again, so a type of
+    depth `d` is quadratic in `d`, and every instance's registers, key, and
+    bindings hold such types.
+  - At 1024 the probe stops in about 12 s of elaboration and 2.5 GB in a
+    debug build; 2048 would need several times that.
+  - A wide program past 1024 instances is rejected although the pin
+    compiles it; the largest sampled `assets/ok` fixture demands 238.
+  - The fix is an instance type that names its symbol once (an interned
+    instance id, or a struct type without the redundant arguments), after
+    which the budget can rise.
   - Probe: `conformance/probes/mono_polymorphic_recursion.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
@@ -1785,7 +1786,7 @@ last.
     (killed after 60 s, its depth unlimited by default). Pinned by
     `conformance/probes/ctfe_plain_keyed_recursion.mojo`. Closes with 1.9,
     when the evaluation demands concrete instances and the instance budget
-    (2.2) stops the expansion.
+    stops the expansion.
   - `len-over-pack-in-comptime-for-header`: `comptime for i in
     range(len(items))` over a runtime pack `*items: *Ts` runs in Mojito and
     is rejected upstream ("cannot use a dynamic value in call argument");

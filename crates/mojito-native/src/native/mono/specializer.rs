@@ -53,6 +53,8 @@ impl<'a> Specializer<'a> {
             ),
             queue: VecDeque::new(),
             instances: Vec::new(),
+            instance_index: HashMap::new(),
+            discovered_types: HashSet::new(),
             output_functions: Vec::new(),
             output_function_decls: Vec::new(),
             output_structs: Vec::new(),
@@ -84,18 +86,13 @@ impl<'a> Specializer<'a> {
             entry_map.insert(entry.clone(), name);
         }
         while let Some((key, bindings)) = self.queue.pop_front() {
+            let name = self.instance_name(&key);
             if self
                 .output_functions
                 .iter()
-                .any(|(name, _)| name == self.instance_name(&key))
+                .any(|(output, _)| output == name)
             {
                 continue;
-            }
-            if self.output_functions.len() >= 4096 {
-                return Err(self.error(
-                    Some(&key.template),
-                    "polymorphic recursion exceeded the 4096-instance budget",
-                ));
             }
             self.materialize(&key, &bindings)?;
         }
@@ -220,8 +217,16 @@ impl<'a> Specializer<'a> {
                 .collect(),
             owner,
         };
-        if let Some((_, name)) = self.instances.iter().find(|(known, _)| known == &key) {
-            return Ok(name.clone());
+        if let Some(&index) = self.instance_index.get(&key) {
+            return Ok(self.instances[index].1.clone());
+        }
+        // The one elaboration bound: counted where an instance is demanded,
+        // so a wide and a deep explosion both stop here.
+        if self.instances.len() >= INSTANCE_BUDGET {
+            return Err(self.error(
+                Some(template),
+                format!("instantiation past the {INSTANCE_BUDGET}-instance budget"),
+            ));
         }
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
@@ -283,18 +288,16 @@ impl<'a> Specializer<'a> {
                 format!("concrete instance symbol `{name}` collides with an existing declaration"),
             ));
         }
+        self.instance_index
+            .insert(key.clone(), self.instances.len());
         self.instances.push((key.clone(), name.clone()));
         self.queue.push_back((key, bindings));
         Ok(name)
     }
 
     pub(super) fn instance_name(&self, key: &InstanceKey) -> &str {
-        self.instances
-            .iter()
-            .find(|(known, _)| known == key)
-            .expect("queued instance has identity")
-            .1
-            .as_str()
+        let index = self.instance_index[key];
+        self.instances[index].1.as_str()
     }
 
     /// The callable parameters this call binds to a closure that captures.
@@ -1470,6 +1473,9 @@ impl<'a> Specializer<'a> {
         // even when no register or variable carries the bare element type.
         push_instruction_types(&function.blocks, &mut types);
         while let Some(ty) = types.pop() {
+            if matches!(ty, Ty::Struct(..)) && !self.discovered_types.insert(ty.clone()) {
+                continue;
+            }
             collect_nested_types(&ty, &mut types);
             let Ty::Struct(name, arguments) = ty else {
                 continue;

@@ -150,7 +150,7 @@ fn overloaded_trait_requirements_get_qualified_names() {
     // Each overloaded requirement owns its binders under its qualified name,
     // so two `pick[T]` requirements bind distinct `T`s.
     use mojito::ast::StmtKind;
-    use mojito::symbol::{OverloadSets, lowered_method_name};
+    use mojito::symbol::{MethodShape, OverloadSets, lowered_method_name};
     let program = parse(
         "trait Picker:\n\
          \x20   def pick[T: Copyable](self, a: T) -> T: ...\n\
@@ -170,10 +170,13 @@ fn overloaded_trait_requirements_get_qualified_names() {
             lowered_method_name(
                 &format!("Picker.{}", m.name),
                 &[],
-                &m.params,
-                m.keyword_only,
-                true,
-                m.self_convention,
+                MethodShape {
+                    type_params: &[],
+                    params: &m.params,
+                    keyword_only: m.keyword_only,
+                    has_self: true,
+                    self_convention: m.self_convention,
+                },
                 &sets,
             )
         })
@@ -722,4 +725,24 @@ fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
     // An unspecialized name carries no suffix either way.
     assert_eq!(specialization_template("List.__hash__"), None);
     assert_eq!(demangle_specialization("List.__hash__"), None);
+}
+
+#[test]
+fn a_nested_instance_argument_spells_as_its_own_symbol() {
+    use mojito::symbol::{InstanceArg, instance_symbol};
+    use mojito::{Ty, TyArg};
+    // Each level spells the level below once, as the symbol minted for it,
+    // so the name of `W[W[…]]` grows linearly with its nesting.
+    let mut ty = Ty::Int;
+    let mut previous = String::new();
+    for _ in 0..4 {
+        let name = instance_symbol("W", &[InstanceArg::Ty(ty.clone())]);
+        assert!(
+            previous.is_empty() || name == format!("W$mono$T{previous}"),
+            "{name}"
+        );
+        previous.clone_from(&name);
+        ty = Ty::Struct(name, vec![TyArg::Ty(ty)]);
+    }
+    assert_eq!(previous, "W$mono$TW$mono$TW$mono$TW$mono$TInt");
 }

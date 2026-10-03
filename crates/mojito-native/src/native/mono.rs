@@ -75,7 +75,24 @@ pub fn specialize(
     program: &MirProgram,
     entries: &[String],
 ) -> Result<SpecializedProgram, MonoError> {
-    Specializer::new(program).run(entries)
+    // Expanding polymorphic recursion nests each instance's types one level
+    // deeper than the last, and the type walks recurse on that nesting, so
+    // the elaborator runs on a stack deep enough to reach the instance
+    // budget rather than overflow on the way.
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("elaborator".to_string())
+            .stack_size(ELABORATOR_STACK_BYTES)
+            .spawn_scoped(scope, || Specializer::new(program).run(entries))
+            .map_or_else(
+                |_| Specializer::new(program).run(entries),
+                |elaborator| {
+                    elaborator
+                        .join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                },
+            )
+    })
 }
 
 /// Fold every branch of a concrete program whose condition is a literal
@@ -145,7 +162,17 @@ pub fn parametric_bodies(program: &MirProgram) -> HashSet<&str> {
         .collect()
 }
 
-#[derive(Clone, PartialEq, Eq)]
+/// The most instances one elaboration demands. It is the elaborator's only
+/// bound — there is no instantiation-depth limit, as upstream — and it stops
+/// expanding polymorphic recursion (`f[W[T]]` calling `f[W[W[T]]]`), which
+/// would otherwise never terminate.
+const INSTANCE_BUDGET: usize = 1024;
+
+/// The elaborator thread's stack: enough for the type walks at the nesting
+/// depth the instance budget admits. Untouched pages are never committed.
+const ELABORATOR_STACK_BYTES: usize = 256 << 20;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct InstanceKey {
     template: String,
     arguments: Vec<InstanceArg>,
@@ -210,6 +237,11 @@ struct Specializer<'a> {
     associated_types: Rc<HashMap<String, AssociatedTypes>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,
+    /// Each demanded key's position in `instances`.
+    instance_index: HashMap<InstanceKey, usize>,
+    /// The struct types [`Specializer::discover_structs`] has walked: a type
+    /// met again in a later body has nothing left to discover.
+    discovered_types: HashSet<Ty>,
     output_functions: Vec<(String, MirFunction)>,
     output_function_decls: Vec<MirFunctionDeclaration>,
     output_structs: Vec<MirStructDeclaration>,

@@ -93,7 +93,7 @@ pub struct CallableCandidate<'a> {
 }
 
 /// One concrete argument in a backend-private function or struct instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstanceArg {
     Ty(Ty),
     Value(CtValue),
@@ -1277,6 +1277,13 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         {
             encode_identifier(name)
         }
+        // A minted generic instance (`W$mono$TInt`) spells as its own symbol:
+        // that symbol already carries every argument, so re-encoding it and
+        // appending the arguments again would make a nested instance's name
+        // grow geometrically with its nesting depth.
+        Ty::Struct(name, _) if mode == KeyMode::Instance && is_instance_struct_symbol(name) => {
+            name.clone()
+        }
         // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
         // no `Struct$` marker, so the MIR definition name matches.
         Ty::Struct(name, args) => {
@@ -1351,6 +1358,13 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         Ty::SelfType => "Self".to_string(),
         other => other.to_string(),
     }
+}
+
+/// Whether `name` is a struct instance symbol [`instance_symbol`] minted.
+/// No source identifier contains `$`, so the `$mono` marker cannot be
+/// spelled by a user type.
+fn is_instance_struct_symbol(name: &str) -> bool {
+    name.contains("$mono")
 }
 
 /// Encode source-controlled identifier text injectively while leaving ordinary

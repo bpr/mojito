@@ -202,12 +202,11 @@ evaluates by demanding a concrete instance and running it on the VM.**
 - **Expansion**: no depth bound by default, as upstream (owner decision,
   2026-10-02). The instance count stays the one elaboration bound, as a
   named constant, counted at enqueue so that a wide explosion and a deep
-  one both stop at it. It must trigger in seconds:
-  `conformance/probes/mono_polymorphic_recursion.mojo` spins for more than
-  five minutes in `enqueue → instance_symbol → encode_identifier` because
-  each nested `W[W[…]]` name is built from the last, which roadmap 2.2
-  fixes before the path lands. The pin runs out of memory on the same
-  program.
+  one both stop at it. It triggers in seconds:
+  `conformance/probes/mono_polymorphic_recursion.mojo` stops at the
+  1024-instance `INSTANCE_BUDGET` (2026-10-03; a nested instance name now
+  spells the level below once, where it used to re-encode the whole of it).
+  The pin runs out of memory on the same program.
 - **Fuel** stays shared and separate from expansion: one counter per
   compilation, held by the elaborator, burned per request and handed to
   each `call_concrete`, which burns per instruction, frame, and block and
@@ -304,4 +303,4 @@ The boundary:
   close when a demand serves a keyed instance.
 - **Roadmap 1.11** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with
-  it. **Roadmap 2.2** makes the instance budget reachable first.
+  it. The instance budget is reachable in seconds (2026-10-03).
