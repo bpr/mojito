@@ -1453,7 +1453,7 @@ mod tests {
             }
         }
 
-        let point = Ty::Struct("Point".to_string(), Vec::new());
+        let point = Ty::Struct("Point".to_string(), Vec::new().into());
         let init_symbol = mojito_symbol::symbol::method_symbol(
             "Point",
             "__init__",

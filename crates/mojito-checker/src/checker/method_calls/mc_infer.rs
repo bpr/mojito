@@ -30,7 +30,8 @@ impl Checker {
             .iter()
             .filter(|(_, info)| info.methods.contains_key(method))
             .filter(|(name, info)| {
-                let implementation = Ty::Struct((*name).clone(), params_as_args(&info.decls));
+                let implementation =
+                    Ty::Struct((*name).clone(), params_as_args(&info.decls).into());
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))
@@ -40,7 +41,7 @@ impl Checker {
                 if signatures.len() == 1 {
                     return vec![format!("{name}.{method}")];
                 }
-                let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
+                let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls).into());
                 signatures
                     .iter()
                     .map(|signature| method_lowered_name(name, method, signature, Some(&self_ty)))

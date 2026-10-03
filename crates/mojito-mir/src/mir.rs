@@ -831,7 +831,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                                     method: method_index,
                                 })
                                 .cloned()
-                                .unwrap_or_else(|| Ty::Struct(name.clone(), Vec::new())),
+                                .unwrap_or_else(|| Ty::Struct(name.clone(), Vec::new().into())),
                         );
                         owned.push(is_owned(&m.self_convention));
                         deinit.push(is_deinit(&m.self_convention));
@@ -2656,7 +2656,7 @@ fn body_parameter_ty(parameter: &FnParam, ty: Ty) -> Ty {
         (ParamKind::Variadic, element) => Ty::VariadicPack(Box::new(element)),
         (ParamKind::KwVariadic, element) => Ty::Struct(
             "StringDict".to_string(),
-            vec![mojito_types::types::TyArg::Ty(element)],
+            vec![mojito_types::types::TyArg::Ty(element)].into(),
         ),
         (_, ty) => ty,
     }

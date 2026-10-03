@@ -464,7 +464,7 @@ impl Checker {
             residual_binders: !m.type_params.iter().all(clone_origin_binder),
             declaration: BodyDeclaration::Method(m),
             receiver_arguments: match receiver {
-                Ty::Struct(_, arguments) => Some(arguments.clone()),
+                Ty::Struct(_, arguments) => Some(arguments.clone().into()),
                 _ => None,
             },
         };
@@ -1005,16 +1005,18 @@ fn map_struct_origins<E>(
     Ok(match ty {
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| {
-                    Ok(match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(map_struct_origins(ty, origin)?),
-                        TyArg::Origin(slot) => TyArg::Origin(origin(slot)?),
-                        TyArg::Val(value) => TyArg::Val(value.clone()),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| {
+                        Ok(match argument {
+                            TyArg::Ty(ty) => TyArg::Ty(map_struct_origins(ty, origin)?),
+                            TyArg::Origin(slot) => TyArg::Origin(origin(slot)?),
+                            TyArg::Val(value) => TyArg::Val(value.clone()),
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, E>>()?,
+                    .collect::<Result<Vec<_>, E>>()?,
+            ),
         ),
         Ty::Tuple(elements) => Ty::Tuple(all(elements, origin)?),
         Ty::RuntimePack(elements) => Ty::RuntimePack(all(elements, origin)?),

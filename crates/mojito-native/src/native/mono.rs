@@ -166,7 +166,7 @@ pub fn parametric_bodies(program: &MirProgram) -> HashSet<&str> {
 /// bound — there is no instantiation-depth limit, as upstream — and it stops
 /// expanding polymorphic recursion (`f[W[T]]` calling `f[W[W[T]]]`), which
 /// would otherwise never terminate.
-const INSTANCE_BUDGET: usize = 1024;
+const INSTANCE_BUDGET: usize = 4096;
 
 /// The elaborator thread's stack: enough for the type walks at the nesting
 /// depth the instance budget admits. Untouched pages are never committed.

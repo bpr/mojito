@@ -73,7 +73,7 @@ pub(super) fn classify_ct_param_with(
         return Some(ParamDecl::Value {
             id: elaborated_binder(tp, siblings, owner),
             name: tp.name.clone(),
-            ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
+            ty: Box::new(Ty::Struct(only.clone(), Vec::new().into())),
             default: tp
                 .default
                 .as_ref()

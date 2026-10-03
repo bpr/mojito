@@ -172,6 +172,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A nested instance type now holds the level below it once, so the
+  elaborator's instance budget is back at 4096: expanding polymorphic
+  recursion (`depth(W[T](x.copy()), n - 1)`) stops there within 380 MB in a
+  debug build, where 1024 instances used to take 2.5 GB. A struct type's
+  argument list is shared between its clones (`TyArgs`), and a walk that
+  changes nothing keeps the list it read. An instance symbol whose argument
+  spelling passes 96 characters names its arguments by digest
+  (`W$mono$H…`), so a symbol's length is bounded at any nesting depth.
+  Elaboration time still grows quadratically with the depth (roadmap 2.2).
 - Expanding polymorphic recursion now stops at the elaborator's instance
   budget in seconds: `depth(W[T](x.copy()), n - 1)` is rejected with
   "instantiation past the 1024-instance budget" after about twelve seconds

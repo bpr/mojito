@@ -915,7 +915,7 @@ impl Checker {
                 inferred_values: Vec::new(),
             },
         );
-        Ok(Some(Ty::Struct(family.to_string(), arguments)))
+        Ok(Some(Ty::Struct(family.to_string(), arguments.into())))
     }
 
     /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:

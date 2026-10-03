@@ -382,13 +382,13 @@ fn colliding_instances_share_only_modulo_pointer_elements() {
     assert!(!fields_equivalent(
         &[(
             "_storage".into(),
-            Ty::Struct("__UninitStorage".into(), vec![TyArg::Ty(Ty::Int)]),
+            Ty::Struct("__UninitStorage".into(), vec![TyArg::Ty(Ty::Int)].into()),
         )],
         &[(
             "_storage".into(),
             Ty::Struct(
                 "__UninitStorage".into(),
-                vec![TyArg::Ty(Ty::Struct("Recorder".into(), vec![]))],
+                vec![TyArg::Ty(Ty::Struct("Recorder".into(), Vec::new().into()))].into(),
             ),
         )],
     ));
@@ -433,13 +433,17 @@ fn substitution_resolves_nested_type_and_value_arguments() {
                 "n",
                 mojito_types::param_expr::MetaTy::int(),
             ))),
-        ],
+        ]
+        .into(),
     );
     let Ty::Struct(name, args) = substitute_ty(&ty, &bindings).unwrap() else {
         panic!()
     };
     assert!(name.contains("$mono$"));
-    assert_eq!(args, vec![TyArg::Ty(Ty::UInt), TyArg::Val(CtValue::Int(4))]);
+    assert_eq!(
+        *args,
+        vec![TyArg::Ty(Ty::UInt), TyArg::Val(CtValue::Int(4))]
+    );
 }
 
 #[test]
@@ -465,13 +469,13 @@ fn value_binders_sharing_a_spelling_keep_their_own_solutions() {
     };
     let ty = Ty::Struct(
         "Grid".into(),
-        vec![reference("Grid.resize"), reference("Grid")],
+        vec![reference("Grid.resize"), reference("Grid")].into(),
     );
     let Ty::Struct(_, args) = substitute_ty(&ty, &bindings).unwrap() else {
         panic!()
     };
     assert_eq!(
-        args,
+        *args,
         vec![TyArg::Val(CtValue::Int(9)), TyArg::Val(CtValue::Int(4))]
     );
 }
@@ -821,7 +825,10 @@ fn demanded_member_its_instance_disproves_is_an_error() {
     specializer
         .enqueue(NULLARY_SLOT_INIT, available, Vec::new())
         .expect("`Int` is `Defaultable`");
-    let unavailable = slot_bindings(&specializer, Ty::Struct("NoDefault".into(), Vec::new()));
+    let unavailable = slot_bindings(
+        &specializer,
+        Ty::Struct("NoDefault".into(), Vec::new().into()),
+    );
     let error = specializer
         .enqueue(NULLARY_SLOT_INIT, unavailable, Vec::new())
         .unwrap_err();
@@ -897,7 +904,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         let template = specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
         let arguments = [
-            TyArg::Ty(Ty::Struct(argument.into(), Vec::new())),
+            TyArg::Ty(Ty::Struct(argument.into(), Vec::new().into())),
             TyArg::Val(CtValue::Int(n)),
         ];
         bind_ty_args(&template.param_decls, &arguments, &mut bindings).unwrap();
@@ -928,7 +935,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
     bindings.values.insert(
         pack.clone(),
         CtValue::Tuple(
-            [Ty::Int, Ty::Struct("Tracked".into(), Vec::new())]
+            [Ty::Int, Ty::Struct("Tracked".into(), Vec::new().into())]
                 .map(|ty| CtValue::Type(Box::new(ty)))
                 .to_vec(),
         ),
@@ -967,8 +974,9 @@ fn trivial_value_and_pack_clauses_are_decided() {
                 "Tuple".into(),
                 vec![
                     TyArg::Ty(Ty::Int),
-                    TyArg::Ty(Ty::Struct(element.into(), Vec::new())),
-                ],
+                    TyArg::Ty(Ty::Struct(element.into(), Vec::new().into())),
+                ]
+                .into(),
             )),
         )
     };

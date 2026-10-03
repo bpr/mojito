@@ -330,7 +330,7 @@ mod tests {
         let storage = |name: &str, element: Ty| {
             Ty::Struct(
                 name.to_string(),
-                vec![mojito_types::types::TyArg::Ty(element)],
+                vec![mojito_types::types::TyArg::Ty(element)].into(),
             )
         };
         assert_eq!(
@@ -419,10 +419,10 @@ mod tests {
             structs,
         };
         assert_eq!(
-            cx.layout_of(&Ty::Struct("Pair".to_string(), vec![])),
+            cx.layout_of(&Ty::Struct("Pair".to_string(), vec![].into())),
             Ok(Layout::new(16, 8))
         );
-        let missing = cx.layout_of(&Ty::Struct("Absent".to_string(), vec![]));
+        let missing = cx.layout_of(&Ty::Struct("Absent".to_string(), vec![].into()));
         assert!(matches!(missing, Err(LayoutError::Unsupported(_))));
     }
 

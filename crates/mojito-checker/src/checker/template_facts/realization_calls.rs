@@ -183,7 +183,7 @@ impl Checker {
                 .cloned()
                 .ok_or("a tuple element's local has no binding")?;
             let target = format!("{owner}.{accessor}");
-            let (element, application) = ((*element).clone(), (owner.clone(), arguments.clone()));
+            let (element, application) = ((*element).clone(), (owner.clone(), arguments.to_vec()));
             let reference = TemplateReference {
                 referent: element.clone(),
                 origin: mojito_checked::templates::TemplateOrigin::Place(
@@ -932,7 +932,7 @@ impl Checker {
             .iter()
             .find(|occurrence| occurrence.id == id)
             .and_then(|occurrence| occurrence.span.source.as_deref());
-        let application = (name.clone(), arguments.clone());
+        let application = (name.clone(), arguments.to_vec());
         if source.is_some()
             && !crate::checker::overload_support::is_bundled_module_source(source)
             && !facts.struct_applications.contains(&application)
@@ -1218,7 +1218,7 @@ impl Checker {
             // arguments, as the clone check judges it.
             if !declared.availability.is_empty() && !substitution.is_empty() {
                 let Ty::Struct(_, bound) = self.instance_ty(
-                    &Ty::Struct(owner.to_string(), arguments.to_vec()),
+                    &Ty::Struct(owner.to_string(), arguments.to_vec().into()),
                     substitution,
                 ) else {
                     return Err("a called method has an availability condition and no clone");

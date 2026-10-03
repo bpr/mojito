@@ -276,7 +276,8 @@ fn type_families_reprint_byte_identically() {
                 Origin::Param(OriginParamId(0)),
                 Origin::SelfParam,
             ])),
-        ],
+        ]
+        .into(),
     );
     let program = program_with(vec![(
         "types".into(),
@@ -360,7 +361,7 @@ fn type_families_reprint_byte_identically() {
                     origin: PointerOrigin::UnsafeAny { mutable: true },
                 },
                 Ty::Ref(RefTy {
-                    referent: Box::new(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)])),
+                    referent: Box::new(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into())),
                     origin: Origin::Untracked { mutable: true },
                     mutability: Mutability::Mutable,
                 }),
@@ -437,7 +438,7 @@ fn unknown_value_grammar_tags_are_diagnosed() {
 fn sample_place(root: u32) -> MirPlace {
     MirPlace {
         root,
-        root_ty: Some(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)])),
+        root_ty: Some(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into())),
         proj: vec![
             Proj::Field("data".into()),
             Proj::Index(Reg(7)),
@@ -939,7 +940,7 @@ fn instruction_families_reprint_byte_identically() {
             yielded: Reg(42),
             iter: 1,
             call: sample_iterator_call(),
-            exhaustion: Ty::Struct("StopIteration".into(), Vec::new()),
+            exhaustion: Ty::Struct("StopIteration".into(), Vec::new().into()),
         },
     ];
     let mut function = function_with(vec![Ty::Int; 43], instrs);
@@ -1349,13 +1350,13 @@ fn param_expr_mir_round_trip() {
     assert_eq!(constants.len(), 16);
     let mut register_types: Vec<Ty> = constants
         .into_iter()
-        .map(|value| Ty::Struct("Holder".into(), vec![TyArg::Val(value)]))
+        .map(|value| Ty::Struct("Holder".into(), vec![TyArg::Val(value)].into()))
         .collect();
     // Residual value arguments, a nested signature slot, and a finite
     // dependent type over a residual index.
     register_types.push(Ty::Struct(
         "Buf".into(),
-        vec![TyArg::Val(CtValue::Expr(sum.clone()))],
+        vec![TyArg::Val(CtValue::Expr(sum.clone()))].into(),
     ));
     register_types.push(Ty::Struct(
         "Buf".into(),
@@ -1367,7 +1368,8 @@ fn param_expr_mir_round_trip() {
                     &context.index_ref(0, 2, MetaTy::int()),
                 )
                 .expect("Int * Int builds"),
-        ))],
+        ))]
+        .into(),
     ));
     register_types.push(DependentType::resolve(
         context
@@ -1392,7 +1394,7 @@ fn param_expr_mir_round_trip() {
     };
     assert_eq!(
         params[0],
-        Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum))])
+        Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum))].into())
     );
 
     // Schema 1.0: the name resolves through the artifact's declared binder,
@@ -1421,6 +1423,7 @@ fn param_expr_mir_round_trip() {
             vec![TyArg::Val(CtValue::Deferred(
                 mojito_types::param_expr::ParamRef::unbound("callback")
             ))]
+            .into()
         )
     );
 
@@ -1585,7 +1588,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
 /// struct; an older artifact, which has no such field, records none.
 #[test]
 fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
-    let receiver = Ty::Struct("Pair".into(), vec![TyArg::Ty(Ty::Int)]);
+    let receiver = Ty::Struct("Pair".into(), vec![TyArg::Ty(Ty::Int)].into());
     let call = |receiver: Option<Ty>| {
         program_with(vec![(
             "main".into(),
@@ -1739,7 +1742,7 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     let holder = |values: Vec<CtValue>| {
         Ty::Struct(
             "Buf".into(),
-            values.into_iter().map(TyArg::Val).collect::<Vec<_>>(),
+            (values.into_iter().map(TyArg::Val).collect::<Vec<_>>()).into(),
         )
     };
     let program = program_with(vec![(
@@ -1797,7 +1800,7 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
         function_with(
             vec![Ty::Struct(
                 "Buf".into(),
-                vec![TyArg::Val(CtValue::Expr(query))],
+                vec![TyArg::Val(CtValue::Expr(query))].into(),
             )],
             Vec::new(),
         ),

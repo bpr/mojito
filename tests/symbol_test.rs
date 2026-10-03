@@ -463,8 +463,11 @@ fn specialization_keys_spell_a_minted_tuple_element_canonically() {
     use mojito::symbol::{canonical_specialization_type, mangle, tuple_specialization_values};
     use mojito::{Ty, TyArg};
     let elements = vec![TyArg::Ty(Ty::Int), TyArg::Ty(Ty::Bool)];
-    let minted = Ty::Struct("Tuple$t2[y3:Inty4:Bool]".to_string(), elements.clone());
-    let nominal = Ty::Struct("Tuple".to_string(), elements);
+    let minted = Ty::Struct(
+        "Tuple$t2[y3:Inty4:Bool]".to_string(),
+        elements.clone().into(),
+    );
+    let nominal = Ty::Struct("Tuple".to_string(), elements.into());
     assert_eq!(
         mangle(
             "Tuple",
@@ -476,7 +479,7 @@ fn specialization_keys_spell_a_minted_tuple_element_canonically() {
         )
     );
     assert_eq!(canonical_specialization_type(&minted), nominal);
-    let erased = Ty::Struct("Tuple$t2[y3:Inty4:Bool]".to_string(), Vec::new());
+    let erased = Ty::Struct("Tuple$t2[y3:Inty4:Bool]".to_string(), Vec::new().into());
     assert_eq!(canonical_specialization_type(&erased), erased);
 }
 
@@ -628,7 +631,7 @@ fn param_expr_closed_specialization_keys() {
         },
         CtValue::Type(Box::new(Ty::Struct(
             "Buf".into(),
-            vec![TyArg::Val(n.clone())],
+            vec![TyArg::Val(n.clone())].into(),
         ))),
     ];
     for value in &open {
@@ -742,7 +745,7 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
             "{name}"
         );
         previous.clone_from(&name);
-        ty = Ty::Struct(name, vec![TyArg::Ty(ty)]);
+        ty = Ty::Struct(name, vec![TyArg::Ty(ty)].into());
     }
     assert_eq!(previous, "W$mono$TW$mono$TW$mono$TW$mono$TInt");
 }

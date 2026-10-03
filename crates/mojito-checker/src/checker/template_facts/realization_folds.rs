@@ -320,8 +320,11 @@ impl Checker {
                 .struct_applications
                 .iter()
                 .map(|(name, arguments)| {
-                    match without_struct_origins(&Ty::Struct(name.clone(), arguments.clone())) {
-                        Ty::Struct(name, arguments) => (name, arguments),
+                    match without_struct_origins(&Ty::Struct(
+                        name.clone(),
+                        arguments.clone().into(),
+                    )) {
+                        Ty::Struct(name, arguments) => (name, arguments.into_vec()),
                         _ => (name.clone(), arguments.clone()),
                     }
                 })

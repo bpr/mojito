@@ -293,26 +293,34 @@ pub(super) fn instantiate_checked_type(
         }
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => {
-                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(TyArg::Ty)
-                    }
-                    // A residual value argument binds through the same
-                    // replacement the checker used, so an erased instance
-                    // compares canonical expressions, not spellings.
-                    TyArg::Val(value) => {
-                        let context = ParamContext::detached();
-                        let bindings = ParamBindings::from_named_values(&context, value_arguments);
-                        mojito_types::types::replace_value_parameters(&context, value, &bindings)
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => instantiate_checked_type(
+                            ty,
+                            type_arguments,
+                            value_arguments,
+                            bound_values,
+                        )
+                        .map(TyArg::Ty),
+                        // A residual value argument binds through the same
+                        // replacement the checker used, so an erased instance
+                        // compares canonical expressions, not spellings.
+                        TyArg::Val(value) => {
+                            let context = ParamContext::detached();
+                            let bindings =
+                                ParamBindings::from_named_values(&context, value_arguments);
+                            mojito_types::types::replace_value_parameters(
+                                &context, value, &bindings,
+                            )
                             .map(TyArg::Val)
                             .map_err(|error| error.to_string())
-                    }
-                    TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
-                })
-                .collect::<Result<Vec<_>, String>>()?,
+                        }
+                        TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            ),
         ),
         Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(instantiate_checked_type(
             element,
@@ -548,7 +556,7 @@ mod tests {
     use mojito_types::types::TyArg;
 
     fn sized(size: ParamExpr) -> Ty {
-        Ty::Struct("Buf".into(), vec![TyArg::Val(size.into_value())])
+        Ty::Struct("Buf".into(), vec![TyArg::Val(size.into_value())].into())
     }
 
     fn plus(context: &ParamContext, parameter: &ParamExpr, offset: i64) -> ParamExpr {
@@ -594,7 +602,7 @@ mod tests {
         .expect("instantiation");
         assert_eq!(
             bound,
-            Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Int(4))])
+            Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Int(4))].into())
         );
     }
 

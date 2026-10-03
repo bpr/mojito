@@ -266,7 +266,7 @@ fn constants_keep_bits_order_and_field_identity() {
     );
     assert_eq!(
         context.constant(point(1, 2)).expect("constant").meta(),
-        &MetaTy::value(Ty::Struct("Point".to_string(), Vec::new()))
+        &MetaTy::value(Ty::Struct("Point".to_string(), Vec::new().into()))
     );
     // A display's spelling is materialization metadata, not identity.
     let bare = CtValue::set(None, vec![CtValue::Int(1)]);

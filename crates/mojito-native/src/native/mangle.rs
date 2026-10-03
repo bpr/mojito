@@ -87,7 +87,7 @@ mod tests {
             SignatureKey, function_symbol, iterator_method_symbol, method_symbol,
         };
         use mojito_types::types::Ty;
-        let pair = Ty::Struct("Pair".to_string(), Vec::new());
+        let pair = Ty::Struct("Pair".to_string(), Vec::new().into());
         let names = [
             method_symbol(
                 "Array",

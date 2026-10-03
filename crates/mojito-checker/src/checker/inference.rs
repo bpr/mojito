@@ -2377,7 +2377,7 @@ impl Checker {
         );
         Ok(Ty::Struct(
             name.to_string(),
-            vec![mojito_types::types::TyArg::Ty(element)],
+            vec![mojito_types::types::TyArg::Ty(element)].into(),
         ))
     }
 
@@ -2480,9 +2480,11 @@ impl Checker {
         let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
         match self.structs.get(&specialized) {
             Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
-                Ty::Struct(specialized, arguments)
+                Ty::Struct(specialized, arguments.into())
             }
-            _ if self.declared_structs.contains(&specialized) => Ty::Struct(specialized, arguments),
+            _ if self.declared_structs.contains(&specialized) => {
+                Ty::Struct(specialized, arguments.into())
+            }
             _ => mojito_types::types::tstring_type(elements),
         }
     }
@@ -2492,9 +2494,11 @@ impl Checker {
         let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
         match self.structs.get(&specialized) {
             Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
-                Ty::Struct(specialized, arguments)
+                Ty::Struct(specialized, arguments.into())
             }
-            _ if self.declared_structs.contains(&specialized) => Ty::Struct(specialized, arguments),
+            _ if self.declared_structs.contains(&specialized) => {
+                Ty::Struct(specialized, arguments.into())
+            }
             _ => nominal_tuple_type(elements),
         }
     }

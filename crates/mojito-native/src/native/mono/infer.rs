@@ -345,7 +345,7 @@ impl Specializer<'_> {
             );
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
-                Ty::Struct(owner, ty_arguments),
+                Ty::Struct(owner, ty_arguments.into()),
             ));
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
@@ -670,7 +670,7 @@ impl Specializer<'_> {
             );
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
-                Ty::Struct(owner, ty_arguments),
+                Ty::Struct(owner, ty_arguments.into()),
             ));
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);

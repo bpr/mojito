@@ -1932,7 +1932,7 @@ mod pointer_storage_tests {
         };
         let storage_ty = Ty::Struct(
             mojito_types::types::UNINIT_STORAGE_TYPE_NAME.to_string(),
-            vec![mojito_types::types::TyArg::Ty(Ty::Int)],
+            vec![mojito_types::types::TyArg::Ty(Ty::Int)].into(),
         );
         let mut vars = vec![Value::UninitStorage(None)];
 

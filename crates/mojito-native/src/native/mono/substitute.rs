@@ -652,8 +652,8 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 unsupported(format!("unresolved type parameter `{}`", binder.name))
             })?
         }
-        Ty::Struct(name, args) => {
-            if args.is_empty() {
+        Ty::Struct(name, original) => {
+            if original.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves
                 // to the concrete instance being materialized; other bare
                 // names are non-generic (or unresolvable, failing later).
@@ -662,9 +662,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 {
                     return Ok(concrete.clone());
                 }
-                return Ok(Ty::Struct(name.clone(), Vec::new()));
+                return Ok(Ty::Struct(name.clone(), Vec::new().into()));
             }
-            let args = args
+            let args = original
                 .iter()
                 .map(|arg| substitute_arg(arg, bindings))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -692,7 +692,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                         .collect::<Vec<_>>(),
                 )
             };
-            Ty::Struct(concrete_name, args)
+            Ty::Struct(concrete_name, original.reusing(args))
         }
         Ty::Tuple(v) => Ty::Tuple(sub_types(v, bindings)?),
         Ty::RuntimePack(v) => Ty::RuntimePack(sub_types(v, bindings)?),

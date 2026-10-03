@@ -70,7 +70,7 @@ impl Specializer<'_> {
         if matches!(receiver, Ty::StringLiteral) {
             let string = Ty::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new(),
+                Vec::new().into(),
             );
             self.enqueue_nominal_method_instance(
                 owner,

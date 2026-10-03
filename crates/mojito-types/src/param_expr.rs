@@ -1658,7 +1658,9 @@ impl MetaTy {
                 dtype: crate::types::SimdDtype::Known(*dtype),
                 width: crate::types::SimdWidth::Known(lanes.len() as i64),
             }),
-            CtValue::Struct { name, .. } => Self::value(Ty::Struct(name.clone(), Vec::new())),
+            CtValue::Struct { name, .. } => {
+                Self::value(Ty::Struct(name.clone(), Vec::new().into()))
+            }
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Expr(expr) => expr.meta().clone(),

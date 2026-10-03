@@ -1425,8 +1425,10 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
             .as_ref()
             .expect("keyword collector element")
             .clone();
-        let body_type =
-            mojito::Ty::Struct("StringDict".into(), vec![mojito::types::TyArg::Ty(element)]);
+        let body_type = mojito::Ty::Struct(
+            "StringDict".into(),
+            vec![mojito::types::TyArg::Ty(element)].into(),
+        );
         let function = collector_body(name);
         assert_eq!(function.param_types.last(), Some(&body_type));
         let collector_slot = function.n_params - 1;

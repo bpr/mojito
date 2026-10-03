@@ -928,7 +928,7 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()?;
             let symbol = mojito_symbol::symbol::tstring_specialization_symbol(&elements);
             return if self.structs.contains_key(&symbol) {
-                Ok(Ty::Struct(symbol, Vec::new()))
+                Ok(Ty::Struct(symbol, Vec::new().into()))
             } else {
                 Err(TypeError::UnknownType(symbol))
             };
@@ -971,7 +971,7 @@ impl Checker {
         (stored
             && mojito_symbol::symbol::specialization_template(owner)
                 == Some(mojito_types::types::TSTRING_TYPE_NAME))
-        .then(|| Ty::Struct(owner.to_string(), Vec::new()))
+        .then(|| Ty::Struct(owner.to_string(), Vec::new().into()))
     }
 
     /// A template's facts for one instance: every retained type substituted,
@@ -1289,8 +1289,9 @@ impl Checker {
             std::mem::take(&mut facts.struct_applications)
                 .into_iter()
                 .map(|(name, arguments)| {
-                    match without_struct_origins(&Ty::Struct(name.clone(), arguments.clone())) {
-                        Ty::Struct(name, arguments) => (name, arguments),
+                    let application = Ty::Struct(name.clone(), arguments.clone().into());
+                    match without_struct_origins(&application) {
+                        Ty::Struct(name, arguments) => (name, arguments.into_vec()),
                         _ => (name, arguments),
                     }
                 })
@@ -1374,7 +1375,7 @@ impl Checker {
             .iter()
             .filter(|(name, arguments)| {
                 let application = mojito_types::types::substitute_packs(
-                    &Ty::Struct(name.clone(), arguments.clone()),
+                    &Ty::Struct(name.clone(), arguments.clone().into()),
                     types,
                     packs,
                     values,
@@ -1464,7 +1465,7 @@ impl Checker {
                     .structs
                     .get(&mangled)
                     .is_some_and(|info| info.fixed_arguments.is_none())
-                    .then(|| Ty::Struct(mangled, Vec::new()))
+                    .then(|| Ty::Struct(mangled, Vec::new().into()))
             }
 
             fn expr(
@@ -1821,7 +1822,7 @@ fn realize_pack_accessor_applications(
             && source.is_some()
             && !crate::checker::overload_support::is_bundled_module_source(source)
         {
-            let application = (owner.clone(), arguments.clone());
+            let application = (owner.clone(), arguments.to_vec());
             facts.struct_applications.push(application);
         }
     }

@@ -1519,6 +1519,12 @@ the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
 id) never makes an instantiation look new across discovery rounds.
 
+`Ty::Struct`'s argument list is a `TyArgs`, shared between clones, so a nested
+type (`W[W[Int]]`) copied into every register, key, and binding holds its level
+below once. Writes are explicit: `TyArgs::make_mut` unshares one level, and a
+rewriting walk rebuilds through `TyArgs::reusing`, which keeps the list it read
+when nothing changed.
+
 An `origin_of(self)` argument on a trait method's *abstract* signature has no
 bound `self` place, so it lowers to the symbolic `Origin::SelfParam` — the
 `Origin`-level analogue of the signature contract's `SigOrigin::Self_` — which

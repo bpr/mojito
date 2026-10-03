@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
 
 use crate::ct::CtValue;
 use crate::param_expr::{
@@ -355,7 +357,7 @@ pub enum Ty {
     /// order. The tail is part of the checked identity (`P[origin_of(xs)]` and
     /// `P[origin_of(ys)]` are different types, as upstream) and erases from
     /// the runtime ABI: mangling, layout, and MIR verification ignore it.
-    Struct(String, Vec<TyArg>),
+    Struct(String, TyArgs),
     /// A SIMD vector type `SIMD[DType.<dtype>, width]`. Either slot is a
     /// parameter expression while the declaration it belongs to is symbolic;
     /// a symbolic slot never crosses the MIR waist.
@@ -473,7 +475,7 @@ pub fn list_type(element: Ty) -> Ty {
 pub fn array_type(element: Ty, length: i64) -> Ty {
     Ty::Struct(
         ARRAY_TYPE_NAME.into(),
-        vec![TyArg::Ty(element), TyArg::Val(CtValue::Int(length))],
+        vec![TyArg::Ty(element), TyArg::Val(CtValue::Int(length))].into(),
     )
 }
 
@@ -734,7 +736,7 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             } else {
                 map_tyargs(arguments, |ty| expand_pack_spread(ty, pack, elements))
             };
-            Ty::Struct(name.clone(), arguments)
+            Ty::Struct(name.clone(), arguments.into())
         }
         Ty::Tuple(list) => Ty::Tuple(expand(list)),
         Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
@@ -1365,6 +1367,90 @@ impl fmt::Display for TyArg {
     }
 }
 
+/// A struct type's argument list, shared between clones.
+///
+/// A nested type (`W[W[Int]]`) copied into every register, key, and binding
+/// that names it holds its level below once rather than once per copy. Reads
+/// see a `Vec<TyArg>`. A write is explicit — [`TyArgs::make_mut`] unshares
+/// one level, and a rewriting walk rebuilds through [`TyArgs::reusing`] — so
+/// a walk that changes nothing never copies the levels it passes through.
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
+pub struct TyArgs(Arc<Vec<TyArg>>);
+
+impl TyArgs {
+    /// The arguments as an owned list, unsharing them only when shared.
+    pub fn into_vec(self) -> Vec<TyArg> {
+        Arc::unwrap_or_clone(self.0)
+    }
+
+    /// The arguments for a write, unshared from every other clone first.
+    pub fn make_mut(&mut self) -> &mut Vec<TyArg> {
+        Arc::make_mut(&mut self.0)
+    }
+
+    /// `rebuilt` as an argument list, keeping this one's storage when a
+    /// rewrite left every argument as it was, so a walk over a nested type
+    /// that changes nothing shares the type rather than copying it.
+    #[must_use]
+    pub fn reusing(&self, rebuilt: Vec<TyArg>) -> Self {
+        if *self.0 == rebuilt {
+            self.clone()
+        } else {
+            rebuilt.into()
+        }
+    }
+}
+
+impl Deref for TyArgs {
+    type Target = Vec<TyArg>;
+
+    fn deref(&self) -> &Vec<TyArg> {
+        &self.0
+    }
+}
+
+impl fmt::Debug for TyArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<Vec<TyArg>> for TyArgs {
+    fn from(arguments: Vec<TyArg>) -> Self {
+        Self(Arc::new(arguments))
+    }
+}
+
+impl From<TyArgs> for Vec<TyArg> {
+    fn from(arguments: TyArgs) -> Self {
+        arguments.into_vec()
+    }
+}
+
+impl FromIterator<TyArg> for TyArgs {
+    fn from_iter<I: IntoIterator<Item = TyArg>>(iter: I) -> Self {
+        Self(Arc::new(iter.into_iter().collect()))
+    }
+}
+
+impl IntoIterator for TyArgs {
+    type Item = TyArg;
+    type IntoIter = std::vec::IntoIter<TyArg>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a TyArgs {
+    type Item = &'a TyArg;
+    type IntoIter = std::slice::Iter<'a, TyArg>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1670,14 +1756,16 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     match ty {
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
-                    TyArg::Val(value) => TyArg::Val(value.clone()),
-                    TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                        TyArg::Val(value) => TyArg::Val(value.clone()),
+                        TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
+                    })
+                    .collect(),
+            ),
         ),
         Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
         Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
@@ -1849,14 +1937,16 @@ pub fn default_literal(ty: &Ty) -> Ty {
         Ty::FloatLiteral => Ty::Float64,
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
-                    TyArg::Val(value) => TyArg::Val(value.clone()),
-                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+                        TyArg::Val(value) => TyArg::Val(value.clone()),
+                        TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
+                    })
+                    .collect(),
+            ),
         ),
         // Internal heterogeneous pack storage also materializes its elements.
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(default_literal).collect()),
@@ -2576,9 +2666,10 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .as_ref()
                 .map(|bound| Box::new(substitute(bound, subst))),
         }),
-        Ty::Struct(name, args) => {
-            Ty::Struct(name.clone(), map_tyargs(args, |t| substitute(t, subst)))
-        }
+        Ty::Struct(name, args) => Ty::Struct(
+            name.clone(),
+            args.reusing(map_tyargs(args, |t| substitute(t, subst))),
+        ),
         Ty::Dependent(dependent) => {
             let mut bindings = ParamBindings::new();
             for (id, ty) in subst {
@@ -2822,9 +2913,10 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
                 callable_bound: boxed(callable_bound, rewrite)?,
             },
         },
-        Ty::Struct(name, arguments) => {
-            Ty::Struct(name.clone(), rewrite_tyargs(arguments, rewrite)?)
-        }
+        Ty::Struct(name, arguments) => Ty::Struct(
+            name.clone(),
+            arguments.reusing(rewrite_tyargs(arguments, rewrite)?),
+        ),
         Ty::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
         Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(rewrite_ty(element, rewrite)?)),
         Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(rewrite_ty(element, rewrite)?)),
@@ -3549,7 +3641,7 @@ fn expand_packs<S: std::hash::BuildHasher>(
                     }
                 }
             }
-            Ty::Struct(name.clone(), arguments)
+            Ty::Struct(name.clone(), arguments.into())
         }
         Ty::Tuple(list) => Ty::Tuple(expand(list)),
         Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
@@ -3799,7 +3891,7 @@ mod collection_representation_tests {
 
     #[test]
     fn uninit_storage_element_recognizes_every_mangled_spelling() {
-        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)]);
+        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)].into());
         for name in [
             "__UninitStorage",
             "mono_test$__UninitStorage",
@@ -3814,7 +3906,7 @@ mod collection_representation_tests {
         }
         assert_eq!(uninit_storage_element(&storage("Storageish")), None);
         assert_eq!(
-            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![])),
+            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![].into())),
             None
         );
     }

@@ -340,13 +340,15 @@ pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
     match ty {
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
-                    other => other.clone(),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ),
         ),
         Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(leaf).collect()),
         Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(leaf).collect()),
@@ -388,11 +390,13 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
             }
         }
         Ty::Struct(_, args) => {
-            for arg in args {
+            let mut erased = args.to_vec();
+            for arg in &mut erased {
                 if let TyArg::Ty(ty) = arg {
                     erase_callable_environments(ty);
                 }
             }
+            *args = args.reusing(erased);
         }
         Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
             for element in elements {

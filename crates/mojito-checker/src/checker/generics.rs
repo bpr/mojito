@@ -336,7 +336,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
         },
         Ty::Struct(name, args) => Ty::Struct(
             name.clone(),
-            map_tyargs(args, |t| substitute_self(t, replacement)),
+            args.reusing(map_tyargs(args, |t| substitute_self(t, replacement))),
         ),
         Ty::Dependent(dependent) => dependent.map_types(|ty| substitute_self(ty, replacement)),
         Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute_self(elem, replacement))),
@@ -471,7 +471,7 @@ fn substitute_values_and_origins(
             .collect()
     };
     match ty {
-        Ty::Struct(name, args) => Ty::Struct(name.clone(), map_args(args)),
+        Ty::Struct(name, args) => Ty::Struct(name.clone(), map_args(args).into()),
         Ty::Assoc { base, name, args } => Ty::Assoc {
             base: Box::new(recur(base)),
             name: name.clone(),
@@ -1414,13 +1414,15 @@ fn bind_pointer_origin_tails(
         }
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                    other => other.clone(),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ),
         ),
         Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
             referent: Box::new(recur(&reference.referent)),

@@ -399,7 +399,10 @@ mod tests {
         assert!(accepts_arg(CType::ConstCharPtr, &byte_ptr));
         assert!(accepts_arg(
             CType::ConstCharPtr,
-            &Ty::Struct("__module$std$ffi$CStringSlice".to_string(), Vec::new())
+            &Ty::Struct(
+                "__module$std$ffi$CStringSlice".to_string(),
+                Vec::new().into()
+            )
         ));
         assert!(!accepts_arg(CType::ConstCharPtr, &Ty::Int));
         assert!(accepts_ret(CType::Int, &int32));

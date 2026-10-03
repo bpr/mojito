@@ -546,36 +546,40 @@ fn reconcile_origin_tails(
         {
             Ty::Struct(
                 found_name.clone(),
-                found_args
-                    .iter()
-                    .zip(declared_args)
-                    .zip(bound_args)
-                    .map(
-                        |((found, declared), bound)| match (found, declared, bound) {
-                            (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
-                                reconcile_origin_tails(found, declared, bound, fits, mismatch),
-                            ),
-                            (
-                                TyArg::Origin(Origin::Unbound),
-                                TyArg::Origin(_),
-                                TyArg::Origin(_),
-                            ) => found.clone(),
-                            (
-                                TyArg::Origin(actual),
-                                TyArg::Origin(expected),
-                                TyArg::Origin(bound),
-                            ) => {
-                                if fits(actual, bound) {
-                                    TyArg::Origin(expected.clone())
-                                } else {
-                                    *mismatch |= body_place_origin(actual);
-                                    found.clone()
+                found_args.reusing(
+                    found_args
+                        .iter()
+                        .zip(declared_args)
+                        .zip(bound_args)
+                        .map(
+                            |((found, declared), bound)| match (found, declared, bound) {
+                                (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => {
+                                    TyArg::Ty(reconcile_origin_tails(
+                                        found, declared, bound, fits, mismatch,
+                                    ))
                                 }
-                            }
-                            _ => found.clone(),
-                        },
-                    )
-                    .collect(),
+                                (
+                                    TyArg::Origin(Origin::Unbound),
+                                    TyArg::Origin(_),
+                                    TyArg::Origin(_),
+                                ) => found.clone(),
+                                (
+                                    TyArg::Origin(actual),
+                                    TyArg::Origin(expected),
+                                    TyArg::Origin(bound),
+                                ) => {
+                                    if fits(actual, bound) {
+                                        TyArg::Origin(expected.clone())
+                                    } else {
+                                        *mismatch |= body_place_origin(actual);
+                                        found.clone()
+                                    }
+                                }
+                                _ => found.clone(),
+                            },
+                        )
+                        .collect(),
+                ),
             )
         }
         (Ty::Tuple(found_elements), Ty::Tuple(declared_elements), Ty::Tuple(bound_elements))
@@ -614,13 +618,17 @@ fn reconcile_origin_tails(
             let mut elements = reconciled.into_iter();
             Ty::Struct(
                 found_name.clone(),
-                found_args
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(_) => elements.next().map_or_else(|| argument.clone(), TyArg::Ty),
-                        TyArg::Val(_) | TyArg::Origin(_) => argument.clone(),
-                    })
-                    .collect(),
+                found_args.reusing(
+                    found_args
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(_) => {
+                                elements.next().map_or_else(|| argument.clone(), TyArg::Ty)
+                            }
+                            TyArg::Val(_) | TyArg::Origin(_) => argument.clone(),
+                        })
+                        .collect(),
+                ),
             )
         }
         _ => found.clone(),

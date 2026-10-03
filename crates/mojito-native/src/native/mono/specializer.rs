@@ -562,7 +562,7 @@ impl<'a> Specializer<'a> {
                 "StringDict",
                 &[InstanceArg::Ty(element.clone())],
             ),
-            vec![mojito_types::types::TyArg::Ty(element.clone())],
+            vec![mojito_types::types::TyArg::Ty(element.clone())].into(),
         );
         self.enqueue_nominal_method_instance(owner, &collector, "__init__", 0, &[])?;
         self.enqueue_nominal_method_instance(owner, &collector, "__setitem__", 2, &[])
@@ -1875,7 +1875,7 @@ pub(super) fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
                 return None;
             }
             let arguments = mojito_types::types::rewrite_tyargs(arguments, self).ok()?;
-            Some(Ty::Struct(template.to_string(), arguments))
+            Some(Ty::Struct(template.to_string(), arguments.into()))
         }
 
         fn expr(
@@ -1937,7 +1937,7 @@ fn without_pointer_origins(ty: &Ty) -> Ty {
         },
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            mojito_types::types::map_tyargs(arguments, recur),
+            arguments.reusing(mojito_types::types::map_tyargs(arguments, recur)),
         ),
         Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
         Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),

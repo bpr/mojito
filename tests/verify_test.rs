@@ -284,7 +284,8 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
     // interpretation: the destination is typed as the stored handle itself
     // (`ref s = self.src` reborrows), not as a borrow of the field slot.
     let stored_ref_place = |mutability: mojito::Mutability| {
-        let mut place = MirPlace::root(0, Some(Ty::Struct("Holder".to_string(), Vec::new())));
+        let mut place =
+            MirPlace::root(0, Some(Ty::Struct("Holder".to_string(), Vec::new().into())));
         place.project(
             Proj::Field("src".to_string()),
             reference_ty(Ty::Int, mutability),
@@ -1531,8 +1532,8 @@ fn verifier_rejects_misaligned_call_place_metadata() {
 fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
     use mojito::mir::MirFunctionDeclaration;
 
-    let other_error = Ty::Struct("OtherError".to_string(), Vec::new());
-    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new());
+    let other_error = Ty::Struct("OtherError".to_string(), Vec::new().into());
+    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new().into());
     let mut f = function(
         vec![block(
             vec![MirInstr::TryNext {
@@ -1555,7 +1556,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
     );
     f.var_names[0] = "iterator".to_string();
     f.var_tys
-        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new()));
+        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new().into()));
 
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1593,7 +1594,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
 fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
     use mojito::mir::MirFunctionDeclaration;
 
-    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new());
+    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new().into());
     let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);
     let Ty::Ref(reference_result) = &result_ty else {
         unreachable!("reference_ty constructs Ty::Ref")
@@ -1620,7 +1621,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
     );
     f.var_names[0] = "iterator".to_string();
     f.var_tys
-        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new()));
+        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new().into()));
 
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1770,7 +1771,10 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
             )],
             2,
             &[
-                (0, Ty::Struct("OpaqueIterator".to_string(), Vec::new())),
+                (
+                    0,
+                    Ty::Struct("OpaqueIterator".to_string(), Vec::new().into()),
+                ),
                 (1, result_ty.clone()),
             ],
         )

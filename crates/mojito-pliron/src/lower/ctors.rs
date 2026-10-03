@@ -22,7 +22,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let struct_ty = match self.func.reg_types.get(&dest.0) {
             Some(ty @ Ty::Struct(..)) => ty.clone(),
-            _ => Ty::Struct(name.to_string(), Vec::new()),
+            _ => Ty::Struct(name.to_string(), Vec::new().into()),
         };
         let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
         let LowerTy::Aggregate { ty, layout } = lowered else {

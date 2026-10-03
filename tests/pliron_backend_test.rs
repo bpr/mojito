@@ -1229,7 +1229,7 @@ mod native_abi_cross_checks {
         structs.insert(
             "Outer".to_string(),
             vec![
-                Ty::Struct("Pair".to_string(), vec![]),
+                Ty::Struct("Pair".to_string(), vec![].into()),
                 Ty::Bool,
                 Ty::Float64,
             ],
@@ -1248,7 +1248,7 @@ mod native_abi_cross_checks {
                     Ty::Float64,
                     Ty::Bool,
                     Ty::StringLiteral,
-                    Ty::Struct("Outer".to_string(), vec![]),
+                    Ty::Struct("Outer".to_string(), vec![].into()),
                 ],
             ),
             (
@@ -1281,7 +1281,7 @@ mod native_abi_cross_checks {
             Ty::Float64,
             Ty::StringLiteral,
             Ty::Error,
-            Ty::Struct("Outer".to_string(), vec![]),
+            Ty::Struct("Outer".to_string(), vec![].into()),
         ];
         for ty in scalar_cases {
             let expected = cx.layout_of(&ty).expect("layout");

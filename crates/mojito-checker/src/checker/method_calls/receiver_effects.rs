@@ -424,7 +424,7 @@ impl Checker {
             Ty::Struct(sname, targs) => match self.structs.get(sname) {
                 Some(info) => (
                     info.tail_origin_bindings(targs),
-                    Ty::Struct(sname.clone(), info.self_arguments()),
+                    Ty::Struct(sname.clone(), info.self_arguments().into()),
                 ),
                 None => (HashMap::new(), obj_ty.clone()),
             },

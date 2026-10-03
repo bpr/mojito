@@ -902,7 +902,7 @@ impl FnLowering<'_> {
             let instance = mojito_symbol::symbol::instance_symbol("StringDict", &arguments);
             let ty = Ty::Struct(
                 instance,
-                vec![mojito_types::types::TyArg::Ty((**element).clone())],
+                vec![mojito_types::types::TyArg::Ty((**element).clone())].into(),
             );
             let lowered = lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?;
             param_handles.push(ptr_ty);

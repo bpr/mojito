@@ -397,7 +397,7 @@ impl Checker {
                 } else {
                     SliceKind::ContiguousSlice
                 };
-                let descriptor = Ty::Struct(kind.type_name().to_string(), Vec::new());
+                let descriptor = Ty::Struct(kind.type_name().to_string(), Vec::new().into());
                 let resolution = self.resolve_struct_setitem(&object_type, &[descriptor], None)?;
                 if let Some(target) = resolution.lowered_name {
                     self.overload_targets
@@ -475,7 +475,7 @@ impl Checker {
                                 SliceKind::ContiguousSlice
                             };
                             argument_types
-                                .push(Ty::Struct(kind.type_name().to_string(), Vec::new()));
+                                .push(Ty::Struct(kind.type_name().to_string(), Vec::new().into()));
                             descriptors.push(Some(kind));
                         }
                     }
@@ -610,7 +610,7 @@ impl Checker {
         }
         self.expression_types.borrow_mut().insert(
             expression.source_span(),
-            Ty::Struct(kind.type_name().to_string(), Vec::new()),
+            Ty::Struct(kind.type_name().to_string(), Vec::new().into()),
         );
         expression
     }
@@ -2188,7 +2188,10 @@ impl Checker {
         if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
             && matches!(field, "start" | "end" | "step")
         {
-            return Ok(Ty::Struct("Optional".to_string(), vec![TyArg::Ty(Ty::Int)]));
+            return Ok(Ty::Struct(
+                "Optional".to_string(),
+                vec![TyArg::Ty(Ty::Int)].into(),
+            ));
         }
         // `v.length` on a SIMD value (a native scalar is a width-1 vector)
         // is upstream's lane-count parameter, folded to an `Int` constant. A

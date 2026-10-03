@@ -18,7 +18,7 @@ pub(super) fn infer_pack_argument_type(expr: &Expr) -> Result<Ty, ComptimeError>
             "Float64" => Ty::Float64,
             "Bool" => Ty::Bool,
             "String" => Ty::StringLiteral,
-            other => Ty::Struct(other.to_string(), Vec::new()),
+            other => Ty::Struct(other.to_string(), Vec::new().into()),
         }),
         ExprKind::Prefix(_, value) | ExprKind::Transfer(value) => infer_pack_argument_type(value),
         ExprKind::Infix(op, left, right) => {
@@ -105,7 +105,7 @@ pub(super) fn forwarded_runtime_pack_type(source: &Type) -> Option<Ty> {
                 },
             })
             .collect::<Option<Vec<_>>>()
-            .map(|arguments| Ty::Struct(name.clone(), arguments)),
+            .map(|arguments| Ty::Struct(name.clone(), arguments.into())),
         _ => None,
     })
 }

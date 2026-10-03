@@ -441,23 +441,21 @@ change that needs a new `MJRT_ABI_VERSION`.
     entry instead of waiting on it.
   - Model: Fable, Planned.
 
-- [ ] **2.2 A nested instance type repeats every inner instance, so deep
-  elaboration costs memory cubic in its nesting**
+- [ ] **2.2 Elaboration time grows quadratically with a nested type's
+  depth**
 
-  Problem: the instance budget is 1024 rather than 4096 only because
-  4096 instances of `depth(W[T](x.copy()), n - 1)` do not fit in memory.
-  - Each level of `W[W[…]]` is a `Ty::Struct` whose name spells the whole
-    level below and whose arguments hold that level again, so a type of
-    depth `d` is quadratic in `d`, and every instance's registers, key, and
-    bindings hold such types.
-  - At 1024 the probe stops in about 12 s of elaboration and 2.5 GB in a
-    debug build; 2048 would need several times that.
-  - A wide program past 1024 instances is rejected although the pin
-    compiles it; the largest sampled `assets/ok` fixture demands 238.
-  - The fix is an instance type that names its symbol once (an interned
-    instance id, or a struct type without the redundant arguments), after
-    which the budget can rise.
-  - Probe: `conformance/probes/mono_polymorphic_recursion.mojo`.
+  Problem: `conformance/probes/mono_polymorphic_recursion.mojo` reaches the
+  4096-instance budget in about a minute of debug-build elaboration, where
+  1024 instances take about 4 s.
+  - Memory is no longer the cost: a nested type shares its level below
+    (`TyArgs`), and the probe stops within 380 MB.
+  - Each walk over a type still visits every level: hashing it into
+    `discovered_types` and `instance_index`, `mentions` in
+    `verify::concrete::is_parametric`, `referenced_parameters` in
+    `mangle`, and the literal and origin canonicalizers.
+  - The lever is a fact cached on each shared argument list (its hash, and
+    whether it is closed), so a walk stops at a closed level.
+  - A wide program is not affected; only deep nesting pays.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2818,6 +2816,23 @@ last.
   - Found while closing the chained-comparison copies (2026-10-03).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **3.119 Checking a deeply nested generic struct type takes time
+  exponential in its depth**
+
+  Problem: `var a16 = W[W[…W[Int]…]](a15.copy())`, sixteen levels of
+  `struct W[T: Copyable & Deinitable]` built one per line, takes minutes in
+  `mojito check`, and every two more levels roughly triple the time.
+  - Twelve levels take about 1.7 s beyond the check's fixed cost.
+  - `wrap(wrap(…wrap(7)…))` over `def wrap[T](x: T) -> W[T]` grows the same
+    way, about doubling per level from twelve on.
+  - Declaring the same type without constructing it costs nothing, and
+    nested calls of a generic `def` returning `T` stay flat.
+  - A likely cause is a conformance of each level re-derived once per bound
+    of the level below, with no memo.
+  - Found while checking nested instance names (2026-10-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

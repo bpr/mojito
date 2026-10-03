@@ -204,7 +204,7 @@ impl Flatten<'_> {
                 (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
                     span(e),
                     provenance,
-                    Ty::Struct(constructed.to_string(), Vec::new()),
+                    Ty::Struct(constructed.to_string(), Vec::new().into()),
                 ),
                 _ => self.fresh(span(e), provenance),
             };
@@ -349,7 +349,7 @@ impl Flatten<'_> {
             None,
             Ty::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new(),
+                Vec::new().into(),
             ),
         );
         self.emit(MirInstr::Call {

@@ -100,7 +100,7 @@ impl Decoder {
                     let name = self.req(value, fields, "name", Self::symbol)?;
                     let args = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)))?;
                     self.unknown(fields, &["name", "arguments"]);
-                    Ty::Struct(name, args)
+                    Ty::Struct(name, args.into())
                 }
                 // Either slot may be a `ct_expr(...)` while symbolic; the
                 // rebuild folds a closed one back to its constant.

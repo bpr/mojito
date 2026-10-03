@@ -195,7 +195,8 @@ impl Checker {
             .iter()
             .filter_map(|(name, info)| Some((name, info, info.methods.get(method)?)))
             .filter(|(name, info, _)| {
-                let implementation = Ty::Struct((*name).clone(), params_as_args(&info.decls));
+                let implementation =
+                    Ty::Struct((*name).clone(), params_as_args(&info.decls).into());
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))

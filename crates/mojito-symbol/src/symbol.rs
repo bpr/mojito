@@ -21,6 +21,7 @@
 //! name the same `FixedBuffer[8]` specialization selected at a call site.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
@@ -31,6 +32,7 @@ use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::types::{
     ParamDecl, Ty, TyArg, canonical_simd_ty, contains_string_literal, default_literal,
 };
+use sha2::{Digest, Sha256};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
 ///
@@ -184,9 +186,10 @@ pub fn resolve_method_symbol<'a>(
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     use mojito_types::types::erase_origin_arguments;
     match argument {
-        TyArg::Ty(Ty::StringLiteral) => {
-            TyArg::Ty(Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()))
-        }
+        TyArg::Ty(Ty::StringLiteral) => TyArg::Ty(Ty::Struct(
+            STDLIB_STRING_STRUCT.to_string(),
+            Vec::new().into(),
+        )),
         TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&erase_capture_environment(
             &default_literal(ty),
         ))),
@@ -338,10 +341,14 @@ pub fn split_method_symbol(symbol: &str) -> Option<(&str, &str)> {
 
 /// Deterministic MIR identity for a concrete generic instance. Origins have
 /// already been erased from `arguments` and therefore cannot split ABI identity.
+///
+/// An argument spelling longer than [`INSTANCE_SPELLING_LIMIT`] is replaced
+/// by its digest (`W$mono$H…`), so a nested instance — whose spelling holds
+/// the symbol of the level below — stays bounded at every nesting depth.
 pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
-    let mut result = format!("{template}$mono");
+    let mut spelling = String::new();
     for argument in arguments {
-        result.push('$');
+        spelling.push('$');
         let raw = match argument {
             // Overload keys intentionally collapse StringLiteral and nominal
             // String, but generic instances cannot: their native layouts are
@@ -350,9 +357,15 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
             InstanceArg::Value(value) => format!("V{value}"),
         };
-        result.push_str(&sanitize(&raw));
+        spelling.push_str(&sanitize(&raw));
     }
-    result
+    if spelling.len() > INSTANCE_SPELLING_LIMIT {
+        // Every spelled argument opens with `$T` or `$V`, so the `$H` marker
+        // keeps a digest apart from any spelling short enough to stay.
+        let digest = Sha256::digest(spelling.as_bytes());
+        spelling = format!("$H{}", hex_digest(&digest[..16]));
+    }
+    format!("{template}$mono{spelling}")
 }
 
 /// The canonical mangled spelling of one parameter type. Only this module can
@@ -1280,7 +1293,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // A minted generic instance (`W$mono$TInt`) spells as its own symbol:
         // that symbol already carries every argument, so re-encoding it and
         // appending the arguments again would make a nested instance's name
-        // grow geometrically with its nesting depth.
+        // grow with its nesting depth.
         Ty::Struct(name, _) if mode == KeyMode::Instance && is_instance_struct_symbol(name) => {
             name.clone()
         }
@@ -1358,6 +1371,17 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         Ty::SelfType => "Self".to_string(),
         other => other.to_string(),
     }
+}
+
+/// The longest argument spelling [`instance_symbol`] keeps verbatim.
+const INSTANCE_SPELLING_LIMIT: usize = 96;
+
+/// Lowercase hexadecimal of `bytes`.
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
 }
 
 /// Whether `name` is a struct instance symbol [`instance_symbol`] minted.
@@ -2115,12 +2139,13 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         {
             Ty::Struct(
                 mojito_types::types::TUPLE_TYPE_NAME.to_string(),
-                mojito_types::types::map_tyargs(args, respell),
+                args.reusing(mojito_types::types::map_tyargs(args, respell)),
             )
         }
-        Ty::Struct(name, args) => {
-            Ty::Struct(name.clone(), mojito_types::types::map_tyargs(args, respell))
-        }
+        Ty::Struct(name, args) => Ty::Struct(
+            name.clone(),
+            args.reusing(mojito_types::types::map_tyargs(args, respell)),
+        ),
         Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(respell(element))),
         Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(respell).collect()),
         Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(respell).collect()),
@@ -2178,14 +2203,14 @@ pub fn tstring_storage_elements(elements: &[Ty]) -> Vec<Ty> {
     elements
         .iter()
         .map(|element| match element {
-            Ty::StringLiteral => Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()),
+            Ty::StringLiteral => Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new().into()),
             Ty::Struct(name, _) if name == mojito_types::types::TSTRING_TYPE_NAME => {
                 let nested = mojito_types::types::tstring_elements(element)
                     .unwrap_or_default()
                     .into_iter()
                     .cloned()
                     .collect::<Vec<_>>();
-                Ty::Struct(tstring_specialization_symbol(&nested), Vec::new())
+                Ty::Struct(tstring_specialization_symbol(&nested), Vec::new().into())
             }
             _ => element.clone(),
         })
@@ -2229,11 +2254,11 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
             }
             let (base, baked) = match demangle_specialization(name) {
                 Some((template, values)) => (
-                    unqualified_type_name(&Ty::Struct(template.to_string(), Vec::new())),
+                    unqualified_type_name(&Ty::Struct(template.to_string(), Vec::new().into())),
                     values,
                 ),
                 None => (
-                    unqualified_type_name(&Ty::Struct(name.clone(), Vec::new())),
+                    unqualified_type_name(&Ty::Struct(name.clone(), Vec::new().into())),
                     Vec::new(),
                 ),
             };

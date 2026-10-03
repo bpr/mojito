@@ -2146,7 +2146,7 @@ impl Checker {
         }
         Ok(Ty::Struct(
             "StringDict".to_string(),
-            vec![TyArg::Ty(element)],
+            vec![TyArg::Ty(element)].into(),
         ))
     }
 
@@ -2433,7 +2433,7 @@ fn explicit_destroy_types(
         .structs
         .iter()
         .filter_map(|(name, info)| {
-            let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls));
+            let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls).into());
             (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),

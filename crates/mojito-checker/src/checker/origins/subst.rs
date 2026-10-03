@@ -404,13 +404,15 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
         }
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
-                    other => other.clone(),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            ),
         ),
         Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
             referent: Box::new(substitute_pointer_origin_params(
@@ -446,18 +448,20 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
     match ty {
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                    TyArg::Origin(origin) => {
-                        TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
-                            bindings.get(&id).cloned()
-                        }))
-                    }
-                    TyArg::Val(_) => argument.clone(),
-                })
-                .collect(),
+            arguments.reusing(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                        TyArg::Origin(origin) => {
+                            TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
+                                bindings.get(&id).cloned()
+                            }))
+                        }
+                        TyArg::Val(_) => argument.clone(),
+                    })
+                    .collect(),
+            ),
         ),
         Ty::Pointer { element, origin } => Ty::Pointer {
             element: Box::new(recur(element)),

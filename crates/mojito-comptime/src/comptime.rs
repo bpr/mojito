@@ -2024,7 +2024,7 @@ impl Elab<'_> {
                 }
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(Ty::Struct(name.clone(), arguments))
+        Some(Ty::Struct(name.clone(), arguments.into()))
     }
 }
 

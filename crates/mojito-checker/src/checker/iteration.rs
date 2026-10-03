@@ -285,7 +285,7 @@ impl Checker {
         }
         let nominal = Ty::Struct(
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new(),
+            Vec::new().into(),
         );
         match self.implicit_conversion_target(&Ty::StringLiteral, &nominal) {
             Ok(Some((target, _))) => {

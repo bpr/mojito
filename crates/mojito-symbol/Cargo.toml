@@ -9,6 +9,7 @@ publish = false
 mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
 mojito-types = { path = "../mojito-types" }
+sha2 = "0.11.0"
 
 [lints]
 workspace = true

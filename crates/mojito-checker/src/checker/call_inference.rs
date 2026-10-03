@@ -100,7 +100,7 @@ impl Checker {
         span: SourceSpan,
         name: &str,
     ) -> Result<Ty, TypeError> {
-        let nominal = Ty::Struct(name.to_string(), Vec::new());
+        let nominal = Ty::Struct(name.to_string(), Vec::new().into());
         let Some((target, _)) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)?
         else {
             return Ok(Ty::StringLiteral);
@@ -125,7 +125,7 @@ impl Checker {
     pub(super) fn nominal_string_wrap(&self, span: SourceSpan) -> Result<Ty, TypeError> {
         let nominal = Ty::Struct(
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new(),
+            Vec::new().into(),
         );
         let Some((target, _)) = self.implicit_conversion_target(&Ty::StringLiteral, &nominal)?
         else {

@@ -921,7 +921,7 @@ impl Checker {
                 });
             }
         }
-        Ok(Ty::Struct("Slice".to_string(), Vec::new()))
+        Ok(Ty::Struct("Slice".to_string(), Vec::new().into()))
     }
 
     /// Type `Pointer(to=place)` (also spelled through the deprecated

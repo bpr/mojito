@@ -312,7 +312,7 @@ impl Checker {
                 if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
                     && args.is_empty()
                 {
-                    return Ok(Ty::Struct(name.clone(), Vec::new()));
+                    return Ok(Ty::Struct(name.clone(), Vec::new().into()));
                 }
                 // Upstream compatibility alias: `StringSlice` resolves to the
                 // canonical `StringSpan` view (never emitted; diagnostics and
@@ -405,7 +405,7 @@ impl Checker {
                     let element = self.tuple_element_types(args)?.remove(0);
                     return Ok(Ty::Struct(
                         name.clone(),
-                        vec![mojito_types::types::TyArg::Ty(element)],
+                        vec![mojito_types::types::TyArg::Ty(element)].into(),
                     ));
                 }
                 if name == "_" && args.is_empty() {
@@ -1141,7 +1141,7 @@ impl Checker {
                 .map(|value| argument(self, value))
                 .collect::<Result<Vec<_>, _>>()?
         };
-        Ok(Ty::Struct(name.to_string(), arguments))
+        Ok(Ty::Struct(name.to_string(), arguments.into()))
     }
 
     /// Resolve the type-valued sequence at the base of an indexed type
@@ -1271,27 +1271,33 @@ impl Checker {
             }
             Ty::Struct(name, arguments) => Ty::Struct(
                 name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty),
-                        // A residual value argument closes under the use's
-                        // bindings and re-folds: `Buf[n + 1]` at `n = 3` is
-                        // `Buf[4]`.
-                        TyArg::Val(value @ CtValue::Expr(_)) if !parameters.is_empty() => {
-                            let context = &self.param_context;
-                            let bindings =
-                                mojito_types::param_expr::ParamBindings::from_named_values(
-                                    context, parameters,
-                                );
-                            mojito_types::types::replace_value_parameters(context, value, &bindings)
+                arguments.reusing(
+                    arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => {
+                                self.resolve_dependent_ty(ty, parameters).map(TyArg::Ty)
+                            }
+                            // A residual value argument closes under the use's
+                            // bindings and re-folds: `Buf[n + 1]` at `n = 3` is
+                            // `Buf[4]`.
+                            TyArg::Val(value @ CtValue::Expr(_)) if !parameters.is_empty() => {
+                                let context = &self.param_context;
+                                let bindings =
+                                    mojito_types::param_expr::ParamBindings::from_named_values(
+                                        context, parameters,
+                                    );
+                                mojito_types::types::replace_value_parameters(
+                                    context, value, &bindings,
+                                )
                                 .map(TyArg::Val)
                                 .map_err(param_error)
-                        }
-                        TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
-                        TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
-                    })
-                    .collect::<Result<Vec<_>, TypeError>>()?,
+                            }
+                            TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                            TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
+                        })
+                        .collect::<Result<Vec<_>, TypeError>>()?,
+                ),
             ),
             Ty::ComptimeList(element) => {
                 Ty::ComptimeList(Box::new(self.resolve_dependent_ty(element, parameters)?))
@@ -1673,9 +1679,10 @@ impl Checker {
                         args,
                     })
             }
-            Ty::Struct(name, args) => {
-                Ty::Struct(name.clone(), map_tyargs(args, |t| self.resolve_assoc_ty(t)))
-            }
+            Ty::Struct(name, args) => Ty::Struct(
+                name.clone(),
+                args.reusing(map_tyargs(args, |t| self.resolve_assoc_ty(t))),
+            ),
             Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(self.resolve_assoc_ty(elem))),
             Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| self.resolve_assoc_ty(t)).collect()),
             Ty::RuntimePack(elems) => {
@@ -2610,7 +2617,7 @@ impl Checker {
             Ty::Struct(name, args) if !args.is_empty() => {
                 let base = mojito_types::types::unqualified_type_name(&Ty::Struct(
                     name.clone(),
-                    Vec::new(),
+                    Vec::new().into(),
                 ));
                 let arguments = args
                     .iter()
@@ -2647,20 +2654,22 @@ impl Checker {
             {
                 Ty::Struct(
                     name.clone(),
-                    declared_args
-                        .iter()
-                        .zip(found_args)
-                        .map(|(declared, found)| match (declared, found) {
-                            (TyArg::Ty(declared), TyArg::Ty(found)) => {
-                                TyArg::Ty(Self::bind_unbound_tails(declared, found))
-                            }
-                            (
-                                TyArg::Origin(mojito_types::origin::Origin::Unbound),
-                                TyArg::Origin(_),
-                            ) => found.clone(),
-                            _ => declared.clone(),
-                        })
-                        .collect(),
+                    declared_args.reusing(
+                        declared_args
+                            .iter()
+                            .zip(found_args)
+                            .map(|(declared, found)| match (declared, found) {
+                                (TyArg::Ty(declared), TyArg::Ty(found)) => {
+                                    TyArg::Ty(Self::bind_unbound_tails(declared, found))
+                                }
+                                (
+                                    TyArg::Origin(mojito_types::origin::Origin::Unbound),
+                                    TyArg::Origin(_),
+                                ) => found.clone(),
+                                _ => declared.clone(),
+                            })
+                            .collect(),
+                    ),
                 )
             }
             _ => declared.clone(),
@@ -2715,7 +2724,7 @@ impl Checker {
             .get(name)
             .and_then(|info| info.fixed_arguments.clone())
             .unwrap_or(arguments);
-        Ty::Struct(name.to_string(), arguments)
+        Ty::Struct(name.to_string(), arguments.into())
     }
 
     /// The struct's own instance type as `Self` resolves to inside its methods:
@@ -2732,7 +2741,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        Some(Ty::Struct(name.to_string(), info.self_arguments()))
+        Some(Ty::Struct(name.to_string(), info.self_arguments().into()))
     }
 
     /// Resolve the alternatives of `Variant[T1, ..., Tn]`.  Alternative order

@@ -223,7 +223,7 @@ pub(super) fn simd_element_type(dtype: &mojito_types::types::SimdDtype) -> Ty {
 }
 
 pub(super) fn slice_descriptor_ty(kind: mojito_types::types::SliceKind) -> Ty {
-    Ty::Struct(kind.type_name().to_string(), Vec::new())
+    Ty::Struct(kind.type_name().to_string(), Vec::new().into())
 }
 
 pub(super) fn subscript_argument_ty(

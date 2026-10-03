@@ -283,7 +283,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
         structs: &structs,
     };
     assert_eq!(
-        cx.layout_of(&Ty::Struct("String".to_string(), vec![])),
+        cx.layout_of(&Ty::Struct("String".to_string(), vec![].into())),
         Ok(Layout::new(
             size_of::<mojito_runtime::MjString>() as u64,
             align_of::<mojito_runtime::MjString>() as u64

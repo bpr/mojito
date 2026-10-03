@@ -266,14 +266,16 @@ fn template_applications(
                             .push((name.clone(), arguments.clone(), false));
                     }
                     Ty::Tuple(_) if names_owner(inner) => {
-                        found.borrow_mut().push((String::new(), Vec::new(), true));
+                        found
+                            .borrow_mut()
+                            .push((String::new(), Vec::new().into(), true));
                     }
                     _ => {}
                 }
                 false
             });
             for (name, arguments, keyed) in found.into_inner() {
-                self.record(name, arguments, keyed);
+                self.record(name, arguments.into(), keyed);
             }
         }
 

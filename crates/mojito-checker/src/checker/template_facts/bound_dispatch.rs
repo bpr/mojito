@@ -283,7 +283,7 @@ impl Checker {
         if !binders.is_empty() {
             return Err("an embedded dispatch's witness has binders of its own");
         }
-        let receiver_ty = Ty::Struct(owner.to_string(), struct_arguments.to_vec());
+        let receiver_ty = Ty::Struct(owner.to_string(), struct_arguments.to_vec().into());
         let parameter_ty =
             |ty: &Ty| self.witness_parameter_ty(ty, &receiver_ty, &substitution, &binders);
         if declared.params.len() != call.contract.arguments.len() {
@@ -989,7 +989,7 @@ impl Checker {
         else {
             return Err("a witness without a method has nothing to install");
         };
-        let receiver_ty = Ty::Struct((*owner).to_string(), struct_arguments.to_vec());
+        let receiver_ty = Ty::Struct((*owner).to_string(), struct_arguments.to_vec().into());
         let parameter_tys: Vec<Ty> = declared
             .params
             .iter()

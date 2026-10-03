@@ -193,7 +193,7 @@ impl Checker {
         {
             self.expression_types.borrow_mut().insert(
                 object.source_span(),
-                Ty::Struct(sname.to_string(), arguments),
+                Ty::Struct(sname.to_string(), arguments.into()),
             );
         }
     }

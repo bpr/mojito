@@ -734,7 +734,7 @@ impl Checker {
                 decls.push(ParamDecl::Value {
                     id: binder_id(decls.len()),
                     name: tp.name.clone(),
-                    ty: Box::new(Ty::Struct(only.clone(), Vec::new())),
+                    ty: Box::new(Ty::Struct(only.clone(), Vec::new().into())),
                     default: tp
                         .default
                         .as_ref()

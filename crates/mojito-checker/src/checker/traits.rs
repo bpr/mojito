@@ -460,7 +460,7 @@ impl Checker {
         let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
         let self_ty = Ty::Struct(
             name.to_string(),
-            fixed_arguments.unwrap_or_else(|| info.self_arguments()),
+            (fixed_arguments.unwrap_or_else(|| info.self_arguments())).into(),
         );
         let saved = SavedStructScope {
             forward_types: std::mem::replace(
@@ -1346,9 +1346,11 @@ impl Checker {
         };
         let self_ty = Ty::Struct(
             name.to_string(),
-            info.fixed_arguments
+            (info
+                .fixed_arguments
                 .clone()
-                .unwrap_or_else(|| info.self_arguments()),
+                .unwrap_or_else(|| info.self_arguments()))
+            .into(),
         );
         let mut witnesses: Vec<&MethodSig> = Vec::new();
         for tr in &info.conforms {
@@ -1903,7 +1905,7 @@ impl Checker {
                 *dtype,
                 lanes.len() as i64,
             )),
-            CtValue::Struct { name, .. } => Some(Ty::Struct(name.clone(), Vec::new())),
+            CtValue::Struct { name, .. } => Some(Ty::Struct(name.clone(), Vec::new().into())),
             CtValue::Tuple(values) => values
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))
@@ -2211,7 +2213,7 @@ impl Checker {
         if info.decls.is_empty() {
             let self_ty = Ty::Struct(
                 name.to_string(),
-                info.fixed_arguments.clone().unwrap_or_default(),
+                info.fixed_arguments.clone().unwrap_or_default().into(),
             );
             let holds = trivial.map_or_else(
                 || self.conforms_to(&self_ty, required),
@@ -2219,7 +2221,7 @@ impl Checker {
             );
             return Some(if holds { always() } else { Vec::new() });
         }
-        let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls));
+        let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls).into());
         if tuple_elements(&self_ty).is_some()
             || mojito_types::types::tstring_elements(&self_ty).is_some()
             || mojito_types::types::uninit_storage_element(&self_ty).is_some()

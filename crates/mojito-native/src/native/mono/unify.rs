@@ -161,7 +161,7 @@ pub(super) fn bind_explicit_value_arguments(
                     continue;
                 };
                 let bound = if is_struct(spelling) {
-                    Some(Ty::Struct(spelling.clone(), Vec::new()))
+                    Some(Ty::Struct(spelling.clone(), Vec::new().into()))
                 } else {
                     match &argument.binder {
                         Some(binder) => enclosing.types.get(binder).cloned(),

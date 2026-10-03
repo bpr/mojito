@@ -643,14 +643,14 @@ impl Elab<'_> {
             // A minted vector-keyed specialization named by an alias fold
             // (`TypeValue(Named("AHasher$v…"))`) is its own identity.
             if self.pending_struct_instances.borrow().contains_key(name) {
-                return Ok(Ty::Struct(name.to_string(), Vec::new()));
+                return Ok(Ty::Struct(name.to_string(), Vec::new().into()));
             }
             // A nested t-string's specialization, minted beside the one
             // whose storage names it (`tstring_storage_elements`).
             if mojito_symbol::symbol::specialization_template(name)
                 == Some(mojito_types::types::TSTRING_TYPE_NAME)
             {
-                return Ok(Ty::Struct(name.to_string(), Vec::new()));
+                return Ok(Ty::Struct(name.to_string(), Vec::new().into()));
             }
         }
         // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value).
@@ -698,7 +698,7 @@ impl Elab<'_> {
                 .iter()
                 .map(|argument| self.param_arg_type(argument, scope).map(TyArg::Ty))
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok(Ty::Struct(name.to_string(), elements));
+            return Ok(Ty::Struct(name.to_string(), elements.into()));
         }
         // Omitted trailing arguments fill from declared type-parameter
         // defaults (`Set[Int]` is `Set[Int, default_hasher]`), matching the
@@ -795,9 +795,9 @@ impl Elab<'_> {
                 .borrow_mut()
                 .entry(mangled.clone())
                 .or_insert_with(|| (name.to_string(), values));
-            return Ok(Ty::Struct(mangled, Vec::new()));
+            return Ok(Ty::Struct(mangled, Vec::new().into()));
         }
-        Ok(Ty::Struct(name.to_string(), tyargs))
+        Ok(Ty::Struct(name.to_string(), tyargs.into()))
     }
 
     /// Whether `name` is a specializable struct keyed by a vector-typed value

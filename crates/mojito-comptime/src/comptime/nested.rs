@@ -1831,7 +1831,7 @@ fn forwarded_source_type(source: &Type) -> Option<Ty> {
             .iter()
             .map(forwarded_source_type_argument)
             .collect::<Option<Vec<_>>>()
-            .map(|arguments| Ty::Struct(name.clone(), arguments)),
+            .map(|arguments| Ty::Struct(name.clone(), arguments.into())),
         _ => None,
     })
 }
