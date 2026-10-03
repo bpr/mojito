@@ -2,7 +2,7 @@
 #
 # The pin (2026-09-21) prints `1`. Mojito stops with "Undefined variable
 # 'tally'"; the same `def` declared above the struct runs. `docs/roadmap.md`
-# 3.112.
+# 3.110.
 struct Shelf[T: Copyable & Deinitable](Movable):
     var items: List[Self.T]
 

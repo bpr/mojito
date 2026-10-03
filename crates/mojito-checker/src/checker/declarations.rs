@@ -1726,7 +1726,7 @@ impl Checker {
                 return Err(TypeError::DynamicDefault(name));
             }
             let expected = self.ty_from_anno(&param.ty)?;
-            let found = self.infer(default)?;
+            let found = self.infer_with_expected(default, &expected, true)?;
             // Fall back to an `@implicit` converting constructor (records the
             // ctor target for omitted-arg materialization), matching the
             // free-function default path and the binding/argument positions.

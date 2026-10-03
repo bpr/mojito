@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A collection display default takes its parameter's type as context, as
+  at the pin: `def grow(var xs: List[Int] = [1, 2])` gives each call that
+  leaves `xs` out a fresh list, and `[1, 2.5]` for `List[Float64]`, a set
+  display for `Set[Int]`, and a dict display for `Dict[String, Int]` work
+  alike on functions and methods
+  (`assets/ok/collection_display_default.mojo`). The default used to be
+  rejected as an `Array[Int, 2]`.
 - A parameter default may read a compile-time parameter in scope, as at the
   pin: `V[3]().m()` beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]` prints `6`, and a method's or function's own parameter,

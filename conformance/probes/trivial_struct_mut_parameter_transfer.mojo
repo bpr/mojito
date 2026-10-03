@@ -1,6 +1,6 @@
 # A `TrivialRegisterPassable` struct transferred out of a `mut` parameter.
 # The pin copies it and prints `3 3`; Mojito rejects the body ("'v' is
-# uninitialized at return from this function"). `docs/roadmap.md` 3.105. When
+# uninitialized at return from this function"). `docs/roadmap.md` 3.103. When
 # Mojito runs it, move this to `assets/ok/`.
 @fieldwise_init
 struct V(TrivialRegisterPassable):

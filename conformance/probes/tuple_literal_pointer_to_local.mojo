@@ -2,7 +2,7 @@
 #
 # **Differs.** The pin prints 2. Mojito rejects it with "not a compile-time
 # value: type pack contains a type which cannot be materialized in source".
-# Filed in `docs/roadmap.md` §3 (3.86). When it runs, promote it to
+# Filed in `docs/roadmap.md` §3 (3.85). When it runs, promote it to
 # `assets/ok`.
 #
 # Observed 2026-09-29 against the pinned Mojo.

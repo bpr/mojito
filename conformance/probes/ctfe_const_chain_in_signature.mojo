@@ -3,7 +3,7 @@
 #
 # The pin (2026-10-02) prints `4 8` and `1`: `C` is the symbolic expression
 # `mul(f(3), 2)` on both sides, equal by structure. Mojito rejects the
-# program: "not a compile-time Int constant: C". docs/roadmap.md 3.117;
+# program: "not a compile-time Int constant: C". docs/roadmap.md 3.115;
 # decision D3 of docs/notes/ctfe-request-path.md.
 def f(n: Int) -> Int:
     return n + 1

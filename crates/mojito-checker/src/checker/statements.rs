@@ -3085,7 +3085,7 @@ impl Checker {
             if let Some(name) = self.dynamic_default_reference(d) {
                 return Err(TypeError::DynamicDefault(name));
             }
-            let dty = self.infer(d)?;
+            let dty = self.infer_with_expected(d, pty, true)?;
             // Fall back to an `@implicit` converting constructor, like the
             // binding and argument positions do (records the ctor target so
             // the omitted-arg default materializes it). A `None` default for
