@@ -225,7 +225,10 @@ impl Flatten<'_> {
         // pointer substitutes the owner place directly, keeping the
         // owner touched (and so droppable) at each access; otherwise
         // the access reads through the runtime handle.
-        if let Some(place) = self.pointer_deref_place(object) {
+        if let Some(place) = self
+            .pointer_deref_place(object)
+            .or_else(|| self.temporary_pointer_deref_place(object))
+        {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
@@ -361,7 +364,10 @@ impl Flatten<'_> {
             && let [SubscriptArg::Keyword { name, value }] = args
             && name == "unsafe_offset"
         {
-            if let Some(place) = self.pointer_deref_place(object) {
+            if let Some(place) = self
+                .pointer_deref_place(object)
+                .or_else(|| self.temporary_pointer_deref_place(object))
+            {
                 let d = self.fresh(span(e), Some(place.root));
                 self.emit(MirInstr::LoadPlace { dest: d, place });
                 return d;

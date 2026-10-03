@@ -172,6 +172,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer returned by a call and dereferenced in place (`print(idp(p)[])`
+  over `def idp[o: MutOrigin](v: Pointer[Int, o]) -> Pointer[Int, o]`) reads
+  its owner, where it printed `None` once the owner had no later use: the
+  result is bound to a hidden slot carrying the loan its origin names, as
+  `var q = idp(p)` already did. A generic identity, a method result, and
+  the `unsafe_offset` spelling take the same path.
+  `assets/ok/call_result_pointer_deref_keeps_owner.mojo` pins it on both
+  backends.
 - A numeric scalar is a condition, as at the pin: `if n:`, `while n:`, a
   conditional expression, and a comprehension filter over an `Int`, `UInt`,
   `Float64`, or width-one lane test it through `Bool(x)`, and `not n` reads

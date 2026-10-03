@@ -1392,6 +1392,46 @@ impl Flatten<'_> {
         Some(place)
     }
 
+    /// The storage behind a call-produced origin-bearing pointer (`idp(p)[]`):
+    /// the temporary is bound to a hidden `$ptr_tmp_r` slot carrying the loan
+    /// its checked origin names — exactly as `var q = idp(p)` would — and the
+    /// deref substitutes the owner place, so the owner outlives the read.
+    fn temporary_pointer_deref_place(&mut self, object: &Expr) -> Option<MirPlace> {
+        if !matches!(
+            object.kind,
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+        ) || !self.is_origin_bearing_pointer(object)
+        {
+            return None;
+        }
+        let pointer_ty = self
+            .checked_ty(object)
+            .filter(|ty| matches!(ty, Ty::Pointer { origin, .. } if !origin.subtree()))?;
+        let loans = self.aggregate_borrows(object);
+        let [loan] = loans.as_slice() else {
+            return None;
+        };
+        let mut place = loan.place.clone();
+        let value = self.expr(object);
+        let variable = self.var(&format!("$ptr_tmp_r{}", value.0));
+        self.var_types.insert(variable, pointer_ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(pointer_ty),
+        });
+        let marker = self.fresh_typed(object.source_span(), Some(place.root), Ty::None);
+        self.emit(MirInstr::EstablishLoans {
+            reference: variable,
+            loans: loans.clone(),
+            marker,
+            dest_interior: None,
+        });
+        self.aggregate_loans.insert(variable, loans);
+        place.through = Some(variable);
+        Some(place)
+    }
+
     fn resolved_callable(&self, expression: &Expr) -> Option<String> {
         self.checked_call_contract(expression)
             .map(|contract| contract.target)

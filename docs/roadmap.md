@@ -211,7 +211,7 @@ correctness fix to existing behavior is allowed.
     keyed-method and template-reach plumbing, the clone-symbol retargeting in
     the checker, the VM, and `native::mono`, and the method certificate
     classes in `checker/template_facts`.
-  - Depends on 1.2, 1.3, 1.6, 1.7, 1.8, and 3.85.
+  - Depends on 1.2, 1.3, 1.6, 1.7, 1.8, and 3.84.
   - Model: Fable, Planned.
 
 - [ ] **1.11 (P4) The driver elaborates and checks to a fixpoint**
@@ -2156,23 +2156,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.79 A pointer returned by a call reads its owner after the owner is
-  destroyed**
-
-  Problem: `print(idp(p)[])` over `def idp[o: MutOrigin](v: Pointer[Int, o])
-  -> Pointer[Int, o]` and `p = Pointer(to=x)` prints `None` when `x` has no
-  later use; the pin prints `7`.
-  - Drop elaboration destroys `x` before the dereference, since the call
-    result's `ref.read` carries no loan of `x`.
-  - Binding the result first (`var q = idp(p)`, then `q[]`) runs: the
-    binding establishes the loan its type names.
-  - A generic `id[T](v: T) -> T` over the pointer reaches the same path.
-  - Found while fixing a `Pointer` type argument's clone identity
-    (2026-09-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **3.80 A pointer held in a generic struct's parameter-typed field cannot
+- [ ] **3.79 A pointer held in a generic struct's parameter-typed field cannot
   be dereferenced in place**
 
   Problem: `print(h.item[])` or `print(h.get()[])` over `h =
@@ -2190,7 +2174,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.81 A scalar does not splat implicitly into a multi-lane vector**
+- [ ] **3.80 A scalar does not splat implicitly into a multi-lane vector**
 
   Problem: `var v: SIMD[DType.int32, 4] = Int32(9)` is rejected with a type
   mismatch; the pin splats it through the implicit
@@ -2205,7 +2189,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.82 An annotated `comptime` literal ignores its declared type**
+- [ ] **3.81 An annotated `comptime` literal ignores its declared type**
 
   Problem: `comptime ONE: Int32 = 1` binds `ONE` as an `Int`, so
   `ONE.dtype` prints `int` where the pin prints `int32`.
@@ -2218,7 +2202,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.83 A chained comparison copies its operands and accepts a middle
+- [ ] **3.82 A chained comparison copies its operands and accepts a middle
   operand the pin cannot copy**
 
   Problem: `b == c < d` over a `Copyable` struct prints `copy` three times
@@ -2236,7 +2220,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.84 An in-place operator cannot apply to a module `def`'s
+- [ ] **3.83 An in-place operator cannot apply to a module `def`'s
   reference result**
 
   Problem: `text(s) += "d"` for `def text(ref t: String) ->
@@ -2257,7 +2241,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.85 An overloaded method's symbol is spelled one way where it is
+- [ ] **3.84 An overloaded method's symbol is spelled one way where it is
   declared and another where it is called**
 
   Problem: for an overloaded method with a callable-typed parameter or a
@@ -2285,7 +2269,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.86 A generic `def` reads a module constant where a local shadows
+- [ ] **3.85 A generic `def` reads a module constant where a local shadows
   it**
 
   Problem: `var TWO = 100; return TWO` in `def run[T: Copyable](s: T)`,
@@ -2299,7 +2283,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.87 A trait requirement's default reading more than module
+- [ ] **3.86 A trait requirement's default reading more than module
   constants is rejected**
 
   Problem: `def scale[n: Int](self, value: Int, factor: Int = n)` in a
@@ -2314,7 +2298,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.88 A default naming a binder in scope fails at run time**
+- [ ] **3.87 A default naming a binder in scope fails at run time**
 
   Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
   `struct V[n: Int]`, checks but stops on the VM with "non-constant default
@@ -2333,7 +2317,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.89 A list literal default for a `List` parameter is an `Array`**
+- [ ] **3.88 A list literal default for a `List` parameter is an `Array`**
 
   Problem: `def grow(var xs: List[Int] = [1, 2])` is rejected with "type
   mismatch for default value of 'xs': expected List[Int], found Array[Int,
@@ -2345,7 +2329,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.90 A static method cannot read its struct's value parameter**
+- [ ] **3.89 A static method cannot read its struct's value parameter**
 
   Problem: `return Self.k` in a `@staticmethod` of `struct W[k: Int]` fails
   at run time with "field access on non-struct None", where the pin prints
@@ -2362,7 +2346,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.91 A generic nested `def` with a by-value capture does not
+- [ ] **3.90 A generic nested `def` with a by-value capture does not
   compile natively**
 
   Problem: `def inner[k: Int]() {var x} -> Int` runs on the VM and prints
@@ -2381,7 +2365,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.92 An initializer call is not judged by argument aliasing**
+- [ ] **3.91 An initializer call is not judged by argument aliasing**
 
   Problem: `Tuple(Span(xs), Span(xs))` over a `var xs` runs and prints
   `3`; the pin rejects it with "aliasing values passed mutably to 'args'
@@ -2399,7 +2383,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.93 A method's `*Ts` pack does not take a `Span` argument**
+- [ ] **3.92 A method's `*Ts` pack does not take a `Span` argument**
 
   Problem: `S().show(Span(xs), 1)` over `def show[*Ts: Copyable](self,
   *args: *Ts)` is rejected with "'Span[_]' is not concrete; use '[]' to bind
@@ -2416,7 +2400,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.94 A tuple literal holding a pointer to a local is rejected**
+- [ ] **3.93 A tuple literal holding a pointer to a local is rejected**
 
   Problem: `var p = (Pointer(to=x), 2)` is rejected with "not a
   compile-time value: type pack contains a type which cannot be
@@ -2429,7 +2413,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.95 A type mismatch between two loan-carrying types prints them
+- [ ] **3.94 A type mismatch between two loan-carrying types prints them
   alike**
 
   Problem: `two(Span(xs), Span(ys))` over `def two[T: Copyable](a: T, b:
@@ -2444,7 +2428,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.96 A plain overload beside a variadic one over the same element
+- [ ] **3.95 A plain overload beside a variadic one over the same element
   type stops at run time**
 
   Problem: `def total(by: Int)` beside `def total(*rest: Int)` checks, and
@@ -2462,7 +2446,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.97 A variadic struct's pack bound is not enforced at an explicit
+- [ ] **3.96 A variadic struct's pack bound is not enforced at an explicit
   application**
 
   Problem: `Row[Plain, Int]()` over `struct Row[*Ts: Movable & Defaultable]`
@@ -2478,7 +2462,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.98 User code may spell the compiler-private `__RuntimeTuple`**
+- [ ] **3.97 User code may spell the compiler-private `__RuntimeTuple`**
 
   Problem: `var storage: __RuntimeTuple[*Self.Ts]` in a user struct, and
   `__RuntimeTuple(*args^)` in its initializer, compile and run.
@@ -2492,7 +2476,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.99 The bundled `List` is not `Defaultable`**
+- [ ] **3.98 The bundled `List` is not `Defaultable`**
 
   Problem: `Tuple[List[Int], Int]()` is rejected ("constraint declared here
   evaluated to False"), where the pin prints the empty list's length.
@@ -2502,7 +2486,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.100 A `Writable` conformance whose only `write_to` witness is
+- [ ] **3.99 A `Writable` conformance whose only `write_to` witness is
   conditional compiles**
 
   Problem: `struct Box[T](Writable)` whose `write_to(self, mut writer:
@@ -2525,7 +2509,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.101 A nested `def` cannot read an enclosing function's
+- [ ] **3.100 A nested `def` cannot read an enclosing function's
   `comptime` binding**
 
   Problem: `comptime n = 3` in `main`, read by a nested `def inner() ->
@@ -2541,7 +2525,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.102 An evaluated default handed to a borrowing parameter is
+- [ ] **3.101 An evaluated default handed to a borrowing parameter is
   never destroyed**
 
   Problem: `use()`, beside `def use(r: R = R(String("dflt")))` over a
@@ -2558,7 +2542,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.103 A list literal is rejected as a `List` parameter's default**
+- [ ] **3.102 A list literal is rejected as a `List` parameter's default**
 
   Problem: `def lst(xs: List[Int] = [1, 2, 3])` is rejected ("type
   mismatch for default value of 'xs': expected List[Int], found
@@ -2570,7 +2554,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.104 An implicit conversion in a cloned generic method is selected
+- [ ] **3.103 An implicit conversion in a cloned generic method is selected
   again per instance**
 
   Problem: `var w: Wrapper[Self.T] = self.item` in a method holding a
@@ -2589,7 +2573,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.105 `==` through a bound reaches an `__eq__` over another type**
+- [ ] **3.104 `==` through a bound reaches an `__eq__` over another type**
 
   Problem: `self.first == self.second` over `T: Equatable` stops in
   elaboration at `Pair[Money]` ("argument 0 of 'Money.__eq__' has type Money,
@@ -2609,7 +2593,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.106 An implicit conversion through a consuming constructor copies a
+- [ ] **3.105 An implicit conversion through a consuming constructor copies a
   parameter-typed place**
 
   Problem: `self.keep(self.item)` with `keep(self, box: Wrapper[Self.T])` and
@@ -2626,7 +2610,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.107 A second `Dict` lookup stales a view of an earlier value**
+- [ ] **3.106 A second `Dict` lookup stales a view of an earlier value**
 
   Problem: `var v = d["a"].rstrip()` then `var u = d["b"].rstrip()` then a read
   of `v` is rejected with "use of invalidated interior reference 'v' to
@@ -2642,7 +2626,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.108 A `^` transfer of a `ref` binding fails in MIR verification, not
+- [ ] **3.107 A `^` transfer of a `ref` binding fails in MIR verification, not
   in the checker**
 
   Problem: `ref r = s` then `var t = r^` is rejected with "unsupported
@@ -2660,7 +2644,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.109 Converting a `List` to a `Span` copies its elements**
+- [ ] **3.108 Converting a `List` to a `Span` copies its elements**
 
   Problem: `var s: Span[Dup, origin_of(xs)] = xs` runs each element's copy
   constructor twice, where the pin builds the view and copies nothing. The
@@ -2674,7 +2658,7 @@ last.
   - Depends on 3.29.
   - Model: Opus, Not Planned.
 
-- [ ] **3.110 An element of a temporary container cannot be passed to a read
+- [ ] **3.109 An element of a temporary container cannot be passed to a read
   parameter**
 
   Problem: `g(make()[0])` over `def make() -> List[Dup]` is rejected with
@@ -2688,7 +2672,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.111 A generic constructor beside a declared one cannot be
+- [ ] **3.110 A generic constructor beside a declared one cannot be
   constructed on a struct with a value parameter**
 
   Problem: `P[Int, 3](7)` for `struct P[U: AnyType, n: Int]` declaring
@@ -2708,7 +2692,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **3.112 A `mut` capture may be transferred away and written back**
+- [ ] **3.111 A `mut` capture may be transferred away and written back**
 
   Problem: `def inner() {mut s} -> String:` whose body runs `var r = s^`,
   `s = String("b")`, `return r^` prints `ab` in Mojito, where the pin reports
@@ -2721,7 +2705,7 @@ last.
   - Depends on nothing.
   - Model: Sonnet, Not Planned.
 
-- [ ] **3.113 A `TrivialRegisterPassable` struct cannot be transferred out of
+- [ ] **3.112 A `TrivialRegisterPassable` struct cannot be transferred out of
   a `mut` parameter**
 
   Problem: `def take(mut v: V) -> V: return v^` for a
@@ -2738,7 +2722,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.114 A pointer handed to a struct's constructor does not keep its
+- [ ] **3.113 A pointer handed to a struct's constructor does not keep its
   pointee alive**
 
   Problem: `var c = Cell[Pointer[List[Int], ImmOrigin(origin_of(xs))]](p)`
@@ -2755,7 +2739,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.115 A heap-owning temporary that carries a loan is destroyed twice
+- [ ] **3.114 A heap-owning temporary that carries a loan is destroyed twice
   when an owning parameter takes it**
 
   Problem: `take(Maybe(Span(xs)))` with `def take[T](var m: Maybe[T])` prints
@@ -2770,7 +2754,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.116 A struct argument over an immutable origin counts as mutable
+- [ ] **3.115 A struct argument over an immutable origin counts as mutable
   in the exclusivity check**
 
   Problem: `b.push(s)` with `s: Span[Int, ImmOrigin(origin_of(xs))]` on a
@@ -2786,7 +2770,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.117 `len` of a list reached through a pointer field does not run**
+- [ ] **3.116 `len` of a list reached through a pointer field does not run**
 
   Problem: `print(len(c.item[]))` with `c.item` a
   `Pointer[List[Int], ImmOrigin(origin_of(xs))]` prints 3 at the pin and
@@ -2797,7 +2781,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.118 A clone over an origin binder loses the loan of a copy it
+- [ ] **3.117 A clone over an origin binder loses the loan of a copy it
   stores**
 
   Problem: `s.put(p, 3)` with `def put[U](mut self, value: Self.T, tag: U)`
@@ -2816,7 +2800,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.119 A method cannot call a generic `def` declared after its
+- [ ] **3.118 A method cannot call a generic `def` declared after its
   struct**
 
   Problem: `def size(self) -> Int: return tally(self.items)` with
@@ -2829,7 +2813,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.120 A `Tuple` over a type parameter needs no evidence the
+- [ ] **3.119 A `Tuple` over a type parameter needs no evidence the
   parameter is `Movable`**
 
   Problem: `def total[T: Writable](pair: Tuple[Int, T])` runs in Mojito and
@@ -2842,7 +2826,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.121 A conditional `__deinit__` is accepted where the struct's
+- [ ] **3.120 A conditional `__deinit__` is accepted where the struct's
   `Deinitable` conformance is unconditional**
 
   Problem: `def __deinit__(deinit self) where IsTriviallyDeinitable[Self.T]`
@@ -2859,7 +2843,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.122 A struct member's `where` clause over `TypeList[Self.Ts.values]()`
+- [ ] **3.121 A struct member's `where` clause over `TypeList[Self.Ts.values]()`
   is rejected**
 
   Problem: `def has_int(self) -> Bool where
@@ -2880,7 +2864,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.123 A compile-time evaluation cannot call a generic struct's method
+- [ ] **3.122 A compile-time evaluation cannot call a generic struct's method
   that holds a `comptime if`**
 
   Problem: `comptime CAP = np(5)`, where `np` calls `Cell[Int](n).m()` and
@@ -2896,7 +2880,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.124 A compile-time evaluation cannot call a value-keyed generic
+- [ ] **3.123 A compile-time evaluation cannot call a value-keyed generic
   `def`**
 
   Problem: `comptime R = rep[3]()`, where `rep[n: Int]` recurses under a
@@ -2913,7 +2897,7 @@ last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **3.125 A module constant that applies a function cannot shape a
+- [ ] **3.124 A module constant that applies a function cannot shape a
   signature**
 
   Problem: `comptime B = f(A)`, `comptime C = B * 2`, and `def g(x:
@@ -2933,6 +2917,20 @@ last.
   - Probe: `conformance/probes/ctfe_const_chain_in_signature.mojo`.
   - Depends on 1.1.
   - Model: Fable, Not Planned.
+
+- [ ] **3.125 A `Pointer[T, o]` parameter cannot infer both its element type
+  and its origin**
+
+  Problem: `def idp[T: AnyType, o: MutOrigin](v: Pointer[T, o])` called with
+  `p = Pointer(to=x)` stops with "type mismatch for argument to 'idp':
+  expected Pointer[Int, origin#1], found Pointer[Int, origin@…]"; the pin
+  runs it.
+  - The element binds, but the origin parameter stays an unsolved slot.
+  - The same signature with a concrete element (`Pointer[Int, o]`) runs.
+  - The parameter order does not matter.
+  - Found while fixing a call-result pointer's dereference (2026-10-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### 4. Grow The CPU Standard Library *(demand-first)*
 

@@ -34,6 +34,7 @@ assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/bundled_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/bundled_instance_loan_carrying_argument.mojo	main	exe-differential	sanitized
+assets/ok/call_result_pointer_deref_keeps_owner.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_deref_store.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_field_chain_write.mojo	main	exe-differential	sanitized
 assets/ok/call_result_pointer_field_local_write.mojo	main	exe-differential	sanitized
