@@ -3074,6 +3074,19 @@ This is why control-flow lowering happens before ownership analysis. A move
 inside an `if` or loop only has the right meaning once joins and back-edges are
 explicit.
 
+A compile-time region follows the same rules. A `comptime if` is decided as an
+`if` whose condition is opaque, and a `comptime for` as a loop whose trip
+count is unknown: an arm assumes nothing from its condition, the join
+intersects the arms, and a value consumed in a loop body without a refill is
+consumed on the back edge. Substitution keeps the taken arm with the drops the
+analysis placed and never recomputes a last use
+([`docs/notes/comptime-region-ownership.md`](notes/comptime-region-ownership.md)).
+The production elaborator still selects the arm and unrolls the loop before
+the check, so today's move analysis sees one arm; the `comptime if` and
+`comptime for` entries of the roadmap bring the region to MIR. The
+`--comptime-regions keep` experiment keeps a program's own regions as runtime
+regions through the check and folds their literal branches in the elaborator.
+
 ### Persistent local loans
 
 Local `ref name = place` bindings are checked references, not copied referent

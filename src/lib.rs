@@ -58,7 +58,7 @@ pub use checker::{Checker, check, check_program};
 pub use compiler::{
     CompiledProgram, Compiler, CompilerError, Execution, VmInstantiation, validate_module_scope,
 };
-pub use comptime::{ComptimeError, elaborate};
+pub use comptime::{ComptimeError, ComptimeRegions, elaborate};
 pub use ct::CtValue;
 pub use error::{LexError, OwnershipError, ParseError, TypeError};
 pub use lexer::Lexer;

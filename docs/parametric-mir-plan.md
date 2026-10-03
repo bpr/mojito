@@ -530,20 +530,18 @@ from `--timings`, the commit before and this one interleaved, median of five:
 
 Three prerequisites come first. None of them moves a body.
 
-- **Ownership on a compile-time region.** "Ownership analyses every arm" does
-  not say what the join rule is, where a last use falls, what an arm may
-  assume, or what is cleaned up on a return or a raise. For a loop it leaves
-  open loop-carried ownership, zero iterations, heterogeneous elements, and
-  compile-time `break` and `continue`. Upstream's
-  `Mojo/lib/LowerLIT/CheckLifetimes.cpp` unifies consume sets across the arms
-  of a compile-time conditional and computes a stable consume set for a
-  compile-time loop, so the question is how to express those facts in
-  Mojito's ownership model, not whether it can be done. A narrow vertical
-  experiment answers it: a move-only value, a reference-bearing value, a
-  conditional use followed by a use after the join, and destruction across
-  an early exit; then zero, one, and several iterations and a heterogeneous
-  pack. Each probe records the pin's verdict and destructor order, negative
-  cases included.
+- **Ownership on a compile-time region.** Decided
+  ([`docs/notes/comptime-region-ownership.md`](notes/comptime-region-ownership.md),
+  2026-10-02): a compile-time region is decided as the runtime region of the
+  same shape, with the condition opaque and the trip count unknown, which is
+  what upstream's `Mojo/lib/LowerLIT/CheckLifetimes.cpp` does on its
+  structured `ComptimeIfOp` and `ComptimeForOp`. Nineteen pin probes
+  (`conformance/probes/comptime_region_*.mojo`) observe it, and the
+  `--comptime-regions keep` experiment reproduces every verdict and every
+  destructor order on today's analysis, with the elaborator folding the
+  literal branch after drop elaboration. P3a and P3b therefore add no join
+  rule: a parameter-expression condition is opaque to the ownership
+  analysis, and the elaborator keeps the taken arm with its drops.
 - **Legality is not lifecycle glue.** Symbolic ownership decides legality and
   last use once. Substitution may resolve a destructor witness or expand
   aggregate cleanup, and it never recomputes a last use. A development-only

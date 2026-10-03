@@ -81,9 +81,9 @@ element at a symbolic index opaque. Observed 2026-09-20 against
 | `abort_ends_a_returning_body.mojo` | Does a trailing `abort(...)` end a value-returning body? | **differs**: the pin prints `1`, Mojito rejects ("does not return a value on every path") — `docs/roadmap.md` §3 |
 | `borrowed_default_argument_destructor.mojo` | Is an evaluated default handed to a borrowing parameter destroyed when the call returns? | **differs**: the pin prints `drop dflt`, Mojito's VM and native backend never run the destructor — `docs/roadmap.md` §3 |
 | `list_literal_default_argument.mojo` | Does `xs: List[Int] = [1, 2, 3]` declare? | **differs**: the pin prints `3`, Mojito rejects the default as an `Array[Int, 3]` — `docs/roadmap.md` §3 |
-| `implicit_conversion_bound_on_declaration.mojo` | Is an `@implicit` conversion in a generic method that still clones per instance selected once, on the declaration? | **differs**: the pin prints `2` twice, Mojito selects again in the `Box[Int]` clone and reports an ambiguity. A method the template serves agrees (`assets/ok/implicit_conversion_bound_on_declaration.mojo`) — `docs/roadmap.md` 3.102 |
-| `equatable_witness_of_another_type.mojo` | Which `__eq__` serves `==` through an `Equatable` bound when the struct's own takes another type? | **differs**: the pin takes `Equatable`'s fieldwise default and prints `True`, Mojito names the declared `__eq__` and stops in elaboration — `docs/roadmap.md` 3.103 |
-| `consuming_conversion_copies_parameter.mojo` | May an `@implicit` conversion through a consuming constructor copy a place of a `Copyable` parameter type? | **differs**: the pin rejects the declaration ("value of type 'T' cannot be implicitly copied"), Mojito prints `7` twice — `docs/roadmap.md` 3.104 |
+| `implicit_conversion_bound_on_declaration.mojo` | Is an `@implicit` conversion in a generic method that still clones per instance selected once, on the declaration? | **differs**: the pin prints `2` twice, Mojito selects again in the `Box[Int]` clone and reports an ambiguity. A method the template serves agrees (`assets/ok/implicit_conversion_bound_on_declaration.mojo`) — `docs/roadmap.md` 3.104 |
+| `equatable_witness_of_another_type.mojo` | Which `__eq__` serves `==` through an `Equatable` bound when the struct's own takes another type? | **differs**: the pin takes `Equatable`'s fieldwise default and prints `True`, Mojito names the declared `__eq__` and stops in elaboration — `docs/roadmap.md` 3.105 |
+| `consuming_conversion_copies_parameter.mojo` | May an `@implicit` conversion through a consuming constructor copy a place of a `Copyable` parameter type? | **differs**: the pin rejects the declaration ("value of type 'T' cannot be implicitly copied"), Mojito prints `7` twice — `docs/roadmap.md` 3.106 |
 
 ## Reflection-reading template bodies (re-run at every re-pin)
 
@@ -99,25 +99,25 @@ template; a field type under a symbolic index is opaque until a
 | `reflection_proof_is_positional.mojo` | Does a proof on another index, after the use, or in another loop license a use? | reject, three times |
 | `template_fallback_reflection.mojo` | Does a validated reflection body still check per instance? | runs, prints `2` `0` |
 | `comptime_for_body_scope.mojo` | Is each unrolled iteration of a `comptime for` body its own scope? | **differs**: the pin prints `0` `1`, Mojito rejects ("'v' is already declared in this scope") — `docs/roadmap.md` §3 |
-| `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` 3.46 |
-| `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in the signature of a generic struct's method that still clones per instance? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" for the clone — `docs/roadmap.md` 3.47 |
-| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` 3.14 |
-| `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` 3.22 |
-| `indexed_copyable_element_transfer.mojo` | May an implicitly copyable, non-trivial indexed element be transferred (`x[0]^`)? | **differs**: the pin rejects ("expression does not designate a value with an origin"), Mojito prints `1` — `docs/roadmap.md` 3.10 |
-| `reference_binding_transfer.mojo` | Which phase rejects a `^` transfer of a `ref` binding? | **differs**: the pin rejects ("expression does not designate a value with an origin"), Mojito rejects at MIR verification with an internal message — `docs/roadmap.md` 3.106 |
-| `variadic_var_collector_element_augmented_operand.mojo` | Can an element of an owned `String` collector be the right operand of `+=`? | **differs**: the pin prints `xy`, Mojito stops ("register r12 has no checked type") — `docs/roadmap.md` 3.3 |
+| `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` 3.48 |
+| `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in the signature of a generic struct's method that still clones per instance? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" for the clone — `docs/roadmap.md` 3.49 |
+| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` 3.16 |
+| `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` 3.24 |
+| `indexed_copyable_element_transfer.mojo` | May an implicitly copyable, non-trivial indexed element be transferred (`x[0]^`)? | **differs**: the pin rejects ("expression does not designate a value with an origin"), Mojito prints `1` — `docs/roadmap.md` 3.12 |
+| `reference_binding_transfer.mojo` | Which phase rejects a `^` transfer of a `ref` binding? | **differs**: the pin rejects ("expression does not designate a value with an origin"), Mojito rejects at MIR verification with an internal message — `docs/roadmap.md` 3.108 |
+| `variadic_var_collector_element_augmented_operand.mojo` | Can an element of an owned `String` collector be the right operand of `+=`? | **differs**: the pin prints `xy`, Mojito stops ("register r12 has no checked type") — `docs/roadmap.md` 3.5 |
 | `collector_runtime_index_native.mojo` | Does a collector indexed by a runtime value compile natively? | VM prints `6`; `--backend pliron` rejects ("unsupported runtime index into pack storage") — `docs/roadmap.md` 2.3 |
-| `comprehension_binder_method_call.mojo` | Does a method called on a borrowed comprehension binder run? | **differs**: the pin prints `2`, Mojito stops at run time ("call passed 0 args to 1-parameter function 'P.get'") — `docs/roadmap.md` 3.35 |
-| `generic_method_transfer_in_try.mojo` | Does a generic method move its `var` parameter into a field's `append` inside `try`/`finally`, as under a `with`? | **differs**: the pin prints `finally` `2`, Mojito rejects the template ("use of uninitialized value 'value'") — `docs/roadmap.md` 3.19 |
-| `value_struct_generic_constructor_overload.mojo` | Does a generic constructor declared beside another one run on a struct with a value parameter? | **differs**: the pin prints `5` `5` `1`, Mojito stops at run time ("vm backend does not support the built-in or callee 'P.__init__$ov$T$Writable' yet") — `docs/roadmap.md` 3.109 |
-| `mut_capture_transfer_refilled.mojo` | May a `mut` capture be transferred away when the body writes it back? | **differs**: the pin rejects ("cannot consume indirect references to values"), Mojito prints `ab` — `docs/roadmap.md` 3.110 |
-| `trivial_struct_mut_parameter_transfer.mojo` | Does `^` copy a `TrivialRegisterPassable` struct out of a `mut` parameter? | **differs**: the pin prints `3 3`, Mojito rejects ("'v' is uninitialized at return from this function") — `docs/roadmap.md` 3.111 |
-| `pointer_copied_into_struct_keeps_loan.mojo` | Does a pointer handed to a struct's constructor keep its pointee alive? | **differs**: the pin prints `2` `2` `2` `3`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.112 |
-| `loan_carrying_temporary_owned_argument.mojo` | Is a heap-owning temporary that carries a loan destroyed once when an owning parameter takes it? | **differs**: the pin prints `1` `1`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.113 |
-| `immutable_origin_struct_argument_exclusivity.mojo` | May a `Span` over an immutable origin be handed to a method of a receiver naming the same origin? | **differs**: the pin prints `1 2`, Mojito rejects ("aliasing values passed mutably") — `docs/roadmap.md` 3.114 |
-| `len_of_dereferenced_pointer_field.mojo` | Does `len` run on a list reached through a pointer field? | **differs**: the pin prints `3`, Mojito stops at run time ("methods on ref") — `docs/roadmap.md` 3.115 |
-| `per_call_clone_copied_loan.mojo` | Does a method with a parameter of its own keep the loan of a value it stores a copy of? | **differs**: the pin prints `3 1 8`, Mojito stops at run time ("checked nominal subscript receiver is None") — `docs/roadmap.md` 3.116 |
-| `method_calls_later_generic_def.mojo` | May a method call a generic `def` declared after its struct? | **differs**: the pin prints `1`, Mojito stops with "Undefined variable 'tally'" — `docs/roadmap.md` 3.117. |
+| `comprehension_binder_method_call.mojo` | Does a method called on a borrowed comprehension binder run? | **differs**: the pin prints `2`, Mojito stops at run time ("call passed 0 args to 1-parameter function 'P.get'") — `docs/roadmap.md` 3.37 |
+| `generic_method_transfer_in_try.mojo` | Does a generic method move its `var` parameter into a field's `append` inside `try`/`finally`, as under a `with`? | **differs**: the pin prints `finally` `2`, Mojito rejects the template ("use of uninitialized value 'value'") — `docs/roadmap.md` 3.21 |
+| `value_struct_generic_constructor_overload.mojo` | Does a generic constructor declared beside another one run on a struct with a value parameter? | **differs**: the pin prints `5` `5` `1`, Mojito stops at run time ("vm backend does not support the built-in or callee 'P.__init__$ov$T$Writable' yet") — `docs/roadmap.md` 3.111 |
+| `mut_capture_transfer_refilled.mojo` | May a `mut` capture be transferred away when the body writes it back? | **differs**: the pin rejects ("cannot consume indirect references to values"), Mojito prints `ab` — `docs/roadmap.md` 3.112 |
+| `trivial_struct_mut_parameter_transfer.mojo` | Does `^` copy a `TrivialRegisterPassable` struct out of a `mut` parameter? | **differs**: the pin prints `3 3`, Mojito rejects ("'v' is uninitialized at return from this function") — `docs/roadmap.md` 3.113 |
+| `pointer_copied_into_struct_keeps_loan.mojo` | Does a pointer handed to a struct's constructor keep its pointee alive? | **differs**: the pin prints `2` `2` `2` `3`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.114 |
+| `loan_carrying_temporary_owned_argument.mojo` | Is a heap-owning temporary that carries a loan destroyed once when an owning parameter takes it? | **differs**: the pin prints `1` `1`, Mojito stops at run time ("use after Pointer deallocation") — `docs/roadmap.md` 3.115 |
+| `immutable_origin_struct_argument_exclusivity.mojo` | May a `Span` over an immutable origin be handed to a method of a receiver naming the same origin? | **differs**: the pin prints `1 2`, Mojito rejects ("aliasing values passed mutably") — `docs/roadmap.md` 3.116 |
+| `len_of_dereferenced_pointer_field.mojo` | Does `len` run on a list reached through a pointer field? | **differs**: the pin prints `3`, Mojito stops at run time ("methods on ref") — `docs/roadmap.md` 3.117 |
+| `per_call_clone_copied_loan.mojo` | Does a method with a parameter of its own keep the loan of a value it stores a copy of? | **differs**: the pin prints `3 1 8`, Mojito stops at run time ("checked nominal subscript receiver is None") — `docs/roadmap.md` 3.118 |
+| `method_calls_later_generic_def.mojo` | May a method call a generic `def` declared after its struct? | **differs**: the pin prints `1`, Mojito stops with "Undefined variable 'tally'" — `docs/roadmap.md` 3.119. |
 
 ## Re-probes of enforced claims
 
@@ -136,3 +136,22 @@ Bridges to re-check by hand each re-pin (no standalone probe): `UnsafePointer`
 remains a deprecated alias of `Pointer` upstream (Mojito keeps accepting it as
 a bridge), and the `subtree-origin-cast` mojito-only case documents Mojito's
 `._subtree` cast acceptance against upstream's pass-manager failure.
+
+## Compile-time region ownership (2026-10-02)
+
+`comptime_region_*.mojo` are the probes behind
+[`docs/notes/comptime-region-ownership.md`](../../docs/notes/comptime-region-ownership.md),
+which tabulates the pin's verdict and destructor order for each, beside the
+runtime-shaped twin (`comptime if` spelled `if`, `comptime for` spelled `for`)
+and the `--comptime-regions keep` experiment. The rule: a compile-time region
+is decided as the runtime region of the same shape, its condition opaque and
+its trip count unknown. Re-run after every re-pin; the five probes Mojito
+runs where the pin rejects (`c2`, `c4`, `c5`, `l1`, `l3`) are also
+`assets/extensions/ownership_ok/` fixtures on the roadmap ledger.
+
+| Probe | Question | Answer |
+| --- | --- | --- |
+| `comptime_region_c1..c10_*.mojo` | How do the arms of a `comptime if` join: last use, early return, raise, a reference-bearing value, an invalid untaken arm, an invalid unused declaration? | As an `if`'s arms: the pin rejects a move in either arm followed by a use after the join (`c1`, `c2`), an untaken arm's use of a moved value (`c4`), an unused declaration that moves (`c5`), and a use after a join one arm returns from while the other consumes (`c6`); a value one arm consumes is destroyed at the other arm's entry (`c3`, `c7`); a reference keeps its referent to its last read (`c8`). |
+| `comptime_region_l1..l7_*.mojo` | How is a `comptime for` body decided: zero, one, several iterations, loop-carried ownership, compile-time `break` and `continue`? | As a loop body with the trip count unknown: a move without a refill is rejected at zero and at one iteration (`l1`, `l2`, `l3`); a refilled move is fine (`l5`); a per-iteration value dies in its iteration, at a `continue`, or at the entry of a breaking arm (`l4`, `l6`). Mojito rejects compile-time `break`/`continue` in the symbolic validation (`l6`, `l7`). |
+| `comptime_region_l8_*.mojo`, `comptime_region_l9_*.mojo` | How is a heterogeneous owned pack destroyed? | At the body's entry when unused, in reverse element order, each element by its own destructor; an empty pack destroys nothing. Mojito matches. |
+| `raise_path_live_value_leaks.mojo` | Is a value live after a conditional region destroyed when the region raises out of the function? | **differs**: the pin prints `del b3`..`del b7`; Mojito destroys only `b4`, which is dead at the raise. Roadmap 3.1. |

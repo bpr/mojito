@@ -4,7 +4,7 @@ use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
+    ComptimeError, ComptimeRegions, DefSpecializationRequest, Elaborated, ElaborationInputs,
     MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
     TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
     UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
@@ -45,6 +45,9 @@ pub struct CompiledProgram {
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     template_stats: crate::templates::TemplateStats,
     clones: crate::census::CloneCensus,
+    /// Whether the compile-time regions were kept through the check, so the
+    /// elaborator folds their literal branches.
+    comptime_regions: ComptimeRegions,
 }
 impl CompiledProgram {
     /// Which mechanism instantiated each generic body of this compilation.
@@ -129,7 +132,13 @@ impl CompiledProgram {
                 let mir = self.drop_elaborated_mir();
                 let _elaborate = timing::span("elaborate");
                 let concrete =
-                    crate::native::mono::specialize(mir, &crate::native::mono::entry_roots(mir));
+                    crate::native::mono::specialize(mir, &crate::native::mono::entry_roots(mir))
+                        .and_then(|concrete| match self.comptime_regions {
+                            ComptimeRegions::Select => Ok(concrete),
+                            ComptimeRegions::Keep => {
+                                crate::native::mono::fold_literal_branches(concrete)
+                            }
+                        });
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",
@@ -239,6 +248,11 @@ pub struct Compiler {
     /// Which MIR phase the VM runs. `None` defers to
     /// [`VmInstantiation::from_env`].
     vm_instantiation: Option<VmInstantiation>,
+    /// How a `comptime if`/`comptime for` reaches the check:
+    /// [`ComptimeRegions::Keep`] is the compile-time-region ownership
+    /// experiment, which also folds the kept literal branches in the
+    /// elaborator.
+    comptime_regions: ComptimeRegions,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -290,7 +304,16 @@ impl Compiler {
             verify_template_facts: None,
             body_fact_reuse: None,
             vm_instantiation: None,
+            comptime_regions: ComptimeRegions::Select,
         }
+    }
+    /// Keep every arm of a `comptime if` and the body of a `comptime for`
+    /// through the check and the ownership analysis (the compile-time-region
+    /// experiment, `docs/notes/comptime-region-ownership.md`).
+    #[must_use]
+    pub const fn with_comptime_regions(mut self, regions: ComptimeRegions) -> Self {
+        self.comptime_regions = regions;
+        self
     }
     /// Choose the MIR phase the VM runs, whatever the environment says.
     #[must_use]
@@ -430,14 +453,8 @@ impl Compiler {
                 clones: minted_clones,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_prepared(
-                    &prepared,
-                    ElaborationInputs {
-                        templates: Some(&templates_catalog),
-                        ..ElaborationInputs::default()
-                    },
-                )
-                .map_err(CompilerError::Comptime)?
+                elaborate_prepared(&prepared, self.elaboration_inputs(&templates_catalog))
+                    .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
             clones = minted_clones;
@@ -606,7 +623,7 @@ impl Compiler {
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
                         hash_leaf_types: &hash_leaf_requests,
-                        templates: Some(&templates_catalog),
+                        ..self.elaboration_inputs(&templates_catalog)
                     },
                 )
                 .map_err(CompilerError::Comptime)?
@@ -694,6 +711,7 @@ impl Compiler {
             concrete: OnceLock::new(),
             template_stats: templates_catalog.stats().clone(),
             clones,
+            comptime_regions: self.comptime_regions,
         })
     }
     /// Execute an ownership-verified program using the configured backend.
@@ -742,6 +760,21 @@ impl Compiler {
     pub fn run_path(&self, entry: &Path) -> Result<Execution, CompilerError> {
         let program = self.compile_path(entry)?;
         self.execute(&program)
+    }
+}
+
+impl Compiler {
+    /// This compilation's elaboration inputs apart from the discovery
+    /// requests: the template catalog and the compile-time-region mode.
+    fn elaboration_inputs<'a>(
+        &self,
+        templates: &'a crate::templates::TemplateCatalog,
+    ) -> ElaborationInputs<'a> {
+        ElaborationInputs {
+            comptime_regions: self.comptime_regions,
+            templates: Some(templates),
+            ..ElaborationInputs::default()
+        }
     }
 }
 

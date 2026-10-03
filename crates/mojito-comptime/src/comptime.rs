@@ -693,6 +693,8 @@ pub struct Elaborated {
 /// first elaboration outside the driver.
 #[derive(Clone, Copy, Default)]
 pub struct ElaborationInputs<'a> {
+    /// How a `comptime if` and a `comptime for` reach the check.
+    pub comptime_regions: ComptimeRegions,
     pub tuple_requests: &'a [TupleSpecializationRequest],
     pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
@@ -705,6 +707,28 @@ pub struct ElaborationInputs<'a> {
     /// Hashed vector types beyond the eager width-1 set.
     pub hash_leaf_types: &'a [Ty],
     pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
+}
+
+/// How elaboration hands a `comptime if` and a `comptime for` to the check.
+///
+/// `Select` is the production path: the taken arm is spliced in and the
+/// loop is unrolled, so the check and the ownership analysis see one arm.
+/// `Keep` is the compile-time-region ownership experiment
+/// (`docs/notes/comptime-region-ownership.md`): in a function body of the
+/// module that declares `main`, every arm is kept as a runtime `if` whose
+/// conditions are the evaluated literals, and a `comptime for` over a
+/// `range(...)` is kept as a runtime `for` over the evaluated bounds, so the
+/// ownership analysis decides the region as it decides the runtime region
+/// of the same shape, and the elaborator folds the literal branch after
+/// drop elaboration. Every kept arm must check under the instantiation,
+/// which only an arm independent of the condition's type facts does; a
+/// region that does not even elaborate kept is selected as in production,
+/// and the bundled library's bodies always are.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ComptimeRegions {
+    #[default]
+    Select,
+    Keep,
 }
 
 /// The declarations an elaboration generated.
@@ -1062,6 +1086,7 @@ pub fn elaborate_prepared(
     inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
     let ElaborationInputs {
+        comptime_regions,
         tuple_requests,
         tstring_requests,
         def_requests,
@@ -1178,6 +1203,18 @@ pub fn elaborate_prepared(
         tuple_transforms,
         materialized_callables,
         fuel: Cell::new(FUEL),
+        keep_regions_in: match comptime_regions {
+            ComptimeRegions::Select => KeptRegions::None,
+            ComptimeRegions::Keep => program
+                .iter()
+                .find_map(|statement| match &statement.kind {
+                    StmtKind::Def { name, .. } if name == "main" => {
+                        Some(KeptRegions::Module(statement.module.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(KeptRegions::None),
+        },
         def_traces: RefCell::new(Vec::new()),
         method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
@@ -2200,6 +2237,15 @@ fn is_specializable_declaration_in(
 /// execution can't hang the compiler (cf. Zig's quota).
 const FUEL: usize = 100_000;
 
+/// Where the compile-time-region experiment keeps `comptime if` arms and
+/// `comptime for` bodies through the check ([`ComptimeRegions::Keep`]).
+enum KeptRegions {
+    /// Nowhere: every region is selected and unrolled.
+    None,
+    /// In the bodies of the module declaring `main`, by its provenance.
+    Module(Option<String>),
+}
+
 /// The compile-time elaboration engine: the CTFE-callable functions and a shared
 /// fuel budget. `top_consts` captures module-level constants for materialization;
 /// `specializable` holds the comptime-dependent generic `def` templates
@@ -2304,6 +2350,9 @@ struct Elab<'a> {
     /// name, as first decided ([`Elab::template_serves_def`]).
     template_served_defs: RefCell<HashMap<String, bool>>,
     fuel: Cell<usize>,
+    /// Where the compile-time-region experiment keeps regions
+    /// ([`ComptimeRegions::Keep`]).
+    keep_regions_in: KeptRegions,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.
@@ -3502,9 +3551,8 @@ fn elaborate_with_requests(
             def_requests,
             method_requests,
             struct_requests,
-            keyed_methods: &[],
             hash_leaf_types,
-            templates: None,
+            ..ElaborationInputs::default()
         },
     )
 }

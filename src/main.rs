@@ -165,6 +165,10 @@ struct CliArgs {
     /// drop-elaborated MIR and resolve parameters at run time, instead of
     /// the concrete graph. `None` leaves the choice to `MOJITO_VM_ERASED`.
     vm_instantiation: Option<mojito::VmInstantiation>,
+    /// `--comptime-regions keep`: the compile-time-region ownership
+    /// experiment, which keeps every `comptime if` arm and `comptime for`
+    /// body through the check (`docs/notes/comptime-region-ownership.md`).
+    comptime_regions: mojito::ComptimeRegions,
     /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
     /// by the backend; raw here so the default build carries no backend
     /// types).
@@ -188,6 +192,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut timings = false;
     let mut instantiation_census = false;
     let mut vm_instantiation = None;
+    let mut comptime_regions = mojito::ComptimeRegions::Select;
     let mut native_debug = None;
     let mut runtime_lib = None;
     let mut iter = raw.into_iter();
@@ -236,6 +241,11 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             instantiation_census = true;
         } else if arg == "--erased" {
             vm_instantiation = Some(mojito::VmInstantiation::Erased);
+        } else if let Some(mode) = arg.strip_prefix("--comptime-regions=") {
+            comptime_regions = parse_comptime_regions(mode)?;
+        } else if arg == "--comptime-regions" {
+            let mode = iter.next().ok_or("--comptime-regions requires a mode")?;
+            comptime_regions = parse_comptime_regions(&mode)?;
         } else if let Some(level) = arg.strip_prefix("--native-debug=") {
             native_debug = Some(level.to_string());
         } else if arg == "--native-debug" {
@@ -265,9 +275,22 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         timings,
         instantiation_census,
         vm_instantiation,
+        comptime_regions,
         native_debug,
         runtime_lib,
     })
+}
+
+/// `--comptime-regions MODE`: `select` is the production path, `keep` the
+/// compile-time-region ownership experiment.
+fn parse_comptime_regions(mode: &str) -> Result<mojito::ComptimeRegions, String> {
+    match mode {
+        "select" => Ok(mojito::ComptimeRegions::Select),
+        "keep" => Ok(mojito::ComptimeRegions::Keep),
+        other => Err(format!(
+            "--comptime-regions expects `select` or `keep`, got `{other}`"
+        )),
+    }
 }
 
 fn require_path(option: &str, path: &str, roots: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -411,7 +434,8 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
 }
 
 fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
-    let compiler = Compiler::new(cli.link_options.clone(), backend);
+    let compiler = Compiler::new(cli.link_options.clone(), backend)
+        .with_comptime_regions(cli.comptime_regions);
     let compiler = match cli.vm_instantiation {
         Some(instantiation) => compiler.with_vm_instantiation(instantiation),
         None => compiler,

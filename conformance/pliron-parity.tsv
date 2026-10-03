@@ -794,6 +794,8 @@ assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/comptime_for_loop_carried_refill.mojo	main	exe-differential	sanitized
+assets/ownership_ok/comptime_if_conditional_use_then_after.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
 assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	exe-differential	sanitized
@@ -858,6 +860,11 @@ assets/extensions/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sa
 assets/extensions/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/template_served_iterable_def.mojo	main	exe-differential	sanitized
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/comptime_for_body_move_without_refill.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/comptime_for_zero_iterations_move.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/comptime_if_untaken_arm_move.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/comptime_if_untaken_arm_uses_moved.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/comptime_if_untaken_unused_declaration_moves.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized

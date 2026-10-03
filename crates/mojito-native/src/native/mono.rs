@@ -20,9 +20,10 @@ use unify::*;
 use availability::Availability;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
+use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, Reg,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
 };
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
@@ -75,6 +76,48 @@ pub fn specialize(
     entries: &[String],
 ) -> Result<SpecializedProgram, MonoError> {
     Specializer::new(program).run(entries)
+}
+
+/// Fold every branch of a concrete program whose condition is a literal
+/// the same block defines, keeping the taken successor.
+///
+/// This is the elaborator's half of the compile-time-region experiment
+/// (`docs/notes/comptime-region-ownership.md`): the regions reached this
+/// graph as runtime branches on literal conditions, the ownership analysis
+/// and drop elaboration decided them as such, and the fold keeps the taken
+/// arm with the destroys drop elaboration placed in it. It recomputes no
+/// last use. The untaken arm's blocks stay in the function, unreachable.
+pub fn fold_literal_branches(
+    specialized: SpecializedProgram,
+) -> Result<SpecializedProgram, MonoError> {
+    let SpecializedProgram {
+        program,
+        entries,
+        parametric,
+    } = specialized;
+    let mut program = program.into_program();
+    for (_, function) in &mut program.functions {
+        for block in &mut function.blocks {
+            if let MirTerm::Branch {
+                cond,
+                then_b,
+                else_b,
+            } = block.term
+                && let Some(taken) = literal_branch_target(&block.instrs, cond, then_b, else_b)
+            {
+                block.term = MirTerm::Jump(taken);
+            }
+        }
+    }
+    let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
+        function: None,
+        construct: format!("folded literal branches: {}", findings.join("; ")),
+    })?;
+    Ok(SpecializedProgram {
+        program,
+        entries,
+        parametric,
+    })
 }
 
 /// The entry roots of a whole program.
@@ -195,6 +238,32 @@ mod specializer;
 mod substitute;
 mod symbolic;
 mod unify;
+
+/// The successor a branch on `cond` takes when the last instruction of its
+/// block defining `cond` is a `Bool` literal.
+fn literal_branch_target(
+    instrs: &[MirInstr],
+    cond: Reg,
+    then_b: usize,
+    else_b: usize,
+) -> Option<usize> {
+    let mut results = Vec::new();
+    instrs
+        .iter()
+        .rev()
+        .find(|instr| {
+            results.clear();
+            instruction_result_regs(instr, &mut results);
+            results.contains(&cond)
+        })
+        .and_then(|instr| match instr {
+            MirInstr::Const {
+                k: Const::Bool(value),
+                ..
+            } => Some(if *value { then_b } else { else_b }),
+            _ => None,
+        })
+}
 
 #[cfg(test)]
 mod tests;

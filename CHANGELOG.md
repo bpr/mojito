@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `docs/notes/comptime-region-ownership.md` records the ownership rule for
+  a compile-time region: a `comptime if` and a `comptime for` are decided as
+  the runtime region of the same shape, with the condition opaque and the
+  trip count unknown, which upstream's lifetime check does on its structured
+  compile-time ops and which nineteen pin probes
+  (`conformance/probes/comptime_region_*.mojo`) observe. `mojito run
+  --comptime-regions keep` takes a program's own regions through that path
+  as an experiment: every arm and body is kept through the check and the
+  ownership analysis, and the elaborator folds the literal branches after
+  drop elaboration (`native::mono::fold_literal_branches`). Every probe's
+  verdict and output then matches the pin's. The production path still
+  selects the arm before the move analysis, so five probes Mojito runs where
+  the pin rejects are now `assets/extensions/ownership_ok/` fixtures on the
+  roadmap ledger, and the probes found that a value live after a region is
+  never destroyed when the region raises out of the function, also filed.
 - `benchmarks/compile/keyed.mojo` calls `def`s keyed by a `comptime if`, a
   `comptime for`, and a type pack, user and bundled, at several
   instantiations, plus a generic struct method holding a `comptime if`: the

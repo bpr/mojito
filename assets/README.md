@@ -39,7 +39,8 @@ future, experiments such as pattern matching or enums — is listed in
 its program uses an acceptance the pin refuses outright — origin-parameter
 erasure, a cross-origin field store, a parametric-mut pointer write, a partial
 field move, a capturing-lambda local, a `mut self` `__call__`, an owned-interior
-generation, a Mojito-only stdlib module — and it carries a header comment
+generation, a Mojito-only stdlib module, a move in an untaken `comptime if`
+arm or an unrolled `comptime for` body — and it carries a header comment
 naming the divergence, which `docs/roadmap.md`'s divergence ledger tracks. When
 a `ref`-field fixture's `Pointer` twin is itself one of these, it joins it here
 under the `pointer_field_` name rather than staying in the ordinary folder.
