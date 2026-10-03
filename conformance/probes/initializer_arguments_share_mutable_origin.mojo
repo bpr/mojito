@@ -5,7 +5,7 @@
 # argument and passed mutably to 'args' argument in 'Tuple[Span[Int,
 # origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call". Mojito runs
 # no argument aliasing rule on a constructor call, so it prints 3. Filed in
-# `docs/roadmap.md` §3 (3.89). When Mojito rejects it, move this file to
+# `docs/roadmap.md` §3 (3.88). When Mojito rejects it, move this file to
 # `assets/type_error/` with its ledger row.
 #
 # Observed 2026-09-29 against the pinned Mojo.

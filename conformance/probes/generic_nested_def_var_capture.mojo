@@ -3,7 +3,7 @@
 # the VM both print 10. Natively it is refused: "generic retained callable
 # `outer$inner` captures by value" — the per-call specialization passes a
 # by-reference environment as leading arguments, but a copied capture lives
-# only in the closure value the direct call no longer reads (roadmap 3.88).
+# only in the closure value the direct call no longer reads (roadmap 3.87).
 # Promote to `assets/ok` once the native run prints 10.
 def outer() -> Int:
     var x = 5

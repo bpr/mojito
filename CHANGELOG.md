@@ -172,6 +172,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A chained comparison treats its operands as the pin does: its two ends
+  are read where they lie when their link's dunder reads them, and a middle
+  operand, which both links read, is copied once and must be
+  `ImplicitlyCopyable`. `b == c < d` over an `ImplicitlyCopyable` struct
+  prints one `copy` instead of three, and over a merely `Copyable` struct it
+  is rejected ("cannot be implicitly copied"), even when the middle operand
+  is a temporary. `assets/ok/chained_comparison_operand_copy.mojo` and
+  `assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo`
+  pin it.
 - An annotated `comptime` binds at its declared type, as at the pin:
   `comptime ONE: Int32 = 1` prints `int32` for `ONE.dtype`,
   `comptime ONES: SIMD[DType.int32, 4] = 1` prints `[1, 1, 1, 1]`, and

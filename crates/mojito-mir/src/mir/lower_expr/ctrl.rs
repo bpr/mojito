@@ -147,7 +147,9 @@ impl Flatten<'_> {
     /// Lower a chained comparison `a op1 b op2 c …` to a `Bool`. Each operand is
     /// evaluated **once**, left to right; a false link short-circuits the rest (the
     /// remaining operands are not evaluated). The result variable holds the last
-    /// comparison evaluated (which is `false` on the link that failed).
+    /// comparison evaluated (which is `false` on the link that failed). The two
+    /// ends are operator operands, read in place where the checker lent them; a
+    /// middle operand feeds two links and is an ordinary (copied) value.
     pub(in crate::mir) fn compare_chain(
         &mut self,
         first: &Expr,
@@ -156,9 +158,13 @@ impl Flatten<'_> {
     ) -> Reg {
         let result = self.fresh_var();
         let merge_blk = self.new_block();
-        let mut prev = self.expr(first);
+        let mut prev = self.lower_operator_operand(first);
         for (i, (op, operand)) in rest.iter().enumerate() {
-            let cur = self.expr(operand);
+            let cur = if i + 1 == rest.len() {
+                self.lower_operator_operand(operand)
+            } else {
+                self.expr(operand)
+            };
             let cmp = self.fresh(sp.clone(), None);
             self.emit(MirInstr::BinOp {
                 op: *op,

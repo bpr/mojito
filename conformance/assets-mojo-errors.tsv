@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	481
+# swept-count	482
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -181,6 +181,7 @@ assets/type_error/capturing_field_rejected.mojo	compile-reject	agree	error: func
 assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
 assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'P' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint

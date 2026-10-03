@@ -378,6 +378,41 @@ impl Checker {
         })
     }
 
+    /// Type a chained comparison `a < b < c`: each adjacent pair must
+    /// compare to a `Bool`, as a single comparison does. A middle operand
+    /// feeds two links, so it is evaluated once and copied, which demands
+    /// `ImplicitlyCopyable` of it whatever its form; the two ends are read
+    /// where they lie when their link's dunder reads them.
+    pub(super) fn infer_compare_chain(
+        &self,
+        first: &Expr,
+        rest: &[(InfixOp, Expr)],
+    ) -> Result<Ty, TypeError> {
+        let mut left = first;
+        for (index, (op, right)) in rest.iter().enumerate() {
+            if self.infer_infix(None, *op, left, right)? != Ty::Bool {
+                return Err(TypeError::BadOperator {
+                    op: infix_symbol(*op).to_string(),
+                    operands: "a chained comparison must compare to Bool".to_string(),
+                });
+            }
+            if index + 1 < rest.len() {
+                self.demand_chain_middle_copy(right)?;
+            }
+            left = right;
+        }
+        if let (Some((op, second)), Some((last_op, last))) = (rest.first(), rest.last()) {
+            if self.chain_link_borrows(*op, first, second)?.0 {
+                self.borrow_chain_end(first)?;
+            }
+            let before_last = rest.len().checked_sub(2).map_or(first, |i| &rest[i].1);
+            if self.chain_link_borrows(*last_op, before_last, last)?.1 {
+                self.borrow_chain_end(last)?;
+            }
+        }
+        Ok(Ty::Bool)
+    }
+
     /// The dunder `lt OP rt` dispatches on a struct left operand, decided
     /// from the operand types alone: what `infer_infix` then records at the
     /// operator, and what an instance of a checked template realizes at its
@@ -1002,6 +1037,55 @@ impl Checker {
         Ok(Ty::Pointer {
             element: Box::new(element),
             origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
+        })
+    }
+
+    /// The type an inferred chain operand takes at its link, as
+    /// [`Self::infer_infix`] sees it.
+    fn chain_operand_ty(&self, operand: &Expr) -> Result<Ty, TypeError> {
+        let ty = self.infer(operand)?;
+        Ok(self.opaque_element(&ty).unwrap_or(ty))
+    }
+
+    /// Read a chain's end operand where it lies, as a two-operand
+    /// comparison reads a struct or type-parameter operand.
+    fn borrow_chain_end(&self, operand: &Expr) -> Result<(), TypeError> {
+        let ty = self.chain_operand_ty(operand)?;
+        self.borrow_nominal_place_argument(operand, &ty);
+        self.borrow_parameter_place_argument(operand, &ty);
+        Ok(())
+    }
+
+    /// Whether one link of a chained comparison reads its left and right
+    /// operands in place: a struct dunder taking them by `read`, or a bound
+    /// requirement over one type parameter.
+    fn chain_link_borrows(
+        &self,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<(bool, bool), TypeError> {
+        let (lt, rt) = (self.chain_operand_ty(left)?, self.chain_operand_ty(right)?);
+        if matches!(lt, Ty::Param { .. }) && lt == rt {
+            return Ok((true, true));
+        }
+        Ok(self
+            .struct_infix_dispatch(op, &lt, &rt)?
+            .map_or((false, false), |dispatch| dispatch.borrows))
+    }
+
+    /// A chain's middle operand is copied for its second link, as upstream
+    /// copies it, even when it is a temporary.
+    fn demand_chain_middle_copy(&self, operand: &Expr) -> Result<(), TypeError> {
+        let ty = self.chain_operand_ty(operand)?;
+        if self.is_implicitly_copyable(&ty) {
+            return Ok(());
+        }
+        Err(TypeError::ImplicitCopy {
+            context: "middle operand of a chained comparison".to_string(),
+            transferable: self.is_movable(&ty),
+            copyable: self.is_copyable(&ty),
+            ty: ty.to_string(),
         })
     }
 }

@@ -1279,21 +1279,9 @@ impl Checker {
                     context: "conditional-expression branches".to_string(),
                 })
             }
-            // Chained comparison `a < b < c`: each adjacent pair must compare to a
-            // `Bool` (same rules as a single comparison); the result is `Bool`.
-            ExprKind::Compare { first, rest } => {
-                let mut left: &Expr = first;
-                for (op, right) in rest {
-                    if self.infer_infix(None, *op, left, right)? != Ty::Bool {
-                        return Err(TypeError::BadOperator {
-                            op: infix_symbol(*op).to_string(),
-                            operands: "a chained comparison must compare to Bool".to_string(),
-                        });
-                    }
-                    left = right;
-                }
-                Ok(Ty::Bool)
-            }
+            // Chained comparison `a < b < c`: each link is a comparison; the
+            // result is `Bool`.
+            ExprKind::Compare { first, rest } => self.infer_compare_chain(first, rest),
             // Slice `object[lower:upper:step]` on a `List`/`String`: each present
             // bound must be `Int`; the result is the same sequence type.
             ExprKind::Slice {
