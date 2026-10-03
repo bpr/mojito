@@ -765,14 +765,16 @@ impl Flatten<'_> {
                     return self.pointer_place_loan(&place, mutable, None, false);
                 }
                 // A method whose selected contract returns an origin-bearing
-                // pointer (`xs.unsafe_ptr()`) loans that rebased place.
+                // pointer (`xs.unsafe_ptr()`) loans that rebased place as a
+                // shared alias, as `Pointer(to=place)` does: copies of the
+                // returned pointer coexist.
                 if let Some(contract) = self.checked_call_contract(expression)
                     && let Ty::Pointer {
                         origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
                         ..
                     } = &contract.result_ty
                 {
-                    return self.pointer_place_loan(&place.clone(), *mutable, None, false);
+                    return self.pointer_place_loan(&place.clone(), *mutable, None, true);
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.

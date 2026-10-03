@@ -154,6 +154,7 @@ assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctor_literal_materialization.mojo	main	exe-differential	sanitized
 assets/ok/generic_def_static_receiver_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
+assets/ok/generic_field_pointer_deref_in_place.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_generic_constructor_overload.mojo	main	exe-differential	sanitized
@@ -859,6 +860,7 @@ assets/extensions/ok/reference_yielding_iteration_named_source.mojo	main	exe-dif
 assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	main	exe-differential	sanitized
 assets/extensions/ok/self_hosted_algorithms.mojo	main	exe-differential	sanitized
 assets/extensions/ok/subtree_pointer_generic_field.mojo	main	exe-differential	sanitized
+assets/extensions/ok/subtree_pointer_generic_return_deref.mojo	main	exe-differential	sanitized
 assets/extensions/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/template_served_iterable_def.mojo	main	exe-differential	sanitized
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized

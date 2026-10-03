@@ -172,6 +172,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer held in a generic struct's parameter-typed field dereferences in
+  place as at the pin: `h.get()[]` twice over `h = Holder(Pointer(to=x))`,
+  or two bound copies beside `h.item[]`, no longer conflict, because a
+  pointer a method returns is now a shared alias of its owner like
+  `Pointer(to=x)`. A subtree pointer (the extension) a generic `def`
+  returns, read as `first(h)[]`, keeps its owner alive through a hidden slot
+  instead of reading a destroyed one.
+  `assets/ok/generic_field_pointer_deref_in_place.mojo` and
+  `assets/extensions/ok/subtree_pointer_generic_return_deref.mojo` pin both
+  on both backends.
 - A pointer returned by a call and dereferenced in place (`print(idp(p)[])`
   over `def idp[o: MutOrigin](v: Pointer[Int, o]) -> Pointer[Int, o]`) reads
   its owner, where it printed `None` once the owner had no later use: the

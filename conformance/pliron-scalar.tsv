@@ -154,6 +154,7 @@ assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctor_literal_materialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_def_static_receiver_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_field_pointer_deref_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_nested_def_captures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_generic_constructor_overload.mojo	-	ineligible	no-scalar-entry-shape
@@ -848,6 +849,7 @@ assets/extensions/ok/reference_yielding_iteration_named_source.mojo	-	ineligible
 assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/self_hosted_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/subtree_pointer_generic_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/subtree_pointer_generic_return_deref.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/subtree_pointer_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/template_served_iterable_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
