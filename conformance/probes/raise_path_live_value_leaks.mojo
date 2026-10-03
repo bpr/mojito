@@ -1,7 +1,7 @@
 # A value live after a region and unused in the arm that raises is never
 # destroyed when the raise leaves the function. The pin prints `del b<n>` on
 # every path here; Mojito prints it only for `b4`, which is dead at the
-# raise. Filed as docs/roadmap.md 3.1 from the compile-time region
+# raise. Filed as docs/roadmap.md R20 from the compile-time region
 # ownership probes (docs/notes/comptime-region-ownership.md).
 struct Thing(Movable):
     var s: String

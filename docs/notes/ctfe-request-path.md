@@ -47,9 +47,9 @@ cannot keep:
   (`value_params`), so `rep[n - 1]()` under a runtime `if` *runs* where the
   pin expands without end (`conformance/probes/ctfe_plain_keyed_recursion.mojo`).
 - The subprogram cannot mint an instance: every compile-time-keyed `def` is
-  excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap 3.113)
+  excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap R132)
   and a keyed method is a trap stub
-  (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, 3.112).
+  (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, R131).
 - Fuel is `const FUEL: usize = 100_000` in `comptime.rs`, reset per round,
   burned by `Elab::burn` per entry and per `comptime for` iteration and by
   the VM per instruction, frame, and block (`burn_ctfe`).
@@ -207,7 +207,7 @@ evaluates by demanding a concrete instance and running it on the VM.**
   4096-instance `INSTANCE_BUDGET` within 380 MB (2026-10-03; a nested
   instance type holds the level below it once, in its argument list and in
   its bounded symbol). Its elaboration time is still quadratic in the
-  nesting depth (roadmap 2.2). The pin runs out of memory on the same
+  nesting depth (roadmap R19). The pin runs out of memory on the same
   program.
 - **Fuel** stays shared and separate from expansion: one counter per
   compilation, held by the elaborator, burned per request and handed to
@@ -315,10 +315,10 @@ The boundary:
   materializes every pending instance, not the thunk's reference closure
   alone, and verifies the whole completed output as the fragment; and an
   application is evaluated only as a whole condition operand (roadmap
-  3.121). `Apply` crosses MIR text since schema 1.14, the branch since 1.15.
-- **Roadmap 1.8** (clones minted during CTFE) and **3.112**, **3.113**
+  R139). `Apply` crosses MIR text since schema 1.14, the branch since 1.15.
+- **Roadmap R7** (clones minted during CTFE) and **R131**, **R132**
   close when a demand serves a keyed instance.
-- **Roadmap 1.10** (P4) deletes the AST route, the early folding of applied
+- **Roadmap R9** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with
   it. The instance budget is reachable without exhausting memory
   (2026-10-03).

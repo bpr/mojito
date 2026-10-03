@@ -124,7 +124,7 @@ Classes:
 | 17 | Bound builtins | B → M | `hasher.update(x)`, `writer.write(x)`, `print`: type-directed calls resolved on the substituted type. `Hashable` and `Writable` come from the bound. A pack element is proved by the pack's bound. |
 | 18 | Constructions | D; X; P | The member is selected on the declaration. Taking the instance's `__init__` clone is X. The member's `where` clause is P. |
 | 19 | Call-through residues | M | A residue names a parameter slot and signature places, no type. It is the generator's, unchanged. The contract of a call through a callable parameter is the parameter's own. |
-| 20 | Implicit conversions | D | The pin selects the `@implicit` constructor on the declaration: with `Int` and `Self.T` overloads, `Wrapper[Self.T] = self.item` picks the `Self.T` one in every instance. The generator records the selected constructor as an ordinary call, so a method its template serves agrees. A method that still clones repeats the selection per clone and reports an ambiguity the pin does not (§Pin verdicts, roadmap §3). |
+| 20 | Implicit conversions | D | The pin selects the `@implicit` constructor on the declaration: with `Int` and `Self.T` overloads, `Wrapper[Self.T] = self.item` picks the `Self.T` one in every instance. The generator records the selected constructor as an ordinary call, so a method its template serves agrees. A method that still clones repeats the selection per clone and reports an ambiguity the pin does not (§Pin verdicts, roadmap R112). |
 | 21 | Iteration protocols | B → M; D | `GetIter.prepare` and the `TryNext` call name the chain. The elaborator resolves each step on the concrete type (`mono/infer.rs:rewrite_get_iter`). The checks on a linear element are D. |
 | 22 | Truthiness conditions | B → M | `Boolable` supplies it. The mark is a conversion call on the condition, resolved on the substituted type. A condition that becomes `Bool` needs no call. |
 | 23 | Tuple unpackings | M; X | The plan is rebuilt from the substituted value type. Naming the generated `Tuple$tN` for a public one is X until struct generators (P3d). |
@@ -242,7 +242,7 @@ value comparison and a `TypeList` query read the instance's bindings, and a
 `Tuple` or `TString` with no specialization answers by its elements. What
 stays undecided is an `all` or `any` through a predicate alias, whose body
 does not reach MIR. The checker rejects the only member clause that could
-ask one today (roadmap §3), so concrete bindings close every predicate
+ask one today (roadmap R130), so concrete bindings close every predicate
 (§Predicates) a member clause reaches.
 
 Removing the trial exposed one defect it had hidden. `Array[c_char, n]()`
@@ -297,7 +297,7 @@ the package list, so neither is reshaped later.
 
 - **Compile-time regions.** A `comptime if` arm and a `comptime for` body
   are checked under assumptions the taken arm supplies. How ownership joins
-  them is its own roadmap entry, and the guarantee above is stated for
+  them is its own roadmap entry (R21), and the guarantee above is stated for
   bodies without them.
 - **Value-dependent register types.** Rows 23 and 27 need a type over a
   parameter expression. That is the common type vocabulary entry.
@@ -362,5 +362,5 @@ arguments may carry a loan too (§Carried sources).
 | 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. A store of a symbolic value publishes its stored type as a carried source, and a call through a struct receiver closes it (§Carried sources). An instance over a loan-carrying argument clones no more than a plain-data one. |
 | 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |
 | 18 | The template's selected constructor serves the instance, a variadic one keyed by the call's element count. |
-| 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap §1). |
+| 7, 16, 18 (availability) | The clause is in MIR and the elaborator decides it (§Availability). A clause in a form it cannot evaluate is undecided, and the checker's verdict at the call stands (roadmap R130). |
 | 2, 23, 24, 26, 27 | Unchanged: these bodies hold a compile-time construct and keep their clones until P3. |

@@ -17,6 +17,7 @@ run_step() {
     "$@" || status=1
 }
 
+run_step "roadmap lint" scripts/roadmap.py lint
 run_step "parity manifest" scripts/check-parity-manifest
 
 run_step "cargo fmt --all --check" cargo fmt --all --check

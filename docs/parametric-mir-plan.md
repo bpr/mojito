@@ -3,7 +3,7 @@
 **Status:** plan recorded 2026-09-30. P0's census (§P0) and P1 have landed,
 P2's gate, the generator contract, is written, and P2's first step landed
 2026-10-01 (§P2). The scheduled
-tasks are [`docs/roadmap.md`](roadmap.md) §1; this document is their design
+tasks are [`docs/roadmap.md`](roadmap.md) track `pmir`; this document is their design
 record and is updated as stages land. It was revised on 2026-09-30 after
 [`docs/parametric-mir-plan-review.md`](parametric-mir-plan-review.md).
 
@@ -404,7 +404,7 @@ interleaved, debug profile, `total` from `--timings`, median of three:
   obligation is classified
   ([`docs/notes/generator-contract.md`](notes/generator-contract.md)). Two
   obligations turned out to be checks the pin makes on the declaration and
-  Mojito does not. They are roadmap §3 entries, and P2 depends on them.
+  Mojito does not. They were roadmap entries (row 20's is still R112), and P2 depends on them.
 - An ordinary generic struct's methods are cloned per instance only so the
   checker can check them concretely. With P1, the elaborator instantiates the
   template's MIR instead.
@@ -425,7 +425,7 @@ its template's MIR, lifecycle members and constructors included.
 
 - **What still clones.** A method whose body holds or reaches a compile-time
   construct, and every method of an instance whose argument carries a loan or
-  a callable. Roadmap §1 has one entry for each reason.
+  a callable. Roadmap track `pmir` has one entry for each reason.
 - **Discovery.** No clone check walks a template-served body at an instance's
   arguments. The driver reads from the template's checked types which
   instances the body reaches and which methods only an instance's own check
@@ -435,7 +435,7 @@ its template's MIR, lifecycle members and constructors included.
 - **The declaration checks the contract named.** A `^` transfer of a
   parameter type needs a bound proving `Movable` (row 10). An `@implicit`
   conversion is selected once where the template serves the method (row 20);
-  a method that still clones repeats it, and that is a roadmap §3 entry.
+  a method that still clones repeats it, and that is roadmap R112.
 - **The serialized `Call`.** A static call records its spelled receiver type,
   from which the elaborator binds the struct's parameters (text schema 1.8).
 - **The erased oracle.** It agrees on every fixture but the
@@ -680,8 +680,7 @@ regions. Later forms may bump it again (decision D5).
   early folding stays as an implementation until P4 without losing the
   identity.
 - **D4. The budget.** Proposed, for the owner to set:
-  - A named workload set: the three P0 programs, the P3 benchmark (roadmap
-    §1), and one many-instantiation program.
+  - A named workload set: the three P0 programs, the P3 benchmark, and one many-instantiation program.
   - Debug and release baselines, with the P0 revision and machine recorded.
     Compilation is measured apart from execution, repeated and interleaved,
     with a stated noise tolerance, and with differential verification off.

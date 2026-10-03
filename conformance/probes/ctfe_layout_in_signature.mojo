@@ -5,7 +5,7 @@
 # convert to `SIMD[.float32, size_of[Pair]()]`, for the constant `S` and for
 # `size_of[T]()` spelled in the signature alike, so both calls are rejected.
 # Mojito stops earlier, with "not a compile-time Int constant": the AST route
-# cannot evaluate the layout application. docs/roadmap.md 3.122.
+# cannot evaluate the layout application. docs/roadmap.md R140.
 from std.sys import size_of
 
 @fieldwise_init

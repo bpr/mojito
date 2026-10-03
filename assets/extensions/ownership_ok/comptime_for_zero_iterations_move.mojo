@@ -1,4 +1,4 @@
-# Ledgered divergence (docs/roadmap.md 3.2): a `comptime for` over
+# Ledgered divergence (docs/roadmap.md R21): a `comptime for` over
 # `range(0)` consumes `a` in its body, and `a` is used after the loop. The
 # pin decides the body as a loop body with its trip count unknown and
 # rejects the use; Mojito unrolls zero iterations before the move analysis.

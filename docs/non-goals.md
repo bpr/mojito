@@ -43,7 +43,7 @@ failed the fifth, overhead. The record is
 - What is rejected is this bridge as built. Representation, locations,
   lifecycle, conversion totality, and default-build isolation all held.
 - Optional Pliron-to-LLVM emission stays the supported native backend, and
-  the parametric front-end work of roadmap section 1 does not depend on
+  the parametric front-end work of the roadmap's `pmir` track does not depend on
   this.
 - Reopen when a canonical form needs no print and parse at the pin, or the
   pinned printer and parser are several times faster, and the same focused
@@ -138,7 +138,7 @@ the opposite case and stay on `docs/roadmap.md` as `divergence` rows.
 
 ### Divergences retained across re-pins
 
-The behavioral-divergences task in `docs/roadmap.md` §3 burns divergences to
+The behavioral-divergences track in `docs/roadmap.md` (`divergences`) burns divergences to
 zero. These five are exempt and are re-probed at every nightly re-pin rather
 than fixed.
 
@@ -161,7 +161,7 @@ than fixed.
 
 ### Rust runtime services that stay in Rust
 
-`docs/roadmap.md` §3 lists the Mojito stdlib shortcuts to port back to pure
+The `mojo-shape` track of `docs/roadmap.md` lists the Mojito stdlib shortcuts to port back to pure
 Mojo. These four are not on it: upstream draws the same boundary, so a Mojo
 implementation would be the wrong shape, not a better one.
 

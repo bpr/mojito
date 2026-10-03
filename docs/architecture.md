@@ -3138,7 +3138,7 @@ A `comptime if` in a generic `def` reaches the analysis as that region: the
 `ComptimeBranch` terminator joins like a `Branch`, and the elaborator keeps the
 taken arm with the destroys the analysis placed at its entry. The production
 elaborator still unrolls a `comptime for` before the check, so the move
-analysis sees its body once; the `comptime for` entry of the roadmap brings the
+analysis sees its body once; the `comptime for` entry of the roadmap (R1) brings the
 loop to MIR.
 
 ### Persistent local loans

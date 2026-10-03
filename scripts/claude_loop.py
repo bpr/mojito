@@ -8,7 +8,8 @@ new `claude -p` process, so no context carries over from one task to the next.
 
 The loop never stops on a bad task. A session that fails, or that leaves its
 entry on the roadmap, is reported and committed as it stands, and the next task
-starts; the exit status is 1 if any task went that way. The one thing that does
+starts; the exit status is 1 if any task went that way, and an entry that waits
+on one of those is skipped for the rest of the run. The one thing that does
 stop a run is three sessions in a row failing inside a minute, which means the
 environment is refusing to work (expired credentials, an exhausted rate limit)
 rather than the tasks being hard. Uncommitted tracked
@@ -20,9 +21,11 @@ created, except new files at the repository root (plan files, prompts,
 `commit_msg.txt`), which stay untracked. The message is the session's
 `commit_msg.txt`.
 
-A carried-out task deletes its entry and renumbers the section, so entries are
-tracked by title, not by number: `--until 1.5` resolves to the title 1.5 has
-when the loop starts and stops once that entry is gone.
+Entries are named by their stable IDs (`R12`), which never change, and the
+order is `scripts/roadmap.py`'s work order, recomputed before every task: the
+open entries top-down, each preceded by its open prerequisites from any track.
+`--track` and `--task` narrow the entries the run is for; their prerequisites
+still run first. `--only` runs exactly the named entries.
 
 Each entry's `Model:` bullet, `Opus|Fable, Planned|Not Planned`, picks the
 Claude model; the `Planned` word only says whether the entry wanted a plan
@@ -30,10 +33,12 @@ first, and a plan file already at the repository root is handed to the session
 that carries its task out.
 
 Usage:
-  scripts/claude_loop.py --list [--section 1]
-  scripts/claude_loop.py                      # carry out the first unchecked task
-  scripts/claude_loop.py --start 1.1 --until 1.27
-  scripts/claude_loop.py --section 3 -n 0     # every task in section 3
+  scripts/claude_loop.py --list [--track pmir]
+  scripts/claude_loop.py                      # carry out the next task
+  scripts/claude_loop.py --track pmir -n 0    # everything pmir needs, in order
+  scripts/claude_loop.py --task R8 -n 0       # R8 and its open prerequisites
+  scripts/claude_loop.py --only R40 --only R41
+  scripts/claude_loop.py --start R3 --until R9
   scripts/claude_loop.py --plan -n 3          # plan the next three instead
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
@@ -66,107 +71,40 @@ MODELS = {
     "Fable": "claude-fable-5-1",
 }
 
-ENTRY_RE = re.compile(r"^- \[(?P<mark>[ xX])\] \*\*(?P<sec>\d+)\.(?P<num>\d+) (?P<rest>.*)$")
-BOUNDARY_RE = re.compile(r"^(- \[[ xX]\] |#{1,3} )")
-MODEL_RE = re.compile(r"Model:\s*(?P<model>Opus|Fable),\s*(?P<plan>Planned|Not Planned)")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import roadmap  # noqa: E402
+
+Task = roadmap.Entry
 
 
-@dataclass
-class Task:
-    section: int
-    number: int
-    title: str
-    body: str
-    checked: bool
-    model: str | None
-    planned: bool | None
+def pending(args, done: set[str], troubled: set[str], skip: set[str]) -> list[Task]:
+    """The run's remaining tasks in work order, read afresh from the roadmap.
 
-    @property
-    def id(self) -> str:
-        return f"{self.section}.{self.number}"
-
-    @property
-    def slug(self) -> str:
-        words = re.sub(r"[^a-z0-9]+", "-", self.title.lower()).strip("-").split("-")
-        return "-".join(words[:6])
-
-    def describe(self) -> str:
-        model = self.model or "?"
-        plan = {True: "Planned", False: "Not Planned", None: "?"}[self.planned]
-        return f"{self.id:>6}  {model:<5}  {plan:<11}  {self.title}"
-
-
-def parse_roadmap(path: Path = ROADMAP) -> list[Task]:
-    lines = path.read_text().splitlines()
-    tasks: list[Task] = []
-    i = 0
-    while i < len(lines):
-        m = ENTRY_RE.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        title_parts = [m["rest"]]
-        j = i + 1
-        while "**" not in title_parts[-1] and j < len(lines) and lines[j].strip():
-            title_parts.append(lines[j].strip())
-            j += 1
-        title = " ".join(title_parts).split("**", 1)[0].strip()
-        k = i + 1
-        while k < len(lines) and not BOUNDARY_RE.match(lines[k]):
-            k += 1
-        body = "\n".join(lines[i:k]).rstrip()
-        mm = MODEL_RE.search(body)
-        tasks.append(
-            Task(
-                section=int(m["sec"]),
-                number=int(m["num"]),
-                title=title,
-                body=body,
-                checked=m["mark"] != " ",
-                model=mm["model"] if mm else None,
-                planned=(mm["plan"] == "Planned") if mm else None,
-            )
-        )
-        i = k
-    return tasks
-
-
-def open_tasks(section: int | None) -> list[Task]:
-    return [
-        t
-        for t in parse_roadmap()
-        if not t.checked and (section is None or t.section == section)
-    ]
-
-
-def find_by_id(tasks: list[Task], ident: str) -> Task:
-    for t in tasks:
-        if t.id == ident:
-            return t
-    sys.exit(f"claude_loop: no unchecked roadmap entry {ident}")
-
-
-def find_by_title(tasks: list[Task], title: str) -> Task | None:
-    return next((t for t in tasks if t.title == title), None)
-
-
-def next_task(tasks: list[Task], previous: Task, successor: str | None) -> Task | None:
-    """The entry that followed `previous` when it started, found by title.
-
-    Falls back to the entry after `previous` when it was left in place, and to
-    the first open entry when both are gone.
+    Leaves out what this run already took on, what `--start` skipped, and
+    every entry that waits, directly or not, on a task that left work behind.
     """
-    if successor and (found := find_by_title(tasks, successor)):
-        return found
-    if (left := find_by_title(tasks, previous.title)) is not None:
-        idx = tasks.index(left) + 1
-        return tasks[idx] if idx < len(tasks) else None
-    return tasks[0] if tasks else None
+    rm = roadmap.parse()
+    if args.only:
+        order = [e for e in rm.open() if e.id in args.only]
+    elif args.task:
+        order = rm.work_order([e for e in rm.open() if e.id in args.task])
+    else:
+        order = rm.work_order(rm.track_roots(args.track))
+    blocked = set(troubled)
+    for t in rm.work_order():
+        if any(d.id in blocked for d in rm.prerequisites(t)):
+            blocked.add(t.id)
+    return [t for t in order if t.id not in done | skip | blocked]
+
+
+def on_roadmap(task: Task) -> bool:
+    return any(e.id == task.id and not e.checked for e in roadmap.parse().entries)
 
 
 def build_prompt(task: Task, mode: str) -> str:
     header = (
-        f"Roadmap task {task.id} from docs/roadmap.md: \"{task.title}\".\n\n"
+        f"Roadmap task {task.id} from docs/roadmap.md (track `{task.track}`): "
+        f"\"{task.title}\".\n\n"
         "The entry as it stands:\n\n"
         f"{task.body}\n\n"
         "Read AGENTS.md first and follow it exactly: the in-session testing "
@@ -221,11 +159,16 @@ def build_prompt(task: Task, mode: str) -> str:
     return header + opening + (
         "\nRun the task to completion without checking in between steps; "
         "nobody will answer a question. When the "
-        "work lands, delete the entry from docs/roadmap.md and renumber the "
-        "section (rechecking every number and every \"Depends on\"), record "
-        "the outcome in docs/features.md and CHANGELOG.md, file any residue "
-        "or divergence as new roadmap entries, and overwrite commit_msg.txt "
-        "with one short paragraph. If the task turns out not to be doable, "
+        f"work lands, delete the {task.id} entry from docs/roadmap.md and "
+        "touch no other entry for it: IDs are stable, nothing is renumbered, "
+        "and a Depends bullet naming a landed ID needs no edit. Record the "
+        "outcome in docs/features.md and CHANGELOG.md. File each residue or "
+        "divergence as a new entry: reserve its ID with `scripts/roadmap.py "
+        "new-id`, put it in the track that owns its fix at the position its "
+        "importance earns, and give it a Depends bullet naming IDs and a "
+        "Model bullet; then run `scripts/roadmap.py lint`. Overwrite "
+        "commit_msg.txt with one short paragraph. If the task turns out not "
+        "to be doable, "
         "leave the code honest, rewrite the entry to state what remains and "
         "why, and say so. Before finishing: cargo fmt --all, git diff --check, "
         "a clean cargo build, and a clean `cargo clippy --workspace --exclude "
@@ -235,7 +178,13 @@ def build_prompt(task: Task, mode: str) -> str:
 
 
 def plan_path(task: Task) -> Path:
-    return ROOT / f"{task.slug}-plan.md"
+    """Where the task's plan is: an existing `R12-*-plan.md` (or a plan named
+    by the title alone, from before IDs) wins over the fresh name."""
+    existing = sorted(ROOT.glob(f"{task.id}-*-plan.md"))
+    if existing:
+        return existing[0]
+    legacy = ROOT / f"{task.slug}-plan.md"
+    return legacy if legacy.exists() else ROOT / f"{task.id}-{task.slug}-plan.md"
 
 
 def plan_written(task: Task, since: float) -> bool:
@@ -360,7 +309,7 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
         return
     msg = read_commit_msg()
     if not msg or msg == msg_before:
-        msg = f"Roadmap: {task.title}"
+        msg = f"Roadmap {task.id}: {task.title}"
         if not finished:
             msg += "\n\nThe session ended without removing the roadmap entry."
     git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
@@ -382,10 +331,14 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-n", "--count", type=int,
                    help="tasks to run; 0 means no limit (default 1, or no limit with --until)")
-    p.add_argument("--start", metavar="N.M", help="first task (default: first unchecked)")
-    p.add_argument("--until", metavar="N.M", help="stop after this task (numbered as the loop starts)")
-    p.add_argument("--section", type=int, help="only take tasks from this section")
-    p.add_argument("--list", action="store_true", help="list unchecked tasks and exit")
+    p.add_argument("--track", help="only the entries of this track, and what they need")
+    p.add_argument("--task", action="append", metavar="ID",
+                   help="only this entry and its open prerequisites (repeatable)")
+    p.add_argument("--only", action="append", metavar="ID",
+                   help="exactly this entry, prerequisites or not (repeatable)")
+    p.add_argument("--start", metavar="ID", help="skip the work order up to this entry")
+    p.add_argument("--until", metavar="ID", help="stop after this entry")
+    p.add_argument("--list", action="store_true", help="list the work order and exit")
     p.add_argument("--dry-run", action="store_true", help="print each prompt instead of running it")
     p.add_argument("--model", help="use this model for every task, ignoring Model: bullets")
     p.add_argument("--opus-model", default=MODELS["Opus"])
@@ -403,14 +356,32 @@ def main() -> int:
     args = p.parse_args()
     if args.count is None:
         args.count = 0 if args.until else 1
+    if sum(map(bool, (args.track, args.task, args.only))) > 1:
+        sys.exit("claude_loop: --track, --task, and --only exclude each other")
+    rm = roadmap.parse()
+    args.task = [rm.find(i).id for i in args.task or []]
+    args.only = [rm.find(i).id for i in args.only or []]
+    args.start, args.until = (rm.find(i).id if i else None for i in (args.start, args.until))
 
-    tasks = open_tasks(args.section)
+    done: set[str] = set()
+    troubled: set[str] = set()
+    skip: set[str] = set()
+    tasks = pending(args, done, troubled, skip)
     if args.list:
         for t in tasks:
             print(t.describe())
         return 0
+    ids = [t.id for t in tasks]
+    for flag, ident in (("--start", args.start), ("--until", args.until)):
+        if ident and ident not in ids:
+            sys.exit(f"claude_loop: {flag} {ident} is not in this run's work order")
+    if args.start:
+        skip = set(ids[: ids.index(args.start)])
+    until = args.until
+    if until and until in skip:
+        sys.exit(f"claude_loop: --until {until} comes before the start task {args.start}")
     if not tasks:
-        print("claude_loop: no unchecked tasks")
+        print("claude_loop: no open tasks")
         return 0
 
     commit = not (args.no_commit or args.dry_run) and not args.plan
@@ -419,17 +390,10 @@ def main() -> int:
               f"the first task's commit stays its own:\n{dirty}", file=sys.stderr)
         commit_stray()
 
-    current = find_by_id(tasks, args.start) if args.start else tasks[0]
-    until_title = find_by_id(tasks, args.until).title if args.until else None
-    if until_title and tasks.index(find_by_title(tasks, until_title)) < tasks.index(current):
-        sys.exit(f"claude_loop: --until {args.until} comes before the start task {current.id}")
-
-    done = 0
+    ran = 0
     quick = 0
-    troubled: list[str] = []
-    while current is not None:
-        idx = tasks.index(current)
-        successor = tasks[idx + 1].title if idx + 1 < len(tasks) else None
+    while tasks := pending(args, done, troubled, skip):
+        current = tasks[0]
         mode = mode_for(args, current)
         prompt = build_prompt(current, mode)
         model = model_for(args, current)
@@ -441,48 +405,45 @@ def main() -> int:
             committing = commit and mode == "execute"
             untracked_before = untracked_files() if committing else set()
             msg_before = read_commit_msg()
-            label = f"{args.model or current.model or args.default_model}, {mode}"
+            label = f"{current.id} {args.model or current.model or args.default_model}, {mode}"
             began = time.time()
             ok = run_claude(args, current, model, label, prompt)
             quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
             if mode == "plan":
                 landed = plan_written(current, began)
                 if ok and not landed:
-                    print(f"claude_loop: session for \"{current.title}\" wrote no "
+                    print(f"claude_loop: session for {current.id} wrote no "
                           f"{plan_path(current).name}", file=sys.stderr)
             else:
-                landed = find_by_title(open_tasks(args.section), current.title) is None
+                landed = not on_roadmap(current)
                 if committing:
                     commit_task(current, untracked_before, msg_before, ok and landed)
                 if ok and not landed:
-                    print(f"claude_loop: entry \"{current.title}\" is still on the roadmap",
+                    print(f"claude_loop: entry {current.id} is still on the roadmap",
                           file=sys.stderr)
             if not ok:
-                print(f"claude_loop: session for \"{current.title}\" failed", file=sys.stderr)
+                print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
             if not (ok and landed):
-                troubled.append(current.title)
+                troubled.add(current.id)
 
-        done += 1
+        done.add(current.id)
+        ran += 1
         if quick >= QUICK_FAIL_LIMIT:
             print(f"claude_loop: {quick} sessions in a row failed inside "
                   f"{QUICK_FAIL}s, which is the environment rather than the "
                   "tasks; stopping with the rest of the run untouched",
                   file=sys.stderr)
             break
-        if current.title == until_title or (args.count and done >= args.count):
+        if current.id == until or (args.count and ran >= args.count):
             break
-
-        if not args.dry_run:
-            tasks = open_tasks(args.section)
-        current = next_task(tasks, current, successor)
-        if until_title and current is not None and find_by_title(tasks, until_title) is None:
+        if until and not args.dry_run and not any(t.id == until for t in roadmap.parse().open()):
             break
 
     if troubled:
-        print(f"claude_loop: {done} tasks ran, {len(troubled)} left work behind:",
+        print(f"claude_loop: {ran} tasks ran, {len(troubled)} left work behind:",
               file=sys.stderr)
-        for title in troubled:
-            print(f"  {title}", file=sys.stderr)
+        for ident in sorted(troubled, key=lambda i: int(i[1:])):
+            print(f"  {ident}", file=sys.stderr)
     return 1 if troubled else 0
 
 

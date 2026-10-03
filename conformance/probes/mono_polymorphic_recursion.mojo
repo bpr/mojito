@@ -5,7 +5,7 @@
 # instantiation depth is unlimited by default. Mojito's erased run prints `0`
 # in 8 s; its concrete run stops at the 4096-instance budget ("instantiation
 # past the 4096-instance budget") in about 70 s and 380 MB in a debug build.
-# The elaboration time, quadratic in the nesting depth, is docs/roadmap.md 2.2.
+# The elaboration time, quadratic in the nesting depth, is docs/roadmap.md R19.
 struct W[T: Copyable & Deinitable](Copyable, Deinitable):
     var v: Self.T
     def __init__(out self, var v: Self.T):

@@ -7,7 +7,7 @@ own — is settled (`docs/architecture.md`); what stays unscheduled is this
 document's particular staging of it. The staging that is scheduled, with MIR
 rather than Pliron as the parametric IR, is
 [`docs/parametric-mir-plan.md`](parametric-mir-plan.md); its tasks are the
-checkboxes in [`docs/roadmap.md`](roadmap.md) §1.
+checkboxes in [`docs/roadmap.md`](roadmap.md), track `pmir`.
 
 **Companion document.**
 [`docs/pliron-backend-pivot-plan.md`](pliron-backend-pivot-plan.md) decides how
@@ -104,7 +104,7 @@ So Mojito accepted invalid Mojo, which broke `AGENTS.md` invariant 1. Resolved
 2026-09-16 by source validation (`checker/comptime_validation.rs`,
 `docs/architecture.md` §Stage 2): both probes now reject with the
 diagnostics above; the pack-keyed remainder is [`docs/roadmap.md`](roadmap.md)
-§1.
+R2.
 
 - **Cause.** `comptime::elaborate` runs before the checker, and dropping untaken
   branches is intended behavior: "a type error in a dropped branch is never
@@ -239,7 +239,7 @@ So upstream's fix for the shape is `rebind`, which Mojito now implements
 (`checker/rebind.rs`); the bundled `Tuple.__contains__` and
 `assets/ok/pack_element_rebind.mojo` use it. The implicit narrowing itself is
 still accepted, because a variadic template's bodies are not yet validated
-symbolically (`docs/roadmap.md` §1).
+symbolically (`docs/roadmap.md` R2).
 
 Everything else is safe. The remaining branches return same-typed literals,
 write to a `Writer`, or are the `comptime if …: pass` specialization markers in
@@ -248,14 +248,13 @@ write to a `Writer`, or are the `comptime if …: pass` specialization markers i
 The sweep also found eight `assets/ok` fixtures that the pinned Mojo rejected
 for reasons unrelated to branches, none of them listed in
 `conformance/cases.tsv`. All eight were respelled on 2026-09-12 and now run on
-both compilers as `cases.tsv` `run` rows; the unswept remainder of `assets/` is
-its own roadmap entry in §3.
+both compilers as `cases.tsv` `run` rows.
 
 ## Recommendation: incremental, and not first
 
 Existing lifecycle and place defects come first, but not all of
-[`docs/roadmap.md`](roadmap.md) §2 and §3, since §3 reopens at every re-pin.
-What gated the pivot was the handful of §2 native-backend defects whose shapes
+[`docs/roadmap.md`](roadmap.md)'s other tracks, since `divergences` reopens at every re-pin.
+What gated the pivot was the handful of native-backend defects whose shapes
 the Stage A1 slice itself uses. Those have landed, the last of them with the
 slice: scalar arithmetic on a direct `ref` field fed a pointer to the
 operator. The slice executes natively and on the VM from one module, so a
@@ -272,10 +271,10 @@ correction is on cost: core text was 2.6 to 3.4 times the v1 text (1.56 to
 2.00 after a review), the shadow failed its compile-time budget on
 2026-09-30 because of the print and parse its canonical text needs, and the
 interpreter question is still open, because both backends ran MIR exported
-from core. §1's own entries do not gate it:
+from core. The `pmir` track's own entries do not gate it:
 they move the check order above `CheckedProgram`, while A1 shadows MIR below
 it. The pivot entry's `Depends on` bullet carries the current numbers, which
-move as §1 closes. The rest of §2 and §3 is orthogonal to steps 1 and 2 below
+move as the `pmir` track closes. The rest of the roadmap is orthogonal to steps 1 and 2 below
 and can interleave with them.
 
 1. **Fix the check order inside the current architecture.** *Landed*
@@ -349,8 +348,8 @@ Three facts bear on Mojito's planned dialects:
   parametric layer would have to own a parametric form of them, or
   `mojito.core`'s types would have to accept parameter attributes.
 - **The parametric layer is mostly attributes.** `kgen` defines more than
-  twice as many attributes as ops. That is the §1 roadmap entry "Parameter
-  expressions have no symbolic form" at framework scale.
+  twice as many attributes as ops. That is the landed parameter-expression symbolic form
+  (`docs/notes/param-expr-attributes.md`) at framework scale.
 - **Compile-time and run-time control flow are separate dialects.**
   - `kgen.param.if` and `kgen.param.for` are the compile-time branch and loop.
     The elaborator's interpreter instantiates their bodies.
@@ -496,7 +495,7 @@ onto code Mojito already has:
    handwritten. Fallback: if the maintainer keeps the derive-only model,
    the same three pieces as `pliron-derive` extensions. Either way, any
    attribute Mojito proposes upstream first (the uniqued parameter
-   expression of §1) is written as plain trait code over `uniqued_any`,
+   expression, `docs/notes/param-expr-attributes.md`) is written as plain trait code over `uniqued_any`,
    not as a new macro option.
 
 ## How Mojo's pipeline uses its dialects
@@ -553,7 +552,7 @@ alone.
     cache, not a distribution format.
   - Mojito's counterpart is the precompiled-prelude cache
     `docs/performance.md` proposes. Caching the prelude as checked templates
-    needs the template checking in §1. Caching elaborated clones would have
+    needs the template checking of the roadmap's `pmir` track. Caching elaborated clones would have
     to be redone for every new instantiation.
 - **Parsing is lazy in three passes.**
   - Name resolution registers declarations.

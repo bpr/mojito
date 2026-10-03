@@ -29,7 +29,7 @@ oracle. That is where the code stands, not where it is meant to end up:
 `docs/pliron-future.md` assesses what a Pliron-centered architecture would
 cost above the waist, and `docs/pliron-backend-pivot-plan.md` stages one below
 `CheckedProgram`. It stays the rule the code follows until a migration stage
-actually lands. See the native-backend section of `docs/roadmap.md` for the
+actually lands. See the `native` track of `docs/roadmap.md` for the
 ordering.
 
 Read these documents before changing behavior:
@@ -40,7 +40,7 @@ Read these documents before changing behavior:
 - `docs/grammar.md` and `docs/frontend.md` — accepted syntax and parser design.
 - `docs/roadmap.md` — current direction, pending work, and task lifecycle policy.
 - `docs/parametric-mir-plan.md` — the staged plan toward Mojo's pipeline
-  order (parametric MIR, one elaborator), behind roadmap section 1.
+  order (parametric MIR, one elaborator), behind the roadmap's `pmir` track.
 - `docs/non-goals.md` — what we have decided not to do, and what would reopen it.
 - `docs/native-abi.md` — the normative native target/layout/runtime-ABI
   contract; owned in code by `crates/mojito-native-core` (target/layout/
@@ -97,7 +97,7 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    (today: direct `ref` struct fields, and `Origin._subtree` origin casts —
    upstream's own experimental spelling, which the pinned build parses but
    rejects at the use) and is listed in `docs/non-goals.md`; every other
-   Mojito-only acceptance is a divergence on `docs/roadmap.md`'s ledger,
+   Mojito-only acceptance is a divergence on `docs/roadmap.md`'s `divergences` track,
    waiting to be withdrawn. Both kinds keep their fixtures under
    `assets/extensions/`, where `scripts/sweep-assets-mojo --extensions`
    asserts the pin rejects each one — every fixture in the ordinary `assets/`
@@ -177,6 +177,11 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
   checkbox, its first sentence stating the issue (or that it is not to be
   fixed, and why), then short bullets — never a semicolon-chained paragraph.
   The roadmap's **Entry Style** section is the rule.
+- Roadmap entries have stable IDs (`R12`), never positions: reserve one with
+  `scripts/roadmap.py new-id`, cite entries only by ID, never renumber, and
+  run `scripts/roadmap.py lint` after editing the file. The work order is
+  computed (`scripts/roadmap.py list [--track T]`), so landing, filing, or
+  moving an entry edits that entry alone.
 - `commit_msg.txt` (untracked, repo root) is **overwritten** with one new
   paragraph per task — never appended, no footers. It must never exceed 100
   words and should usually be far shorter: two sentences saying what the

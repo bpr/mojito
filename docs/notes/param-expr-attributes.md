@@ -388,7 +388,7 @@ included, because the pin types `self.storage[0]` over an unbound pack as
 `Ts.values[0]`, never as a concrete type. A `comptime for` variable is the
 index's binder, owned by its loop. The node is a register type a generator may
 carry (*Register types*); no body carries one into MIR before the type-pack
-stage of `docs/roadmap.md` §1.
+stage of `docs/roadmap.md` (R2).
 
 Three decisions shaped the checker side.
 
@@ -508,7 +508,7 @@ checked before instantiation; a field type is opaque and inherits nothing
 from `T`'s bound; a `conforms_to` arm proves exactly its traits; `types[i]
 == Int` narrows nothing; a `var` of an opaque type needs `Deinitable`
 proved (which Mojito's destruction walk does not yet require of any opaque
-parameter, `docs/roadmap.md` §3).
+parameter, `docs/roadmap.md` R30).
 
 ## Register types
 
@@ -565,7 +565,7 @@ else (`CtMarker::Applied`). So `SIMD[DType.float32, C]` matches itself on
 both sides of a call and rejects `SIMD[DType.float32, 8]`
 (`assets/ok/comptime_applied_constant_in_signature.mojo`,
 `assets/type_error/comptime_applied_constant_mismatch.mojo`). What stays
-with the AST route is in `docs/roadmap.md` §3 (3.120–3.122).
+with the AST route is in `docs/roadmap.md` (R138, R139, R140).
 
 **Below the waist.** The concrete verifier rejects every form in the table
 and every layout query: the elaborator answers `MirInstr::SizeOf` from the

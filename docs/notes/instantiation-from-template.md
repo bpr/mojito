@@ -9,7 +9,7 @@ template the authority for the instantiations it covers, what it covers
 today, and what it does not.
 
 The plan this implements is `instantiation-from-template-plan.md` (untracked,
-repository root). The remaining work is `docs/roadmap.md` section 1, one
+repository root). The remaining work is `docs/roadmap.md` track `pmir`, one
 entry per uncovered construct.
 
 Since 2026-10-01 the mechanism serves fewer bodies. A generic struct's method

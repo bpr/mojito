@@ -226,7 +226,7 @@ ones (about 0.09 s each, `check_program.bodies` under `--timings`), with
 6 bodies re-inferred in the second transfer pass and 100–250 in each later
 round (new clones, rewritten calls, and served requests). What a carried
 pass still costs is the copy itself and the per-site syntax hash
-(`docs/roadmap.md` 5.4).
+(`docs/roadmap.md` R148).
 
 ### 3. Comptime elaboration rebuilds invariant indexes each round
 
@@ -575,7 +575,7 @@ with no receiver origin), and a reference result (admitted when every
 `return` hands out a place of `self`).
 
 The remaining cost is body inference of uncovered bodies, about one second per
-transfer pass. `docs/roadmap.md` section 1 carries the entries that attack it,
+transfer pass. The `pmir` track of `docs/roadmap.md` carries the entries that attack it,
 and `docs/notes/instantiation-from-template.md` is the design record.
 
 The counters are `body_inference.{plain,template,clone}`,
