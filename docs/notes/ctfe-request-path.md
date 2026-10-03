@@ -205,7 +205,7 @@ evaluates by demanding a concrete instance and running it on the VM.**
   one both stop at it. It must trigger in seconds:
   `conformance/probes/mono_polymorphic_recursion.mojo` spins for more than
   five minutes in `enqueue → instance_symbol → encode_identifier` because
-  each nested `W[W[…]]` name is built from the last, which roadmap 2.3
+  each nested `W[W[…]]` name is built from the last, which roadmap 2.2
   fixes before the path lands. The pin runs out of memory on the same
   program.
 - **Fuel** stays shared and separate from expansion: one counter per
@@ -304,4 +304,4 @@ The boundary:
   close when a demand serves a keyed instance.
 - **Roadmap 1.11** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with
-  it. **Roadmap 2.3** makes the instance budget reachable first.
+  it. **Roadmap 2.2** makes the instance budget reachable first.

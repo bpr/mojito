@@ -51,6 +51,7 @@ assets/ok/chained_comparison_operand_copy.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/collection_display_default.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized
+assets/ok/collector_runtime_index.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_generic.mojo	main	exe-differential	sanitized

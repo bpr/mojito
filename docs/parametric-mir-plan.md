@@ -567,7 +567,7 @@ Three prerequisites come first. None of them moves a body.
   constant) materializes now, and a demand on an active key is upstream's
   "function instantiation in parameter domain that recursively requires
   itself". No depth bound, as upstream: the instance budget is the one
-  elaboration bound, apart from VM fuel, and roadmap 2.3 makes it reachable
+  elaboration bound, apart from VM fuel, and roadmap 2.2 makes it reachable
   in seconds first.
 - **A common type vocabulary.** A heterogeneous pack already needs a type
   that depends on a symbolic index, and P2's methods already need receiver

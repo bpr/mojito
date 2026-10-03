@@ -97,7 +97,7 @@ correctness fix to existing behavior is allowed.
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.1 and 2.3.
+  - Depends on 1.1 and 2.2.
   - Model: Fable, Planned.
 
 - [ ] **1.3 (P3b) MIR cannot express a `comptime for`**
@@ -441,19 +441,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     entry instead of waiting on it.
   - Model: Fable, Planned.
 
-- [ ] **2.2 A collector indexed by a runtime value does not compile natively**
-
-  Problem: `sum += xs[i]` in `def total(*xs: Int) -> Int` prints `6` on the VM
-  for `total(1, 2, 3)`, and `--backend pliron` rejects it with "unsupported
-  runtime index into pack storage".
-  - A literal index (`xs[0]`) and `len(xs)` compile natively.
-  - The rejection is explicit and at compile time, so nothing runs wrong.
-  - The site is `crates/mojito-pliron/src/lower/subscripts.rs`.
-  - Probe: `conformance/probes/collector_runtime_index_native.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.3 The elaborator's instance budget is not reached in reasonable
+- [ ] **2.2 The elaborator's instance budget is not reached in reasonable
   time on expanding polymorphic recursion**
 
   Problem: `depth(W[T](x.copy()), n - 1)` makes `native::mono` spin for more
@@ -584,6 +572,8 @@ last.
     when it is the right operand of an augmented assignment.
   - `parts[i].byte_length()` and `print(parts[i])` over the same collector
     run.
+  - A read collector (`*parts: String`) and a literal index (`parts[0]`)
+    fail the same way.
   - Probe:
     `conformance/probes/variadic_var_collector_element_augmented_operand.mojo`.
   - Depends on nothing.
@@ -1795,7 +1785,7 @@ last.
     (killed after 60 s, its depth unlimited by default). Pinned by
     `conformance/probes/ctfe_plain_keyed_recursion.mojo`. Closes with 1.9,
     when the evaluation demands concrete instances and the instance budget
-    (2.3) stops the expansion.
+    (2.2) stops the expansion.
   - `len-over-pack-in-comptime-for-header`: `comptime for i in
     range(len(items))` over a runtime pack `*items: *Ts` runs in Mojito and
     is rejected upstream ("cannot use a dynamic value in call argument");

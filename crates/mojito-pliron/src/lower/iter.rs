@@ -189,6 +189,78 @@ impl FnLowering<'_> {
         }
     }
 
+    /// The byte stride between the elements of homogeneous pack storage
+    /// `elements` (non-empty); `what` names the rejected heterogeneous use.
+    pub(super) fn homogeneous_pack_stride(
+        &self,
+        elements: &[Ty],
+        what: &str,
+        dest: Reg,
+    ) -> Result<u64, PlironError> {
+        if elements.iter().any(|element| element != &elements[0]) {
+            return Err(self.unsupported_reg(format!("heterogeneous {what}"), dest));
+        }
+        let composed = self.struct_layout_of(elements, dest)?;
+        Ok(if elements.len() > 1 {
+            composed.offsets[1] - composed.offsets[0]
+        } else {
+            0
+        })
+    }
+
+    /// `base + position * stride` bytes: the address of element `position`
+    /// of homogeneous pack storage.
+    pub(super) fn strided_element_address(
+        &mut self,
+        ctx: &mut Context,
+        base: Value,
+        position: Value,
+        stride: u64,
+        dest: Reg,
+    ) -> Value {
+        let stride_value = self.int_constant(ctx, stride as i64);
+        let scaled =
+            MulOp::new_with_overflow_flag(ctx, position, stride_value, no_overflow_flags());
+        self.append(ctx, scaled.get_operation(), Some(dest));
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let address = GetElementPtrOp::new(
+            ctx,
+            base,
+            vec![GepIndex::Value(scaled.get_result(ctx))],
+            i8_ty,
+        );
+        self.append(ctx, address.get_operation(), Some(dest));
+        address.get_result(ctx)
+    }
+
+    /// Define `dest` as a zeroed value of its register type, for a read on
+    /// a path that never completes (an empty pack's element).
+    pub(super) fn define_zeroed(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        match lower_ty(
+            self.name,
+            self.func.reg_types.get(&dest.0).unwrap_or(&Ty::Int),
+            &self.layout,
+            self.reg_span(dest),
+        )? {
+            LowerTy::Scalar(_) => {
+                let zero = self.int_constant(ctx, 0);
+                self.reg_values.insert(dest.0, zero);
+            }
+            LowerTy::Aggregate { layout, .. } => {
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                self.reg_values.insert(dest.0, storage);
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+            }
+        }
+        Ok(())
+    }
+
     /// The backend-side advance position of a pack-fallback iterator slot
     /// (the slot itself keeps the pack layout), created on first use.
     pub(super) fn pack_position_slot(&mut self, ctx: &mut Context, iter: u32) -> Value {
@@ -264,58 +336,18 @@ impl FnLowering<'_> {
             if let Some(elements) = self.pack_iter_elements(iter) {
                 let Some(first) = elements.first() else {
                     // An empty pack's advance is dead code (`HasNext` is
-                    // statically false); define a zeroed destination.
-                    match lower_ty(
-                        self.name,
-                        self.func.reg_types.get(&dest.0).unwrap_or(&Ty::Int),
-                        &self.layout,
-                        self.reg_span(dest),
-                    )? {
-                        LowerTy::Scalar(_) => {
-                            let zero = self.int_constant(ctx, 0);
-                            self.reg_values.insert(dest.0, zero);
-                        }
-                        LowerTy::Aggregate { layout, .. } => {
-                            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                            self.reg_values.insert(dest.0, storage);
-                        }
-                        LowerTy::ZeroSized => {
-                            self.erased.insert(dest.0);
-                        }
-                    }
-                    return Ok(());
+                    // statically false).
+                    return self.define_zeroed(ctx, dest);
                 };
-                if elements.iter().any(|element| element != first) {
-                    return Err(self.unsupported_reg("heterogeneous pack advance".into(), dest));
-                }
-                let composed = self.struct_layout_of(&elements, dest)?;
-                let stride = if elements.len() > 1 {
-                    composed.offsets[1] - composed.offsets[0]
-                } else {
-                    0
-                };
+                let stride = self.homogeneous_pack_stride(&elements, "pack advance", dest)?;
                 let slot = self.var_slots[iter as usize];
                 let position_slot = self.pack_position_slot(ctx, iter);
                 let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
                 let position = LoadOp::new(ctx, position_slot, i64_handle);
                 self.append(ctx, position.get_operation(), Some(dest));
                 self.clear_pack_leaf_flag(ctx, iter, position.get_result(ctx));
-                let stride_value = self.int_constant(ctx, stride as i64);
-                let scaled = MulOp::new_with_overflow_flag(
-                    ctx,
-                    position.get_result(ctx),
-                    stride_value,
-                    no_overflow_flags(),
-                );
-                self.append(ctx, scaled.get_operation(), Some(dest));
-                let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-                let address = GetElementPtrOp::new(
-                    ctx,
-                    slot,
-                    vec![GepIndex::Value(scaled.get_result(ctx))],
-                    i8_ty,
-                );
-                self.append(ctx, address.get_operation(), Some(dest));
+                let source =
+                    self.strided_element_address(ctx, slot, position.get_result(ctx), stride, dest);
                 let one = self.int_constant(ctx, 1);
                 let next = AddOp::new_with_overflow_flag(
                     ctx,
@@ -326,7 +358,6 @@ impl FnLowering<'_> {
                 self.append(ctx, next.get_operation(), Some(dest));
                 let store = StoreOp::new(ctx, next.get_result(ctx), position_slot);
                 self.append(ctx, store.get_operation(), Some(dest));
-                let source = address.get_result(ctx);
                 return match lower_ty(self.name, first, &self.layout, self.reg_span(dest))? {
                     LowerTy::Scalar(scalar) => {
                         let handle = scalar.handle(ctx);

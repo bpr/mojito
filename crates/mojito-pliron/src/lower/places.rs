@@ -113,7 +113,7 @@ impl FnLowering<'_> {
                 (root_ty, root_slot, 0)
             };
         let mut offset: u64 = 0;
-        for proj in &place.proj[projected..] {
+        for (step, proj) in place.proj.iter().enumerate().skip(projected) {
             while let Ty::Ref(reference) = ty {
                 if offset != 0 {
                     address = self.gep_byte(ctx, address, offset, dest);
@@ -150,30 +150,41 @@ impl FnLowering<'_> {
                 Proj::Index(index) => {
                     // A literal index into pack storage projects statically,
                     // like `Proj::ConstIndex` (the Tuple accessor bodies'
-                    // `self.storage[0]` shape).
+                    // `self.storage[0]` shape); a runtime one traps outside
+                    // `0..len` and addresses homogeneous storage by stride.
                     if let Ty::Tuple(elements) | Ty::RuntimePack(elements) = &ty {
                         let elements = elements.clone();
-                        let Some(PendingLiteral::Int(literal)) =
-                            self.pending_literals.get(&index.0).cloned()
-                        else {
-                            return Err(self.unsupported_reg(
-                                "runtime subscript projection into pack storage".into(),
-                                dest,
-                            ));
-                        };
-                        let element = literal
-                            .to_i64()
-                            .and_then(|value| usize::try_from(value).ok())
-                            .filter(|value| *value < elements.len())
-                            .ok_or_else(|| {
+                        if let Some(element) = self.constant_pack_index(*index, elements.len()) {
+                            let composed = self.struct_layout_of(&elements, dest)?;
+                            offset += composed.offsets[element];
+                            ty = elements[element].clone();
+                            continue;
+                        }
+                        if offset != 0 {
+                            address = self.gep_byte(ctx, address, offset, dest);
+                            offset = 0;
+                        }
+                        self.emit_index_guard(ctx, *index, elements.len(), dest)?;
+                        // An empty pack's projection is never reached; it
+                        // keeps the checked element type the place records.
+                        let Some(first) = elements.first() else {
+                            ty = place.projection_tys.get(step).cloned().ok_or_else(|| {
                                 self.unsupported_reg(
-                                    "pack subscript projection index out of range".into(),
+                                    "untyped projection into an empty pack".into(),
                                     dest,
                                 )
                             })?;
-                        let composed = self.struct_layout_of(&elements, dest)?;
-                        offset += composed.offsets[element];
-                        ty = elements[element].clone();
+                            continue;
+                        };
+                        let stride = self.homogeneous_pack_stride(
+                            &elements,
+                            "runtime pack projection",
+                            dest,
+                        )?;
+                        let position = self.reg_value(ctx, *index, ScalarTy::Int)?;
+                        address =
+                            self.strided_element_address(ctx, address, position, stride, dest);
+                        ty = first.clone();
                         continue;
                     }
                     if let Some((dtype, width)) = simd_dims(&ty) {
@@ -181,7 +192,7 @@ impl FnLowering<'_> {
                             address = self.gep_byte(ctx, address, offset, dest);
                             offset = 0;
                         }
-                        self.emit_simd_index_guard(ctx, *index, width as usize, dest)?;
+                        self.emit_index_guard(ctx, *index, width as usize, dest)?;
                         let element = Ty::Simd {
                             dtype: mojito_types::types::SimdDtype::Known(dtype),
                             width: mojito_types::types::SimdWidth::Known(1),

@@ -227,8 +227,8 @@ impl FnLowering<'_> {
 
     /// An intrinsic storage subscript: a constant index into heterogeneous
     /// (`TupleStorage`) or homogeneous (`VariadicStorage`) pack storage — the
-    /// VM's `index_value` clone at a statically composed offset. Runtime
-    /// indexes stay rejected until the packs slice.
+    /// VM's `index_value` clone at a statically composed offset; a runtime
+    /// index reads homogeneous storage at a strided offset.
     pub(super) fn lower_index_intrinsic(
         &mut self,
         ctx: &mut Context,
@@ -242,7 +242,7 @@ impl FnLowering<'_> {
             let Some((dtype, width)) = self.func.reg_types.get(&base.0).and_then(simd_dims) else {
                 return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
             };
-            self.emit_simd_index_guard(ctx, index, width as usize, dest)?;
+            self.emit_index_guard(ctx, index, width as usize, dest)?;
             // A width-1 vector is a scalar register (`LowerTy::Scalar`): its
             // only lane is the value itself.
             if width == 1 {
@@ -274,17 +274,9 @@ impl FnLowering<'_> {
                 ));
             }
         };
-        let Some(PendingLiteral::Int(literal)) = self.pending_literals.get(&index.0).cloned()
-        else {
-            return Err(self.unsupported_reg("runtime index into pack storage".into(), dest));
+        let Some(element) = self.constant_pack_index(index, elements.len()) else {
+            return self.lower_runtime_pack_index(ctx, dest, base, index, &elements);
         };
-        let element = literal
-            .to_i64()
-            .and_then(|value| usize::try_from(value).ok())
-            .filter(|value| *value < elements.len())
-            .ok_or_else(|| {
-                self.unsupported_reg("pack subscript index out of range".into(), dest)
-            })?;
         let composed = self.struct_layout_of(&elements, dest)?;
         let base_ptr = self.reg_ptr(ctx, base)?;
         let offset = composed.offsets[element];
@@ -296,7 +288,42 @@ impl FnLowering<'_> {
         self.load_from(ctx, address, &elements[element], dest)
     }
 
-    pub(super) fn emit_simd_index_guard(
+    /// The element a literal pack index selects, when it is in `0..len`.
+    pub(super) fn constant_pack_index(&self, index: Reg, len: usize) -> Option<usize> {
+        let Some(PendingLiteral::Int(literal)) = self.pending_literals.get(&index.0) else {
+            return None;
+        };
+        literal
+            .to_i64()
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| *value < len)
+    }
+
+    /// A runtime (or out-of-range literal) index into homogeneous pack
+    /// storage: the VM's `bounds_check` as a trap on an index outside
+    /// `0..len` (one unsigned compare), then the element at
+    /// `index * stride`. A read the instance never executes must not
+    /// reject it, so an empty pack's read compiles to the trap alone.
+    pub(super) fn lower_runtime_pack_index(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        base: Reg,
+        index: Reg,
+        elements: &[Ty],
+    ) -> Result<(), PlironError> {
+        self.emit_index_guard(ctx, index, elements.len(), dest)?;
+        let Some(element) = elements.first() else {
+            return self.define_zeroed(ctx, dest);
+        };
+        let stride = self.homogeneous_pack_stride(elements, "runtime pack index", dest)?;
+        let base_ptr = self.reg_ptr(ctx, base)?;
+        let position = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let address = self.strided_element_address(ctx, base_ptr, position, stride, dest);
+        self.load_from(ctx, address, element, dest)
+    }
+
+    pub(super) fn emit_index_guard(
         &mut self,
         ctx: &mut Context,
         index: Reg,

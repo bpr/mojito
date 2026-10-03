@@ -32,11 +32,12 @@ pub(super) fn verify_intrinsic_index(
         }
         // An elaborated pack is the tuple its call site collected: the
         // elaborator rewrites the pack's type at the instance's arity and
-        // keeps the subscript.
+        // keeps the subscript. An empty instance keeps no element type to
+        // check against; its every read is out of range and traps.
         (
             MirIntrinsicSubscript::VariadicStorage,
             Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)),
-        ) => Some(elements.iter().collect::<Vec<_>>()),
+        ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
         (MirIntrinsicSubscript::Simd, Some(Ty::Simd { dtype, .. })) => {
             let scalar = simd_element_type(dtype);
             if let Some(dest) = dest

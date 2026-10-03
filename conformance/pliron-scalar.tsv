@@ -51,6 +51,7 @@ assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_display_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_truthiness.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/collector_runtime_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comparable_ordered_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_generic.mojo	-	ineligible	no-scalar-entry-shape

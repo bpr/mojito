@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A collector indexed by a runtime value compiles natively: `sum += xs[i]`
+  in `def total(*xs: Int) -> Int` gives `6` for `total(1, 2, 3)` under
+  `--backend pliron`, as on the VM and at the pin, and so does a method
+  called on `xs[i]` (`assets/ok/collector_runtime_index.mojo`). Native
+  lowering used to reject it with "unsupported runtime index into pack
+  storage". An instance with an empty collector, such as `total()`, used to
+  fail MIR verification on both backends.
 - A native `**kwargs` collector holds its keywords: `return kwargs["b"]` in
   `def pick(var **kwargs: Int)` gives `2` under `--backend pliron`, as on
   the VM and at the pin, through direct and indirect calls and over

@@ -351,9 +351,12 @@ pub(super) fn verify_place(
                     ));
                 }
                 if let Some(base) = &current {
+                    // An empty pack instance keeps no element type to
+                    // check against; its every index is out of range.
                     match indexed_place_element_types(base) {
                         Some(candidates)
-                            if !candidates.iter().any(|candidate| {
+                            if !candidates.is_empty()
+                                && !candidates.iter().any(|candidate| {
                                 types_compatible(projected, candidate)
                                     || matches!(candidate, Ty::Ref(reference) if types_compatible(projected, &reference.referent))
                             }) =>

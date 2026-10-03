@@ -735,7 +735,7 @@ impl FnLowering<'_> {
         base.projection_tys.pop();
         base.ty = Some(canonical_simd_ty(dtype, width as i64));
         let (address, _) = self.place_address(ctx, &base, src)?;
-        self.emit_simd_index_guard(ctx, index, width, src)?;
+        self.emit_index_guard(ctx, index, width, src)?;
         let vector = self.simd_load_vector_from(ctx, address, dtype, width, src);
         let lane = self.reg_value(ctx, src, ScalarTy::of_dtype(dtype))?;
         // The guard above makes the dynamic insert index in range (an
