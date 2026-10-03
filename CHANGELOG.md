@@ -172,6 +172,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A declaring unpack binds its names even where a module constant shares
+  one: `var i, j = 100, 1` beside `comptime i = 40` declares a local `i`,
+  in a generic `def` as in a plain one, where elaboration replaced the
+  target with the constant's literal and the program stopped with "invalid
+  assignment target". A plain local shadowing a constant in a generic
+  `def`'s body already read the local, as at the pin;
+  `assets/ok/comptime_shadowed_locals.mojo` now pins both.
 - An overloaded method is declared under the symbol its calls name. The
   lowered symbol now spells the method's own binders with their bounds
   (`First.pick$ov$T$Copyable$Int`), a callable-bounded binder by its callable

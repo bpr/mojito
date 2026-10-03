@@ -3,7 +3,7 @@
 #
 # The pin (2026-09-21) prints `1 6`. Mojito stops with "Cell.m: unspecialized
 # type-keyed method": the evaluation's subprogram carries the method as its
-# template stub and mints no per-instantiation clone. `docs/roadmap.md` 3.117.
+# template stub and mints no per-instantiation clone. `docs/roadmap.md` 3.116.
 comptime FLAG = 3
 
 struct Cell[T: Copyable & Deinitable]:

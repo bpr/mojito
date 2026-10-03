@@ -1827,8 +1827,18 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             rewrite_expr(place, subs);
             rewrite_expr(value, subs);
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            rewrite_exprs(targets, subs);
+        // A declaring unpack's bare name binds a new local, so it is never a
+        // use of a same-named constant.
+        StmtKind::Unpack {
+            targets,
+            value,
+            declares,
+        } => {
+            for target in targets {
+                if !(*declares && matches!(target.kind, ExprKind::Identifier(_))) {
+                    rewrite_expr(target, subs);
+                }
+            }
             rewrite_expr(value, subs);
         }
         StmtKind::Expr(e) => rewrite_expr(e, subs),
