@@ -3908,7 +3908,9 @@ logic participates in generic inference and in free, instance, static, and
 bounded-trait method selection. The ABI preserves unmatched pairs in call-site
 order. The VM constructs the implicitly linked, self-hosted `StringDict[T]`
 directly in the collector's callee slot; it is an owned mutable local and never
-participates in caller write-back. `callee(**kwargs^)` consumes that dictionary,
+participates in caller write-back. The native caller builds the same
+instance in fresh storage through its empty constructor and one `__setitem__`
+per collected keyword, then passes it owned. `callee(**kwargs^)` consumes that dictionary,
 moves its ordered entries back into the shared binder, and retains ordinary
 duplicate/missing-keyword diagnostics and the checker-selected effect contract.
 6. binds value parameters into frame locals

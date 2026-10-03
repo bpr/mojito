@@ -354,48 +354,21 @@ impl FnLowering<'_> {
         };
         let kw_pack = match kw_variadic {
             None => None,
-            Some((_element, Some(index))) => {
-                let Some(LowerTy::Aggregate { ty, layout }) = params.get(index) else {
+            Some((element, Some(index))) => {
+                let Some(collector) = params.get(index) else {
                     return Err(self.unsupported_reg(
-                        format!("keyword pack of `{name}` lacks aggregate storage"),
+                        format!("keyword pack of `{name}` lacks a parameter slot"),
                         dest,
                     ));
                 };
-                let Ty::Struct(struct_name, _) = ty.as_ref() else {
-                    return Err(self.unsupported_reg(
-                        format!("keyword pack of `{name}` is not a StringDict"),
-                        dest,
-                    ));
-                };
-                let Some(struct_decl) = self.struct_decls.get(struct_name.as_str()) else {
-                    return Err(self.unsupported_reg(
-                        format!("keyword pack of `{name}` lacks a struct declaration"),
-                        dest,
-                    ));
-                };
-                let field_types = struct_decl
-                    .fields
+                let collector = collector.clone();
+                let keywords = matched
+                    .keyword_overflow
                     .iter()
-                    .map(|(_, ty)| ty.clone())
+                    .map(|&k| (kwargs[k].0.clone(), kwargs[k].1))
                     .collect::<Vec<_>>();
-                let composed = self.struct_layout_of(&field_types, dest)?;
-                let Some(count_index) = struct_decl
-                    .fields
-                    .iter()
-                    .position(|(field, _)| field == "count")
-                else {
-                    return Err(self.unsupported_reg(
-                        format!("keyword pack of `{name}` lacks a count field"),
-                        dest,
-                    ));
-                };
-                let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
-                self.mem_zero(ctx, storage, layout.size);
-                let count_address =
-                    self.gep_byte(ctx, storage, composed.offsets[count_index], dest);
-                let count = self.int_constant(ctx, matched.keyword_overflow.len() as i64);
-                let store = StoreOp::new(ctx, count, count_address);
-                self.append(ctx, store.get_operation(), Some(dest));
+                let storage =
+                    self.build_keyword_collector(ctx, &collector, &element, &keywords, dest)?;
                 Some((index, storage))
             }
             Some((_, None)) => {
@@ -497,6 +470,109 @@ impl FnLowering<'_> {
             lowered.push(value);
         }
         Ok(lowered)
+    }
+
+    /// The `**kwargs` collector of one call, built as the VM's
+    /// `make_kwargs_dict` builds it: the collector instance's empty
+    /// constructor into fresh storage, then one `__setitem__` per collected
+    /// keyword in call order. Each value enters the collector owned; the
+    /// callee owns and destroys the collector.
+    pub(super) fn build_keyword_collector(
+        &mut self,
+        ctx: &mut Context,
+        collector: &LowerTy,
+        element: &Ty,
+        keywords: &[(String, Reg)],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let LowerTy::Aggregate { ty, layout } = collector else {
+            return Err(self.unsupported_reg("keyword pack lacks aggregate storage".into(), dest));
+        };
+        let Ty::Struct(struct_name, _) = ty.as_ref() else {
+            return Err(self.unsupported_reg("keyword pack is not a StringDict".into(), dest));
+        };
+        let (Some(init), Some(setitem)) = (
+            self.constructor_init(struct_name, 0),
+            self.unique_method_instance(struct_name, "__setitem__", 3),
+        ) else {
+            return Err(self.unsupported_reg(
+                format!("keyword pack `{struct_name}` lacks a compiled `__init__`/`__setitem__`"),
+                dest,
+            ));
+        };
+        let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
+        self.emit_void_call(ctx, &init, vec![storage], dest)?;
+        let Some(value_param) = self.signatures[&setitem].params.get(2).cloned() else {
+            return Err(self.unsupported_reg(format!("`{setitem}` takes no value"), dest));
+        };
+        for (keyword, reg) in keywords {
+            let key = self.entry_alloca(ctx, 24, 8);
+            let len = self.uint_constant(ctx, keyword.len() as u64);
+            let data = self.emit_alloc(ctx, len, 1, dest);
+            let global = self.shared.intern_string(ctx, keyword.as_bytes());
+            let literal = self.global_address(ctx, &global, dest);
+            self.mem_copy(ctx, data, literal, keyword.len() as u64, dest);
+            self.store_string_fields(ctx, key, data, len, len, dest);
+            let value = match &value_param {
+                LowerTy::Scalar(scalar) => self.reg_value(ctx, *reg, *scalar)?,
+                LowerTy::Aggregate { layout, .. } => {
+                    let slot = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
+                    self.store_to(ctx, slot, element, *reg)?;
+                    slot
+                }
+                LowerTy::ZeroSized => {
+                    return Err(
+                        self.unsupported_reg("zero-sized keyword pack element".into(), dest)
+                    );
+                }
+            };
+            self.emit_void_call(ctx, &setitem, vec![storage, key, value], dest)?;
+            self.emit_free(ctx, data);
+        }
+        Ok(storage)
+    }
+
+    /// The unique compiled overload of `struct_name.method` with `arity`
+    /// physical parameters (receiver included).
+    pub(super) fn unique_method_instance(
+        &self,
+        struct_name: &str,
+        method: &str,
+        arity: usize,
+    ) -> Option<String> {
+        let name = format!("{struct_name}.{method}");
+        if self.signatures.contains_key(&name) {
+            return Some(name);
+        }
+        let mut matches = self.signatures.iter().filter(|(fname, signature)| {
+            mojito_symbol::symbol::is_overload_of(fname, &name) && signature.params.len() == arity
+        });
+        let first = matches.next()?.0.clone();
+        matches.next().is_none().then_some(first)
+    }
+
+    /// Call compiled `name`, which neither raises nor returns a value, with
+    /// fully bound operands; `anchor` only locates the emitted operations.
+    pub(super) fn emit_void_call(
+        &mut self,
+        ctx: &mut Context,
+        name: &str,
+        operands: Vec<Value>,
+        anchor: Reg,
+    ) -> Result<(), PlironError> {
+        let signature = &self.signatures[name];
+        if signature.returns_value || signature.sret.is_some() || signature.outcome.is_some() {
+            return Err(self.unsupported_reg(format!("`{name}` is not a void call"), anchor));
+        }
+        let func_ty = signature.func_ty;
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
+        self.append(ctx, call.get_operation(), Some(anchor));
+        Ok(())
     }
 
     /// The omitted-argument value of one parameter: the folded literal at the

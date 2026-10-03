@@ -97,7 +97,7 @@ correctness fix to existing behavior is allowed.
   - Start the mixed-feature probe every later P3 entry extends.
   - Delete the cloner's branch for the class, its trap stubs, and its
     certificate class.
-  - Depends on 1.1 and 2.4.
+  - Depends on 1.1 and 2.3.
   - Model: Fable, Planned.
 
 - [ ] **1.3 (P3b) MIR cannot express a `comptime for`**
@@ -441,23 +441,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     entry instead of waiting on it.
   - Model: Fable, Planned.
 
-- [ ] **2.2 A native `**kwargs` collector holds only its count**
-
-  Problem: `return kwargs["b"]` in `def pick(var **kwargs: Int)` returns `2`
-  on the VM, and `--backend pliron` stops with `vm: dereference of dangling
-  Pointer`.
-  - The native caller zeroes a `StringDict` and stores the keyword count, so
-    only `len(kwargs)` is right. The keys and values are never stored.
-  - The fix is to build the collector as the VM does: the instance's empty
-    constructor, then one `__setitem__` per collected keyword.
-    `native::mono` already keeps both members for every `**kwargs` callee.
-  - Until then a native read of a collector must be rejected at compile
-    time, not run.
-  - Probe: `conformance/probes/kwargs_keyed_read_native.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **2.3 A collector indexed by a runtime value does not compile natively**
+- [ ] **2.2 A collector indexed by a runtime value does not compile natively**
 
   Problem: `sum += xs[i]` in `def total(*xs: Int) -> Int` prints `6` on the VM
   for `total(1, 2, 3)`, and `--backend pliron` rejects it with "unsupported
@@ -469,7 +453,7 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **2.4 The elaborator's instance budget is not reached in reasonable
+- [ ] **2.3 The elaborator's instance budget is not reached in reasonable
   time on expanding polymorphic recursion**
 
   Problem: `depth(W[T](x.copy()), n - 1)` makes `native::mono` spin for more
@@ -1811,7 +1795,7 @@ last.
     (killed after 60 s, its depth unlimited by default). Pinned by
     `conformance/probes/ctfe_plain_keyed_recursion.mojo`. Closes with 1.9,
     when the evaluation demands concrete instances and the instance budget
-    (2.4) stops the expansion.
+    (2.3) stops the expansion.
   - `len-over-pack-in-comptime-for-header`: `comptime for i in
     range(len(items))` over a runtime pack `*items: *Ts` runs in Mojito and
     is rejected upstream ("cannot use a dynamic value in call argument");

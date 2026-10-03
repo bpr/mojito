@@ -203,6 +203,7 @@ assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
 assets/ok/kwargs.mojo	main	exe-differential	sanitized
+assets/ok/kwargs_keyed_read.mojo	main	exe-differential	sanitized
 assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
 assets/ok/lambda_hof.mojo	main	exe-differential	sanitized

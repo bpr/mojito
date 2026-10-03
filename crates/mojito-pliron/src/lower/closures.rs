@@ -358,44 +358,29 @@ impl FnLowering<'_> {
         let mut slots = matched.slots.iter();
         for (index, expected) in abi.params.iter().enumerate() {
             if abi.kw_pack_index == Some(index) {
-                let LowerTy::Aggregate { ty, layout } = expected else {
+                let element = match expected {
+                    LowerTy::Aggregate { ty, .. } => match ty.as_ref() {
+                        Ty::Struct(_, args) => match args.as_slice() {
+                            [mojito_types::types::TyArg::Ty(element)] => Some(element.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(element) = element else {
                     return Err(self.unsupported_reg(
-                        "indirect keyword pack lacks aggregate storage".into(),
+                        "indirect keyword pack is not a StringDict instance".into(),
                         dest,
                     ));
                 };
-                let Ty::Struct(struct_name, _) = ty.as_ref() else {
-                    return Err(self.unsupported_reg(
-                        "indirect keyword pack is not a StringDict".into(),
-                        dest,
-                    ));
-                };
-                let Some(struct_decl) = self.struct_decls.get(struct_name.as_str()) else {
-                    return Err(self.unsupported_reg(
-                        "indirect keyword pack lacks a struct declaration".into(),
-                        dest,
-                    ));
-                };
-                let field_types = struct_decl
-                    .fields
+                let keywords = matched
+                    .keyword_overflow
                     .iter()
-                    .map(|(_, ty)| ty.clone())
+                    .map(|&k| (kwargs[k].0.clone(), kwargs[k].1))
                     .collect::<Vec<_>>();
-                let composed = self.struct_layout_of(&field_types, dest)?;
-                let count_index = struct_decl
-                    .fields
-                    .iter()
-                    .position(|(field, _)| field == "count")
-                    .ok_or_else(|| {
-                        self.unsupported_reg("indirect keyword pack lacks `count`".into(), dest)
-                    })?;
-                let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
-                self.mem_zero(ctx, storage, layout.size);
-                let count_address =
-                    self.gep_byte(ctx, storage, composed.offsets[count_index], dest);
-                let count = self.int_constant(ctx, matched.keyword_overflow.len() as i64);
-                let store = StoreOp::new(ctx, count, count_address);
-                self.append(ctx, store.get_operation(), Some(dest));
+                let storage =
+                    self.build_keyword_collector(ctx, expected, &element, &keywords, dest)?;
                 lowered.push(storage);
                 continue;
             }

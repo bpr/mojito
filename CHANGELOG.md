@@ -172,6 +172,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A native `**kwargs` collector holds its keywords: `return kwargs["b"]` in
+  `def pick(var **kwargs: Int)` gives `2` under `--backend pliron`, as on
+  the VM and at the pin, through direct and indirect calls and over
+  `String` values (`assets/ok/kwargs_keyed_read.mojo`). The native caller
+  used to zero the collector and store only its count, so a keyed read
+  stopped with "dereference of dangling Pointer".
 - A `@staticmethod` of a value-parameterized struct reads its struct's
   parameter, as at the pin: `return Self.k` in `struct W[k: Int]` gives `5`
   for `W[5].st()`, and so do a bracket slot a callee infers from
