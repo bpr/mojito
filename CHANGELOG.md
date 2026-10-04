@@ -309,6 +309,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `var` declared in a `comptime for` body that shadows an enclosing `var`
+  of its name is its own binding in every copy, as in the pin; it used to
+  fail with "operator Add is not defined for None and Int", since the
+  checked declaration table never descended into a `comptime for` body
+  (`assets/ok/template_loop_local.mojo`).
+
 - A `comptime if` whose condition asks a layout query (`comptime if
   size_of[Self.T]() == 8:` in a generic struct's method, or `size_of[Int]()`
   in any function) is decided by the elaborator under the compilation's

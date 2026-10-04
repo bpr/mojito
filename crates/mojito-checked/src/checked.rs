@@ -2566,9 +2566,7 @@ fn build_checked_declarations(
                             .chain(orelse.iter().map(Vec::as_slice))
                             .chain(finalbody.iter().map(Vec::as_slice))
                             .collect(),
-                        StmtKind::With { body, .. }
-                        | StmtKind::ComptimeFor { body, .. }
-                        | StmtKind::Scope(body) => vec![body],
+                        StmtKind::With { body, .. } | StmtKind::Scope(body) => vec![body],
                         _ => Vec::new(),
                     };
                     for body in nested {
@@ -2674,6 +2672,14 @@ fn build_checked_declarations(
                         )
                     })
                     .collect(),
+                StmtKind::ComptimeFor { body, .. } => block(
+                    body,
+                    out,
+                    annotation_types,
+                    statement_bindings,
+                    declaration_captures,
+                    binding_types,
+                ),
                 _ => Vec::new(),
             };
             out[id.0 as usize].children = children;

@@ -1793,20 +1793,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R285 A `comptime for` local shadowing the enclosing `var` of its
-  name fails to check**
-
-  Problem: in `def shadow[n: Int]()`, a `var x = i` inside `comptime for i
-  in range(n)` that shadows an outer `var x = 100` fails with "operator Add
-  is not defined for None and Int" at `x += 1`, while the pin prints `1 2 3
-  100`.
-  - `assets/ok/template_loop_local.mojo` holds the case and fails on master;
-    its other functions (`total`, `nested`, `arms`) run.
-  - The fixture landed passing in c8f6cf73, so a later change broke it.
-  - Found while landing the layout-query `comptime if` (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R62 A `def`'s own type pack cannot be queried in a runtime position**
 
   Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
