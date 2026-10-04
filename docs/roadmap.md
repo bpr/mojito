@@ -616,19 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R263 `len` of a homogeneous collector copies the whole collector**
-
-  Problem: `len(a)` inside `def count(*a: IC)` runs the copy constructor of
-  every element of `a`, where the pin copies nothing. The copies are never
-  destroyed.
-  - MIR passes the collector to `len` as a `var.use` copy; the checker's
-    `borrow_nominal_place_argument` lends only a named nominal struct.
-  - An element read (`var x = a[1]`, `print(a[1])`) already reads the element
-    place alone (`assets/ok/variadic_element_value_read.mojo`).
-  - Probe: `conformance/probes/variadic_collector_len_copies_collector.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R264 `print` of a type-parameter-typed value in a generic `def`
   leaks a copy**
 

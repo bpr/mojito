@@ -1599,6 +1599,7 @@ impl Flatten<'_> {
             Ty::Struct(..)
                 | Ty::Tuple(_)
                 | Ty::RuntimePack(_)
+                | Ty::VariadicPack(_)
                 | Ty::Variant(_)
                 | Ty::Param { .. }
                 | Ty::Assoc { .. }

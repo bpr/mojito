@@ -301,6 +301,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `len(a)` of a homogeneous collector (`def count(*a: IC)`) or of a named
+  tuple reads the storage in place, as the pin's `len[T: Sized](value: T)`
+  does, where it used to copy every element and never destroy the copies,
+  on the VM and natively (`assets/ok/variadic_collector_len.mojo`).
+
 - A value read of a homogeneous collector's element (`var x = a[1]` inside
   `def h(*a: IC)`) copies that element alone, as the pin does: MIR loads the
   element place and runs the checked value copy on it, where it used to copy

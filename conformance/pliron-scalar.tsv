@@ -787,6 +787,7 @@ assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scala
 assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variable_scoping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_args.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variadic_collector_len.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_element_value_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_method_type_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_overload_collector_position.mojo	-	ineligible	no-scalar-entry-shape

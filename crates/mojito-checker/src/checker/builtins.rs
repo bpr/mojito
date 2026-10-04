@@ -616,6 +616,19 @@ impl Checker {
         }
     }
 
+    /// `len` over a named tuple or pack reads the storage where it lies, as
+    /// upstream's `len[T: Sized](value: T)` takes it by `read`: taking the
+    /// length copies no element.
+    pub(super) fn borrow_storage_place_argument(&self, argument: &Expr, ty: &Ty) {
+        if matches!(argument.kind, ExprKind::Identifier(_))
+            && matches!(ty, Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_))
+        {
+            self.borrowed_read_call_places
+                .borrow_mut()
+                .insert(argument.source_span());
+        }
+    }
+
     /// A read-only builtin (`print`) over an element of a named tuple or
     /// pack reads the element where it lies, as it reads a field.
     pub(super) fn borrow_storage_element_argument(&self, argument: &Expr) {
@@ -778,6 +791,7 @@ impl Checker {
             return Err(TypeError::Unsupported(message));
         }
         self.borrow_nominal_place_argument(&args[0], &tys[0]);
+        self.borrow_storage_place_argument(&args[0], &tys[0]);
         if let Some(result) = self.len_result_for_type(&tys[0])? {
             return Ok(result);
         }

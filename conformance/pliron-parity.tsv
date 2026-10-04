@@ -787,6 +787,7 @@ assets/ok/value_parameter_inferred_from_argument_type.mojo	main	exe-differential
 assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
+assets/ok/variadic_collector_len.mojo	main	exe-differential	sanitized
 assets/ok/variadic_element_value_read.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
