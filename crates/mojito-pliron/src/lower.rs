@@ -243,6 +243,7 @@ pub fn lower_body(
         trace_lifecycle: env.trace_lifecycle,
         reg_values: HashMap::new(),
         pending_literals: HashMap::new(),
+        int_consts: HashMap::new(),
         pack_positions: HashMap::new(),
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
@@ -431,6 +432,10 @@ struct FnLowering<'a> {
     reg_values: HashMap<u32, Value>,
     /// Registers holding a not-yet-materialized literal.
     pending_literals: HashMap<u32, PendingLiteral>,
+    /// Registers holding an `Int` constant: an index the elaborator folded
+    /// (an unrolled `comptime for`'s), which projects pack storage
+    /// statically as a literal does.
+    int_consts: HashMap<u32, i64>,
     /// Backend-side advance positions of pack-fallback iterator slots
     /// (the slot itself keeps the pack layout), keyed by iterator variable.
     pack_positions: HashMap<u32, Value>,

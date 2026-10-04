@@ -590,6 +590,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             param,
             kwargs,
             kwarg_places,
+            element,
         } => record(
             tag,
             &[
@@ -599,6 +600,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("param", symbol(&param.name)),
                 ("kwargs", kwargs_value(kwargs)),
                 ("kwarg_places", places_option(kwarg_places)),
+                ("element", option(element.as_ref().map(param_arg))),
             ],
         ),
         MirInstr::MaterializeLiteral {

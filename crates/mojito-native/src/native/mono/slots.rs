@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_places_mut;
 use mojito_mir::mir::{MirBlock, MirFunction, MirInstr, MirTerm};
+use mojito_types::types::{ParamDecl, Ty};
 
 /// Remove the `retired` slots from `function`, none of them a parameter nor
 /// still addressed: every slot above one moves down past it, and its name
@@ -50,6 +51,34 @@ pub(super) fn addressed_slots<'a>(
     let mut blocks: Vec<MirBlock> = blocks.into_iter().cloned().collect();
     renumber_blocks(&mut blocks, &record);
     addressed.into_inner()
+}
+
+/// The slots a template seeds for its constructible type parameters (a
+/// `Hasher` or `Defaultable` bound), each typed by its own binder, that no
+/// block of `function` still addresses: the reification the erased VM reads
+/// to construct `T()`. Mojo gives a type parameter no storage, so a
+/// concrete instance, whose every construction names its type, keeps none.
+pub(super) fn reification_slots(function: &MirFunction, scope: &[ParamDecl]) -> BTreeSet<VarId> {
+    let addressed = addressed_slots(&function.blocks);
+    scope
+        .iter()
+        .filter(|decl| mojito_types::types::constructible_type_parameter(decl))
+        .filter_map(|decl| {
+            let binder = decl.binder();
+            let slot = function
+                .var_names
+                .iter()
+                .enumerate()
+                .skip(function.n_params)
+                .position(|(slot, name)| {
+                    *name == *binder.name
+                        && matches!(function.var_tys.get(&(slot as VarId)),
+                            Some(Ty::Param { binder: typed, .. }) if *typed == binder)
+                })?;
+            Some((slot + function.n_params) as VarId)
+        })
+        .filter(|slot| !addressed.contains(slot))
+        .collect()
 }
 
 pub(super) fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {

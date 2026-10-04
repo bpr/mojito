@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R295**.
+Next free ID: **R300**.
 
 ## Ordered Work
 
@@ -60,17 +60,18 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R252 (P3b) A binding of an element's type under a served pack loop
-  keys a clone**
+- [ ] **R298 (P3b) A `comptime` alias of a pack element under a served
+  loop keys a clone**
 
-  Problem: `var value = Ts[i]()` or `var first = args[i]` under `comptime
-  for i in range(Ts.length)` in a pack-keyed `def` keeps the cloner
-  (`loop_binds_pack_element`, `comptime.rs`;
-  `assets/ok/pack_element_default_construction.mojo`'s `build`).
-  - The binding's slot type names the index, so each unrolled copy needs a
-    slot of its own, which is R247's gap at a pack element.
-  - Depends on R247.
-  - Model: Fable, Planned.
+  Problem: `comptime T = Ts[i]` in a pack-keyed `def`'s `comptime for`
+  keeps the cloner (`def_body_keys_specialization`, `comptime.rs`), as
+  `var first: T = args[i]` under it does.
+  - A served body would carry the alias as the dependent `Ts[i]` it
+    denotes, which the element binding beside it already is.
+  - The cloned path also fails on a `StringLiteral` element (R297).
+  - Found while landing R252 (2026-10-04).
+  - Depends on R297.
+  - Model: Fable, Not Planned.
 
 - [ ] **R255 (P3b) A collector-less pack-keyed `def` whose signature spreads
   the pack keys a clone**
@@ -622,6 +623,26 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R295 (P5) The erased oracle cannot construct a pack element**
+
+  Problem: `print(Ts[0]())` in `def ends[*Ts: Movable & Defaultable &
+  Writable & Deinitable]()` prints on concrete MIR and stops under
+  `--erased` with "constructing type parameter 'Ts' … requires a reified
+  type argument".
+  - The VM indexes a pack's reified spellings by the element's index
+    register, but the erased frame of an explicit application leaves the
+    pack's slot unbound.
+  - A pack proved `Defaultable` only by a `where` clause has no slot at
+    all, since `constructible_type_parameter` reads bounds.
+  - Under a `comptime for` the oracle stops first at the loop's bound
+    (R286).
+  - `assets/ok/pack_element_default_construction.mojo` and
+    `assets/ok/pack_element_binding_served.mojo` are its
+    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Native Backend
 
 Track: `native`.
@@ -642,6 +663,25 @@ change that needs a new `MJRT_ABI_VERSION`.
     the suspect is the native lowering copying the element without the
     `String` copy that the VM's clone performs.
   - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R299 Native lowering cannot lay out a struct a served pack binds
+  only as an element**
+
+  Problem: `show(String("tmp"), [7, 8])` and `show(Named("k", w), …)` into
+  a template-served `def show[*Ts: Writable](*args: *Ts)` stop natively with
+  "unsupported aggregate layout (struct 'List' has no MIR declaration to lay
+  out)", where the VM and the pin print
+  (`assets/ok/pack_argument_destroyed_after_call.mojo`,
+  `assets/ok/pack_element_temporaries.mojo`, both `exe-differential` rows
+  of `conformance/pliron-parity.tsv`).
+  - The struct appears only as an element of the call's pack, so no
+    declaration of it reaches the native program's layout table.
+  - Before R252 landed, `pack_element_temporaries` stopped earlier, at
+    "unsupported heterogeneous runtime pack projection": a folded constant
+    index into a served `def`'s pack was projected by stride.
+  - Found while landing R252 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1915,6 +1955,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - R256 serves the shape from its template and assumes the cloner runs it
     meanwhile; it does not.
   - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R296 A local annotated with a pack element's type is rejected**
+
+  Problem: `var value: Ts[i] = Ts[i]()` in a `def`'s `comptime for` fails
+  with "unknown type 'Ts'", and `var value: Self.Ts[i] = Self.Ts[i]()` in
+  a method with "dependent type indexing requires a type-valued associated
+  member" (`checker/type_resolution.rs`), while the pin prints each
+  element's default.
+  - The unannotated `var value = Ts[i]()` runs, typed as the dependent
+    element; the annotation resolver has no pack-element form.
+  - Found while landing R252 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R297 A `comptime` alias of a `StringLiteral` pack element is not
+  concrete**
+
+  Problem: `comptime T = Ts[i]` then `var first: T = args[i]`, called as
+  `alias(1, "two", True)`, fails with "'StringLiteral[_]' is not concrete,
+  use '[]' to bind missing parameters", while the pin prints `1`, `two`,
+  `True`.
+  - The clone binds the element as the open `StringLiteral[_]` the call's
+    argument types it, not the closed literal type the pin infers.
+  - An `Int` or `Float64` element runs.
+  - Found while landing R252 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

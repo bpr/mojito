@@ -231,7 +231,8 @@ impl BodyShape<'_> {
     ///
     /// The template typed the construction as the dependent element `Ts[i]`,
     /// which the availability clause or the pack's bound proves
-    /// `Defaultable`, and recorded nothing else at it. The elaborator writes
+    /// `Defaultable`, and recorded nothing else at it but that construction
+    /// (`ConstructPackElement`). The elaborator writes
     /// the element's concrete construction there, closed syntax naming
     /// nothing the body binds, whose facts an instance records from its own
     /// check of that construction alone
@@ -280,7 +281,12 @@ impl BodyShape<'_> {
             && self.facts.is_none_or(|facts| {
                 let built = self.occurrence(value);
                 fact_at(&facts.expression_types, built).is_some_and(dependent_element)
-                    && fact_at(&facts.operation_adjustments, built).is_none()
+                    && fact_at(&facts.operation_adjustments, built).is_none_or(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
+                        )
+                    })
                     && fact_at(&facts.conversions, built).is_none()
                     && fact_at(&facts.overload_targets, built).is_none()
             });

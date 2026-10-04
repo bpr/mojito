@@ -912,6 +912,33 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
     for ty in checked.declaration_types() {
         collect_public_tuple_types(&ty, &mut element_sets);
     }
+    // A closed `Tuple` bound to a generic call's type parameter, or to an
+    // element of its type pack, is a type the instance builds (`T()` at
+    // `T = Tuple[Int, Bool]`, `Ts[i]()`). The table is unordered, so its
+    // finds join in symbol order.
+    let mut instantiated = Vec::new();
+    for instantiation in checked.generic_instantiations().values() {
+        for argument in &instantiation.arguments {
+            match argument {
+                TyArg::Ty(ty) => collect_public_tuple_types(ty, &mut instantiated),
+                TyArg::Val(CtValue::Tuple(elements)) => {
+                    for element in elements {
+                        if let CtValue::Type(ty) = element {
+                            collect_public_tuple_types(ty, &mut instantiated);
+                        }
+                    }
+                }
+                TyArg::Val(_) | TyArg::Origin(_) => {}
+            }
+        }
+    }
+    instantiated
+        .sort_by_cached_key(|elements| crate::symbol::tuple_specialization_symbol(elements));
+    for elements in instantiated {
+        if !element_sets.contains(&elements) {
+            element_sets.push(elements);
+        }
+    }
 
     let mut requests = element_sets
         .into_iter()

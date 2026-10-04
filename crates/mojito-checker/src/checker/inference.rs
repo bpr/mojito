@@ -858,8 +858,14 @@ impl Checker {
                 }
                 if let ExprKind::Member { object, field } = &callee.kind
                     && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                    && let Some(element) =
-                        self.infer_pack_element_construction(field, true, param_args, args, kwargs)
+                    && let Some(element) = self.infer_pack_element_construction(
+                        expr.source_span(),
+                        field,
+                        true,
+                        param_args,
+                        args,
+                        kwargs,
+                    )
                 {
                     return element;
                 }

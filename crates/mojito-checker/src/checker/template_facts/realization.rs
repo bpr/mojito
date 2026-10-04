@@ -1950,7 +1950,9 @@ fn substituted_facts(
         )
     };
     Ok(CheckedBodyFacts {
-        // A pack query the instance folded to its literal carries none.
+        // A pack query the instance folded to its literal carries none, nor
+        // does a pack element's construction the elaborator wrote closed,
+        // whose own check the instance merges (`merge_element_constructions`).
         operation_adjustments: template
             .operation_adjustments
             .iter()
@@ -1958,6 +1960,7 @@ fn substituted_facts(
                 !matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
+                        | mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
                 )
             })
             .map(|(id, adjustment)| {

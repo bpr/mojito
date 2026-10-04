@@ -52,7 +52,11 @@ impl Flatten<'_> {
                 param,
                 kwargs,
                 kwarg_places,
+                element: None,
             });
+            return dest;
+        }
+        if let Some(dest) = self.pack_element_construction(e, param_args) {
             return dest;
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) =
@@ -312,6 +316,9 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
+        if let Some(dest) = self.pack_element_construction(e, param_args) {
+            return dest;
+        }
         if let Some(value) = self
             .checked_adjustments(e)
             .into_iter()
@@ -855,5 +862,43 @@ impl Flatten<'_> {
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         dest
+    }
+}
+
+impl Flatten<'_> {
+    /// `Ts[i]()` or `Self.Ts[i]()` over a symbolic pack: the element
+    /// construction the checker recorded, its index the call's one
+    /// parameter argument.
+    fn pack_element_construction(&mut self, e: &Expr, param_args: &[ParamArg]) -> Option<Reg> {
+        let pack =
+            self.checked_adjustments(e)
+                .into_iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::ConstructPackElement { pack } => {
+                        Some(pack)
+                    }
+                    _ => None,
+                })?;
+        // The elaborator selects the element by the index's expression,
+        // a literal one included, which a forwarded argument leaves out.
+        let element = self
+            .param_arg_regs(param_args, &span(e))
+            .into_iter()
+            .next()
+            .map(|mut element| {
+                if let (None, Some(ParamArg::Value(index))) = (&element.expr, param_args.first()) {
+                    element.expr = self.value_binder_expr(index);
+                }
+                element
+            });
+        let dest = self.fresh(span(e), None);
+        self.emit(MirInstr::ConstructTypeParam {
+            dest,
+            param: pack,
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
+            element,
+        });
+        Some(dest)
     }
 }

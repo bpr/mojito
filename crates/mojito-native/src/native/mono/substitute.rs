@@ -4,67 +4,59 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// Rewrite `T()` over a binder these bindings solve to a SIMD type into the
-/// zero vector of that type: a splat of one zero lane, held in a fresh
-/// register. `Defaultable` admits every SIMD value, and a single
-/// instruction cannot spell the splat.
-pub(super) fn default_construct_simd_parameters(function: &mut MirFunction, bindings: &Bindings) {
-    use mojito_ast::ast::Dtype;
-    for block in &mut function.blocks {
+/// Rewrite each nullary `T()` or `Ts[i]()` whose constructed type these
+/// bindings decide into that type's default construction
+/// ([`default_construction`]). A construction they leave open — an element
+/// whose `comptime for` index is not yet unrolled — stays for the copy that
+/// binds it.
+pub(super) fn default_construct_parameters(
+    blocks: &mut [MirBlock],
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    for block in blocks {
         let mut index = 0;
         while index < block.instrs.len() {
-            let MirInstr::ConstructTypeParam {
-                dest,
-                param,
-                kwargs,
-                ..
-            } = &block.instrs[index]
-            else {
-                index += 1;
-                continue;
-            };
-            if !kwargs.is_empty() {
-                index += 1;
-                continue;
-            }
-            let Some(Ty::Simd { dtype, width }) = bindings.types.get(param) else {
-                index += 1;
-                continue;
-            };
-            let (Some(dtype), Some(width)) = (
-                dtype.known(),
-                width.known().and_then(|width| usize::try_from(width).ok()),
-            ) else {
-                index += 1;
-                continue;
-            };
-            let (zero, lane_ty) = match dtype {
-                Dtype::Bool => (Const::Bool(false), Ty::Bool),
-                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
-                    (Const::Float(0.0), Ty::Float64)
+            let constructed = match &mut block.instrs[index] {
+                MirInstr::ConstructTypeParam {
+                    dest,
+                    param,
+                    kwargs,
+                    element,
+                    ..
+                } if kwargs.is_empty() => {
+                    constructed_type(param, element.as_ref(), bindings)?.map(|ty| (*dest, ty))
                 }
-                _ => (Const::Int(0), Ty::Int),
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    for region in std::iter::once(body)
+                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter_mut())
+                        .chain(finalbody.iter_mut())
+                    {
+                        default_construct_parameters(region, n_regs, reg_types, bindings)?;
+                    }
+                    None
+                }
+                _ => None,
             };
-            let dest = *dest;
-            let lane = Reg(function.n_regs);
-            function.n_regs += 1;
-            function.reg_types.insert(lane.0, lane_ty);
-            block.instrs[index] = MirInstr::MakeSimd {
-                dest,
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width as i64),
-                elems: vec![lane],
+            let Some((dest, ty)) = constructed else {
+                index += 1;
+                continue;
             };
-            block.instrs.insert(
-                index,
-                MirInstr::Const {
-                    dest: lane,
-                    k: zero,
-                },
-            );
-            index += 2;
+            let built = default_construction(dest, &ty, n_regs, reg_types)?;
+            let count = built.len();
+            block.instrs.splice(index..=index, built);
+            index += count;
         }
     }
+    Ok(())
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the
@@ -458,6 +450,7 @@ pub(super) fn substitute_instruction(
             param,
             kwargs,
             kwarg_places,
+            ..
         } if !kwargs.is_empty() => {
             let binding = bindings.types.get(&*param);
             let source = match kwargs.as_slice() {
@@ -507,46 +500,22 @@ pub(super) fn substitute_instruction(
                 }
             }
         }
-        ConstructTypeParam { dest, param, .. } => {
-            // A scalar binding default-constructs as its zero value (the
-            // VM's `ConstructTypeParam` answer for the built-in
-            // `Defaultable` types).
-            let scalar_default = match bindings.types.get(&*param) {
-                Some(Ty::Int | Ty::IntLiteral) => Some(mojito_mir::mir::Const::Int(0)),
-                Some(Ty::UInt) => Some(mojito_mir::mir::Const::Int(0)),
-                Some(Ty::Bool) => Some(mojito_mir::mir::Const::Bool(false)),
-                Some(Ty::Float64 | Ty::FloatLiteral) => Some(mojito_mir::mir::Const::Float(0.0)),
-                Some(Ty::StringLiteral) => Some(mojito_mir::mir::Const::Str(String::new())),
-                Some(Ty::None) => Some(mojito_mir::mir::Const::None),
-                _ => None,
-            };
-            if let Some(k) = scalar_default {
-                *instruction = Const { dest: *dest, k };
-                return Ok(());
-            }
-            let Some(Ty::Struct(struct_name, _)) = bindings.types.get(&*param) else {
-                return Err(MonoError {
-                    function: None,
-                    construct: format!(
-                        "constructing type parameter `{}` without a concrete struct binding",
+        // Every nullary construction the bindings decide was written as its
+        // type's default construction (`default_construct_parameters`).
+        ConstructTypeParam { param, element, .. } => {
+            return Err(MonoError {
+                function: None,
+                construct: match element {
+                    Some(_) => format!(
+                        "constructing an element of pack `{}` at an index the instance does not decide",
                         param.name
                     ),
-                });
-            };
-            *instruction = Call {
-                dest: *dest,
-                func: mojito_mir::mir::FuncRef::named(struct_name),
-                raises: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                receiver: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            };
+                    None => format!(
+                        "constructing type parameter `{}` without a concrete binding",
+                        param.name
+                    ),
+                },
+            });
         }
         CallIndirect {
             raises,
@@ -1123,4 +1092,126 @@ fn tuple_specialization(args: &[TyArg], bindings: &Bindings) -> Option<String> {
         .tuple_specializations
         .contains(&specialized)
         .then_some(specialized)
+}
+
+/// The type a nullary construction builds under `bindings`: the binder's
+/// own binding, or for `Ts[i]()` the element its evaluated index selects
+/// from the pack's. `None` while either is still symbolic.
+fn constructed_type(
+    param: &ParamRef,
+    element: Option<&mojito_mir::mir::MirParamArg>,
+    bindings: &Bindings,
+) -> Result<Option<Ty>, MonoError> {
+    let Some(bound) = bindings.types.get(param) else {
+        return Ok(None);
+    };
+    let Some(element) = element else {
+        return Ok((!mojito_types::types::is_symbolic(bound)).then(|| bound.clone()));
+    };
+    let Ty::RuntimePack(elements) = bound else {
+        return Err(MonoError {
+            function: None,
+            construct: format!(
+                "pack `{}` is bound to the non-pack type `{bound}`",
+                param.name
+            ),
+        });
+    };
+    let Some(index) = element
+        .expr
+        .as_ref()
+        .and_then(|expr| eval_ct(expr, bindings).ok())
+        .as_ref()
+        .and_then(mojito_types::param_expr::fold::integer_value)
+        .and_then(|value| value.to_i64())
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return Ok(None);
+    };
+    let chosen = elements.get(index).ok_or_else(|| MonoError {
+        function: None,
+        construct: format!(
+            "element {index} of pack `{}` is out of range for its {} elements",
+            param.name,
+            elements.len()
+        ),
+    })?;
+    substitute_ty(chosen, bindings).map(Some)
+}
+
+/// The default construction of the concrete `ty` into `dest`: a scalar's
+/// zero value (the VM's `ConstructTypeParam` answer for the built-in
+/// `Defaultable` types); a SIMD type's zero vector, a splat of one zero lane
+/// held in a fresh register, as `Defaultable` admits every SIMD value and a
+/// single instruction cannot spell the splat; or a struct's nullary
+/// constructor call, which the call rewriting then instantiates.
+fn default_construction(
+    dest: Reg,
+    ty: &Ty,
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+) -> Result<Vec<MirInstr>, MonoError> {
+    use mojito_ast::ast::Dtype;
+    use mojito_mir::mir::Const;
+    let zero = match ty {
+        Ty::Int | Ty::IntLiteral | Ty::UInt => Some(Const::Int(0)),
+        Ty::Bool => Some(Const::Bool(false)),
+        Ty::Float64 | Ty::FloatLiteral => Some(Const::Float(0.0)),
+        Ty::StringLiteral => Some(Const::Str(String::new())),
+        Ty::None => Some(Const::None),
+        _ => None,
+    };
+    if let Some(k) = zero {
+        return Ok(vec![MirInstr::Const { dest, k }]);
+    }
+    match ty {
+        Ty::Simd { dtype, width } => {
+            let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
+                return Err(MonoError {
+                    function: None,
+                    construct: format!("default-constructing the open vector type `{ty}`"),
+                });
+            };
+            let (zero, lane_ty) = match dtype {
+                Dtype::Bool => (Const::Bool(false), Ty::Bool),
+                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
+                    (Const::Float(0.0), Ty::Float64)
+                }
+                _ => (Const::Int(0), Ty::Int),
+            };
+            let lane = Reg(*n_regs);
+            *n_regs += 1;
+            reg_types.insert(lane.0, lane_ty);
+            Ok(vec![
+                MirInstr::Const {
+                    dest: lane,
+                    k: zero,
+                },
+                MirInstr::MakeSimd {
+                    dest,
+                    dtype: SimdDtype::Known(dtype),
+                    width: SimdWidth::Known(width),
+                    elems: vec![lane],
+                },
+            ])
+        }
+        Ty::Struct(struct_name, _) => Ok(vec![MirInstr::Call {
+            dest,
+            func: mojito_mir::mir::FuncRef::named(struct_name),
+            raises: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        }]),
+        _ => Err(MonoError {
+            function: None,
+            construct: format!("default-constructing `{ty}`, which is no struct"),
+        }),
+    }
 }

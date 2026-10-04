@@ -1804,9 +1804,8 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
 /// or owned (`var *args`, destroyed last to first after its last element use;
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
-/// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); no
-/// binding declared in a served loop takes an element's type, which would
-/// need a slot per unrolled copy; and the body keys no clone. The check types
+/// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); and
+/// the body keys no clone. The check types
 /// such a body once, with the collector a pack of the symbolic `Ts` and each
 /// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
 /// pack from the call.
@@ -1827,72 +1826,8 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
             classify_ct_param(parameter, type_params, name),
             Some(ParamDecl::Type { .. })
         )
-    }) && !loop_binds_pack_element(body, &packs, false)
-        && !def_body_keys_specialization(body, &packs);
+    }) && !def_body_keys_specialization(body, &packs);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
-}
-
-/// Whether a binding declared under a `comptime for` of `stmts` takes an
-/// element of one of `packs` (`var value = Ts[i]()`, `var first = args[i]`,
-/// an annotation naming the pack): its type names the loop's index, so each
-/// unrolled copy needs a slot of its own, which the unroller does not mint.
-/// `in_loop` says whether `stmts` is already a compile-time loop's body.
-fn loop_binds_pack_element(stmts: &[Stmt], packs: &HashSet<String>, in_loop: bool) -> bool {
-    fn names_pack(expression: &Expr, packs: &HashSet<String>) -> bool {
-        struct Finder<'a> {
-            packs: &'a HashSet<String>,
-            found: bool,
-        }
-
-        impl mojito_ast::visit::Visitor for Finder<'_> {
-            fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Identifier(name)
-                | ExprKind::Call { name, .. }
-                | ExprKind::TypeApply { name, .. } = &expr.kind
-                {
-                    self.found |= self.packs.contains(name);
-                }
-            }
-        }
-
-        let mut finder = Finder {
-            packs,
-            found: false,
-        };
-        mojito_ast::visit::walk_expr(&mut finder, expression);
-        finder.found
-    }
-    let has = |block: &[Stmt], in_loop: bool| loop_binds_pack_element(block, packs, in_loop);
-    stmts.iter().any(|s| match &s.kind {
-        StmtKind::VarDecl { ty, value, .. } if in_loop => {
-            names_pack(value, packs)
-                || ty.as_ref().is_some_and(|ty| {
-                    matches!(ty, Type::Named(name, _) if packs.contains(name.trim_start_matches('*')))
-                })
-        }
-        StmtKind::Assign { value, .. } | StmtKind::Comptime { value, .. } if in_loop => {
-            names_pack(value, packs)
-        }
-        StmtKind::ComptimeFor { body, .. } => has(body, true),
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            branches.iter().any(|(_, b)| has(b, in_loop))
-                || orelse.as_ref().is_some_and(|b| has(b, in_loop))
-        }
-        StmtKind::While { body, .. } | StmtKind::For { body, .. } => has(body, in_loop),
-        StmtKind::With { body, .. } => has(body, in_loop),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            has(body, in_loop)
-                || except.as_ref().is_some_and(|(_, b)| has(b, in_loop))
-                || orelse.as_ref().is_some_and(|b| has(b, in_loop))
-                || finalbody.as_ref().is_some_and(|b| has(b, in_loop))
-        }
-        _ => false,
-    })
 }
 
 /// The callees a block spreads one of `packs` into as a call argument

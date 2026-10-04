@@ -267,6 +267,12 @@ impl Specializer<'_> {
             &locals,
             &bindings.callables,
         )?;
+        default_construct_parameters(
+            &mut blocks[first..],
+            tables.n_regs,
+            tables.reg_types,
+            &iteration,
+        )?;
         substitute_blocks_metadata(&mut blocks[first..], &iteration)?;
         self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
         Ok(())

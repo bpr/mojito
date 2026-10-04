@@ -8,7 +8,7 @@
 use equiv::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;
-use slots::{addressed_slots, renumber_blocks, renumber_slots, retire_slots};
+use slots::{addressed_slots, reification_slots, renumber_blocks, renumber_slots, retire_slots};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use spread::*;
 use std::cell::RefCell;

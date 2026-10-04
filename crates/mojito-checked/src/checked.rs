@@ -445,6 +445,12 @@ pub enum SemanticAdjustment {
     ConstructTypeParam {
         param: mojito_types::param_expr::ParamRef,
     },
+    /// `Ts[i]()` / `Self.Ts[i]()` over a symbolic pack: construct the
+    /// element the bracket's index selects from the pack `pack` binds, through
+    /// its `Defaultable` initializer.
+    ConstructPackElement {
+        pack: mojito_types::param_expr::ParamRef,
+    },
     /// `Int(copy=x)`: the `Copyable` initializer of a built-in value type,
     /// whose copy is the read of its source, so MIR lowers the call as its
     /// one keyword argument's value.

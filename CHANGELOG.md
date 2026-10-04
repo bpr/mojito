@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pack-keyed `def` whose `comptime for` binds an element (`var value =
+  Ts[i]()`, `var first = args[i]`) is served by its template, as the pin
+  elaborates it: each unrolled copy keeps its own local at its element's
+  type. `Ts[i]()` lowers to MIR's element form of `type.construct` (textual
+  schema 1.21), which the elaborator writes as the selected element's
+  default construction, a literal index included. Such a `def` used to be
+  cloned per call, and failed there on a `StringLiteral` element ("register
+  r7 has no checked type") (`assets/ok/pack_element_binding_served.mojo`).
+
 - A `var` declared in a template-served `comptime for` whose type names the
   index (`var v = SIMD[DType.int32, i](7)`, `var l = Lanes[i](3)`) runs as
   in the pin: the elaborator gives each unrolled copy its own slot at that
@@ -325,6 +334,18 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- `print(Ts[i]())` in a template-served pack-keyed `def` prints each
+  element's default instead of failing with "vm backend does not support the
+  built-in or callee 'Ts'", and `Ts.length` over a `Defaultable` pack no
+  longer fails MIR verification ("variable slot 0 retains ABI-only
+  RuntimePack type"): an instance keeps no slot for a type parameter.
+- `T()` at `T = Tuple[Int, Bool]` builds `(0, False)` instead of failing
+  with "vm backend does not support the built-in or callee 'Tuple'": a
+  `Tuple` bound to a call's type parameter or pack element is specialized.
+- Natively, an element of a template-served `def`'s heterogeneous pack read
+  at a `comptime for` index (`print(args[i])`) projects statically instead of
+  failing with "unsupported heterogeneous runtime pack projection".
 
 - A `var` declared in a `comptime for` body that shadows an enclosing `var`
   of its name is its own binding in every copy, as in the pin; it used to

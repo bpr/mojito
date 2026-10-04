@@ -175,6 +175,7 @@ impl Flatten<'_> {
                 param,
                 kwargs,
                 kwarg_places,
+                element: None,
             });
             return Some(dest);
         }

@@ -246,11 +246,19 @@ impl Decoder {
                     .ok()
                     .map(|found| self.places_option(found))
                     .unwrap_or_default();
+                // Schema 1.21 records a pack element's index; an older
+                // artifact constructs a type parameter alone.
+                let element = self
+                    .field(fields, "element")
+                    .ok()
+                    .and_then(|found| self.option_value(Some(found)))
+                    .and_then(|found| self.mir_param_arg(found));
                 Some(MirInstr::ConstructTypeParam {
                     dest,
                     param,
                     kwargs,
                     kwarg_places,
+                    element,
                 })
             }
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {

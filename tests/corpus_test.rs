@@ -347,6 +347,11 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
     "pack_length_runtime_position",
+    // R295, the erased oracle: an erased frame leaves a pack's reified
+    // spellings unbound, so it has no element to construct `Ts[i]()` from
+    // (R286 stops a collector-less pack's loop first).
+    "pack_element_binding_served",
+    "pack_element_default_construction",
     // R292, the erased oracle: a kept `comptime for` runs its index as a
     // runtime value, so a vector at the index's width has no known width.
     "comptime_for_index_typed_local",

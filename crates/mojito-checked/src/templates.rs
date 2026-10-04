@@ -326,6 +326,7 @@ pub fn derive_adjustment(
         // update of a place (`inplace_updates`) from its realized dunder.
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
+        | SemanticAdjustment::ConstructPackElement { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
         | SemanticAdjustment::SelectedCall(..)
         | SemanticAdjustment::AugmentedSubscript(..)

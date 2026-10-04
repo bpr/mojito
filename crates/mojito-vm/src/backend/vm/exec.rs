@@ -149,6 +149,7 @@ impl VmBackend {
                 dest,
                 param,
                 kwargs,
+                element,
                 ..
             } => {
                 // The `Copyable` initializer produces a copy of its borrowed
@@ -165,17 +166,34 @@ impl VmBackend {
                     return Ok(Flow::Normal);
                 }
                 // A constructible type parameter is reified at runtime as the
-                // bound struct's name.
-                let bound =
-                    match self.bound_type_parameter(prog, function, frame_id, vars, &param.name) {
-                        Some(reference @ Value::Ref { .. }) => {
-                            match self.read_reference(&reference, frame_id, vars)? {
-                                Value::Struct { name, .. } => Some(Value::Str(name)),
-                                _ => None,
-                            }
+                // bound struct's name, in the slot its declaration names (a
+                // pack's spelled `*Ts`).
+                let slot = match element {
+                    Some(_) => format!("*{}", param.name.trim_start_matches('*')),
+                    None => param.name.to_string(),
+                };
+                let bound = match self.bound_type_parameter(prog, function, frame_id, vars, &slot) {
+                    Some(reference @ Value::Ref { .. }) => {
+                        match self.read_reference(&reference, frame_id, vars)? {
+                            Value::Struct { name, .. } => Some(Value::Str(name)),
+                            _ => None,
                         }
-                        other => other,
-                    };
+                    }
+                    other => other,
+                };
+                // A pack is reified as the tuple of its elements' spellings,
+                // of which `Ts[i]()` constructs the one its index selects.
+                let bound = match (element, bound) {
+                    (None, bound) => bound,
+                    (Some(element), Some(Value::Tuple(spellings))) => element
+                        .value
+                        .and_then(|index| match regs[index.0 as usize] {
+                            Value::Int(index) => usize::try_from(index).ok(),
+                            _ => None,
+                        })
+                        .and_then(|index| spellings.get(index).cloned()),
+                    (Some(_), _) => None,
+                };
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
                         "vm: constructing type parameter '{}' in '{}' requires a reified type argument",

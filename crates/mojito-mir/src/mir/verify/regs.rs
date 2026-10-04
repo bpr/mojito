@@ -321,8 +321,10 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::ConstructTypeParam {
             kwargs,
             kwarg_places,
+            element,
             ..
         } => {
+            out.extend(element.iter().filter_map(|argument| argument.value));
             out.extend(kwargs.iter().map(|(_, register)| *register));
             for p in kwarg_places.iter().flatten() {
                 place(p, out);

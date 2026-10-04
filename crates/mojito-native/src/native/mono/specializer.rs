@@ -397,12 +397,19 @@ impl<'a> Specializer<'a> {
             layout: self.layout_oracle(),
             ..bindings.clone()
         };
-        default_construct_simd_parameters(&mut function, bindings);
+        default_construct_parameters(
+            &mut function.blocks,
+            &mut function.n_regs,
+            &mut function.reg_types,
+            bindings,
+        )?;
         self.unroll_comptime_loops(&key.template, &mut function, scope, bindings)?;
+        let reified = reification_slots(&function, scope);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.answer_param_constants(&mut function.blocks, bindings);

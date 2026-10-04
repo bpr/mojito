@@ -367,7 +367,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   builds the dependent element (`ParamContext::list_get`,
   `DependentType::pack_element` in `mojito-types`), `opaque_element` is its
   bounded `Ty::Param` view and `restore_pack_elements` the way back,
-  `infer_pack_element_construction` types an element's `Ts[i]()` (each
+  `infer_pack_element_construction` types an element's `Ts[i]()` and, over
+  a symbolic pack, records `SemanticAdjustment::ConstructPackElement`, which
+  `lower_expr/expr_call.rs:pack_element_construction` lowers as
+  `MirInstr::ConstructTypeParam` with its `element` index and
+  `native::mono`'s `default_construct_parameters` (`mono/substitute.rs`,
+  through `constructed_type` and `default_construction`, beside the
+  unroller's per-copy call) writes as the element's default construction (each
   instance's construction is `comptime/rewrite.rs:pack_element_construction`,
   reached for a `def` through `fold_pack_uses`; stored to
   the element's own storage, as `Tuple.__init__(out self)` stores it, the
@@ -1130,7 +1136,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   index-typed slots leave the instance through `retire_slots`.
 - `native::mono` slot renumbering (`mono/slots.rs`): `renumber_slots`,
   `renumber_blocks`, `addressed_slots`, and `retire_slots`, shared by
-  runtime promotion (`mono/promote.rs`) and unrolling. The comptime
+  runtime promotion (`mono/promote.rs`) and unrolling; `reification_slots`
+  names a type parameter's erased-oracle slot, which `materialize_body`
+  retires from each instance. The comptime
   elaborator's walk (`Elab::mono_stmt`, `comptime/mono.rs`) treats a kept
   `comptime for`'s index as a symbolic parameter, so a struct applied over
   it (`Lanes[i]`) stays for the checker. `comptime_for_next`
@@ -1142,7 +1150,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
 - A type pack the template serves: `served_pack_defs` (a fixpoint over
   `pack_def_shape_served`, `pack_spread_callees`, `def_pack_names`, and
-  `loop_binds_pack_element`, `comptime.rs`) names the served `def`s and
+  `def_body_keys_specialization`, `comptime.rs`) names the served `def`s and
   `pack_def_template_served` reads it; `PackRewriter::served_callees`
   (`comptime/rewrite.rs`) spells a clone's spread into a served callee
   element by element; `comptime_for_is_template_served` admits a pack's

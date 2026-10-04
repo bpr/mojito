@@ -373,7 +373,31 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             param,
             kwargs,
             kwarg_places,
+            element,
         } => {
+            if let Some(element) = element {
+                if element.value.is_none() && element.expr.is_none() {
+                    errors.push(format!(
+                        "{prefix}: element construction of pack '{}' names no index",
+                        param.name
+                    ));
+                }
+                if !kwargs.is_empty() {
+                    errors.push(format!(
+                        "{prefix}: element construction of pack '{}' passes keyword arguments",
+                        param.name
+                    ));
+                }
+                if let Some(found) = cx.reg_ty(*dest)
+                    && !matches!(found, Ty::Dependent(dependent) if dependent.pack_element().is_some())
+                {
+                    errors.push(format!(
+                        "{prefix}: element construction of pack '{}' has result type {found}",
+                        param.name
+                    ));
+                }
+                return;
+            }
             if kwarg_places.len() != kwargs.len() {
                 errors.push(format!(
                     "{prefix}: type-parameter construction of '{}' has {} keyword places for {} keyword arguments",

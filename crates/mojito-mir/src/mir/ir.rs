@@ -157,10 +157,16 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             dest,
             kwargs,
             kwarg_places,
+            element,
             ..
         } => {
             out.push(dest);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
+            out.extend(
+                element
+                    .iter_mut()
+                    .filter_map(|argument| argument.value.as_mut()),
+            );
         }
         MirInstr::Const { dest, .. }
         | MirInstr::SizeOf { dest, .. }
@@ -908,6 +914,11 @@ pub enum MirInstr {
         /// Like `Call::kwarg_places`, aligned with `kwargs`: the retained
         /// caller place each borrowed argument reads.
         kwarg_places: Vec<Option<MirPlace>>,
+        /// `Ts[i]()`: `param` is a type pack and this argument the index of
+        /// the element constructed, as `Call::param_arg_regs` carries one —
+        /// `value` the register the erased VM reads, `expr` the expression
+        /// the elaborator evaluates.
+        element: Option<MirParamArg>,
     },
     /// The byte size of one checker-resolved type: a layout query only a
     /// generator carries. The elaborator answers it under the compilation's

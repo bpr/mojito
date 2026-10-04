@@ -105,6 +105,7 @@ impl Checker {
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
                         | mojito_checked::checked::SemanticAdjustment::AugmentedInPlace { .. }
+                        | mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
                 ) || self.kept_element_store(&occurrence.span, adjustment)
                     || self.own_binder_construction(&occurrence.span, adjustment);
                 (!kept_apart && !adjustment_derives(adjustment)).then(|| {

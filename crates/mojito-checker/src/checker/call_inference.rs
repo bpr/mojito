@@ -296,9 +296,14 @@ impl Checker {
                 .insert(args[0].source_span());
             return Ok(ty);
         }
-        if let Some(element) =
-            self.infer_pack_element_construction(name, false, param_args, args, kwargs)
-        {
+        if let Some(element) = self.infer_pack_element_construction(
+            span.clone(),
+            name,
+            false,
+            param_args,
+            args,
+            kwargs,
+        ) {
             return element;
         }
         if param_args.is_empty() {

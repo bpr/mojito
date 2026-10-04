@@ -518,6 +518,7 @@ impl Checker {
     /// nullary construction at one index.
     pub(super) fn infer_pack_element_construction(
         &self,
+        span: SourceSpan,
         pack: &str,
         through_self: bool,
         param_args: &[ParamArg],
@@ -530,22 +531,25 @@ impl Checker {
         if !args.is_empty() || !kwargs.is_empty() {
             return None;
         }
-        let (base, spelled) = if through_self {
+        let (base, spelled, reference) = if through_self {
             let declared = self.self_decls.iter().any(|decl| {
                 matches!(decl, ParamDecl::Type { name, variadic: true, .. }
                     if name.trim_start_matches('*') == pack)
             });
-            self.pack_reference(pack).filter(|_| declared)?;
+            let reference = self.pack_reference(pack).filter(|_| declared)?;
             (
                 SourceType::SelfParam(pack.to_string()),
                 format!("Self.{pack}"),
+                reference,
             )
         } else {
-            self.pack_parameter_in_scope(pack)
+            let reference = self
+                .pack_parameter_in_scope(pack)
                 .filter(|_| self.lookup(pack).is_none())?;
             (
                 SourceType::Named(pack.to_string(), Vec::new()),
                 pack.to_string(),
+                reference,
             )
         };
         Some(
@@ -558,6 +562,19 @@ impl Checker {
                     .opaque_element(&element)
                     .unwrap_or_else(|| element.clone());
                 if self.conforms_to(&view, "Defaultable") {
+                    // A symbolic element is the template's construction,
+                    // which the elaborator resolves per instance; a closed
+                    // one is an ordinary construction of its type.
+                    if mojito_types::types::is_symbolic(&element)
+                        && let Some(pack) = reference.as_decl_ref()
+                    {
+                        self.operation_adjustments.borrow_mut().insert(
+                            span,
+                            mojito_checked::checked::SemanticAdjustment::ConstructPackElement {
+                                pack: pack.clone(),
+                            },
+                        );
+                    }
                     Ok(element)
                 } else {
                     Err(TypeError::TraitNotSatisfied {

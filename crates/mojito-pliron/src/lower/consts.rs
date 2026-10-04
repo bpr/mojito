@@ -14,6 +14,7 @@ impl FnLowering<'_> {
             MirConst::Int(value) => {
                 let constant = self.int_constant(ctx, *value);
                 self.reg_values.insert(dest.0, constant);
+                self.int_consts.insert(dest.0, *value);
                 Ok(())
             }
             MirConst::Float(value) => {

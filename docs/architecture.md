@@ -497,7 +497,7 @@ in its body, and every one outside a generic `def` — is unrolled in the AST
 as before. A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no
-element-typed binding under the loop) keeps its body; the checker
+local `comptime` alias keying a clone) keeps its body; the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
@@ -526,7 +526,21 @@ survivor, and `native::mono` folds it per instance
 (`answer_param_constants`, after the `comptime if`s are decided): a length
 through `eval_ct`, a membership or conformance through the oracle that
 decides a `comptime if`. A clone binds every pack before materialization
-and folds the same queries in the AST (`fold_pack_uses`).
+and folds the same queries in the AST (`fold_pack_uses`). A pack element's
+default construction (`Ts[i]()`, `Self.Ts[i]()`) over a symbolic pack is
+`__init__` through the element's `Defaultable` witness, as `T()` is through
+the parameter's: the checker records `SemanticAdjustment::ConstructPackElement`
+and MIR lowers it as `ConstructTypeParam` with its `element` index (schema
+1.21), so one instruction constructs a parameter or a pack element. The
+elaborator's `default_construct_parameters` (`mono/substitute.rs`) writes
+every nullary construction whose type the bindings decide as that type's
+default construction — before unrolling for a parameter or a literal index,
+and in each unrolled copy for the loop's index — and a binding of the
+element under the loop takes the copy's own slot at its element type. A
+type parameter's runtime reification slot (a `Hasher` or `Defaultable`
+bound), which only the erased oracle reads, leaves every concrete instance
+(`reification_slots`, `mono/slots.rs`), as Mojo gives a type parameter no
+storage.
 
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a

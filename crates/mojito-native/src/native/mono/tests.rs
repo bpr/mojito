@@ -1209,3 +1209,44 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
         "only the runtime `if` remains"
     );
 }
+
+#[test]
+fn defaultable_pack_instance_keeps_no_reification_slot_and_builds_its_elements() {
+    let source = "def build[*Ts: Movable & Defaultable & Writable & Deinitable]() -> Int:\n\
+                  \x20   comptime for i in range(len(Ts)):\n\
+                  \x20       var value = Ts[i]()\n\
+                  \x20       print(value)\n\
+                  \x20   return Ts.length\n\
+                  \n\
+                  def main():\n\
+                  \x20   print(build[Int, Bool]())\n";
+    let specialized = specialized_main(source);
+    let (_, instance) = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("build$mono$"))
+        .expect("an instance of `build`");
+    assert!(
+        !instance.var_names.iter().any(|name| name == "*Ts"),
+        "the pack's reification slot leaves the instance: {:?}",
+        instance.var_names
+    );
+    let body = instructions(&instance.blocks);
+    assert!(
+        !body
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::ConstructTypeParam { .. })),
+        "each element construction is written as its type's default"
+    );
+    assert!(
+        body.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Const {
+                k: Const::Bool(false),
+                ..
+            }
+        )),
+        "the `Bool` element constructs as `False`"
+    );
+}

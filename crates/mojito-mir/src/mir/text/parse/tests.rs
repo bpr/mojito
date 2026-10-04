@@ -1562,6 +1562,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             param: binder.clone(),
             kwargs: Vec::new(),
             kwarg_places: Vec::new(),
+            element: None,
         },
         MirInstr::Call {
             dest: Reg(1),
@@ -1617,6 +1618,52 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
         &read[1],
         MirInstr::Call { param_arg_regs, .. } if param_arg_regs[0].binder.is_none()
     ));
+}
+
+/// Schema 1.21 carries the index of a pack element's construction
+/// (`Ts[i]()`); an older artifact constructs the parameter itself.
+#[test]
+fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
+    let context = ParamContext::detached();
+    let pack = test_binder("Ts");
+    let index = context.decl_ref(test_binder("i").id, "i", MetaTy::int());
+    let construct = |element: Option<MirParamArg>| {
+        program_with(vec![(
+            "main".into(),
+            function_with(
+                vec![Ty::Int, Ty::Int],
+                vec![MirInstr::ConstructTypeParam {
+                    dest: Reg(1),
+                    param: pack.clone(),
+                    kwargs: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    element,
+                }],
+            ),
+        )])
+    };
+    let recorded = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+            MirInstr::ConstructTypeParam { element, .. } => element.clone(),
+            other => panic!("expected a type construction, read {other:?}"),
+        }
+    };
+    let program = construct(Some(MirParamArg {
+        name: None,
+        value: Some(Reg(0)),
+        binder: None,
+        expr: Some(index.clone()),
+    }));
+    assert_reprints(&program);
+    let read = recorded(&write::program(&program)).expect("an element");
+    assert_eq!((read.value, read.expr), (Some(Reg(0)), Some(index)));
+
+    let older = write::program(&construct(None))
+        .replacen("mojito-mir 1.21", "mojito-mir 1.20", 1)
+        .replace(", element: absent", "");
+    assert!(!older.contains("element:"));
+    assert!(recorded(&older).is_none());
 }
 
 /// Schema 1.7 carries the expression a value argument built from the
