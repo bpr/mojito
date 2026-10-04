@@ -873,9 +873,12 @@ impl Flatten<'_> {
                             return loans;
                         }
                         let place = this.place(source);
-                        // A `ref` parameter's own slot is not an owner; its
-                        // carried loan already covers the referent.
-                        if this.runtime_aliases.contains(&place.root)
+                        // A local `ref` binding's slot is not an owner; its
+                        // carried loan already covers the referent. A
+                        // reference parameter carries no loan into the body,
+                        // so its slot is the root the view is lent from.
+                        if (this.runtime_aliases.contains(&place.root)
+                            && (place.root as usize) >= this.f.n_params)
                             || loans.iter().any(|loan| {
                                 loan.place.root == place.root
                                     && loan.place.proj.is_empty()
@@ -890,10 +893,11 @@ impl Flatten<'_> {
                                 mojito_checked::checked::SemanticAdjustment::BorrowMutable
                             )
                         });
+                        let interior = field_interior(&place, named);
                         loans.push(MirLoan {
                             place,
                             mutable,
-                            interior: None,
+                            interior,
                             shared: false,
                         });
                         loans
@@ -911,4 +915,34 @@ impl Flatten<'_> {
             _ => Vec::new(),
         }
     }
+}
+
+/// The interior domain a view lends from a field receiver (`h.name.strip()`
+/// lends `h.name["bytes"]`): its field path followed by the callee's named
+/// interior. A store over the field invalidates that domain, so the view's
+/// next use is rejected as invalidated, while reads of the field coexist.
+fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigin> {
+    if named.is_empty() || place.proj.is_empty() {
+        return None;
+    }
+    let fields = place
+        .proj
+        .iter()
+        .map(|step| match step {
+            Proj::Field(name) => Some(mojito_types::origin::OriginSeg::Field(name.clone())),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(MirInteriorOrigin {
+        root: place.root,
+        path: fields
+            .into_iter()
+            .chain(
+                named
+                    .iter()
+                    .cloned()
+                    .map(mojito_types::origin::OriginSeg::Interior),
+            )
+            .collect(),
+    })
 }

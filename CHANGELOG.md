@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A store to a field of `self` (or of a `mut` parameter) while a view of
+  that field is live (`var view = self.name.strip()`, `self.name =
+  String("q")`, then `view.byte_length()`) is now rejected as a use of the
+  invalidated interior reference `self.name["bytes"]`, as the pin rejects
+  it, instead of running. A view returned from a field receiver lends the
+  field's named interior rather than the whole field, through a local too.
+
 - A returned reference must now name its declared origin itself, as the pin
   compares them: `return self.item` under `ref[origin_of(self)]`, and
   `return self.items[i]` under `ref[origin_of(self.items)]`, are rejected

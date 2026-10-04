@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R266**.
+Next free ID: **R267**.
 
 ## Ordered Work
 
@@ -616,22 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R28 A store to a field of `self` under a live view of it is accepted**
-
-  Problem: in a `mut self` method, `var view = self.name.strip()` then
-  `self.name = String("q")` then `view.byte_length()` runs on Mojito, where
-  the pin reports "origin was invalidated here" at the store.
-  - The same store through a local (`h.name = …` in `main`) is rejected as
-    "access to 'h.name' conflicts with live reference 'view'", so only the
-    `self` root escapes the check.
-  - The view's origin is the receiver field's owned interior
-    (`ViewResultInteriors`), which the store should invalidate.
-  - It is the same with and without a struct parameter, so it predates the
-    template derivation of such views.
-  - Pinned by `conformance/probes/self_field_store_under_live_view.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R29 A place passed to a `ref` parameter may alias a pack element**
 
   Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
@@ -1143,6 +1127,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while closing the chained-comparison copies (2026-10-03).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R266 A view of a whole local's owned interior is lent as the whole
+  local**
+
+  Problem: `var view = s.strip()` then `s = String("q")` then a use of
+  `view` is rejected at the store as "access to 's' conflicts with live
+  reference 'view'", where the pin rejects the use as "use of invalidated
+  interior reference 's["bytes"]'".
+  - The verdict agrees; the shape does not: the pin lends `s["bytes"]` and
+    the store invalidates it, Mojito lends all of `s`.
+  - A field receiver (`h.name.strip()`, `self.name.strip()`) already lends
+    its named interior; a bare variable receiver still takes a whole-place
+    loan in `aggregate_borrows_unmaterialized`'s view-result path.
+  - Moving the owner (`var g = h^`) under such a view reports the stale view,
+    where the pin reports "use of uninitialized value 'h'".
+  - Found while closing the `self` field store under a live view (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
