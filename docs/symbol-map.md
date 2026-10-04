@@ -961,7 +961,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `print`/`input` reject).
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
-  literals; a bare runtime use of a compile-time collection is rejected with
+  literals, and so does a reflection query over a closed handle
+  (`reflection_query`: `r.field_count()`, `reflect[T].field_index["x"]()`);
+  a bare runtime use of a compile-time collection is rejected with
   upstream's `ImplicitlyCopyable` text; runtime locals shadow).
 - `comptime/unparse.rs` owns the source spelling of a `where` clause for
   diagnostics (`render_where_clause`, `violated_constraint_message`: the

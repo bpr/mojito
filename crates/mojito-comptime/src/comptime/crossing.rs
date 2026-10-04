@@ -178,6 +178,21 @@ impl Elab<'_> {
                 env.get(name)
             }
         };
+        // A reflection query in a runtime position (`r.field_count()`,
+        // `reflect[T].field_index["x"]()`) is upstream's call of a static
+        // `Reflected[T]` method whose body returns a compile-time answer:
+        // it folds to the literal form of that answer where it stands. A
+        // handle over a subject still a parameter does not evaluate here, and
+        // its query is left for the checker to type symbolically.
+        if let Some(handle) = reflection_query(expr, &binding)
+            && self.eval(handle, env).is_ok()
+        {
+            let mut literal = lit_result(&self.eval(expr, env)?, expr.span)?;
+            literal.source.clone_from(&expr.source);
+            literal.syntax_id = expr.syntax_id;
+            *expr = literal;
+            return Ok(());
+        }
         match &mut expr.kind {
             // `materialize[NAME]()`: the binding's literal form. Any other
             // spelling is left for the checker to report.
@@ -394,6 +409,63 @@ fn not_implicitly_copyable(value: &CtValue) -> ComptimeError {
             .runtime_type_text()
             .unwrap_or_else(|| value.to_string())
     ))
+}
+
+/// The reflection handle `expr` calls a `Reflected[T]` method on —
+/// `is_struct()`, `field_count()`, `field_names()`, `field_types()`,
+/// `field_index[name]()` — if it calls one.
+fn reflection_query<'e, 'a>(
+    expr: &'e Expr,
+    binding: &dyn Fn(&str) -> Option<&'a CtValue>,
+) -> Option<&'e Expr> {
+    let object = match &expr.kind {
+        ExprKind::MethodCall {
+            object,
+            args,
+            kwargs,
+            ..
+        } if args.is_empty() && kwargs.is_empty() => object,
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
+            ExprKind::Member { object, .. } => object,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    reflection_handle(object, binding).then_some(&**object)
+}
+
+/// Whether `expr` spells a reflection handle: `reflect[T]`, a name bound to
+/// one, or a field handle selected from one (`.field["x"]`, `.field_at[i]`).
+fn reflection_handle<'a>(expr: &Expr, binding: &dyn Fn(&str) -> Option<&'a CtValue>) -> bool {
+    let reflect_unshadowed = |name: &str| name == "reflect" && binding(name).is_none();
+    match &expr.kind {
+        ExprKind::Identifier(name) => matches!(binding(name), Some(CtValue::Reflected(_))),
+        ExprKind::TypeApply { name, .. } => reflect_unshadowed(name),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            reflect_unshadowed(name)
+                && param_args.len() == 1
+                && args.is_empty()
+                && kwargs.is_empty()
+        }
+        ExprKind::Index { object, .. } => match &object.kind {
+            ExprKind::Identifier(name) => reflect_unshadowed(name),
+            ExprKind::Member { object, field } => {
+                matches!(field.as_str(), "field" | "field_at") && reflection_handle(object, binding)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// The names a body declares as runtime locals (anywhere in it, flat), which

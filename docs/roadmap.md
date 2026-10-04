@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R267**.
+Next free ID: **R272**.
 
 ## Ordered Work
 
@@ -105,6 +105,24 @@ correctness fix to existing behavior is allowed.
   does not (R250, R251, R252) and every pack-keyed method (R5).
   - Delete the branch and the class once nothing reaches them.
   - Depends on R250, R251, R252, and R5.
+  - Model: Fable, Planned.
+
+- [ ] **R267 (P3b) A reflection query over a template-served `def`'s
+  binder reaches MIR without its subject**
+
+  Problem: `return reflect[T].field_count()` in a template-served
+  `def count[T: AnyType]()`, and a `comptime if reflect[T].field_count() ==
+  2:` whose thunk the elaborator below MIR runs, fail with "vm backend does
+  not support the built-in or callee 'reflect.field_count'", where the pin
+  prints the count.
+  - The checker types the query as a `ParamKind::Reflect` node, but MIR
+    lowers the method call as a plain call with no subject type, which
+    neither the VM nor `native::mono` can answer.
+  - `conformance/probes/template_fallback_reflection.mojo`, which printed
+    `2`, `0` before `comptime if` became template-served, now fails this way.
+  - A closed subject folds above MIR in the crossing pass instead.
+  - The bound form (`comptime r = reflect[T]`) is R75's.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R246 (P3b) A `comptime for` over a compile-time collection, a
@@ -1704,20 +1722,18 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R41 A reflection method call in a runtime position is rejected**
+- [ ] **R268 `reflect[Int].is_struct()` answers `False`**
 
-  Problem: `comptime r = reflect[Point]` followed by `print(r.field_count())`
-  prints `2` at the pin, while Mojito reports "Undefined variable 'r'".
-  - Binding the result first works: `comptime count = r.field_count()` then
-    `print(count)`.
-  - The reflection handle erases before the executable check, so a method
-    call on it must fold to its compile-time value where it stands, as the
-    upstream materialization of an `Int` result does.
-  - A direct `reflect[Point].field_count()` in a runtime position fails too,
-    with "type 'reflect[…]' has no method 'field_count'".
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan lists which handle results are implicitly materializable (an `Int`,
-    a `Bool`) and which still need an explicit crossing (a name list).
+  Problem: the pin answers `True` for every builtin scalar and `String`
+  (`reflect[Int].is_struct()`, `reflect[Float64].is_struct()`), and so for a
+  field handle over an `Int` field (`reflect[Point].field["y"].is_struct()`),
+  while Mojito prints `False`.
+  - `eval_reflection_method` (`comptime/eval.rs`) answers `is_struct` by
+    matching `Ty::Struct`, and a builtin scalar is a `Ty::Int`-style type of
+    its own.
+  - The same probe shows the pin's `field_count()` is 1 for `Int`,
+    `Float64`, and `Bool` and 3 for `String`, which R76 must match when it
+    lands.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2024,6 +2040,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     method before the lever is chosen.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R269 `reflect[Self]` in a non-generic struct's method is rejected**
+
+  Problem: `comptime r = reflect[Self]` then `r.field_count()` in a method of
+  a plain struct prints the field count at the pin, while Mojito reports
+  "not a compile-time value: unsupported compile-time type argument".
+  - The elaborator walks a plain struct's method bodies with no binding for
+    `Self`, so `reflect[Self]` has no subject.
+  - Both the bound form and `comptime n = reflect[Self].field_count()` fail.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R270 A module-scope reflection handle is rejected**
+
+  Problem: `comptime R = reflect[Point]` at module scope, read in `main` as
+  `R.field_count()` or through `comptime n = R.field_count()`, prints 2 at
+  the pin, while Mojito reports "unknown type 'reflect'".
+  - The same binding inside a function works.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R271 A `field_types()` result in a runtime position is rejected**
+
+  Problem: `var t = reflect[Point].field_types()` compiles at the pin, while
+  Mojito reports "type-valued or symbolic comptime values cannot materialize
+  at runtime".
+  - The crossing pass folds a runtime reflection query to its value's
+    literal form, and a list of types has none.
+  - Upstream's result is a `TypeList` value, which Mojito's checker types
+    only in compile-time positions.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R77 A field's value cannot be read by reflection**
 

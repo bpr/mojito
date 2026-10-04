@@ -301,6 +301,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A reflection query in a runtime position (`print(r.field_count())` after
+  `comptime r = reflect[Point]`, `reflect[Point].is_struct()`,
+  `r.field_index["y"]()`, `r.field_names()[1]`) now prints its answer, as
+  the pin's static `Reflected[T]` call does, instead of reporting an
+  undefined `r` or an unsupported `reflect.field_count` callee. The
+  elaborator's crossing pass folds the query to the literal form of its
+  compile-time value where it stands, and a query that has no answer (an
+  unknown field name) is rejected at compile time
+  (`assets/ok/reflection_runtime_query.mojo`,
+  `assets/type_error/reflection_runtime_query_unknown_field.mojo`).
 - A direct `size_of[T]()` in a SIMD width now checks and runs in generic
   parameters, return types, and vector constructions. The checker preserves
   the layout application and substitutes its type operand before the
