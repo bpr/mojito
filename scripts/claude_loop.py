@@ -33,6 +33,8 @@ plan file at the repository root gets a plan session before the session that
 carries it out, which is handed the plan; a plan pass that fails or writes no
 plan file leaves the task unexecuted. `--no-auto-plan` skips that pass, and a
 plan file already at the root is handed to the executing session either way.
+`--model Opus` or `--model Fable` overrides every entry's model choice (say,
+when Fable usage runs out); planning still follows the bullet.
 
 Usage:
   scripts/claude_loop.py --list [--track pmir]
@@ -43,6 +45,7 @@ Usage:
   scripts/claude_loop.py --start R3 --until R9
   scripts/claude_loop.py --plan -n 3          # plan the next three instead
   scripts/claude_loop.py --no-auto-plan       # execute Planned entries unplanned
+  scripts/claude_loop.py --model opus -n 0    # run every entry on Opus
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
 """
@@ -73,6 +76,7 @@ MODELS = {
     "Opus": "claude-opus-5-5[1m]",
     "Fable": "claude-fable-5-1",
 }
+MODEL_ALIASES = {name.lower(): name for name in MODELS}
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import roadmap  # noqa: E402
@@ -320,11 +324,17 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
     git("commit", "--quiet", "--file", "-", stdin=msg + "\n")
 
 
-def model_for(args, task: Task) -> str:
+def model_name(args, task: Task) -> str:
+    """The model the task runs on: `--model` when given, else the entry's
+    `Model:` bullet, else `--default-model`."""
     if args.model:
-        return args.model
-    name = task.model or args.default_model
-    return {"Opus": args.opus_model, "Fable": args.fable_model}[name]
+        return MODEL_ALIASES.get(args.model.lower(), args.model)
+    return task.model or args.default_model
+
+
+def model_for(args, task: Task) -> str:
+    name = model_name(args, task)
+    return {"Opus": args.opus_model, "Fable": args.fable_model}.get(name, name)
 
 
 def modes_for(args, task: Task) -> list[str]:
@@ -351,7 +361,10 @@ def main() -> int:
     p.add_argument("--until", metavar="ID", help="stop after this entry")
     p.add_argument("--list", action="store_true", help="list the work order and exit")
     p.add_argument("--dry-run", action="store_true", help="print each prompt instead of running it")
-    p.add_argument("--model", help="use this model for every task, ignoring Model: bullets")
+    p.add_argument("--model", metavar="Opus|Fable|ID",
+                   help="use this model for every task, ignoring Model: bullets: "
+                        "Opus or Fable (any case, mapped through --opus-model/--fable-model) "
+                        "or a literal claude model ID")
     p.add_argument("--opus-model", default=MODELS["Opus"])
     p.add_argument("--fable-model", default=MODELS["Fable"])
     p.add_argument("--default-model", choices=MODELS, default="Opus",
@@ -418,7 +431,7 @@ def main() -> int:
             committing = commit and mode == "execute"
             untracked_before = untracked_files() if committing else set()
             msg_before = read_commit_msg()
-            label = f"{current.id} {args.model or current.model or args.default_model}, {mode}"
+            label = f"{current.id} {model_name(args, current)}, {mode}"
             began = time.time()
             ok = run_claude(args, current, model, label, prompt)
             quick = quick + 1 if not ok and time.time() - began < QUICK_FAIL else 0
