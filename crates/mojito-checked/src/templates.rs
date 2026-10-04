@@ -222,6 +222,10 @@ pub fn derive_adjustment(
             interior: interior.clone(),
         }),
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // A built-in value's copy construction names no type.
+        SemanticAdjustment::BuiltinCopyConstruction => {
+            Some(SemanticAdjustment::BuiltinCopyConstruction)
+        }
         // A pointer to a place is minted with the place owner's capability,
         // which its declaration fixes. A provenance rebind to an origin that
         // names no binding (`origin_of(self)`, a binder) is the same under

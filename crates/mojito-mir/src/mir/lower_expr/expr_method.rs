@@ -166,8 +166,16 @@ impl Flatten<'_> {
                 )
             })
         {
+            let (kwargs, kwarg_places) = self
+                .copy_construction_keywords(kwargs)
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
             let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::ConstructTypeParam { dest, param });
+            self.emit(MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                kwarg_places,
+            });
             return Some(dest);
         }
         // `x.__mlir_index__()` on an integer is the identity

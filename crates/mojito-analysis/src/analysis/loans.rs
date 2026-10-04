@@ -635,6 +635,16 @@ pub(super) fn loan_accesses(
                     .collect()
             }
         }
+        // A type parameter's initializer borrows its keyword sources
+        // (`copy: Self`).
+        MirInstr::ConstructTypeParam {
+            dest, kwarg_places, ..
+        } => kwarg_places
+            .iter()
+            .flatten()
+            .cloned()
+            .map(|place| (place, LoanAccess::Read, span_for(*dest)))
+            .collect(),
         MirInstr::VariantSet { place, value, .. } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }

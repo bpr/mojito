@@ -19,6 +19,19 @@ impl Flatten<'_> {
                     .expect("checked synthesized fieldwise copy has one argument"),
             );
         }
+        if self.checked_adjustments(e).iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction
+            )
+        }) {
+            return self.expr(
+                &kwargs
+                    .first()
+                    .expect("checked built-in copy construction has a 'copy=' argument")
+                    .value,
+            );
+        }
         if let Some(zero) = self.default_scalar_construction(e) {
             return zero;
         }
@@ -30,8 +43,16 @@ impl Flatten<'_> {
                 )
             })
         {
+            let (kwargs, kwarg_places) = self
+                .copy_construction_keywords(kwargs)
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
             let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::ConstructTypeParam { dest, param });
+            self.emit(MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                kwarg_places,
+            });
             return dest;
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) =
@@ -522,41 +543,15 @@ impl Flatten<'_> {
             && self.call_anchors_arguments(e);
         let (regs, arg_places) = self.lower_call_arguments(args, view_result);
         self.allow_argument_anchors = saved_anchor_permission;
-        // A copy construction (`Name(copy=place)`) binds its single
-        // keyword to the copy constructor's borrowed `copy: Self`
-        // parameter. Read a place source shallowly and retain it:
-        // `construct_via_copy` runs `__copyinit__` on the live source
-        // exactly once, where an ordinary value read would run the
-        // user's copy constructor a second time for the argument
-        // itself — observable through its side effects.
-        let copy_construction_source = (args.is_empty()
-            && kwargs.len() == 1
-            && kwargs[0].name == "copy"
+        let copy_construction = args.is_empty()
             && matches!(
                 self.checked_ty(e),
                 Some(Ty::Struct(constructed, _)) if constructed == *name
-            ))
-        .then(|| self.simple_place(&kwargs[0].value))
-        .flatten();
-        let (kw, kwarg_places) = if let Some(place) = copy_construction_source {
-            let source_expr = &kwargs[0].value;
-            let source = self.fresh_typed(
-                span(source_expr),
-                Some(place.root),
-                place
-                    .ty
-                    .clone()
-                    .or_else(|| self.checked_ty(source_expr))
-                    .unwrap_or(Ty::Error),
             );
-            self.emit(MirInstr::LoadPlace {
-                dest: source,
-                place: place.clone(),
-            });
-            (vec![("copy".to_string(), source)], vec![Some(place)])
-        } else {
-            self.lower_call_keywords(kwargs, view_result)
-        };
+        let (kw, kwarg_places) = copy_construction
+            .then(|| self.copy_construction_keywords(kwargs))
+            .flatten()
+            .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
         let (regs, arg_places, kw, kwarg_places) = match self.checked_ty(e) {
             Some(Ty::Struct(constructed, _)) if constructed == *name => self
                 .fieldwise_keywords_positional(&constructed, (regs, arg_places, kw, kwarg_places)),

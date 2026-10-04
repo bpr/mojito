@@ -445,6 +445,10 @@ pub enum SemanticAdjustment {
     ConstructTypeParam {
         param: mojito_types::param_expr::ParamRef,
     },
+    /// `Int(copy=x)`: the `Copyable` initializer of a built-in value type,
+    /// whose copy is the read of its source, so MIR lowers the call as its
+    /// one keyword argument's value.
+    BuiltinCopyConstruction,
     /// A supplied compile-time type argument binding a runtime-constructible
     /// type parameter (`hash[Fnv1a](x)`): MIR reifies it as the bound
     /// struct's name so `ConstructTypeParam` dispatch constructs the supplied

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.18
+# Mojito Textual MIR Format, Version 1.19
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.18 is implemented end to end for inspection and loading: canonical
+Version 1.19 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.18
+mojito-mir 1.19
 ```
 
-The writer emits 1.18. The reader accepts 1.0 through 1.18; *Schema 1.0*
+The writer emits 1.19. The reader accepts 1.0 through 1.19; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -150,6 +150,14 @@ Minor version 18 lets a SIMD instruction's lane slots stay symbolic: the
 in a `DType`-keyed `def`), exactly as the `simd` type record's slots do. The
 elaborator closes them per instance, so elaborated MIR holds known slots. A
 1.17 consumer rejects the spelling, which is the intended failure.
+
+Minor version 19 carries the arguments of a type parameter's construction
+through its bound's initializer: `type.construct` gains `kwargs` and
+`kwarg_places`, spelled and aligned as a `call`'s, which `T(copy=x)` fills
+with the `Copyable` initializer's borrowed source and `T()` leaves empty.
+The elaborator replaces the instruction with the bound type's construction,
+so elaborated MIR holds none. An older artifact reads as constructing with
+no argument.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -642,7 +650,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.18
+mojito-mir 1.19
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

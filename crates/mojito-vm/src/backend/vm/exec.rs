@@ -143,7 +143,25 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
-            MirInstr::ConstructTypeParam { dest, param } => {
+            MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                ..
+            } => {
+                // The `Copyable` initializer produces a copy of its borrowed
+                // source, whatever type the parameter is bound to.
+                if let [(keyword, source)] = kwargs.as_slice() {
+                    if keyword != "copy" {
+                        return Err(RuntimeError::Unsupported(format!(
+                            "vm: constructing type parameter '{}' with keyword '{keyword}'",
+                            param.name
+                        )));
+                    }
+                    let source = regs[source.0 as usize].clone();
+                    regs[dest.0 as usize] = self.clone_value(prog, &source)?;
+                    return Ok(Flow::Normal);
+                }
                 // A constructible type parameter is reified at runtime as the
                 // bound struct's name.
                 let bound =

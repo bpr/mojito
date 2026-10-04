@@ -318,6 +318,16 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             place(p, out);
             out.push(*value);
         }
+        MirInstr::ConstructTypeParam {
+            kwargs,
+            kwarg_places,
+            ..
+        } => {
+            out.extend(kwargs.iter().map(|(_, register)| *register));
+            for p in kwarg_places.iter().flatten() {
+                place(p, out);
+            }
+        }
         MirInstr::Raise { src } => out.push(*src),
         MirInstr::Drop { reg } => out.push(*reg),
         MirInstr::DefVar { src, .. } => out.push(*src),
@@ -325,7 +335,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::TypeName { .. }
-        | MirInstr::ConstructTypeParam { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::DropVar { .. }

@@ -588,6 +588,40 @@ impl Flatten<'_> {
         (registers, places)
     }
 
+    /// The keyword of a copy construction (`Name(copy=place)`,
+    /// `T(copy=place)`), which binds the copy initializer's borrowed
+    /// `copy: Self` parameter: a place source is read shallowly and retained,
+    /// so the copy initializer runs on the live source exactly once, where an
+    /// ordinary value read would run a user's copy initializer a second time
+    /// for the argument itself — observable through its side effects. `None`
+    /// for any other keyword list or a source that is not a simple place.
+    pub(super) fn copy_construction_keywords(
+        &mut self,
+        arguments: &[mojito_ast::ast::KwArg],
+    ) -> Option<(Vec<(String, Reg)>, Vec<Option<MirPlace>>)> {
+        let [argument] = arguments else {
+            return None;
+        };
+        if argument.name != "copy" {
+            return None;
+        }
+        let place = self.simple_place(&argument.value)?;
+        let source = self.fresh_typed(
+            span(&argument.value),
+            Some(place.root),
+            place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(&argument.value))
+                .unwrap_or(Ty::Error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: source,
+            place: place.clone(),
+        });
+        Some((vec![("copy".to_string(), source)], vec![Some(place)]))
+    }
+
     /// Fold a keyword `@fieldwise_init` construction into its positional form:
     /// the arguments were evaluated in source order, and the call lists their
     /// registers in field order, so no backend binds keywords to fields. A

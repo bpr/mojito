@@ -165,8 +165,17 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::GetIter { .. }
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. } => {}
+        MirInstr::ConstructTypeParam {
+            dest,
+            kwargs,
+            kwarg_places,
+            ..
+        } => {
+            out.push(dest);
+            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
+            places(kwarg_places.iter_mut().flatten(), &mut out);
+        }
         MirInstr::Const { dest, .. }
-        | MirInstr::ConstructTypeParam { dest, .. }
         | MirInstr::SizeOf { dest, .. }
         | MirInstr::TypeName { dest, .. }
         | MirInstr::HasNext { dest, .. }
@@ -869,10 +878,18 @@ pub enum MirInstr {
         dest: Reg,
         k: Const,
     },
-    /// Construct the concrete type reified for a checked type parameter.
+    /// Construct the concrete type reified for a checked type parameter,
+    /// through the bound's initializer the checker selected: `T()` passes no
+    /// argument, `T(copy=x)` the `Copyable` initializer's one.
     ConstructTypeParam {
         dest: Reg,
         param: mojito_types::param_expr::ParamRef,
+        /// The selected initializer's keyword arguments, each a read the
+        /// initializer borrows.
+        kwargs: Vec<(String, Reg)>,
+        /// Like `Call::kwarg_places`, aligned with `kwargs`: the retained
+        /// caller place each borrowed argument reads.
+        kwarg_places: Vec<Option<MirPlace>>,
     },
     /// The byte size of one checker-resolved type: a layout query only a
     /// generator carries. The elaborator answers it under the compilation's

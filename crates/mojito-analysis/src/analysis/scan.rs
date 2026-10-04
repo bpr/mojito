@@ -75,6 +75,13 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             uses.extend(capture_accesses.iter().map(|access| (access.root, *dest)));
             uses
         }
+        MirInstr::ConstructTypeParam {
+            dest, kwarg_places, ..
+        } => kwarg_places
+            .iter()
+            .flatten()
+            .flat_map(|place| place_loan_uses(place, *dest))
+            .collect(),
         MirInstr::CallIndirect {
             dest,
             callee_place,

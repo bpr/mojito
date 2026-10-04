@@ -27,9 +27,6 @@ impl Checker {
         // the enclosing constructor frame at execution time.
         if let ExprKind::Identifier(name) = &object.kind
             && name == "Self"
-            && param_args.is_empty()
-            && args.is_empty()
-            && kwargs.is_empty()
             && let Some(ty) = self
                 .self_decls
                 .iter()
@@ -37,6 +34,18 @@ impl Checker {
                 .find_map(type_parameter)
             && let Ty::Param { binder, .. } = &ty
         {
+            if !(param_args.is_empty() && args.is_empty() && kwargs.is_empty()) {
+                return self
+                    .infer_type_param_copy_construction(
+                        span.clone(),
+                        method,
+                        &ty,
+                        param_args,
+                        args,
+                        kwargs,
+                    )
+                    .map(Some);
+            }
             if !self.conforms_to(&ty, "Defaultable") && !self.conforms_to(&ty, "Hasher") {
                 return Err(TypeError::TraitNotSatisfied {
                     param: method.to_string(),

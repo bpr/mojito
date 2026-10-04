@@ -13,10 +13,20 @@ pub(super) fn default_construct_simd_parameters(function: &mut MirFunction, bind
     for block in &mut function.blocks {
         let mut index = 0;
         while index < block.instrs.len() {
-            let MirInstr::ConstructTypeParam { dest, param } = &block.instrs[index] else {
+            let MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                ..
+            } = &block.instrs[index]
+            else {
                 index += 1;
                 continue;
             };
+            if !kwargs.is_empty() {
+                index += 1;
+                continue;
+            }
             let Some(Ty::Simd { dtype, width }) = bindings.types.get(param) else {
                 index += 1;
                 continue;
@@ -440,7 +450,64 @@ pub(super) fn substitute_instruction(
         // `H()` on a type parameter constructs the bound struct: once the
         // binding is concrete this is an ordinary nullary constructor call,
         // which the call rewriting below then instantiates.
-        ConstructTypeParam { dest, param } => {
+        // `T(copy=x)` copies its source through the bound type's copy
+        // initializer: a built-in value copies by the value read, a struct
+        // by the ordinary `Name(copy=x)` construction.
+        ConstructTypeParam {
+            dest,
+            param,
+            kwargs,
+            kwarg_places,
+        } if !kwargs.is_empty() => {
+            let binding = bindings.types.get(&*param);
+            let source = match kwargs.as_slice() {
+                [(keyword, source)] if keyword == "copy" => *source,
+                _ => {
+                    return Err(MonoError {
+                        function: None,
+                        construct: format!(
+                            "constructing type parameter `{}` through an initializer other than `copy=`",
+                            param.name
+                        ),
+                    });
+                }
+            };
+            match binding {
+                Some(ty) if mojito_types::types::builtin_copy_is_value_read(ty) => {
+                    *instruction = MirInstr::CopyValue {
+                        dest: *dest,
+                        value: source,
+                    };
+                }
+                Some(Ty::Struct(struct_name, _)) => {
+                    sub_places(kwarg_places, bindings)?;
+                    *instruction = Call {
+                        dest: *dest,
+                        func: mojito_mir::mir::FuncRef::named(struct_name),
+                        raises: None,
+                        args: Vec::new(),
+                        kwargs: std::mem::take(kwargs),
+                        arg_places: Vec::new(),
+                        kwarg_places: std::mem::take(kwarg_places),
+                        capture_accesses: Vec::new(),
+                        param_arg_regs: Vec::new(),
+                        receiver: None,
+                        instantiated_args: Vec::new(),
+                        spread: None,
+                    };
+                }
+                _ => {
+                    return Err(MonoError {
+                        function: None,
+                        construct: format!(
+                            "copying through type parameter `{}` without a concrete binding",
+                            param.name
+                        ),
+                    });
+                }
+            }
+        }
+        ConstructTypeParam { dest, param, .. } => {
             // A scalar binding default-constructs as its zero value (the
             // VM's `ConstructTypeParam` answer for the built-in
             // `Defaultable` types).

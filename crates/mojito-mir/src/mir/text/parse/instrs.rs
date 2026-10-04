@@ -234,7 +234,24 @@ impl Decoder {
                         name: name.into(),
                     },
                 };
-                Some(MirInstr::ConstructTypeParam { dest, param })
+                // Schema 1.19 records the bound initializer's keyword
+                // arguments; an older artifact constructs with none.
+                let kwargs = self
+                    .field(fields, "kwargs")
+                    .ok()
+                    .map(|found| self.kwargs(found))
+                    .unwrap_or_default();
+                let kwarg_places = self
+                    .field(fields, "kwarg_places")
+                    .ok()
+                    .map(|found| self.places_option(found))
+                    .unwrap_or_default();
+                Some(MirInstr::ConstructTypeParam {
+                    dest,
+                    param,
+                    kwargs,
+                    kwarg_places,
+                })
             }
             "literal.materialize" => Some(MirInstr::MaterializeLiteral {
                 dest: self.req(value, fields, "dest", Self::reg)?,

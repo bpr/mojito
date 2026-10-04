@@ -585,13 +585,20 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::SizeOf { dest, ty } | MirInstr::TypeName { dest, ty } => {
             record(tag, &[("dest", reg_value(*dest)), ("type", ty_value(ty))])
         }
-        MirInstr::ConstructTypeParam { dest, param } => record(
+        MirInstr::ConstructTypeParam {
+            dest,
+            param,
+            kwargs,
+            kwarg_places,
+        } => record(
             tag,
             &[
                 ("dest", reg_value(*dest)),
                 ("owner", quote(&param.id.owner)),
                 ("slot", param.id.slot.to_string()),
                 ("param", symbol(&param.name)),
+                ("kwargs", kwargs_value(kwargs)),
+                ("kwarg_places", places_option(kwarg_places)),
             ],
         ),
         MirInstr::MaterializeLiteral {

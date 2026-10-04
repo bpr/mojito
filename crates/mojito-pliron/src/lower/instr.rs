@@ -211,7 +211,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         match instr {
             MirInstr::Const { dest, k } => self.lower_const(ctx, *dest, k),
-            MirInstr::ConstructTypeParam { dest, param } => Err(self.unsupported_reg(
+            MirInstr::ConstructTypeParam { dest, param, .. } => Err(self.unsupported_reg(
                 format!(
                     "constructing type parameter `{}` after monomorphization",
                     param.name

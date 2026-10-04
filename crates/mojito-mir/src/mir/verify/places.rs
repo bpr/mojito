@@ -119,6 +119,9 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         MirInstr::MakeClosure { captures, .. } => {
             captures.iter().map(|capture| &capture.place).collect()
         }
+        MirInstr::ConstructTypeParam { kwarg_places, .. } => {
+            kwarg_places.iter().flatten().collect()
+        }
         MirInstr::Call {
             arg_places,
             kwarg_places,
@@ -201,6 +204,9 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             .iter_mut()
             .map(|capture| &mut capture.place)
             .collect(),
+        MirInstr::ConstructTypeParam { kwarg_places, .. } => {
+            kwarg_places.iter_mut().flatten().collect()
+        }
         MirInstr::Call {
             arg_places,
             kwarg_places,

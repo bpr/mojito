@@ -368,7 +368,20 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 }
             }
         }
-        MirInstr::ConstructTypeParam { dest, param } => {
+        MirInstr::ConstructTypeParam {
+            dest,
+            param,
+            kwargs,
+            kwarg_places,
+        } => {
+            if kwarg_places.len() != kwargs.len() {
+                errors.push(format!(
+                    "{prefix}: type-parameter construction of '{}' has {} keyword places for {} keyword arguments",
+                    param.name,
+                    kwarg_places.len(),
+                    kwargs.len()
+                ));
+            }
             if let Some(found) = cx.reg_ty(*dest)
                 && !matches!(found, Ty::Param { binder, .. } if binder == param)
                 && !matches!(found, Ty::Struct(..))

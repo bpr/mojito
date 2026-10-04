@@ -141,6 +141,110 @@ impl Checker {
         Ok(nominal)
     }
 
+    /// `T(copy=x)` on a type parameter: construction through the bound's
+    /// `Copyable` initializer, `__init__(out self, *, copy: Self)`, which
+    /// borrows a value of the parameter's own type. Recorded as the
+    /// `ConstructTypeParam` of the binder; its argument stays the call's own.
+    pub(super) fn infer_type_param_copy_construction(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        ty: &Ty,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let Ty::Param { binder, .. } = ty else {
+            return Err(TypeError::InvariantViolation(format!(
+                "constructing '{name}' names no type parameter"
+            )));
+        };
+        let ([], [], [source]) = (param_args, args, kwargs) else {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "a type parameter is constructed only through its bound's \
+                         initializers, `()` or `(copy=value)`"
+                    .to_string(),
+            });
+        };
+        if source.name != "copy" {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: format!(
+                    "no initializer of the parameter's bound takes keyword '{}'",
+                    source.name
+                ),
+            });
+        }
+        if !self.is_copyable(ty) {
+            return Err(TypeError::TraitNotSatisfied {
+                param: name.to_string(),
+                ty: ty.to_string(),
+                trait_name: "Copyable".to_string(),
+                reason: self.trait_failure_reason(ty, "Copyable"),
+            });
+        }
+        let found = self.infer(&source.value)?;
+        if !mojito_types::types::coerces(&found, ty) {
+            return Err(TypeError::TypeMismatch {
+                expected: ty.to_string(),
+                found: found.to_string(),
+                context: format!("argument 'copy' of '{name}'"),
+            });
+        }
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
+                param: binder.clone(),
+            },
+        );
+        Ok(ty.clone())
+    }
+
+    /// `Name(copy=x)` on a built-in value type: its `Copyable` initializer,
+    /// which borrows a value of the type and copies it by the value read.
+    fn infer_builtin_copy_construction(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        ty: &Ty,
+        source: &mojito_ast::ast::KwArg,
+    ) -> Result<Ty, TypeError> {
+        let found = self.infer_with_expected(&source.value, ty, true)?;
+        if !self.record_implicit_conversion(&source.value, &found, ty)? {
+            return Err(TypeError::TypeMismatch {
+                expected: ty.to_string(),
+                found: found.to_string(),
+                context: format!("argument 'copy' of '{name}'"),
+            });
+        }
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
+        );
+        Ok(ty.clone())
+    }
+
+    /// The built-in value type a constructor head names (`Int`,
+    /// `SIMD[DType.float32, 4]`, `Float32`), whose copy is the value read.
+    fn builtin_copy_constructed(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<Ty> {
+        match name {
+            "SIMD" => self
+                .simd_dims(param_args)
+                .ok()
+                .and_then(|(dtype, width)| simd_of(dtype, width).ok()),
+            "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => scalar_type_name(name),
+            _ if param_args.is_empty() => {
+                Dtype::from_scalar_alias(name).map(|dtype| simd_ty(dtype, 1))
+            }
+            _ => None,
+        }
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_call(
         &self,
@@ -187,7 +291,7 @@ impl Checker {
         {
             return element;
         }
-        if param_args.is_empty() && args.is_empty() && kwargs.is_empty() {
+        if param_args.is_empty() && args.is_empty() {
             let type_parameter = self
                 .tparams
                 .iter()
@@ -206,10 +310,16 @@ impl Checker {
                     ..
                 },
             ) = type_parameter
-                && bounds
-                    .iter()
-                    .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
+                && (!kwargs.is_empty()
+                    || bounds
+                        .iter()
+                        .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable")))
             {
+                if !kwargs.is_empty() {
+                    return self.infer_type_param_copy_construction(
+                        span, name, ty, param_args, args, kwargs,
+                    );
+                }
                 self.operation_adjustments.borrow_mut().insert(
                     span,
                     mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
@@ -315,6 +425,14 @@ impl Checker {
                 }
                 "comptime" if self.source_validation && args.len() == 1 => {
                     return self.infer(&args[0]);
+                }
+                // `Int(copy=x)`: a built-in value type's `Copyable`
+                // initializer.
+                _ if args.is_empty()
+                    && matches!(kwargs, [keyword] if keyword.name == "copy")
+                    && let Some(ty) = self.builtin_copy_constructed(name, param_args) =>
+                {
+                    return self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0]);
                 }
                 // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
                 // lane by keyword.

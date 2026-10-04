@@ -1534,6 +1534,8 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
         MirInstr::ConstructTypeParam {
             dest: Reg(0),
             param: binder.clone(),
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
         },
         MirInstr::Call {
             dest: Reg(1),
