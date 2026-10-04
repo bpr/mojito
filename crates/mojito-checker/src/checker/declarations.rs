@@ -360,7 +360,9 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                     valid,
                 };
             }
-            StmtKind::If { branches, orelse } => {
+            // A kept `comptime if` is checked as its runtime counterpart: the
+            // condition is opaque, so every arm must initialize.
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 let mut flows: Vec<_> = branches
                     .iter()
                     .map(|(_, branch)| init_field_flow(branch, field, initialized))

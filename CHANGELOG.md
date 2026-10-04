@@ -301,6 +301,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Self.T()` in a method or constructor that a generic struct clones per
+  instance (one holding a `comptime if`) now constructs the bound type, as
+  the pin does, on the VM and natively
+  (`assets/ok/struct_type_param_construction_clone.mojo`). The clone used to
+  keep the template's `T`, failing with "in 'reset' instantiated for
+  'Box[Float64]': type mismatch for assignment target: expected Float64,
+  found T", and a constructor initializing a field in every arm of a
+  `comptime if` was reported as leaving it uninitialized.
 - A trait default holding a `comptime if` is elaborated for each conformer
   that inherits it, as upstream decides it per conformer: the inherited
   defaults are materialized into each conformer before compile-time

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	501
+# swept-count	502
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -203,6 +203,7 @@ assets/type_error/comptime_field_names_runtime_use.mojo	compile-reject	agree	err
 assets/type_error/comptime_for_runtime_pack_length.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
 assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[String, String, String]' does not implement the '__iter__' method
 assets/type_error/comptime_if_arm_conditional_destroy.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
+assets/type_error/comptime_if_constructor_arm_leaves_field_uninitialized.mojo	compile-reject	agree	error: 'self.x' is uninitialized at the implicit return from this function
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
 assets/type_error/comptime_keyed_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/comptime_layout_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 16]' to 'SIMD[.float32, size_of[Pair]()]'

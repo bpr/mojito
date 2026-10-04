@@ -2543,15 +2543,33 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         ExprKind::Member { object, .. } => retype_expr(object, subs),
         ExprKind::MethodCall {
             object,
+            method,
             args,
             kwargs,
-            ..
         } => {
-            retype_expr(object, subs);
             retype_exprs(args, subs);
-            for k in kwargs {
+            for k in kwargs.iter_mut() {
                 retype_expr(&mut k.value, subs);
             }
+            // `Self.T(...)` on a dropped binding constructs the bound type,
+            // spelled as the ordinary constructor call it names.
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && subs.contains_key(method.as_str())
+            {
+                let mut name = method.clone();
+                let mut param_args = Vec::new();
+                retype_head(&mut name, &mut param_args, subs);
+                if name != *method {
+                    e.kind = ExprKind::Call {
+                        name,
+                        param_args,
+                        args: std::mem::take(args),
+                        kwargs: std::mem::take(kwargs),
+                    };
+                    return;
+                }
+            }
+            retype_expr(object, subs);
         }
         ExprKind::Index { object, index } => {
             retype_expr(object, subs);

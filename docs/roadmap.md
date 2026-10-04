@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R281**.
+Next free ID: **R283**.
 
 ## Ordered Work
 
@@ -1763,23 +1763,37 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R57 Constructing a struct's own type parameter fails in every instance
-  clone**
+- [ ] **R281 Constructing a struct's type parameter with arguments is
+  rejected**
 
-  Problem: `self.x = Self.T()` in a method of `struct Box[T: Copyable &
-  Deinitable & Defaultable]` is rejected for the instance — "in 'reset'
-  instantiated for 'Box[Float64]': type mismatch for assignment target:
-  expected Float64, found T" — while the pin runs it.
-  - A clone respells `Self.T` in its annotations but not in a construction
-    expression, so the call still types as the template's `T`.
-  - A constructor clone fails the same way, so the shape reaches lifecycle
-    and ordinary bodies alike.
-  - Found while closing the overloaded-constructor-family item; no fixture
-    pins it yet.
-  - The plan names the substitution `specialize_method_clone` applies to
-    expressions, not only to annotations.
+  Problem: `return Self.T(copy=self.x)` in a method of `struct Box[T:
+  Copyable & Deinitable & Defaultable]` fails with "Undefined variable
+  'Self'", while the pin runs it.
+  - The checker types only the nullary `Self.T()`
+    (`Checker::infer_type_receiver_call`, recorded as
+    `SemanticAdjustment::ConstructTypeParam`); any argument falls through
+    to the value-receiver families, which find no `Self` binding.
+  - The construction should select the bound's constructor (`Copyable`'s
+    `copy=` initializer) and carry its arguments, in the template and in a
+    per-instance clone, which already respells the call head.
+  - Found while landing the nullary construction in instance clones
+    (2026-10-04).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R282 `size_of[Self.T]()` in a struct method's `comptime if` is not
+  evaluated**
+
+  Problem: `comptime if size_of[Self.T]() == 8:` in a method of a generic
+  struct fails with "not a compile-time value: 'size_of' is not a
+  compile-time-callable function", while the pin runs it.
+  - The same condition over a `def`'s own binder (`size_of[T]()`) folds.
+  - It fails before and after `Self.T()` clones were fixed, with or
+    without a `Self.T()` in the body; the failing phase is not yet located.
+  - Found while landing the nullary construction in instance clones
+    (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R62 A `def`'s own type pack cannot be queried in a runtime position**
 
