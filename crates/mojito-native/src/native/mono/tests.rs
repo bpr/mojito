@@ -1059,6 +1059,90 @@ fn comptime_for_unrolls_one_copy_per_iteration() {
 }
 
 #[test]
+fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
+    // A `var` whose type names the index is one slot per copy, each at its
+    // iteration's type, and the template's slot leaves the instance — even
+    // when the range is empty.
+    let source = "def total[n: Int]() -> Int:\n\
+         \x20   var sum = 0\n\
+         \x20   comptime for i in range(1, n):\n\
+         \x20       var v = SIMD[DType.int32, i](7)\n\
+         \x20       sum += Int(v.reduce_add())\n\
+         \x20   return sum\n\
+         def main():\n\
+         \x20   print(total[3]())\n\
+         \x20   print(total[1]())\n";
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile the loop");
+    let template = compiled
+        .drop_elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "total")
+        .map(|(_, function)| function)
+        .expect("the template is lowered");
+    let index = template
+        .blocks
+        .iter()
+        .find_map(|block| match &block.term {
+            MirTerm::ComptimeFor { index, .. } => Some(index.clone()),
+            _ => None,
+        })
+        .expect("the template keeps the loop");
+    let (slot, _) = template
+        .var_tys
+        .iter()
+        .find(|(_, ty)| mojito_types::types::names_binder(ty, &index))
+        .expect("the template types `v` over the index");
+    let name = &template.var_names[*slot as usize];
+    let specialized = specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize the loop");
+    let instance = |suffix: &str| {
+        specialized
+            .program
+            .functions
+            .iter()
+            .find(|(candidate, _)| candidate.starts_with("total$") && candidate.ends_with(suffix))
+            .map(|(_, function)| function)
+            .expect("the instance is emitted")
+    };
+    let copies = |function: &MirFunction| -> Vec<Ty> {
+        assert_eq!(function.n_vars, function.var_names.len());
+        assert!(
+            function
+                .var_tys
+                .values()
+                .all(|ty| !mojito_types::types::names_binder(ty, &index))
+        );
+        assert!(
+            !function.var_names.contains(name),
+            "the template's slot is retired"
+        );
+        let mut types: Vec<Ty> = function
+            .var_names
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.starts_with(&format!("{name}$unroll")))
+            .map(|(slot, _)| function.var_tys[&(slot as mojito_hir::hir::VarId)].clone())
+            .collect();
+        types.sort_by_key(ToString::to_string);
+        types
+    };
+    let widths: Vec<String> = copies(instance("V3"))
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(widths, ["Int32", "SIMD[DType.int32, 2]"]);
+    assert!(copies(instance("V1")).is_empty());
+}
+
+#[test]
 fn comptime_branch_selection_keeps_the_taken_arm() {
     // The template carries the region as a `comptime_branch`; each instance
     // keeps the taken arm alone, with the destroy drop elaboration placed at

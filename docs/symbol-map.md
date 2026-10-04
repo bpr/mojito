@@ -1121,10 +1121,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `native::mono::unroll` (`mono/unroll.rs`): `unroll_comptime_loops` runs
   before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
   pick a loop and its body, `copy_body` appends one finished copy per
-  iteration (fresh registers, `substitute_value_parameter_reads` with the
-  index among the locals, `substitute_blocks_metadata`, nested `unroll_in`,
+  iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
+  whose type names the index (`mojito_types::types::names_binder`),
+  `substitute_value_parameter_reads` with the index among the locals,
+  `substitute_blocks_metadata`, nested `unroll_in`,
   `select_comptime_branches_in`), `retarget` chains the copies, and
-  `forget_registers` drops the dead body's tables. `comptime_for_next`
+  `forget_registers` drops the dead body's tables; the template's
+  index-typed slots leave the instance through `retire_slots`.
+- `native::mono` slot renumbering (`mono/slots.rs`): `renumber_slots`,
+  `renumber_blocks`, `addressed_slots`, and `retire_slots`, shared by
+  runtime promotion (`mono/promote.rs`) and unrolling. The comptime
+  elaborator's walk (`Elab::mono_stmt`, `comptime/mono.rs`) treats a kept
+  `comptime for`'s index as a symbolic parameter, so a struct applied over
+  it (`Lanes[i]`) stays for the checker. `comptime_for_next`
   (`backend/vm.rs`) runs the header on the erased path from the index slot.
 - The cloner keys a top-level `def` on a `comptime for` its template does
   not serve (`comptime_for_is_template_served`, `comptime.rs`) or a `rebind`;

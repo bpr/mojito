@@ -62,6 +62,7 @@ assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_scope.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_index_typed_local.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_iteration_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized

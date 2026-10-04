@@ -3502,6 +3502,42 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
     })
 }
 
+/// Whether `ty` names the declared parameter `binder`.
+///
+/// It counts as a type parameter, or in a parameter expression of a value
+/// position — a SIMD width, a value argument, a pack element's index — or of
+/// a type embedded in one.
+pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
+    struct Finder<'a> {
+        binder: &'a ParamRef,
+        found: bool,
+    }
+    impl TyRewrite for Finder<'_> {
+        fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
+            self.found |= binder == self.binder;
+            None
+        }
+
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            expr.visit(&mut |node| {
+                self.found |= matches!(node.kind(), ParamKind::DeclRef(reference) if reference == self.binder)
+                    || node
+                        .embedded_types()
+                        .into_iter()
+                        .any(|ty| names_binder(ty, self.binder));
+            });
+            Ok(expr.clone())
+        }
+    }
+    let mut finder = Finder {
+        binder,
+        found: false,
+    };
+    // The finder never fails; the rebuilt type is discarded.
+    let _ = rewrite_ty(ty, &mut finder);
+    finder.found
+}
+
 /// The [`is_symbolic`] companion for compile-time values: a value parameter, or
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R292**.
+Next free ID: **R295**.
 
 ## Ordered Work
 
@@ -143,22 +143,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R2.
   - Model: Fable, Planned.
 
-- [ ] **R247 (P3b) A value declared in a template-served `comptime for` whose
-  type names the index does not elaborate**
-
-  Problem: `var v = SIMD[DType.int32, i](7)` inside `comptime for i in
-  range(1, n)` in a generic `def` fails with "place rooted at slot 3 lacks
-  complete checked type metadata"; the pin prints `17` for `n = 3`.
-  - The checker records a vector construction only at a known width, so the
-    binding has no checked type at a symbolic index (R140 is the same gap at
-    a layout constant's width).
-  - The unroller copies the body with the original's variable slots, so a
-    slot whose type depends on the index would hold one type per copy where
-    `var_tys` has one entry (`mono/unroll.rs`); each copy needs its own
-    slot for such a binding.
-  - Depends on R140.
-  - Model: Fable, Planned.
-
 - [ ] **R248 (P3b) A thunk condition inside a template-served `comptime for`
   cannot read the index**
 
@@ -171,6 +155,37 @@ correctness fix to existing behavior is allowed.
     declares nor passes it.
   - The thunk needs the indices of the loops enclosing the condition among
     its binders, and the unroller must bind them per copy.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R293 (P3c) An annotated vector binding at a symbolic width rejects
+  its literal initializer**
+
+  Problem: `var v: SIMD[DType.int32, n] = 7` in `def h[n: Int]` fails with
+  "invalid checked program: … binding of Int to a slot of type
+  SIMD[DType.int32, n]"; the pin prints `16` for `h[2]` after `v += 1`.
+  - The same binding at a `comptime for` index (`SIMD[DType.int32, i]`)
+    fails the same way; the pin prints `24` for `range(1, 3)`.
+  - Cause to confirm: the checker records the literal-to-vector conversion
+    (a splat) only at a known width, so MIR binds the bare `Int`.
+  - `var v = SIMD[DType.int32, n](7)` already runs.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R294 (P3c) A struct whose field is a vector over its own value
+  parameter has no fields when applied at a symbolic argument**
+
+  Problem: `Lanes[n](3).v`, for `struct Lanes[w: Int]` holding `var v:
+  SIMD[DType.int32, Self.w]`, fails in `def owned[n: Int]` with "type
+  'Lanes[n]' has no field 'v'"; the pin prints `[3, 3]` for `owned[2]`.
+  - The same application at a `comptime for` index (`Lanes[i]`) fails the
+    same way.
+  - Cause to confirm: the comptime elaborator specializes such a struct
+    eagerly, and an application over a symbolic parameter keeps the
+    template only as a shell (`resolve_struct_spec_args_if_ready`), which
+    the checker sees with no fields.
+  - A struct whose fields do not name the parameter (`var v: Int`) already
+    runs at a symbolic argument and at the index.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -538,6 +553,24 @@ correctness fix to existing behavior is allowed.
     production path is unaffected.
   - A per-frame loop state, or a slot reset on every exit edge, fixes it;
     entry R10 deletes the oracle and the question with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R292 (P5) The erased oracle cannot run a vector at a kept `comptime
+  for` index's width**
+
+  Problem: `var v = SIMD[DType.int32, i](7)` inside `comptime for i in
+  range(1, n)` in a generic `def` runs on concrete MIR and stops under
+  `--erased` with "a SIMD instruction over the symbolic slots
+  `SIMD[DType.int32, i]` reached the VM".
+  - Concrete MIR has no such instruction: the elaborator unrolls the loop
+    and gives each copy its own slot at its own width.
+  - The erased frame runs the kept header with the index as a runtime
+    value, and the VM's SIMD instructions need a known width
+    (`concrete_simd_slots`).
+  - `assets/ok/comptime_for_index_typed_local.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -347,6 +347,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
     "pack_length_runtime_position",
+    // R292, the erased oracle: a kept `comptime for` runs its index as a
+    // runtime value, so a vector at the index's width has no known width.
+    "comptime_for_index_typed_local",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

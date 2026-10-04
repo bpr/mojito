@@ -149,12 +149,26 @@ impl Elab<'_> {
             }
             StmtKind::For {
                 var, iter, body, ..
-            }
-            | StmtKind::ComptimeFor { var, iter, body } => {
+            } => {
                 self.mono_expr(iter, consts, mono)?;
                 mono.push_value_scope();
                 mono.bind_value(var, false);
                 let result = self.mono_block_contents(body, consts, mono);
+                mono.pop_value_scope();
+                result
+            }
+            // A `comptime for` the walk reaches is kept for the elaborator to
+            // unroll, so its index is a parameter of the body: an
+            // application over it stays symbolic, as one over the enclosing
+            // declaration's own parameters does.
+            StmtKind::ComptimeFor { var, iter, body } => {
+                self.mono_expr(iter, consts, mono)?;
+                mono.push_value_scope();
+                mono.bind_value(var, false);
+                let symbolic_base = mono.symbolic_type_params.len();
+                mono.symbolic_type_params.push(var.clone());
+                let result = self.mono_block_contents(body, consts, mono);
+                mono.symbolic_type_params.truncate(symbolic_base);
                 mono.pop_value_scope();
                 result
             }

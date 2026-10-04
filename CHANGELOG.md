@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `var` declared in a template-served `comptime for` whose type names the
+  index (`var v = SIMD[DType.int32, i](7)`, `var l = Lanes[i](3)`) runs as
+  in the pin: the elaborator gives each unrolled copy its own slot at that
+  iteration's type and drops the template's, on the VM and natively. Such a
+  binding used to fail MIR verification ("place root slot … is typed Int32,
+  declared SIMD[DType.int32, 2]") or the comptime walk ("'i' is not a
+  compile-time type") (`assets/ok/comptime_for_index_typed_local.mojo`).
+
 - A `def`'s or a method's own type pack answers `Us.length`, `len(Us)`,
   `Us.contains[X]()`, and `Us.all_conforms_to[T]()` in a runtime position,
   as the pin does: a template-served body carries the query as a parameter
