@@ -6,10 +6,16 @@
 use super::*;
 use mojito_types::types::TransferSet;
 
-/// Materialize trait default methods into each conforming struct before semantic
-/// checking. This keeps default dispatch static: downstream MIR sees an ordinary
-/// struct method and needs no trait-object runtime machinery.
-pub(super) fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
+/// Materialize trait default methods into each conforming struct, as upstream
+/// gives a conformer every default it does not spell.
+///
+/// `comptime::prepare` runs this before elaboration, so an inherited body is a method of its conformer
+/// with `Self` bound and its compile-time constructs are elaborated like any
+/// other method's; the checker's own call is a no-op on prepared source (an
+/// inherited method is then explicit). This keeps default dispatch static:
+/// downstream MIR sees an ordinary struct method and needs no trait-object
+/// runtime machinery.
+pub fn expand_trait_defaults(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
     #[derive(Clone)]
     struct TraitDefaults {
         refines: Vec<String>,

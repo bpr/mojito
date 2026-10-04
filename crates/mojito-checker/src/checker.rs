@@ -407,6 +407,7 @@ mod overload_support;
 pub use body_carry::{CarriedSite, PassCarry};
 pub use overload_support::is_bundled_module_source;
 mod traits_support;
+pub use traits_support::expand_trait_defaults;
 
 /// Type-check a program and return the concrete lowered callee chosen for
 /// every overloaded call site.

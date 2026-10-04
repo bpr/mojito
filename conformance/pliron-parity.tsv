@@ -757,6 +757,7 @@ assets/ok/temporary_receiver_deinit.mojo	main	exe-differential	sanitized
 assets/ok/temporary_receiver_view.mojo	main	exe-differential	sanitized
 assets/ok/ternary.mojo	main	exe-differential	sanitized
 assets/ok/thin_nested_def_reads_value_parameter.mojo	main	exe-differential	sanitized
+assets/ok/trait_default_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized

@@ -1552,9 +1552,11 @@ alternative list beside its active tag as a defensive runtime consistency check.
 
 Trait refinement is flattened during checking: inherited method and associated
 compile-time requirements become part of the refined contract, and a refined
-bound satisfies its ancestors. Before checking, executable trait defaults are
-materialized as ordinary methods on each conforming struct. An explicit struct
-method wins; unresolved defaults from multiple paths are rejected. MIR and the
+bound satisfies its ancestors. Before compile-time elaboration
+(`comptime::prepare`, through `checker::expand_trait_defaults`), executable
+trait defaults are materialized as ordinary methods on each conforming struct,
+so a default's `comptime if` is elaborated per conformer like the conformer's
+own methods. An explicit struct method wins; unresolved defaults from multiple paths are rejected. MIR and the
 VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.

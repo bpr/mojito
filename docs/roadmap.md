@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R278**.
+Next free ID: **R281**.
 
 ## Ordered Work
 
@@ -1763,21 +1763,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R51 A trait default body holding a `comptime if` never elaborates**
-
-  Problem: a trait whose default method holds `comptime if True:` reports
-  "unsupported feature: comptime if" for every conformer, where the pin
-  checks the default symbolically and runs it.
-  - The elaborator specializes struct methods and `def`s; a default body a
-    conformer inherits is never stubbed or selected, so the construct reaches
-    the executable check.
-  - The upstream reflective defaults (`Hashable.__hash__`, `Equatable.__eq__`)
-    are written as such bodies over `reflect[Self]`.
-  - The plan says where an inherited default is copied into a conformer today
-    and where its selection would run.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R57 Constructing a struct's own type parameter fails in every instance
   clone**
 
@@ -2014,6 +1999,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The elaborator walks a plain struct's method bodies with no binding for
     `Self`, so `reflect[Self]` has no subject.
   - Both the bound form and `comptime n = reflect[Self].field_count()` fail.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R278 `reflect[Self]` in a generic struct's method is rejected**
+
+  Problem: `reflect[Self].field_count()` in a method of `struct Box[T]`,
+  written there or inherited from a trait default under `comptime if
+  reflect[Self].is_struct():`, prints the field count at the pin, while
+  Mojito reports "not a compile-time value: unsupported compile-time type
+  argument".
+  - The elaborator's `type_from_anno` has no binding for `Type::SelfType`,
+    so an instance clone cannot name its own type as a reflection subject.
+  - The upstream reflective defaults (`Hashable.__hash__`,
+    `Equatable.__eq__`) are written over `reflect[Self]`; inherited
+    defaults are now struct methods, so this and R269 are what they wait on.
+  - Probe: `conformance/probes/reflect_self_generic_struct_method.mojo`.
+  - Depends on R269.
+  - Model: Opus, Planned.
+
+- [ ] **R279 A struct's associated value read as `Self.N` is rejected**
+
+  Problem: `return Self.N` over `comptime N: Int = 3` in a struct's own
+  method, or in a trait default it inherits, prints the value at the pin,
+  while Mojito reports "'Self.N' is not a type parameter of the enclosing
+  struct".
+  - A bound parameter reads the member (`T.size` over `T: Fixed`), so only
+    the struct's own spelling is missing.
+  - Probe: `conformance/probes/associated_value_self_read.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R280 `comptime if conforms_to(T, X):` over a `def`'s parameter fails**
+
+  Problem: `def tag[T: Movable](x: T)` holding `comptime if conforms_to(T,
+  Copyable):` prints `copyable` at the pin, while Mojito stops with
+  "invalid checked program: fn '$comptime$tag$0': register r0 has no
+  checked type".
+  - The template-served `comptime if` outlines its condition into a thunk,
+    and the thunk's MIR carries `conforms_to` as an untyped call over type
+    operands.
+  - The same condition over `Self.T` in a struct method runs.
+  - Probe: `conformance/probes/conforms_to_condition_generic_def.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 

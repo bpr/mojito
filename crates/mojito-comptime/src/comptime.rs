@@ -633,9 +633,11 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     elaborate_prepared(&prepared, ElaborationInputs::default()).map(|elaborated| elaborated.program)
 }
 
-/// Prepare a linked program for source validation and elaboration: qualify
-/// struct packs, synthesize the derived `copy`/`__hash__` methods, desugar
-/// SIMD-keyed methods, and fold SIMD alias bounds.
+/// Prepare a linked program for source validation and elaboration.
+///
+/// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
+/// give each conformer the trait defaults it inherits, desugar SIMD-keyed
+/// methods, and fold SIMD alias bounds.
 ///
 /// These rewrites normalize declarations without selecting a `comptime if`
 /// arm, unrolling a loop, stubbing a template body, or minting a clone, so
@@ -646,6 +648,8 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut program)?;
     synthesize_copyable_copy(&mut program);
     synthesize_hashable_hash(&mut program);
+    let mut program =
+        mojito_checker::checker::expand_trait_defaults(&program).map_err(ComptimeError::Type)?;
     desugar_simd_keyed_methods(&mut program);
     fold_simd_alias_bounds(&mut program);
     Ok(program)

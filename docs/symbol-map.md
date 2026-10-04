@@ -883,7 +883,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overlay) and the per-callee marshaling between VM values and Rust's
   standard library.
 - `comptime.rs` owns the staged entry points (`prepare` normalizes
-  declarations without selecting or cloning, `elaborate_prepared` is the
+  declarations without selecting or cloning — among them each conformer's
+  inherited trait defaults, through `checker::expand_trait_defaults`, `elaborate_prepared` is the
   already-validated request-driven route the driver re-elaborates each
   discovery round, `elaborate` composes prepare → validate → elaborate for
   the stage seam), the `Elab` elaboration driver (`block`/`stmt`; its

@@ -301,6 +301,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait default holding a `comptime if` is elaborated for each conformer
+  that inherits it, as upstream decides it per conformer: the inherited
+  defaults are materialized into each conformer before compile-time
+  elaboration (`comptime::prepare`) rather than at checking, so the arm is
+  selected like a conformer method's own on the VM and natively
+  (`assets/ok/trait_default_comptime_if.mojo`). A condition the elaborator
+  folds, such as `reflect[Point].field_count() == 2`, used to reach the
+  compile-time request path and fail with "vm backend does not support the
+  built-in or callee 'reflect.field_count'". `reflect[Self]` in such a body
+  waits on R269 and R278.
 - A generic struct's `Tuple` field over its parameter (`var pair:
   Tuple[Self.T, Int]` on `Holder[T]`) reads and indexes as the closed
   `Tuple` it names at each instance, from the struct's own methods and from
