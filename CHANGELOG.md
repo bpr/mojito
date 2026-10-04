@@ -309,6 +309,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime if` whose condition asks a layout query (`comptime if
+  size_of[Self.T]() == 8:` in a generic struct's method, or `size_of[Int]()`
+  in any function) is decided by the elaborator under the compilation's
+  target, as the pin decides it, on the VM and natively. It used to fail
+  with "'size_of' is not a compile-time-callable function"
+  (`assets/ok/comptime_if_layout_query.mojo`).
+
 - `Self.T()` in a method or constructor that a generic struct clones per
   instance (one holding a `comptime if`) now constructs the bound type, as
   the pin does, on the VM and natively

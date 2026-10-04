@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R285**.
+Next free ID: **R286**.
 
 ## Ordered Work
 
@@ -1793,17 +1793,17 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R282 `size_of[Self.T]()` in a struct method's `comptime if` is not
-  evaluated**
+- [ ] **R285 A `comptime for` local shadowing the enclosing `var` of its
+  name fails to check**
 
-  Problem: `comptime if size_of[Self.T]() == 8:` in a method of a generic
-  struct fails with "not a compile-time value: 'size_of' is not a
-  compile-time-callable function", while the pin runs it.
-  - The same condition over a `def`'s own binder (`size_of[T]()`) folds.
-  - It fails before and after `Self.T()` clones were fixed, with or
-    without a `Self.T()` in the body; the failing phase is not yet located.
-  - Found while landing the nullary construction in instance clones
-    (2026-10-04).
+  Problem: in `def shadow[n: Int]()`, a `var x = i` inside `comptime for i
+  in range(n)` that shadows an outer `var x = 100` fails with "operator Add
+  is not defined for None and Int" at `x += 1`, while the pin prints `1 2 3
+  100`.
+  - `assets/ok/template_loop_local.mojo` holds the case and fails on master;
+    its other functions (`total`, `nested`, `arms`) run.
+  - The fixture landed passing in c8f6cf73, so a later change broke it.
+  - Found while landing the layout-query `comptime if` (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

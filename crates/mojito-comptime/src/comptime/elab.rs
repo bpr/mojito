@@ -1050,12 +1050,14 @@ impl Elab<'_> {
     }
 
     /// Keep a `comptime if` whose condition names a binder of the generic
-    /// `def` being elaborated as a template: every arm is elaborated in the
-    /// block's environment (a binding an arm declares stays the arm's), and
-    /// the statement is rebuilt for the check, which types every arm with
-    /// the binders symbolic and records the condition for the MIR branch the
-    /// elaborator below MIR decides. Returns `false`, emitting nothing, for
-    /// a condition over no template binder, which is selected here.
+    /// `def` being elaborated as a template, or asks a layout query
+    /// (`size_of[Self.T]()`, `size_of[Int]()`) only the elaborator below MIR
+    /// answers under its target: every arm is elaborated in the block's
+    /// environment (a binding an arm declares stays the arm's), and the
+    /// statement is rebuilt for the check, which types every arm with the
+    /// binders symbolic and records the condition for the MIR branch that
+    /// elaborator decides. Returns `false`, emitting nothing, for any other
+    /// condition, which is selected here.
     fn keep_template_comptime_if(
         &self,
         stmt: &Stmt,
@@ -1066,16 +1068,14 @@ impl Elab<'_> {
         let StmtKind::ComptimeIf { branches, orelse } = &stmt.kind else {
             return Ok(false);
         };
+        let binders = self.template_binders.borrow().last().cloned();
         let symbolic = in_fn
-            && self
-                .template_binders
-                .borrow()
-                .last()
-                .is_some_and(|binders| {
-                    branches
-                        .iter()
-                        .any(|(cond, _)| expression_names_any(cond, binders))
-                });
+            && branches.iter().any(|(cond, _)| {
+                asks_layout(cond)
+                    || binders
+                        .as_ref()
+                        .is_some_and(|binders| expression_names_any(cond, binders))
+            });
         if !symbolic {
             return Ok(false);
         }
@@ -1175,6 +1175,22 @@ impl Elab<'_> {
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a
 /// type, or a `Self.`-qualified parameter.
+/// Whether a compile-time condition asks a layout query (`size_of[T]()`).
+fn asks_layout(expression: &Expr) -> bool {
+    struct Finder(bool);
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.0 |= matches!(&expr.kind, ExprKind::Call { name, .. }
+                if name == mojito_types::param_expr::SIZE_OF_FUNCTION);
+        }
+    }
+
+    let mut finder = Finder(false);
+    mojito_ast::visit::walk_expr(&mut finder, expression);
+    finder.0
+}
+
 fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     struct Finder<'a> {
         names: &'a HashSet<String>,
