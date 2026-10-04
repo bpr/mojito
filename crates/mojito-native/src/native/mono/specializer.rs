@@ -14,6 +14,7 @@ impl<'a> Specializer<'a> {
                 .iter()
                 .map(|(n, f)| (n.as_str(), f))
                 .collect(),
+            function_names: source.functions.iter().map(|(n, _)| n.as_str()).collect(),
             declarations: source
                 .declarations
                 .functions
@@ -64,6 +65,17 @@ impl<'a> Specializer<'a> {
             output_functions: Vec::new(),
             output_function_decls: Vec::new(),
             output_structs: Vec::new(),
+            output_struct_positions: HashMap::new(),
+            conformance_answers: RefCell::default(),
+            layout_structs: Rc::new(RefCell::new(mojito_mir::mir::struct_field_index_of(
+                &source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|declaration| declaration.param_decls.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ))),
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
             closure_captures: HashMap::new(),
@@ -740,19 +752,7 @@ impl<'a> Specializer<'a> {
                 "layout query: no native target for this host".to_string(),
             ));
         };
-        let structs: Vec<MirStructDeclaration> = self
-            .output_structs
-            .iter()
-            .chain(
-                self.source
-                    .declarations
-                    .structs
-                    .iter()
-                    .filter(|declaration| declaration.param_decls.is_empty()),
-            )
-            .cloned()
-            .collect();
-        let structs = mojito_mir::mir::struct_field_index_of(&structs);
+        let structs = self.layout_structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target,
             structs: &structs,
@@ -769,22 +769,32 @@ impl<'a> Specializer<'a> {
     /// structs. `None` on a host with no native target.
     fn layout_oracle(&self) -> Option<Rc<LayoutOracle>> {
         let target = *self.target?;
-        let structs: Vec<MirStructDeclaration> = self
-            .output_structs
-            .iter()
-            .chain(
-                self.source
-                    .declarations
-                    .structs
-                    .iter()
-                    .filter(|declaration| declaration.param_decls.is_empty()),
-            )
-            .cloned()
-            .collect();
         Some(Rc::new(LayoutOracle {
             target,
-            structs: mojito_mir::mir::struct_field_index_of(&structs),
+            structs: Rc::clone(&self.layout_structs),
         }))
+    }
+
+    /// Add `declaration` to the output structs and, unless a non-generic
+    /// source struct already answers its name, to the layout field index.
+    fn declare_output_struct(&mut self, declaration: MirStructDeclaration) {
+        let shadowed = self
+            .structs
+            .get(declaration.name.as_str())
+            .is_some_and(|source| source.param_decls.is_empty());
+        if !shadowed {
+            self.layout_structs.borrow_mut().insert(
+                declaration.name.clone(),
+                declaration
+                    .fields
+                    .iter()
+                    .map(|(_, ty)| ty.clone())
+                    .collect(),
+            );
+        }
+        self.output_struct_positions
+            .insert(declaration.name.clone(), self.output_structs.len());
+        self.output_structs.push(declaration);
     }
 
     fn take_frame(&mut self) -> FunctionFrame {
@@ -925,7 +935,7 @@ impl<'a> Specializer<'a> {
                 "layout query: no native target for this host".to_string(),
             ));
         };
-        let structs = mojito_mir::mir::struct_field_index_of(&self.output_structs);
+        let structs = self.layout_structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target,
             structs: &structs,
@@ -2008,8 +2018,8 @@ impl<'a> Specializer<'a> {
             // presence bitmask — the VM's `Value::Slice` `Option<i64>` fields)
             // so descriptor-typed parameters and locals lay out.
             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") {
-                if !self.output_structs.iter().any(|decl| decl.name == name) {
-                    self.output_structs.push(MirStructDeclaration {
+                if !self.output_struct_positions.contains_key(&name) {
+                    self.declare_output_struct(MirStructDeclaration {
                         name,
                         fields: vec![
                             ("start".to_string(), Ty::Int),
@@ -2073,9 +2083,9 @@ impl<'a> Specializer<'a> {
                 })
                 .collect();
             if let Some(existing) = self
-                .output_structs
-                .iter()
-                .find(|decl| decl.name == declaration.name)
+                .output_struct_positions
+                .get(&declaration.name)
+                .map(|&position| &self.output_structs[position])
             {
                 // Output declarations dedupe by name, but a checker-concrete
                 // generic application keeps its template name — two distinct
@@ -2102,7 +2112,7 @@ impl<'a> Specializer<'a> {
             }
             types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
             declaration.conformances = self.instance_conformances(template, &bindings);
-            self.output_structs.push(declaration);
+            self.declare_output_struct(declaration);
             // The nominal String's `__copyinit__` stays too: native lowering
             // bridges it and never reaches the body, but the VM runs it.
             for method in ["__init__", "__copyinit__", "__moveinit__", "__deinit__"] {
@@ -2111,13 +2121,10 @@ impl<'a> Specializer<'a> {
                 // lowering composes for the instance. The clone was minted
                 // over the checker's spelling of the arguments, so a nested
                 // instance argument (`List$mono$TInt`) names its template.
-                let clone = mojito_symbol::symbol::instance_method_clone_name(
-                    method,
-                    &template.param_decls,
-                    &template_spelled_arguments(&arguments),
-                )
-                .map(|clone| format!("{template_name}.{clone}"))
-                .filter(|symbol| self.functions.contains_key(symbol.as_str()));
+                let clone = self
+                    .instance_method_clone(&template_name, method, &arguments)
+                    .map(|clone| format!("{template_name}.{clone}"))
+                    .filter(|symbol| self.functions.contains_key(symbol.as_str()));
                 if let Some(clone) = clone {
                     // A variadic initializer's clone needs a call-site arity;
                     // those sites enqueue it.
@@ -2389,6 +2396,10 @@ const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
 pub(super) fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
     struct TemplateSpelling;
     impl mojito_types::types::TyRewrite for TemplateSpelling {
+        fn visits_closed(&self) -> bool {
+            true
+        }
+
         fn whole(&mut self, ty: &Ty) -> Option<Ty> {
             let Ty::Struct(name, arguments) = ty else {
                 return None;
@@ -2458,6 +2469,7 @@ fn without_pointer_origins(ty: &Ty) -> Ty {
             element: Box::new(recur(element)),
             origin: mojito_types::origin::PointerOrigin::Static,
         },
+        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(mojito_types::types::map_tyargs(arguments, recur)),

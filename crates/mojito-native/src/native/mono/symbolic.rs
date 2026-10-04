@@ -65,7 +65,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | Ty::Dependent(_)
         | Ty::SelfType
         | Ty::GenericFunc { .. } => true,
-        Ty::Struct(_, args) => args.iter().any(arg_has_symbolic),
+        Ty::Struct(_, args) => !args.is_closed() && args.iter().any(arg_has_symbolic),
         Ty::Tuple(v) | Ty::RuntimePack(v) | Ty::Variant(v) | Ty::Overload(v) => {
             v.iter().any(is_symbolic)
         }

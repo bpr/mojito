@@ -869,7 +869,7 @@ pub fn is_writer_parameter(ty: &Ty) -> bool {
 }
 
 pub fn contains_infer(ty: &Ty) -> bool {
-    mentions(ty, &|ty| matches!(ty, Ty::Infer))
+    mentions_open(ty, &|ty| matches!(ty, Ty::Infer))
 }
 
 /// Whether the compile-time `StringLiteral` occurs anywhere in `ty`.
@@ -878,65 +878,20 @@ pub fn contains_infer(ty: &Ty) -> bool {
 /// `String` struct's, so an instantiation argument that mentions it never
 /// selects a nominal-`String` instance.
 pub fn contains_string_literal(ty: &Ty) -> bool {
-    mentions(ty, &|ty| matches!(ty, Ty::StringLiteral))
+    mentions_open(ty, &|ty| matches!(ty, Ty::StringLiteral))
 }
 
 /// Whether `predicate` holds for `ty` or any type nested in it (struct
 /// arguments, elements, callable signatures).
 pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
-    if predicate(ty) {
-        return true;
-    }
-    let argument_mentions = |argument: &TyArg| match argument {
-        TyArg::Ty(ty) => mentions(ty, predicate),
-        TyArg::Val(CtValue::Expr(expr)) => expr_mentions(expr, predicate),
-        // A pack bound whole holds type positions (see `map_tyargs`).
-        TyArg::Val(CtValue::Tuple(values)) => values.iter().any(|value| match value {
-            CtValue::Type(ty) => mentions(ty, predicate),
-            _ => false,
-        }),
-        TyArg::Val(_) | TyArg::Origin(_) => false,
-    };
-    match ty {
-        Ty::Struct(_, arguments) => arguments.iter().any(argument_mentions),
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            mentions(element, predicate)
-        }
-        Ty::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
-            elements.iter().any(|element| mentions(element, predicate))
-        }
-        Ty::Assoc { base, args, .. } => {
-            mentions(base, predicate) || args.iter().any(argument_mentions)
-        }
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            ..
-        } => {
-            params.iter().any(|param| mentions(param, predicate))
-                || mentions(ret, predicate)
-                || variadic
-                    .as_deref()
-                    .is_some_and(|variadic| mentions(variadic, predicate))
-                || kw_variadic
-                    .as_deref()
-                    .is_some_and(|variadic| mentions(variadic, predicate))
-        }
-        Ty::Overload(candidates) => candidates
-            .iter()
-            .any(|candidate| mentions(candidate, predicate)),
-        _ => false,
-    }
+    mentions_below(ty, predicate, false)
+}
+
+/// [`mentions`] for a `predicate` that holds of no type a
+/// [closed](TyArgs::is_closed) argument list can hold — a parameter, a
+/// literal or inference type, a callable — so a closed level is not walked.
+pub fn mentions_open(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
+    mentions_below(ty, predicate, true)
 }
 
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
@@ -1395,21 +1350,31 @@ impl fmt::Display for TyArg {
 ///
 /// A nested type (`W[W[Int]]`) copied into every register, key, and binding
 /// that names it holds its level below once rather than once per copy. Reads
-/// see a `Vec<TyArg>`. A write is explicit — [`TyArgs::make_mut`] unshares
-/// one level, and a rewriting walk rebuilds through [`TyArgs::reusing`] — so
-/// a walk that changes nothing never copies the levels it passes through.
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
-pub struct TyArgs(Arc<Vec<TyArg>>);
+/// see a `Vec<TyArg>`. A write is explicit — [`TyArgs::update`] unshares one
+/// level, and a rewriting walk rebuilds through [`TyArgs::reusing`] — so a
+/// walk that changes nothing never copies the levels it passes through.
+///
+/// Each level caches two facts about everything below it, computed once when
+/// the level is built: its hash, so hashing a type visits one level, and
+/// whether it is [closed](TyArgs::is_closed), so a walk that only looks for
+/// or rewrites open positions stops there. A deeply nested type then costs
+/// each walk its own level, not its depth.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct TyArgs(Arc<TyArgList>);
 
 impl TyArgs {
     /// The arguments as an owned list, unsharing them only when shared.
     pub fn into_vec(self) -> Vec<TyArg> {
-        Arc::unwrap_or_clone(self.0)
+        Arc::unwrap_or_clone(self.0).arguments
     }
 
-    /// The arguments for a write, unshared from every other clone first.
-    pub fn make_mut(&mut self) -> &mut Vec<TyArg> {
-        Arc::make_mut(&mut self.0)
+    /// Apply `write` to the arguments, unshared from every other clone
+    /// first, and refresh the cached facts after it.
+    pub fn update<R>(&mut self, write: impl FnOnce(&mut Vec<TyArg>) -> R) -> R {
+        let list = Arc::make_mut(&mut self.0);
+        let result = write(&mut list.arguments);
+        *list = TyArgList::new(std::mem::take(&mut list.arguments));
+        result
     }
 
     /// `rebuilt` as an argument list, keeping this one's storage when a
@@ -1417,11 +1382,66 @@ impl TyArgs {
     /// that changes nothing shares the type rather than copying it.
     #[must_use]
     pub fn reusing(&self, rebuilt: Vec<TyArg>) -> Self {
-        if *self.0 == rebuilt {
+        if self.0.arguments == rebuilt {
             self.clone()
         } else {
             rebuilt.into()
         }
+    }
+
+    /// Whether every argument, at any depth, is a concrete runtime-shaped
+    /// type or a scalar compile-time value, and every origin is unbound.
+    ///
+    /// A closed list holds no parameter, associated or dependent projection,
+    /// `Self`, inference hole, literal type or value, callable, pointer,
+    /// reference, expression, deferred slot, marker, or bound origin. So
+    /// [`is_symbolic`] is false of it, substitution and the literal, origin,
+    /// and callable-environment canonicalizers leave it as it is, and a
+    /// [`TyRewrite`] that rewrites only those positions passes it whole.
+    pub fn is_closed(&self) -> bool {
+        self.0.closed
+    }
+}
+
+/// The storage behind [`TyArgs`]: the arguments with their cached facts.
+#[derive(Clone)]
+struct TyArgList {
+    arguments: Vec<TyArg>,
+    digest: u64,
+    closed: bool,
+}
+
+impl TyArgList {
+    fn new(arguments: Vec<TyArg>) -> Self {
+        use std::hash::{Hash, Hasher};
+        // A fixed-key hasher, so equal lists digest alike in every clone.
+        let mut hasher = std::hash::DefaultHasher::new();
+        arguments.hash(&mut hasher);
+        Self {
+            digest: hasher.finish(),
+            closed: arguments.iter().all(closed_argument),
+            arguments,
+        }
+    }
+}
+
+impl PartialEq for TyArgList {
+    fn eq(&self, other: &Self) -> bool {
+        self.digest == other.digest && self.arguments == other.arguments
+    }
+}
+
+impl Eq for TyArgList {}
+
+impl std::hash::Hash for TyArgList {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.digest);
+    }
+}
+
+impl Default for TyArgs {
+    fn default() -> Self {
+        Vec::new().into()
     }
 }
 
@@ -1429,19 +1449,19 @@ impl Deref for TyArgs {
     type Target = Vec<TyArg>;
 
     fn deref(&self) -> &Vec<TyArg> {
-        &self.0
+        &self.0.arguments
     }
 }
 
 impl fmt::Debug for TyArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.0.arguments.fmt(f)
     }
 }
 
 impl From<Vec<TyArg>> for TyArgs {
     fn from(arguments: Vec<TyArg>) -> Self {
-        Self(Arc::new(arguments))
+        Self(Arc::new(TyArgList::new(arguments)))
     }
 }
 
@@ -1453,7 +1473,7 @@ impl From<TyArgs> for Vec<TyArg> {
 
 impl FromIterator<TyArg> for TyArgs {
     fn from_iter<I: IntoIterator<Item = TyArg>>(iter: I) -> Self {
-        Self(Arc::new(iter.into_iter().collect()))
+        iter.into_iter().collect::<Vec<_>>().into()
     }
 }
 
@@ -1471,7 +1491,7 @@ impl<'a> IntoIterator for &'a TyArgs {
     type IntoIter = std::slice::Iter<'a, TyArg>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.0.arguments.iter()
     }
 }
 
@@ -1778,6 +1798,7 @@ fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>>
 pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     let recur = |ty: &Ty| erase_origin_arguments(ty);
     match ty {
+        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(
@@ -1959,6 +1980,7 @@ pub fn default_literal(ty: &Ty) -> Ty {
     match ty {
         Ty::IntLiteral => Ty::Int,
         Ty::FloatLiteral => Ty::Float64,
+        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(
@@ -2691,6 +2713,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .as_ref()
                 .map(|bound| Box::new(substitute(bound, subst))),
         }),
+        Ty::Struct(_, args) if args.is_closed() => ty.clone(),
         Ty::Struct(name, args) => Ty::Struct(
             name.clone(),
             args.reusing(map_tyargs(args, |t| substitute(t, subst))),
@@ -2906,6 +2929,14 @@ pub trait TyRewrite {
     fn enter_signature(&mut self, _decls: &[ParamDecl]) {}
 
     fn exit_signature(&mut self) {}
+
+    /// Whether a [closed](TyArgs::is_closed) struct type is walked rather
+    /// than passed whole. Nothing inside one reaches `param` or `expr`, so
+    /// only a rewrite whose `whole` or `value` hook must see inside it opts
+    /// in.
+    fn visits_closed(&self) -> bool {
+        false
+    }
 }
 
 /// Rebuild `ty` through `rewrite`. Origins, conventions, and transfer effects
@@ -2938,6 +2969,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
                 callable_bound: boxed(callable_bound, rewrite)?,
             },
         },
+        Ty::Struct(_, arguments) if arguments.is_closed() && !rewrite.visits_closed() => ty.clone(),
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(rewrite_tyargs(arguments, rewrite)?),
@@ -3400,6 +3432,7 @@ pub struct CheckedDeclId(pub u32);
 pub fn is_symbolic(ty: &Ty) -> bool {
     match ty {
         Ty::Infer | Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
+        Ty::Struct(_, arguments) if arguments.is_closed() => false,
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             TyArg::Ty(ty) => is_symbolic(ty),
             TyArg::Val(value) => ct_value_is_symbolic(value),
@@ -3462,7 +3495,7 @@ pub fn has_free_parameters(ty: &Ty) -> bool {
         return is_symbolic(ty);
     };
     let bound: Vec<&ParamId> = decls.iter().map(ParamDecl::id).collect();
-    mentions(ty, &|inner| match inner {
+    mentions_open(ty, &|inner| match inner {
         Ty::Param { binder, .. } => !bound.contains(&&binder.id),
         Ty::Infer | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
         _ => false,
@@ -3535,6 +3568,104 @@ impl TyRewrite for Replacer<'_> {
     fn exit_signature(&mut self) {
         self.scopes.pop();
         self.depth -= 1;
+    }
+}
+
+/// [`mentions`], passing a closed level whole when `skip_closed`.
+fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -> bool {
+    let mentions =
+        |ty: &Ty, predicate: &dyn Fn(&Ty) -> bool| mentions_below(ty, predicate, skip_closed);
+    if predicate(ty) {
+        return true;
+    }
+    let argument_mentions = |argument: &TyArg| match argument {
+        TyArg::Ty(ty) => mentions(ty, predicate),
+        TyArg::Val(CtValue::Expr(expr)) => expr_mentions(expr, predicate),
+        // A pack bound whole holds type positions (see `map_tyargs`).
+        TyArg::Val(CtValue::Tuple(values)) => values.iter().any(|value| match value {
+            CtValue::Type(ty) => mentions(ty, predicate),
+            _ => false,
+        }),
+        TyArg::Val(_) | TyArg::Origin(_) => false,
+    };
+    match ty {
+        Ty::Struct(_, arguments) if skip_closed && arguments.is_closed() => false,
+        Ty::Struct(_, arguments) => arguments.iter().any(argument_mentions),
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+            mentions(element, predicate)
+        }
+        Ty::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().any(|element| mentions(element, predicate))
+        }
+        Ty::Assoc { base, args, .. } => {
+            mentions(base, predicate) || args.iter().any(argument_mentions)
+        }
+        Ty::Func {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            ..
+        }
+        | Ty::GenericFunc {
+            params,
+            ret,
+            variadic,
+            kw_variadic,
+            ..
+        } => {
+            params.iter().any(|param| mentions(param, predicate))
+                || mentions(ret, predicate)
+                || variadic
+                    .as_deref()
+                    .is_some_and(|variadic| mentions(variadic, predicate))
+                || kw_variadic
+                    .as_deref()
+                    .is_some_and(|variadic| mentions(variadic, predicate))
+        }
+        Ty::Overload(candidates) => candidates
+            .iter()
+            .any(|candidate| mentions(candidate, predicate)),
+        _ => false,
+    }
+}
+
+/// Whether one struct argument is closed; see [`TyArgs::is_closed`].
+fn closed_argument(argument: &TyArg) -> bool {
+    match argument {
+        TyArg::Ty(ty) => closed_ty(ty),
+        TyArg::Val(value) => matches!(
+            value,
+            CtValue::Int(_)
+                | CtValue::UInt(_)
+                | CtValue::Float(_)
+                | CtValue::Bool(_)
+                | CtValue::Str(_)
+                | CtValue::Dtype(_)
+                | CtValue::Simd { .. }
+        ),
+        TyArg::Origin(origin) => matches!(origin, crate::origin::Origin::Unbound),
+    }
+}
+
+fn closed_ty(ty: &Ty) -> bool {
+    match ty {
+        Ty::Int
+        | Ty::UInt
+        | Ty::Bool
+        | Ty::Float64
+        | Ty::None
+        | Ty::Never
+        | Ty::Dtype
+        | Ty::Error => true,
+        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        Ty::Struct(_, arguments) => arguments.is_closed(),
+        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            elements.iter().all(closed_ty)
+        }
+        Ty::ComptimeList(element) | Ty::VariadicPack(element) => closed_ty(element),
+        _ => false,
     }
 }
 

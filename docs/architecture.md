@@ -1589,9 +1589,15 @@ id) never makes an instantiation look new across discovery rounds.
 
 `Ty::Struct`'s argument list is a `TyArgs`, shared between clones, so a nested
 type (`W[W[Int]]`) copied into every register, key, and binding holds its level
-below once. Writes are explicit: `TyArgs::make_mut` unshares one level, and a
+below once. Writes are explicit: `TyArgs::update` unshares one level, and a
 rewriting walk rebuilds through `TyArgs::reusing`, which keeps the list it read
-when nothing changed.
+when nothing changed. Each list caches its hash and whether it is closed
+(`TyArgs::is_closed`: no parameter, projection, literal or inference type,
+callable, pointer, reference, expression, deferred value, or bound origin at
+any depth), so hashing a nested type visits one level, and `is_symbolic`,
+`mentions_open`, `substitute`, the literal, origin, and callable-environment
+canonicalizers, and every `TyRewrite` that does not opt in through
+`visits_closed` pass a closed level whole.
 
 An `origin_of(self)` argument on a trait method's *abstract* signature has no
 bound `self` place, so it lowers to the symbolic `Origin::SelfParam` — the

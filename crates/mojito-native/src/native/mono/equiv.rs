@@ -338,6 +338,7 @@ pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
         }
     }
     match ty {
+        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(
@@ -389,7 +390,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
                 erase_callable_environments(error);
             }
         }
-        Ty::Struct(_, args) => {
+        Ty::Struct(_, args) if !args.is_closed() => {
             let mut erased = args.to_vec();
             for arg in &mut erased {
                 if let TyArg::Ty(ty) = arg {

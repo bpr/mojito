@@ -95,7 +95,7 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
 /// with no runtime ABI.
 fn is_parametric(ty: &Ty) -> bool {
     mojito_types::types::is_symbolic(ty)
-        || mojito_types::types::mentions(ty, &|inner| matches!(inner, Ty::GenericFunc { .. }))
+        || mojito_types::types::mentions_open(ty, &|inner| matches!(inner, Ty::GenericFunc { .. }))
 }
 
 fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {

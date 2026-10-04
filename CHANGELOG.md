@@ -301,6 +301,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Elaborating a deeply nested type no longer takes time quadratic in its
+  depth: expanding polymorphic recursion (`depth(W[T](x.copy()), n - 1)`)
+  reaches the 4096-instance budget after under 2 s of debug-build
+  elaboration, where it took about 80 s, and the `Optional[T]` form after
+  under 2 s, where it took about 140 s. Each struct type's shared argument
+  list caches its hash and whether it is closed — holding no parameter,
+  literal, callable, pointer, expression, or bound origin — so hashing a
+  type visits one level and the symbolic, parametric, substitution,
+  literal, origin, and callable-environment walks pass a closed level
+  whole. The elaborator also keeps its layout field index and its output
+  structs' positions as it declares them, looks up a method's
+  per-instantiation clone only when the checker minted one, and remembers
+  each concrete type's conformance to a trait.
 - A nested instance type now holds the level below it once, so the
   elaborator's instance budget is back at 4096: expanding polymorphic
   recursion (`depth(W[T](x.copy()), n - 1)`) stops there within 380 MB in a

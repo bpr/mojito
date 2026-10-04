@@ -1447,6 +1447,10 @@ impl Checker {
         struct Specialized<'a>(&'a Checker);
 
         impl mojito_types::types::TyRewrite for Specialized<'_> {
+            fn visits_closed(&self) -> bool {
+                true
+            }
+
             fn whole(&mut self, ty: &Ty) -> Option<Ty> {
                 let Ty::Struct(name, arguments) = ty else {
                     return None;

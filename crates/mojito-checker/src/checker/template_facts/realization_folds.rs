@@ -622,6 +622,10 @@ pub(super) fn fold_binder_views(ty: &Ty, views: &[(Ty, Ty)]) -> Ty {
     struct Folder<'a>(&'a [(Ty, Ty)]);
 
     impl mojito_types::types::TyRewrite for Folder<'_> {
+        fn visits_closed(&self) -> bool {
+            true
+        }
+
         fn whole(&mut self, ty: &Ty) -> Option<Ty> {
             self.0
                 .iter()

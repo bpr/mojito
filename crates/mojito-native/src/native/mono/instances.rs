@@ -195,12 +195,7 @@ impl Specializer<'_> {
             return None;
         };
         let template = nominal_template(name);
-        let struct_decl = self.structs.get(template)?;
-        let clone = mojito_symbol::symbol::instance_method_clone_name(
-            method,
-            &struct_decl.param_decls,
-            &super::specializer::template_spelled_arguments(arguments),
-        )?;
+        let clone = self.instance_method_clone(template, method, arguments)?;
         let target = format!("{template}.{clone}");
         self.functions
             .contains_key(target.as_str())
@@ -230,12 +225,7 @@ impl Specializer<'_> {
             .map_or(method, |qualifier| {
                 &method[..method.len() - qualifier.len()]
             });
-        let struct_decl = self.structs.get(template)?;
-        let clone = mojito_symbol::symbol::instance_method_clone_name(
-            source,
-            &struct_decl.param_decls,
-            &super::specializer::template_spelled_arguments(arguments),
-        )?;
+        let clone = self.instance_method_clone(template, source, arguments)?;
         let selected = mojito_symbol::symbol::resolve_method_symbol(
             self.functions.iter().map(|(name, f)| CallableCandidate {
                 name,
@@ -249,6 +239,29 @@ impl Specializer<'_> {
         self.functions
             .contains_key(selected.as_str())
             .then_some(selected)
+    }
+
+    /// The symbol the checker mints a per-instantiation clone of
+    /// `template`'s `method` under for the instance over `arguments`
+    /// (`__len__$y3:Int` for `Box[Int]`), or `None` when it minted no clone
+    /// of the method at all. Spelling the arguments walks every level of a
+    /// nested type, so the second answer comes first.
+    pub(super) fn instance_method_clone(
+        &self,
+        template: &str,
+        method: &str,
+        arguments: &[TyArg],
+    ) -> Option<String> {
+        let clone_prefix = format!("{template}.{method}$");
+        self.function_names
+            .range(clone_prefix.as_str()..)
+            .next()
+            .filter(|name| name.starts_with(&clone_prefix))?;
+        mojito_symbol::symbol::instance_method_clone_name(
+            method,
+            &self.structs.get(template)?.param_decls,
+            &super::specializer::template_spelled_arguments(arguments),
+        )
     }
 
     /// The receiver's own overload a bound dispatch `dispatch` selects
@@ -367,15 +380,7 @@ impl Specializer<'_> {
         // `write_to` clone when the checker minted one; otherwise the
         // template's erased `write_to` is instantiated for the receiver.
         let clone_target = self
-            .structs
-            .get(nominal_template(name))
-            .and_then(|struct_decl| {
-                mojito_symbol::symbol::instance_method_clone_name(
-                    method,
-                    &struct_decl.param_decls,
-                    &super::specializer::template_spelled_arguments(arguments),
-                )
-            })
+            .instance_method_clone(nominal_template(name), method, arguments)
             .map(|clone| format!("{}.{clone}", nominal_template(name)))
             .filter(|target| self.functions.contains_key(target.as_str()));
         let target = clone_target.unwrap_or_else(|| {

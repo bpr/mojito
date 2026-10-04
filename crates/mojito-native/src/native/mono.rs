@@ -10,7 +10,8 @@ use equiv::*;
 use promote::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use spread::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use substitute::*;
@@ -26,6 +27,7 @@ use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
 };
+use mojito_native_core::layout::StructFieldIndex;
 use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
@@ -217,22 +219,23 @@ struct Bindings {
     folded_captures: Vec<(String, CtValue)>,
     /// What answers a layout application (`size_of[T]()`) a type of the
     /// instance carries: the target, and the struct declarations known when
-    /// the instance was materialized. `None` where no layout is answered.
+    /// the layout is asked. `None` where no layout is answered.
     layout: Option<Rc<LayoutOracle>>,
 }
 
 /// The layout answers available to one instance's substitution.
 struct LayoutOracle {
     target: NativeTarget,
-    structs: mojito_native_core::layout::StructFieldIndex,
+    structs: Rc<RefCell<StructFieldIndex>>,
 }
 
 impl LayoutOracle {
     /// The size of the concrete `ty`, or the layout error naming why not.
     fn size_of(&self, ty: &Ty) -> Result<i64, MonoError> {
+        let structs = self.structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target: &self.target,
-            structs: &self.structs,
+            structs: &structs,
         };
         layout
             .layout_of(ty)
@@ -255,6 +258,9 @@ struct Specializer<'a> {
     /// The target every layout query is answered for.
     target: Option<&'a NativeTarget>,
     functions: HashMap<&'a str, &'a MirFunction>,
+    /// The source's function symbols in order, so the clones of one method
+    /// are found as a range of names extending its symbol.
+    function_names: BTreeSet<&'a str>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
@@ -282,6 +288,16 @@ struct Specializer<'a> {
     output_functions: Vec<(String, MirFunction)>,
     output_function_decls: Vec<MirFunctionDeclaration>,
     output_structs: Vec<MirStructDeclaration>,
+    /// Each output struct's position in `output_structs`, by name.
+    output_struct_positions: HashMap<String, usize>,
+    /// The field types a layout query reads: the source's non-generic
+    /// structs, joined by each output struct as it is declared. Every
+    /// [`LayoutOracle`] shares it, so building one copies nothing.
+    layout_structs: Rc<RefCell<StructFieldIndex>>,
+    /// Each concrete type's conformance to a trait, as decided with no
+    /// conformance under way: the answer depends on nothing else, so a
+    /// nested type's conformance reads its level below's.
+    conformance_answers: RefCell<HashMap<(Ty, String), Option<bool>>>,
     constant_values: HashMap<u32, CtValue>,
     callable_targets: HashMap<u32, (String, bool)>,
     /// The environment of each lifted body closed over in the function being

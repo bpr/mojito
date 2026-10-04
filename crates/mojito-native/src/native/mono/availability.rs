@@ -226,6 +226,28 @@ impl Specializer<'_> {
         trait_name: &str,
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
+        let key = (ty.clone(), trait_name.to_string());
+        if let Some(answer) = self.conformance_answers.borrow().get(&key) {
+            return *answer;
+        }
+        // Only an answer no enclosing conformance's cycle cut shaped is
+        // every asker's answer.
+        let unconditional = visiting.is_empty();
+        let answer = self.decide_type_conforms(ty, trait_name, visiting);
+        if unconditional {
+            self.conformance_answers.borrow_mut().insert(key, answer);
+        }
+        answer
+    }
+
+    /// Whether the concrete type `ty` conforms to `trait_name`, decided
+    /// afresh; see [`Specializer::type_conforms`].
+    fn decide_type_conforms(
+        &self,
+        ty: &Ty,
+        trait_name: &str,
+        visiting: &mut HashSet<(String, String)>,
+    ) -> Option<bool> {
         let Ty::Struct(name, arguments) = ty else {
             if self
                 .source

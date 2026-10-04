@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R262**.
+Next free ID: **R263**.
 
 ## Ordered Work
 
@@ -528,23 +528,21 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R19 Elaboration time grows quadratically with a nested type's
-  depth**
+- [ ] **R262 Finding a nested instance's method clone still spells every
+  level of its type**
 
-  Problem: `conformance/probes/mono_polymorphic_recursion.mojo` reaches the
-  4096-instance budget in about a minute of debug-build elaboration, where
-  1024 instances take about 4 s.
-  - Memory is no longer the cost: a nested type shares its level below
-    (`TyArgs`), and the probe stops within 380 MB.
-  - Each walk over a type still visits every level: hashing it into
-    `discovered_types` and `instance_index`, `mentions` in
-    `verify::concrete::is_parametric`, `referenced_parameters` in
-    `mangle`, and the literal and origin canonicalizers.
-  - The lever is a fact cached on each shared argument list (its hash, and
-    whether it is closed), so a walk stops at a closed level.
-  - A wide program is not affected; only deep nesting pays.
+  Problem: when the checker minted a per-instantiation clone of a
+  template's method, the elaborator names the clone an instance needs by
+  respelling the instance's whole argument type, so a deeply nested
+  instance of that template pays its depth on each lookup.
+  - `template_spelled_arguments` rebuilds each level under its template
+    name, and `mangle` renders the whole type for the clone's symbol.
+  - A template with no minted clone of the method skips both
+    (`instance_method_clone`), so the nesting probes are linear.
+  - The lever is a clone index keyed by the instance's arguments rather
+    than by a spelled symbol.
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**

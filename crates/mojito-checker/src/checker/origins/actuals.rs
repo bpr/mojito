@@ -236,11 +236,13 @@ impl Checker {
             let Some(position) = origin_slots.iter().position(|(id, _)| id == slot) else {
                 continue;
             };
-            if let Some(argument @ TyArg::Origin(_)) =
-                arguments.make_mut().get_mut(info.decls.len() + position)
-            {
-                *argument = TyArg::Origin(origin.clone());
-            }
+            arguments.update(|arguments| {
+                if let Some(argument @ TyArg::Origin(_)) =
+                    arguments.get_mut(info.decls.len() + position)
+                {
+                    *argument = TyArg::Origin(origin.clone());
+                }
+            });
         }
         Ty::Struct(name, arguments)
     }
