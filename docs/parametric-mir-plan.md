@@ -607,7 +607,14 @@ branch for the class is deleted, and so is its certificate class.
   `comptime if`s over the index decided per copy, before substitution. The
   cloner's class keeps only the loops the template does not serve: over a
   list, a pack, a reflection query, or with a local `comptime` binding in
-  the body. Schema 1.16.
+  the body. Schema 1.16. The second landed the same day for a module-level
+  `def` whose collector is read and whose body neither spreads the pack nor
+  binds an element's type under the loop: the pack binder, the
+  `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's
+  length as a loop bound cross the waist, and the elaborator binds the pack
+  from the call's recorded elements. The owned collector, the spreads, and
+  the element-typed binding keep the clone (R250–R252), and the certificate
+  class waits on them and on the methods (R253).
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
   only of a concrete type, and a compile-time layout query names the target
   it is answered for. A concrete type does not make layout independent of

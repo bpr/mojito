@@ -896,7 +896,7 @@ fn reify_value_parameters(
                     return None;
                 };
                 let value = match resolved.get(index).cloned().flatten() {
-                    Some(value @ Value::Str(_)) => value,
+                    Some(value @ (Value::Str(_) | Value::Tuple(_))) => value,
                     _ if constructible_type_parameter(declaration) => match default.as_deref() {
                         Some(Ty::Struct(struct_name, _)) => Value::Str(struct_name.clone()),
                         _ => return None,
@@ -1050,6 +1050,49 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     })
 }
 
+/// The values an erased frame reads a parameter expression against, by
+/// name: its slots and reified value parameters that have a compile-time
+/// reading, and each type pack of the signature by its collector's runtime
+/// arity — a tuple of as many placeholder elements, which answers the
+/// pack's length query and nothing else, since the frame carries no type
+/// argument.
+fn erased_parameter_values(
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> HashMap<String, CtValue> {
+    let packs = function
+        .param_types
+        .iter()
+        .zip(variables)
+        .filter_map(|(ty, value)| {
+            let (Ty::VariadicPack(element), Value::Tuple(items)) = (ty, value) else {
+                return None;
+            };
+            let Ty::Param { binder, .. } =
+                mojito_types::types::pack_spread(std::slice::from_ref(&**element))?
+            else {
+                return None;
+            };
+            let placeholder = CtValue::Type(Box::new(Ty::None));
+            Some((
+                binder.name.trim_start_matches('*').to_string(),
+                CtValue::Tuple(vec![placeholder; items.len()]),
+            ))
+        });
+    function
+        .var_names
+        .iter()
+        .zip(variables)
+        .chain(comptime.iter().map(|(name, value)| (name, value)))
+        .filter_map(|(name, value)| {
+            runtime_value_as_ct(value)
+                .map(|value| (name.trim_start_matches('*').to_string(), value))
+        })
+        .chain(packs)
+        .collect()
+}
+
 /// Decide a `comptime if` on the erased path from the frame's reified value
 /// parameters: a comparison over value binders, constants, and expressions
 /// of them. A condition over a type binder has no erased reading, since an
@@ -1084,13 +1127,7 @@ fn comptime_for_next(
             "the erased oracle cannot decide the comptime for {what} `{start}..{stop}:{step}`"
         ))
     };
-    let named: HashMap<String, CtValue> = function
-        .var_names
-        .iter()
-        .zip(variables.iter())
-        .chain(comptime.iter().map(|(name, value)| (name, value)))
-        .filter_map(|(name, value)| runtime_value_as_ct(value).map(|value| (name.clone(), value)))
-        .collect();
+    let named = erased_parameter_values(function, variables, comptime);
     let bound = |expr: &mojito_types::param_expr::ParamExpr, what: &str| {
         let value = expr.evaluate_named(&named).map_err(|_| unsupported(what))?;
         mojito_types::param_expr::fold::integer_value(&value)
@@ -1132,20 +1169,18 @@ fn comptime_branch_holds(
             "the erased oracle cannot decide the comptime if condition `{cond:?}`"
         ))
     };
-    let named: HashMap<String, CtValue> = function
-        .var_names
-        .iter()
-        .zip(variables)
-        .chain(comptime.iter().map(|(name, value)| (name, value)))
-        .filter_map(|(name, value)| runtime_value_as_ct(value).map(|value| (name.clone(), value)))
-        .collect();
+    let named = erased_parameter_values(function, variables, comptime);
     let operand = |operand: &ConstraintOperand| match operand {
         ConstraintOperand::Param(param) => named.get(param.name.as_ref()).cloned(),
         ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
             expr.evaluate_named(&named).ok()
         }
         ConstraintOperand::Value(value) => Some(value.clone()),
-        ConstraintOperand::Type(_) | ConstraintOperand::PackLength(_) => None,
+        ConstraintOperand::PackLength(pack) => match named.get(pack.name.trim_start_matches('*')) {
+            Some(CtValue::Tuple(elements)) => i64::try_from(elements.len()).ok().map(CtValue::Int),
+            _ => None,
+        },
+        ConstraintOperand::Type(_) => None,
     };
     let compare = |op, left, right| {
         let (left, right) = (
@@ -1521,12 +1556,33 @@ impl VmBackend {
         instantiated: &[TyArg],
     ) -> Vec<Option<Value>> {
         let mut supplied = self.runtime_parameter_arguments(prog, caller, declarations, arguments);
-        for (slot, argument) in supplied.iter_mut().zip(instantiated) {
-            if slot.is_none()
-                && let TyArg::Ty(ty) = argument
-                && let Some(spelling) = reified_type_spelling(ty)
-            {
-                *slot = Some(Value::Str(spelling));
+        for ((slot, argument), declaration) in
+            supplied.iter_mut().zip(instantiated).zip(declarations)
+        {
+            match argument {
+                TyArg::Ty(ty) if slot.is_none() => {
+                    if let Some(spelling) = reified_type_spelling(ty) {
+                        *slot = Some(Value::Str(spelling));
+                    }
+                }
+                // A type pack's solution is its element list, which the
+                // erased frame keeps for the pack's length.
+                TyArg::Val(CtValue::Tuple(elements))
+                    if matches!(declaration, ParamDecl::Type { variadic: true, .. }) =>
+                {
+                    *slot = Some(Value::Tuple(
+                        elements
+                            .iter()
+                            .map(|element| match element {
+                                CtValue::Type(ty) => Value::Str(
+                                    reified_type_spelling(ty).unwrap_or_else(|| ty.to_string()),
+                                ),
+                                _ => Value::None,
+                            })
+                            .collect(),
+                    ));
+                }
+                _ => {}
             }
         }
         supplied

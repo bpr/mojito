@@ -143,11 +143,13 @@ fn def_class(trace: &DefInstanceTrace, template: &[Stmt]) -> CloneClass {
         CloneClass::DTypeVectorDef
     } else if !trace.pack_bindings.is_empty() {
         CloneClass::PackDef
-    } else if block_has_statement(template, |kind| {
+    } else if block_has_statement(template, &|kind| {
         matches!(kind, StmtKind::ComptimeFor { .. })
     }) {
         CloneClass::ComptimeForDef
-    } else if block_has_statement(template, |kind| matches!(kind, StmtKind::ComptimeIf { .. })) {
+    } else if block_has_statement(template, &|kind| {
+        matches!(kind, StmtKind::ComptimeIf { .. })
+    }) {
         CloneClass::ComptimeIfDef
     } else if trace.value_bindings.is_empty() {
         CloneClass::TypeDef

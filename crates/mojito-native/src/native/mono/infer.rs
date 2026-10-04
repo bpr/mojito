@@ -174,12 +174,27 @@ impl Specializer<'_> {
         // result spells has no other source. One still symbolic here belongs
         // to a parametric caller, which unification leaves as it stands.
         for (decl, argument) in declaration.param_decls.iter().zip(instantiated) {
-            if let (ParamDecl::Type { .. }, TyArg::Ty(ty)) = (decl, argument)
-                && !is_symbolic(ty)
-            {
-                bind_type(&decl.binder(), ty, &mut bindings).map_err(|e| {
-                    self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
-                })?;
+            match (decl, argument) {
+                (ParamDecl::Type { .. }, TyArg::Ty(ty)) if !is_symbolic(ty) => {
+                    bind_type(&decl.binder(), ty, &mut bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                    })?;
+                }
+                // A type pack's solution is the element list the checker
+                // recorded, bound whole.
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    let elements = elements
+                        .iter()
+                        .map(|element| match element {
+                            CtValue::Type(ty) if !is_symbolic(ty) => Some((**ty).clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<Ty>>>();
+                    if let Some(elements) = elements {
+                        bind_pack(&decl.binder(), elements, &mut bindings);
+                    }
+                }
+                _ => {}
             }
         }
         bind_explicit_value_arguments(
@@ -284,6 +299,24 @@ impl Specializer<'_> {
         // and the arity joins the instance identity. Checker-specialized
         // packs (`Tuple$tN`'s concrete `RuntimePack`) keep their identity.
         let variadic_arity = match &declaration.variadic {
+            // A type pack binds to the overflow's element types whole, one
+            // per position, unless the call's recorded solution bound it.
+            Some(element)
+                if let Some(Ty::Param { binder, .. }) =
+                    mojito_types::types::pack_spread(std::slice::from_ref(element)) =>
+            {
+                if !bindings.types.contains_key(binder) {
+                    let elements = slots
+                        .positional_overflow
+                        .iter()
+                        .map(|index| {
+                            reg_ty(caller, args[*index], owner).map(materialize_nested_literals)
+                        })
+                        .collect::<Result<Vec<Ty>, _>>()?;
+                    bind_pack(binder, elements, &mut bindings);
+                }
+                None
+            }
             // The declaration records the pack ELEMENT type; a concrete
             // `RuntimePack`/`Tuple` spelling means the checker already
             // specialized the pack (`Tuple$tN`).

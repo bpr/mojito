@@ -17,7 +17,11 @@ impl Elab<'_> {
     /// Registry-aware specializability: recognizes struct-typed value
     /// parameters through the collected struct set.
     pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
-        is_specializable_declaration_in(statement, &|name| self.structs.contains_key(name))
+        is_specializable_declaration_in(
+            statement,
+            &|name| self.structs.contains_key(name),
+            &self.forward_targets,
+        )
     }
 
     pub(super) fn ctfe_call(

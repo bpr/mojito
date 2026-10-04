@@ -491,9 +491,23 @@ dominates — is copied once per index value with fresh registers, the index's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
-for the pruning. Every other `comptime for` — over a list, a pack, a
-reflection query, or with a local `comptime` binding in its body, and every
-one outside a generic `def` — is unrolled in the AST as before.
+for the pruning. Every other `comptime for` — over a list, a pack's
+elements themselves, a reflection query, or with a local `comptime` binding
+in its body, and every one outside a generic `def` — is unrolled in the AST
+as before. A type pack crosses the waist the same way: a pack-keyed `def`
+the template serves (`pack_def_template_served`: a read collector, no spread
+of the pack in a call or a signature type, no caller spreading a pack into
+it, no element-typed binding under the loop) keeps its body; the checker
+types it with the collector a `VariadicPack` of the symbolic pack, each
+`args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
+length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
+compile time — a `PackQuery::Length` the loop header carries as its bound;
+MIR records the elements the checker solved for the call
+(`TyArg::Val(CtValue::Tuple)` among `instantiated_args`); and `native::mono`
+binds the pack whole (`bind_pack`: the `RuntimePack` every spelling of the
+pack substitutes to, and the element tuple its parameter expressions fold
+under), so the loop's trip count and each copy's element type close at
+unrolling and the instance is named by its elements.
 
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a

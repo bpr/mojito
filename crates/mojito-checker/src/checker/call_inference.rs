@@ -1553,8 +1553,8 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
-        let mut conversions = 0;
-        let mut simd_erasures = 0;
+        self.record_pack_element_conversions(decls, &tyargs, &use_params, &arg_tys, &arg_exprs)?;
+        let (mut conversions, mut simd_erasures) = (0, 0);
         for ((aty, pty), expression) in arg_tys.iter().zip(&use_params).zip(arg_exprs) {
             if matches!(pty, Ty::Param { binder, .. } if binder.name.starts_with('*')) {
                 // Each pack element was checked independently against the pack's
@@ -1868,6 +1868,43 @@ impl Checker {
             );
         }
         binding
+    }
+
+    /// Record each pack element's conversion to the element the call
+    /// solved, when it solved the pack. Each element was checked against the
+    /// pack's bounds during inference, and there is no single substituted
+    /// element type to coerce every argument into; a literal element
+    /// converts to its solved element, which the template's instance takes
+    /// it as.
+    fn record_pack_element_conversions(
+        &self,
+        decls: &[ParamDecl],
+        tyargs: &[TyArg],
+        use_params: &[Ty],
+        arg_tys: &[Ty],
+        arg_exprs: &[&Expr],
+    ) -> Result<(), TypeError> {
+        let solved = decls
+            .iter()
+            .zip(tyargs)
+            .find_map(|(decl, argument)| match (decl, argument) {
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    Some(elements)
+                }
+                _ => None,
+            });
+        let Some(elements) = solved else {
+            return Ok(());
+        };
+        let pack_arguments = use_params.iter().zip(arg_tys).zip(arg_exprs).filter(
+            |((pty, _), _)| matches!(pty, Ty::Param { binder, .. } if binder.name.starts_with('*')),
+        );
+        for (((_, found), expression), element) in pack_arguments.zip(elements) {
+            if let CtValue::Type(element) = element {
+                self.record_implicit_conversion(expression, found, element)?;
+            }
+        }
+        Ok(())
     }
 
     /// Check each argument a `*args` collector gathers at `overflow` against

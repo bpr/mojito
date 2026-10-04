@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def` keyed on a type pack is served by its template when its collector
+  is read and its body neither spreads the pack nor binds an element's type
+  under its loop: the checker types the body once with the collector a pack
+  of the symbolic `Ts`, each `args[i]` the dependent `Ts[i]`, and the pack's
+  length (`args.__len__()`, `Ts.length`, `len(Ts)`) a parameter expression
+  bounding the `comptime for`; MIR carries the pack binder and the loop as
+  themselves and records the elements the checker solved at each call; and
+  the elaborator binds the pack from the call, unrolls the loop, and folds
+  each element's type, for the native backend as for the VM
+  (`assets/ok/pack_template_served.mojo`). The erased oracle reads a pack's
+  length from its collector's arity or the call's recorded elements.
+  `len(args)` as a `comptime for` bound is rejected, as the pin rejects it
+  (`assets/type_error/comptime_for_runtime_pack_length.mojo`). The owned
+  collector, the spreads, and the element-typed binding keep their clone
+  (roadmap R250–R252).
 - A generic `def` holding a `comptime for` over a `range` is served by its
   template, so the loop crosses the MIR waist as itself: the checker types
   the body once with the index a symbolic `Int` binder of the loop's own and

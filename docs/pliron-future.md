@@ -238,8 +238,9 @@ The narrowing rule was probed directly:
 So upstream's fix for the shape is `rebind`, which Mojito now implements
 (`checker/rebind.rs`); the bundled `Tuple.__contains__` and
 `assets/ok/pack_element_rebind.mojo` use it. The implicit narrowing itself is
-still accepted, because a variadic template's bodies are not yet validated
-symbolically (`docs/roadmap.md` R2).
+still accepted in those two bodies, which are methods: a pack-keyed method
+clones per instance until `docs/roadmap.md` R5, where a module-level
+pack-keyed `def` is now checked once with its pack symbolic.
 
 Everything else is safe. The remaining branches return same-typed literals,
 write to a `Writer`, or are the `comptime if …: pass` specialization markers in

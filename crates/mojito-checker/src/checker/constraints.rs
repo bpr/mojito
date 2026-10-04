@@ -766,6 +766,9 @@ impl Checker {
             }
             ExprKind::TupleLit(values) => constant(CtValue::Tuple(aggregate(values)?)),
             ExprKind::ListLit(values) => constant(CtValue::List(aggregate(values)?)),
+            // The length of a pack that is still a parameter, which the
+            // instance's elements fix.
+            _ if let Some(pack) = self.pack_length_query(expr) => Ok(pack),
             ExprKind::Prefix(PrefixOp::Neg, value) => context
                 .neg(&self.compile_dependent_ct_expr(value)?)
                 .map_err(param_error),
@@ -796,6 +799,65 @@ impl Checker {
                 )),
             },
         }
+    }
+
+    /// The length query of a pack that is still a parameter, when `expr`
+    /// asks one ([`Self::pack_length_binder`]).
+    pub(super) fn pack_length_query(&self, expr: &Expr) -> Option<ParamExpr> {
+        let pack = self.pack_length_binder(expr)?;
+        Some(
+            self.param_context
+                .pack_query(&pack, mojito_types::param_expr::PackQuery::Length),
+        )
+    }
+
+    /// The pack whose length `expr` asks, as the pin reads it at compile
+    /// time: `args.__len__()` of a collector spreading the pack, or
+    /// `Ts.length` and `len(Ts)` of the pack itself. `len(args)` is a runtime
+    /// value, as it is upstream.
+    pub(super) fn pack_length_binder(&self, expr: &Expr) -> Option<ParamRef> {
+        let collector_pack = |object: &Expr| {
+            let ExprKind::Identifier(name) = &object.kind else {
+                return None;
+            };
+            let pack = match self.lookup(name)? {
+                Ty::VariadicPack(element) => {
+                    mojito_types::types::pack_spread(std::slice::from_ref(element))
+                }
+                Ty::Tuple(elements) => mojito_types::types::pack_spread(elements),
+                _ => None,
+            }?;
+            let Ty::Param { binder, .. } = pack else {
+                return None;
+            };
+            self.pack_reference(&binder.name)
+        };
+        let pack = match &expr.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+                match args.as_slice() {
+                    [pack] => self.unbound_pack_named(pack),
+                    _ => None,
+                }
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
+                collector_pack(object)
+            }
+            ExprKind::Member { object, field } if field == "length" => {
+                self.unbound_pack_named(object)
+            }
+            _ => None,
+        }?;
+        pack.as_decl_ref().cloned()
     }
 
     /// Compile a declaration-level `where` clause, retaining the optional
@@ -1494,6 +1556,13 @@ impl Checker {
                     ConstraintOperand::Value(CtValue::Int(types.len() as i64))
                 }
             });
+        }
+        // `args.__len__()` of a collector spreading a pack that is still a
+        // parameter is that pack's length.
+        if matches!(&expr.kind, ExprKind::MethodCall { .. })
+            && let Some(pack) = self.pack_length_binder(expr)
+        {
+            return Ok(ConstraintOperand::PackLength(pack));
         }
         Ok(match &expr.kind {
             // A type name is the type it resolves to — `String` the nominal

@@ -580,9 +580,15 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
 fn param_apply_is_structural_and_unfolded() {
     let context = ParamContext::new();
     let seven = literal(&context, 7);
-    let applied = context.apply("f", &[seven.clone()], MetaTy::int());
-    assert_eq!(applied, context.apply("f", &[seven.clone()], MetaTy::int()));
-    assert_ne!(applied, context.apply("g", &[seven.clone()], MetaTy::int()));
+    let applied = context.apply("f", std::slice::from_ref(&seven), MetaTy::int());
+    assert_eq!(
+        applied,
+        context.apply("f", std::slice::from_ref(&seven), MetaTy::int())
+    );
+    assert_ne!(
+        applied,
+        context.apply("g", std::slice::from_ref(&seven), MetaTy::int())
+    );
     assert_ne!(
         applied,
         context.apply("f", &[literal(&context, 8)], MetaTy::int())

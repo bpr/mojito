@@ -104,7 +104,10 @@ pub(super) fn matched_parameter_arguments<'a>(
             decls.iter().find(|declaration| declaration.name() == name)
         } else {
             let declaration = explicit.get(positional).copied();
-            positional += 1;
+            // A type pack takes every positional argument from its slot on.
+            if !matches!(declaration, Some(ParamDecl::Type { variadic: true, .. })) {
+                positional += 1;
+            }
             declaration
         };
         if let Some(declaration) = declaration {
@@ -396,6 +399,24 @@ pub(super) fn unify_arg(
         (TyArg::Origin(_), TyArg::Origin(_)) => Ok(()),
         _ => Err("generic application arguments disagree".to_string()),
     }
+}
+
+/// Bind the type pack `binder` to `elements`: as the runtime pack every
+/// spelling of the pack substitutes to, and as the element tuple the
+/// parameter expressions over it (`Ts[i]`, the pack's length) fold under.
+pub(super) fn bind_pack(binder: &ParamRef, elements: Vec<Ty>, bindings: &mut Bindings) {
+    bindings.values.insert(
+        binder.clone(),
+        CtValue::Tuple(
+            elements
+                .iter()
+                .map(|element| CtValue::Type(Box::new(element.clone())))
+                .collect(),
+        ),
+    );
+    bindings
+        .types
+        .insert(binder.clone(), Ty::RuntimePack(elements));
 }
 
 pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> Result<(), String> {

@@ -8,16 +8,12 @@ use super::*;
 /// holds no arithmetic of its own.
 pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
-    let mut bound = ParamBindings::new();
-    for (binder, value) in &bindings.values {
-        if let Ok(value) = context.constant(value.clone()) {
-            bound.bind(binder.id.clone(), value);
-        }
-    }
-    let replaced = context.replace(expr, &bound).map_err(|error| MonoError {
-        function: None,
-        construct: error.to_string(),
-    })?;
+    let replaced = context
+        .replace(expr, &ct_bindings(bindings))
+        .map_err(|error| MonoError {
+            function: None,
+            construct: error.to_string(),
+        })?;
     // A layout application the instance's oracle answers under its target.
     if let ParamKind::Apply {
         function,
@@ -46,6 +42,19 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
             |parameter| format!("unresolved value parameter `{}`", parameter.name),
         ),
     })
+}
+
+/// The instance's value solutions as parameter-expression bindings, each
+/// binder by its identity.
+pub(super) fn ct_bindings(bindings: &Bindings) -> ParamBindings {
+    let context = ParamContext::detached();
+    let mut bound = ParamBindings::new();
+    for (binder, value) in &bindings.values {
+        if let Ok(value) = context.constant(value.clone()) {
+            bound.bind(binder.id.clone(), value);
+        }
+    }
+    bound
 }
 
 pub(super) fn is_symbolic(ty: &Ty) -> bool {

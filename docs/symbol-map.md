@@ -1118,6 +1118,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
+- A type pack the template serves: `pack_def_template_served`,
+  `def_pack_names`, `collect_forward_targets`, `block_spreads_pack`,
+  `signature_spreads_pack`, and `loop_binds_pack_element` (`comptime.rs`)
+  decide it, and `comptime_for_is_template_served` admits a pack's length
+  as a bound; `Checker::pack_length_binder`/`pack_length_query`
+  (`checker/constraints.rs`) read `args.__len__()`, `Ts.length`, and
+  `len(Ts)` as `PackQuery::Length` for the loop bound and as a
+  `ConstraintOperand::PackLength` in a `comptime if`; a pack element's
+  literal argument converts to the element the call solved
+  (`call_inference.rs`); `verify_param_arguments` (`verify/subscripts.rs`)
+  and `matched_parameter_arguments` (`mono/unify.rs`) let a pack take every
+  positional compile-time argument; `bind_pack` (`mono/unify.rs`) binds the
+  pack from the call's `TyArg::Val(CtValue::Tuple)` or the overflow's types,
+  `ct_bindings` (`mono/symbolic.rs`) carries the solution into `eval_ct` and
+  `substitute_ty` (a `Dependent` element closes through
+  `replace_parameters`; a `VariadicPack` over a bound pack is the elements'
+  `Tuple`), and `ParamContext::replace` (`mojito-types`) answers a bound
+  pack's length; `erased_parameter_values` (`backend/vm.rs`) gives the
+  erased frame each pack's arity, from the collector or the call's recorded
+  elements.
 
 ## The compile-time branch and the request path (2026-10-03)
 

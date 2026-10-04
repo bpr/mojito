@@ -1144,6 +1144,7 @@ pub fn elaborate_prepared(
         specializable: collect_specializable(program, &bound_generics),
         bound_generics,
         pack_generics,
+        forward_targets: collect_forward_targets(program),
         comptime_generics: collect_comptime_generic_templates(program),
         dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
@@ -1426,7 +1427,7 @@ fn pack_values_projection(expression: &Expr) -> Option<&str> {
 /// Whether a block directly contains a `comptime if`/`comptime for` (not descending
 /// into nested `def`/`struct`, which have their own compile-time scope).
 fn block_has_comptime(stmts: &[Stmt]) -> bool {
-    block_has_statement(stmts, |kind| {
+    block_has_statement(stmts, &|kind| {
         matches!(
             kind,
             StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. }
@@ -1435,30 +1436,63 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
 }
 
 /// Whether a block directly contains a `comptime for` its template does not
-/// serve, under the same scope rule as [`block_has_comptime`].
-fn block_has_unkept_comptime_for(stmts: &[Stmt]) -> bool {
-    block_has_statement(stmts, |kind| {
+/// serve, under the same scope rule as [`block_has_comptime`]; `packs`
+/// names the `def`'s packs as [`comptime_for_is_template_served`] reads them.
+fn block_has_unkept_comptime_for(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
+    block_has_statement(stmts, &|kind| {
         matches!(kind, StmtKind::ComptimeFor { iter, body, .. }
-            if !comptime_for_is_template_served(iter, body))
+            if !comptime_for_is_template_served(iter, body, packs))
     })
 }
 
 /// Whether a generic `def`'s template serves a `comptime for`: the iterable
 /// is a `range` whose bounds are parameter expressions — literals, names,
-/// `Self.` members, and arithmetic over them — and the body declares no
-/// `comptime` binding of its own, which the elaborator above MIR would have
-/// to evaluate with the index unknown. Such a loop is checked once with the
-/// index symbolic, carried by MIR as a loop header, and unrolled below MIR;
-/// any other — over a compile-time list, a pack, a reflection query — is
-/// unrolled in the AST, on a clone per instantiation.
-pub(super) fn comptime_for_is_template_served(iter: &Expr, body: &[Stmt]) -> bool {
-    fn parameter_shaped(expression: &Expr) -> bool {
+/// `Self.` members, the length of one of the `def`'s `packs` as the pin
+/// spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
+/// `len(args)` is a runtime value there), and arithmetic over them — and
+/// the body declares no `comptime` binding of its own, which the elaborator
+/// above MIR would have to evaluate with the index unknown. Such a loop is
+/// checked once with the index symbolic, carried by MIR as a loop header,
+/// and unrolled below MIR; any other — over a compile-time list, a pack, a
+/// reflection query — is unrolled in the AST, on a clone per instantiation.
+pub(super) fn comptime_for_is_template_served(
+    iter: &Expr,
+    body: &[Stmt],
+    packs: &HashSet<String>,
+) -> bool {
+    fn pack_length(expression: &Expr, packs: &HashSet<String>) -> bool {
+        let names_pack = |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if packs.contains(name));
+        match &expression.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                name == "len"
+                    && param_args.is_empty()
+                    && kwargs.is_empty()
+                    && matches!(args.as_slice(), [pack] if names_pack(pack))
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => method == "__len__" && args.is_empty() && kwargs.is_empty() && names_pack(object),
+            ExprKind::Member { object, field } => field == "length" && names_pack(object),
+            _ => false,
+        }
+    }
+    fn parameter_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
         match &expression.kind {
             ExprKind::Int(_) | ExprKind::Identifier(_) => true,
             ExprKind::Member { object, .. } => {
                 matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                    || pack_length(expression, packs)
             }
-            ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner),
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
+            ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner, packs),
             ExprKind::Infix(
                 InfixOp::Add
                 | InfixOp::Sub
@@ -1469,13 +1503,15 @@ pub(super) fn comptime_for_is_template_served(iter: &Expr, body: &[Stmt]) -> boo
                 | InfixOp::Shl,
                 left,
                 right,
-            ) => parameter_shaped(left) && parameter_shaped(right),
+            ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
             _ => false,
         }
     }
     matches!(&iter.kind, ExprKind::Call { name, args, .. }
-        if name == "range" && !args.is_empty() && args.iter().all(parameter_shaped))
-        && !block_has_statement(body, |kind| matches!(kind, StmtKind::Comptime { .. }))
+        if name == "range"
+            && !args.is_empty()
+            && args.iter().all(|bound| parameter_shaped(bound, packs)))
+        && !block_has_statement(body, &|kind| matches!(kind, StmtKind::Comptime { .. }))
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
@@ -1515,11 +1551,222 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
 /// unrolls a `comptime for` over a compile-time list or a pack, or asserts
 /// a `rebind` over its parameters. A `comptime if` and a `comptime for`
-/// over a `range` do not: the template keeps the region, the check types
-/// it with the binders symbolic, and the elaborator below MIR selects or
-/// unrolls.
-fn def_body_keys_specialization(stmts: &[Stmt]) -> bool {
-    block_has_unkept_comptime_for(stmts) || block_has_rebind(stmts)
+/// over a `range` — of a pack's length included — do not: the template
+/// keeps the region, the check types it with the binders symbolic, and the
+/// elaborator below MIR selects or unrolls.
+fn def_body_keys_specialization(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
+    block_has_unkept_comptime_for(stmts, packs) || block_has_rebind(stmts)
+}
+
+/// The names a `def`'s type packs go by in its body: each `*Ts` binder,
+/// bare, and each collector that spreads one (`*args: *Ts`).
+pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> HashSet<String> {
+    let binders: HashSet<&str> = type_params
+        .iter()
+        .filter_map(|parameter| parameter.name.strip_prefix('*'))
+        .collect();
+    let collectors = params.iter().filter_map(|parameter| {
+        let Type::Named(spread, _) = &parameter.ty else {
+            return None;
+        };
+        (parameter.kind == ParamKind::Variadic && binders.contains(spread.trim_start_matches('*')))
+            .then(|| parameter.name.clone())
+    });
+    binders
+        .iter()
+        .map(|binder| (*binder).to_string())
+        .chain(collectors)
+        .collect()
+}
+
+/// Whether a top-level `def` keyed on a type pack is served by its template:
+/// every compile-time parameter is a type parameter, the pack among them;
+/// the collector is read, not `var` (an owned element moved per unrolled
+/// copy is a per-instance ownership fact the loop form does not carry yet);
+/// no signature type and no call spreads the pack whole (`Tuple[*Ts]`,
+/// `other(*args)`), which only an instance expands, and no caller spreads
+/// a pack into the `def` (`forward_targets`), since a clone's whole-pack
+/// forward binds the callee's clone; no binding declared in a served loop
+/// takes an element's type, which would need a slot per unrolled copy; and
+/// the body keys no clone. The check types such a body once, with the
+/// collector a pack of the symbolic `Ts` and each `args[i]` the dependent
+/// `Ts[i]`, and the elaborator below MIR binds the pack from the call.
+fn pack_def_template_served(statement: &Stmt, forward_targets: &HashSet<String>) -> bool {
+    let StmtKind::Def {
+        name,
+        type_params,
+        params,
+        ret,
+        body,
+        ..
+    } = &statement.kind
+    else {
+        return false;
+    };
+    let packs = def_pack_names(type_params, params);
+    pack_keyed_declaration(statement)
+        && !forward_targets.contains(name)
+        && type_params.iter().all(|parameter| {
+            matches!(
+                classify_ct_param(parameter, type_params, name),
+                Some(ParamDecl::Type { .. })
+            )
+        })
+        && !params.iter().any(|parameter| {
+            parameter.kind == ParamKind::Variadic
+                && matches!(parameter.convention, Some(ArgConvention::Var))
+        })
+        && !signature_spreads_pack(params, ret.as_ref())
+        && !block_spreads_pack(body, &packs)
+        && !loop_binds_pack_element(body, &packs, false)
+        && !def_body_keys_specialization(body, &packs)
+}
+
+/// The names every call of the program spreads an argument into
+/// (`other(*args)`): a type-pack `def` among them keeps its clone, since the
+/// forwarding clone binds the callee's clone whole.
+fn collect_forward_targets(program: &[Stmt]) -> HashSet<String> {
+    struct Finder {
+        targets: HashSet<String>,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Call { name, args, .. } = &expr.kind
+                && args
+                    .iter()
+                    .any(|argument| matches!(&argument.kind, ExprKind::Spread(_)))
+            {
+                self.targets.insert(name.clone());
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        targets: HashSet::new(),
+    };
+    mojito_ast::visit::walk_block(&mut finder, program);
+    finder.targets
+}
+
+/// Whether a binding declared under a `comptime for` of `stmts` takes an
+/// element of one of `packs` (`var value = Ts[i]()`, `var first = args[i]`,
+/// an annotation naming the pack): its type names the loop's index, so each
+/// unrolled copy needs a slot of its own, which the unroller does not mint.
+/// `in_loop` says whether `stmts` is already a compile-time loop's body.
+fn loop_binds_pack_element(stmts: &[Stmt], packs: &HashSet<String>, in_loop: bool) -> bool {
+    fn names_pack(expression: &Expr, packs: &HashSet<String>) -> bool {
+        struct Finder<'a> {
+            packs: &'a HashSet<String>,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Identifier(name)
+                | ExprKind::Call { name, .. }
+                | ExprKind::TypeApply { name, .. } = &expr.kind
+                {
+                    self.found |= self.packs.contains(name);
+                }
+            }
+        }
+
+        let mut finder = Finder {
+            packs,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, expression);
+        finder.found
+    }
+    let has = |block: &[Stmt], in_loop: bool| loop_binds_pack_element(block, packs, in_loop);
+    stmts.iter().any(|s| match &s.kind {
+        StmtKind::VarDecl { ty, value, .. } if in_loop => {
+            names_pack(value, packs)
+                || ty.as_ref().is_some_and(|ty| {
+                    matches!(ty, Type::Named(name, _) if packs.contains(name.trim_start_matches('*')))
+                })
+        }
+        StmtKind::Assign { value, .. } | StmtKind::Comptime { value, .. } if in_loop => {
+            names_pack(value, packs)
+        }
+        StmtKind::ComptimeFor { body, .. } => has(body, true),
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            branches.iter().any(|(_, b)| has(b, in_loop))
+                || orelse.as_ref().is_some_and(|b| has(b, in_loop))
+        }
+        StmtKind::While { body, .. } | StmtKind::For { body, .. } => has(body, in_loop),
+        StmtKind::With { body, .. } => has(body, in_loop),
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            has(body, in_loop)
+                || except.as_ref().is_some_and(|(_, b)| has(b, in_loop))
+                || orelse.as_ref().is_some_and(|b| has(b, in_loop))
+                || finalbody.as_ref().is_some_and(|b| has(b, in_loop))
+        }
+        _ => false,
+    })
+}
+
+/// Whether a parameter annotation or the result type applies a pack spread
+/// (`Tuple[*Ts]`, `Variant[*Ts]`), beyond the collector's own `*Ts`.
+fn signature_spreads_pack(params: &[FnParam], ret: Option<&Type>) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(_, args) = ty {
+                self.found |= args.iter().any(|argument| {
+                    matches!(argument, ParamArg::Type(Type::Named(name, _) | Type::SelfParam(name))
+                        if name.starts_with('*'))
+                });
+            }
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    for ty in params.iter().map(|parameter| &parameter.ty).chain(ret) {
+        mojito_ast::visit::walk_type(&mut finder, ty);
+    }
+    finder.found
+}
+
+/// Whether a block spreads one of `packs` into a call (`other(*args)`), a
+/// nested `def` included.
+fn block_spreads_pack(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
+    struct Finder<'a> {
+        packs: &'a HashSet<String>,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Spread(inner) = &expr.kind {
+                let spread = match &inner.kind {
+                    ExprKind::Identifier(name) => Some(name),
+                    ExprKind::Transfer(moved) => match &moved.kind {
+                        ExprKind::Identifier(name) => Some(name),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                self.found |= spread.is_some_and(|name| self.packs.contains(name));
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        packs,
+        found: false,
+    };
+    mojito_ast::visit::walk_block(&mut finder, stmts);
+    finder.found
 }
 
 fn collect_reference_origin_parameters(
@@ -2100,8 +2347,8 @@ struct CtStruct<'a> {
 /// its compile-time arguments. This predicate is intentionally independent of
 /// the top-level registry: nested generic pack functions need the same delayed
 /// elaboration even though their lexical specialization happens later.
-fn is_specializable_declaration(statement: &Stmt) -> bool {
-    is_specializable_declaration_in(statement, &|_| false)
+fn is_specializable_declaration(statement: &Stmt, forward_targets: &HashSet<String>) -> bool {
+    is_specializable_declaration_in(statement, &|_| false, forward_targets)
 }
 
 /// The registry-aware form: `is_value_struct` recognizes a single bound that
@@ -2110,16 +2357,23 @@ fn is_specializable_declaration(statement: &Stmt) -> bool {
 fn is_specializable_declaration_in(
     statement: &Stmt,
     is_value_struct: &dyn Fn(&str) -> bool,
+    forward_targets: &HashSet<String>,
 ) -> bool {
     match &statement.kind {
         StmtKind::Def {
-            type_params, body, ..
+            type_params,
+            params,
+            body,
+            ..
         } => {
             !type_params.is_empty()
-                && (def_body_keys_specialization(body)
-                    || type_params
+                && (def_body_keys_specialization(body, &def_pack_names(type_params, params))
+                    // A type pack keys a clone per call unless the template
+                    // serves the body (`pack_def_template_served`).
+                    || (type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
+                        && !pack_def_template_served(statement, forward_targets))
                     // A `[dtype: DType]` parameter keys a clone per call:
                     // source validation checks the template symbolically,
                     // and only a concrete lane executes.
@@ -2177,6 +2431,8 @@ struct Elab<'a> {
     /// deferred call keeps the template as a signature-only stub for the
     /// discovery check.
     pack_generics: HashSet<String>,
+    /// The names some call spreads a pack into ([`collect_forward_targets`]).
+    forward_targets: HashSet<String>,
     /// The subset of `specializable` specialized only for its compile-time
     /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
     /// A call that omits a parameter consults the checker-recorded
@@ -2762,11 +3018,15 @@ fn collect_specializable<'a>(
             _ => None,
         })
         .collect();
+    let forward_targets = collect_forward_targets(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration_in(s, &|bound| struct_names.contains(bound))
-                || bound_generics.contains(name))
+            && (is_specializable_declaration_in(
+                s,
+                &|bound| struct_names.contains(bound),
+                &forward_targets,
+            ) || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
@@ -2799,11 +3059,12 @@ fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
             families.entry(name.clone()).or_default().push(statement);
         }
     }
+    let forward_targets = collect_forward_targets(program);
     families.retain(|_, declarations| {
         declarations.len() > 1
             && declarations.iter().any(|s| {
                 comptime_keyed_declaration(s)
-                    || pack_keyed_declaration(s)
+                    || (pack_keyed_declaration(s) && !pack_def_template_served(s, &forward_targets))
                     || dtype_keyed_declaration(s)
             })
     });
@@ -2897,12 +3158,15 @@ fn dtype_keyed_declaration(statement: &Stmt) -> bool {
 /// compile-time-keyed class's per-declaration predicate.
 fn comptime_keyed_declaration(statement: &Stmt) -> bool {
     let StmtKind::Def {
-        type_params, body, ..
+        type_params,
+        params,
+        body,
+        ..
     } = &statement.kind
     else {
         return false;
     };
-    def_body_keys_specialization(body)
+    def_body_keys_specialization(body, &def_pack_names(type_params, params))
         && admits_comptime_keying(statement)
         && type_params
             .iter()
@@ -2914,16 +3178,19 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
 /// with the enclosing clone (roadmap: nested definitions over compile-time
 /// parameters).
 pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
-    is_specializable_declaration(statement)
+    is_specializable_declaration(statement, &HashSet::new())
         || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
-            if !type_params.is_empty() && block_has_comptime(body))
+            if !type_params.is_empty()
+                && (block_has_comptime(body)
+                    || type_params.iter().any(|parameter| parameter.name.starts_with('*'))))
 }
 
 /// Whether every compile-time parameter of a `def` is one its template
-/// serves: a non-variadic type parameter, or a scalar (`Int`/`Bool`) value
-/// parameter that no runtime parameter type names, so an application spells
-/// it and the elaborator binds it from the call's recorded arguments. A
-/// value a call must infer from an argument type keeps the clone until the
+/// serves: a type parameter — a type pack included, which the elaborator
+/// binds from the call's recorded elements — or a scalar (`Int`/`Bool`)
+/// value parameter that no runtime parameter type names, so an application
+/// spells it and the elaborator binds it from the call's recorded arguments.
+/// A value a call must infer from an argument type keeps the clone until the
 /// elaborator binds one from the call.
 pub(super) fn template_serves_binders(
     type_params: &[TypeParam],
@@ -2933,9 +3200,7 @@ pub(super) fn template_serves_binders(
     !type_params.is_empty()
         && type_params.iter().all(|parameter| {
             match classify_ct_param(parameter, type_params, owner) {
-                Some(ParamDecl::Type {
-                    variadic: false, ..
-                }) => true,
+                Some(ParamDecl::Type { .. }) => true,
                 Some(ParamDecl::Value {
                     ty,
                     variadic: false,
@@ -3003,14 +3268,19 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
 }
 
 /// Top-level type-pack templates: a `def` with a `*Ts` type parameter (see
-/// [`pack_generic_template_names`]). Value packs stay on the syntactic (hard)
+/// [`pack_generic_template_names`]) whose template does not serve it
+/// ([`pack_def_template_served`]). Value packs stay on the syntactic (hard)
 /// specialization path. An overloaded name is a template family
 /// ([`collect_overload_families`]), whose request path tells its declarations
 /// apart, since overload selection is the checker's.
 fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
+    let forward_targets = collect_forward_targets(program);
     program
         .iter()
-        .filter(|statement| pack_keyed_declaration(statement))
+        .filter(|statement| {
+            pack_keyed_declaration(statement)
+                && !pack_def_template_served(statement, &forward_targets)
+        })
         .filter_map(|statement| match &statement.kind {
             StmtKind::Def { name, .. } => Some(name.clone()),
             _ => None,
@@ -3085,6 +3355,7 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
 /// selection is the checker's.
 fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
+    let forward_targets = collect_forward_targets(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -3097,7 +3368,9 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
             let StmtKind::Def { params, .. } = &statement.kind else {
                 return None;
             };
-            if is_specializable_declaration(statement) || def_counts[name.as_str()] != 1 {
+            if is_specializable_declaration(statement, &forward_targets)
+                || def_counts[name.as_str()] != 1
+            {
                 return None;
             }
             let has_type_binder = type_params.iter().any(|parameter| {
@@ -3117,7 +3390,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
 
 /// Whether a block directly contains a statement `wanted` accepts, under the
 /// same scope rule as `block_has_comptime`.
-fn block_has_statement(stmts: &[Stmt], wanted: fn(&StmtKind) -> bool) -> bool {
+fn block_has_statement(stmts: &[Stmt], wanted: &dyn Fn(&StmtKind) -> bool) -> bool {
     let has = |block: &[Stmt]| block_has_statement(block, wanted);
     stmts.iter().any(|s| match &s.kind {
         kind if wanted(kind) => true,
@@ -3278,7 +3551,8 @@ impl<'a> Elab<'a> {
         let StmtKind::Def { name, .. } = &statement.kind else {
             return false;
         };
-        self.overload_families.contains_key(name) && !is_specializable_declaration(statement)
+        self.overload_families.contains_key(name)
+            && !is_specializable_declaration(statement, &self.forward_targets)
     }
 
     /// Whether `name` is an overloaded template family: a call to it

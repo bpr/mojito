@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R250**.
+Next free ID: **R254**.
 
 ## Ordered Work
 
@@ -60,17 +60,61 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R2 (P3b) MIR cannot express a type pack**
+- [ ] **R250 (P3b) A pack-keyed `def` with an owned collector keys a clone**
 
-  Problem: a pack-keyed body is unrolled in the AST, per call, before the
-  check.
-  - A pack parameter and a pack-typed register stay symbolic until the
-    elaborator expands them, and an element's type depends on the symbolic
-    index.
-  - A variadic template's body is validated symbolically, which closes the
-    implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
-  - Delete the cloner's branch and the certificate class.
-  - Depends on R1.
+  Problem: `def take[*Ts: Movable](var *args: *Ts)` is unrolled in the AST
+  per call, where a read collector's `def` is served by its template.
+  - A move of `args[i]^` under the served loop is a move of the dynamic
+    place `args[*]` to the ownership analysis, which decides the loop with
+    its trip count unknown and would see the second copy move a path the
+    first already moved; the pin moves one element per copy.
+  - The loop form needs an element place keyed by the index expression,
+    distinct per iteration, and the owned pack's reverse destruction over
+    the elements left (`assets/ok/owned_pack_destroyed_in_reverse.mojo`).
+  - `pack_def_template_served` (`comptime.rs`) keeps such a `def` on the
+    cloner.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R251 (P3b) A pack spread into or out of a pack-keyed `def` keys a
+  clone**
+
+  Problem: a `def` that spreads its collector (`show(*a)`, `print(*a)`),
+  names the pack in a signature type (`-> Tuple[*Ts]`, `Variant[*Ts]`), or
+  is the callee some call spreads a pack into, is unrolled in the AST per
+  call.
+  - MIR lowering expands no spread: a symbolic pack's spread has no element
+    count, and a clone's concrete spread into a template-served callee is
+    "call spread outside a specialized type pack" (`inference.rs`).
+  - A spread into a served callee is a call whose arguments are the pack's
+    element places; a spread in a result type is `expand_pack_spread` over
+    the bound pack at substitution.
+  - `collect_forward_targets`, `block_spreads_pack`, and
+    `signature_spreads_pack` (`comptime.rs`) keep such a `def` on the
+    cloner.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R252 (P3b) A binding of an element's type under a served pack loop
+  keys a clone**
+
+  Problem: `var value = Ts[i]()` or `var first = args[i]` under `comptime
+  for i in range(Ts.length)` in a pack-keyed `def` keeps the cloner
+  (`loop_binds_pack_element`, `comptime.rs`;
+  `assets/ok/pack_element_default_construction.mojo`'s `build`).
+  - The binding's slot type names the index, so each unrolled copy needs a
+    slot of its own, which is R247's gap at a pack element.
+  - Depends on R247.
+  - Model: Fable, Planned.
+
+- [ ] **R253 (P3b) The cloner's type-pack branch and the `PackElements`
+  certificate class are still live**
+
+  Problem: `pack_generic_template_names`, the pack request path, and
+  `TemplateClass::PackElements` serve the pack-keyed `def`s the template
+  does not (R250, R251, R252) and every pack-keyed method (R5).
+  - Delete the branch and the class once nothing reaches them.
+  - Depends on R250, R251, R252, and R5.
   - Model: Fable, Planned.
 
 - [ ] **R246 (P3b) A `comptime for` over a compile-time collection, a

@@ -702,6 +702,13 @@ pub(super) fn verify_param_arguments(
         }
         return;
     }
+    // A type pack takes every positional argument from its slot on.
+    let pack = |index: usize| {
+        matches!(
+            declarations[index],
+            mojito_types::types::ParamDecl::Type { variadic: true, .. }
+        )
+    };
     let mut occupied = vec![false; declarations.len()];
     let mut next_positional = 0;
     for argument in arguments {
@@ -713,7 +720,7 @@ pub(super) fn verify_param_arguments(
             while declarations
                 .get(next_positional)
                 .is_some_and(|declaration| {
-                    occupied[next_positional]
+                    (occupied[next_positional] && !pack(next_positional))
                         || match declaration {
                             mojito_types::types::ParamDecl::Type { infer_only, .. }
                             | mojito_types::types::ParamDecl::Value { infer_only, .. } => {
@@ -725,7 +732,7 @@ pub(super) fn verify_param_arguments(
                 next_positional += 1;
             }
             let index = (next_positional < declarations.len()).then_some(next_positional);
-            next_positional += usize::from(index.is_some());
+            next_positional += usize::from(index.is_some_and(|index| !pack(index)));
             index
         };
         let Some(index) = index else {
@@ -741,7 +748,7 @@ pub(super) fn verify_param_arguments(
             ));
             continue;
         };
-        if occupied[index] {
+        if occupied[index] && !pack(index) {
             errors.push(format!(
                 "{prefix}: compile-time parameter '{}' is supplied more than once",
                 declarations[index].name()

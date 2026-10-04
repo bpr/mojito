@@ -305,11 +305,11 @@ impl Elab<'_> {
             } => {
                 // A comptime-dependent generic template can't be elaborated now (its
                 // parameter value is unknown); keep it verbatim for monomorphization.
-                if is_specializable_declaration(stmt) {
+                if is_specializable_declaration(stmt, &self.forward_targets) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let body = self.def_body(type_params, body, env)?;
+                let body = self.def_body(type_params, params, body, env)?;
                 let params = fold_default_bindings(params, env);
                 out.push(rebuilt(
                     stmt,
@@ -1007,18 +1007,21 @@ impl Elab<'_> {
     fn def_body(
         &self,
         type_params: &[TypeParam],
+        params: &[FnParam],
         body: &[Stmt],
         env: &mut HashMap<String, CtValue>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         if type_params.is_empty() {
             return self.block(body, env, true);
         }
-        self.template_binders.borrow_mut().push(
-            type_params
-                .iter()
-                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
-                .collect(),
-        );
+        // A pack's collector stands for the pack in a bound (`len(args)`),
+        // so it is a binder of the body too.
+        let mut binders: HashSet<String> = type_params
+            .iter()
+            .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+            .collect();
+        binders.extend(def_pack_names(type_params, params));
+        self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, env, true);
         self.template_binders.borrow_mut().pop();
         body
@@ -1148,12 +1151,12 @@ impl Elab<'_> {
         let StmtKind::ComptimeFor { var, iter, body } = &stmt.kind else {
             return Ok(false);
         };
-        if !in_fn || !comptime_for_is_template_served(iter, body) {
-            return Ok(false);
-        }
         let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
             return Ok(false);
         };
+        if !in_fn || !comptime_for_is_template_served(iter, body, &binders) {
+            return Ok(false);
+        }
         binders.insert(var.clone());
         self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, &mut env.clone(), true);

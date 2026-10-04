@@ -986,6 +986,19 @@ impl ParamContext {
                 &self.replace_at(subject, bindings, depth, memo)?,
                 query.clone(),
             ),
+            // A pack bound to its elements answers its length; the other
+            // queries stay the checker's concrete pack logic.
+            ParamKind::PackQuery {
+                pack,
+                query: PackQuery::Length,
+            } if let Some(CtValue::Tuple(elements)) =
+                bindings.lookup(pack).and_then(ParamExpr::as_constant) =>
+            {
+                let length = i64::try_from(elements.len()).map_err(|_| {
+                    ParamError::Arithmetic(format!("pack `{pack}` is too long to count"))
+                })?;
+                self.constant(CtValue::Int(length))?
+            }
             ParamKind::PackQuery { pack, query } => {
                 let query = match query {
                     PackQuery::Contains(element) => {

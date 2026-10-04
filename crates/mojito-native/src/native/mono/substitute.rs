@@ -699,6 +699,14 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         Ty::Variant(v) => Ty::Variant(sub_types(v, bindings)?),
         Ty::Overload(v) => Ty::Overload(sub_types(v, bindings)?),
         Ty::ComptimeList(v) => Ty::ComptimeList(Box::new(substitute_ty(v, bindings)?)),
+        // A collector over a bound type pack is the tuple of its elements.
+        Ty::VariadicPack(v)
+            if let Some(Ty::Param { binder, .. }) =
+                mojito_types::types::pack_spread(std::slice::from_ref(&**v))
+                && let Some(Ty::RuntimePack(elements)) = bindings.types.get(binder) =>
+        {
+            Ty::Tuple(sub_types(elements, bindings)?)
+        }
         Ty::VariadicPack(v) => {
             let element = substitute_ty(v, bindings)?;
             match bindings.variadic_arity {
@@ -721,9 +729,21 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         }
         Ty::Dependent(dependent) => {
             let Some((elements, index)) = dependent.selection() else {
-                return Err(unsupported(format!(
-                    "dependent type `{ty}` has no concrete MIR declaration fact"
-                )));
+                // An element of a pack that is still a parameter (`Ts[i]`)
+                // closes once the pack and the index are bound.
+                let closed = mojito_types::types::replace_parameters(
+                    &ParamContext::detached(),
+                    ty,
+                    &ct_bindings(bindings),
+                    0,
+                )
+                .map_err(|error| unsupported(error.to_string()))?;
+                if matches!(closed, Ty::Dependent(_)) {
+                    return Err(unsupported(format!(
+                        "dependent type `{ty}` has no concrete MIR declaration fact"
+                    )));
+                }
+                return substitute_ty(&closed, bindings);
             };
             let value = eval_ct(index, bindings)?;
             let index = match value {

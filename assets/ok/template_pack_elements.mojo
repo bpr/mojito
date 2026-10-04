@@ -1,7 +1,7 @@
-# A `def` keyed on a type pack: source validation checks the body once, with
-# `values[i]` at the dependent element `Ts[i]`, and each instance inherits the
-# facts of every unrolled copy at the element the fold fixed (class
-# PackElements). Three elements, one, and none.
+# A `def` keyed on a type pack is served by its template: the checker types
+# the body once with `values[i]` at the dependent element `Ts[i]` and the
+# pack's length as the loop's bound, and the elaborator binds the pack from
+# each call and unrolls the loop per instance. Three elements, one, and none.
 def show[*Ts: Writable](*values: *Ts):
     comptime for i in range(values.__len__()):
         print(values[i])

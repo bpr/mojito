@@ -1912,7 +1912,7 @@ fn param_apply_list_get_and_reflect_round_trip() {
         }),
         ReflectQuery::FieldNamed("x".into()),
     );
-    let applied = context.apply("f", &[i.clone()], MetaTy::int());
+    let applied = context.apply("f", std::slice::from_ref(&i), MetaTy::int());
     let types = vec![
         Ty::Dependent(DependentType::Parameter(element)),
         Ty::Dependent(DependentType::Parameter(reflected)),
