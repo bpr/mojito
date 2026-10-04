@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R283**.
+Next free ID: **R285**.
 
 ## Ordered Work
 
@@ -1757,29 +1757,41 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R283 Constructing a type parameter through a user trait's
+  `__init__` requirement is unsupported**
+
+  Problem: `return T(v)` in `def build[T: Make & Movable & Deinitable]`,
+  where `trait Make` requires `def __init__(out self, v: Int)`, reports
+  "unsupported feature", while the pin runs it.
+  - The checker constructs a type parameter only through `()` and
+    `Copyable`'s `copy=` initializer
+    (`Checker::infer_type_param_copy_construction`).
+  - The construction should bind its arguments to the bound trait's
+    `__init__` requirement, and the elaborator respell it as the bound
+    struct's constructor call, as `T(copy=x)` already is.
+  - Found while landing `T(copy=x)` (2026-10-04).
+  - Probe: `conformance/probes/type_param_trait_init_requirement.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R284 A `@fieldwise_init` initializer does not satisfy a trait's
+  `__init__` requirement**
+
+  Problem: `@fieldwise_init struct A(Make, Movable)` with one `var v: Int`
+  field reports "declares conformance to trait 'Make' but is missing method
+  '__init__'" when `Make` requires `def __init__(out self, v: Int)`, while
+  the pin accepts the conformance.
+  - The conformance check does not see the synthesized initializer.
+  - Found while landing `T(copy=x)` (2026-10-04).
+  - Probe: `conformance/probes/fieldwise_init_satisfies_trait_init.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R281 Constructing a struct's type parameter with arguments is
-  rejected**
-
-  Problem: `return Self.T(copy=self.x)` in a method of `struct Box[T:
-  Copyable & Deinitable & Defaultable]` fails with "Undefined variable
-  'Self'", while the pin runs it.
-  - The checker types only the nullary `Self.T()`
-    (`Checker::infer_type_receiver_call`, recorded as
-    `SemanticAdjustment::ConstructTypeParam`); any argument falls through
-    to the value-receiver families, which find no `Self` binding.
-  - The construction should select the bound's constructor (`Copyable`'s
-    `copy=` initializer) and carry its arguments, in the template and in a
-    per-instance clone, which already respells the call head.
-  - Found while landing the nullary construction in instance clones
-    (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R282 `size_of[Self.T]()` in a struct method's `comptime if` is not
   evaluated**

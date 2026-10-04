@@ -786,6 +786,7 @@ assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
 assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
+assets/ok/type_param_copy_construction.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized

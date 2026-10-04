@@ -109,18 +109,6 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
 /// none of a `try` region's blocks, which the caller walks itself.
 /// Renumbering a copied block rewrites them all.
 pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
-    fn place<'a>(place: &'a mut MirPlace, out: &mut Vec<&'a mut Reg>) {
-        for projection in &mut place.proj {
-            if let Proj::Index(reg) = projection {
-                out.push(reg);
-            }
-        }
-    }
-    fn places<'a>(places: impl IntoIterator<Item = &'a mut MirPlace>, out: &mut Vec<&'a mut Reg>) {
-        for item in places {
-            place(item, out);
-        }
-    }
     fn subscript_arg<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
         match arg {
             MirSubscriptArg::Index(reg) => out.push(reg),
@@ -138,7 +126,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
     let mut out = Vec::new();
     match instruction {
         MirInstr::EstablishLoans { loans, marker, .. } => {
-            places(loans.iter_mut().map(|loan| &mut loan.place), &mut out);
+            places_regs_mut(loans.iter_mut().map(|loan| &mut loan.place), &mut out);
             out.push(marker);
         }
         MirInstr::InvalidateInteriors { marker, .. } => out.push(marker),
@@ -147,14 +135,14 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place: target,
         } => {
             out.push(dest);
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
         }
         MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
         MirInstr::CopyValue { dest, value } => out.extend([dest, value]),
         MirInstr::WriteRef { reference, value } => out.extend([reference, value]),
         MirInstr::MakeClosure { dest, captures, .. } => {
             out.push(dest);
-            places(
+            places_regs_mut(
                 captures.iter_mut().map(|capture| &mut capture.place),
                 &mut out,
             );
@@ -172,8 +160,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.push(dest);
-            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
-            places(kwarg_places.iter_mut().flatten(), &mut out);
+            keyword_regs_mut(kwargs, kwarg_places, &mut out);
         }
         MirInstr::Const { dest, .. }
         | MirInstr::SizeOf { dest, .. }
@@ -191,7 +178,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place: target,
         } => {
             out.push(dest);
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
         }
         MirInstr::DefVar { src, .. } => out.push(src),
         MirInstr::UnOp { dest, a, .. } => out.extend([dest, a]),
@@ -207,9 +194,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.push(dest);
             out.extend(args.iter_mut());
-            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
-            places(arg_places.iter_mut().flatten(), &mut out);
-            places(kwarg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
+            keyword_regs_mut(kwargs, kwarg_places, &mut out);
             param_args(param_arg_regs, &mut out);
         }
         MirInstr::CallIndirect {
@@ -225,10 +211,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, callee]);
             out.extend(args.iter_mut());
-            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
-            places(callee_place.iter_mut(), &mut out);
-            places(arg_places.iter_mut().flatten(), &mut out);
-            places(kwarg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(callee_place.iter_mut(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
+            keyword_regs_mut(kwargs, kwarg_places, &mut out);
             param_args(param_arg_regs, &mut out);
         }
         MirInstr::MethodCall {
@@ -244,10 +229,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, recv]);
             out.extend(args.iter_mut());
-            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
-            places(recv_place.iter_mut(), &mut out);
-            places(arg_places.iter_mut().flatten(), &mut out);
-            places(kwarg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(recv_place.iter_mut(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
+            keyword_regs_mut(kwargs, kwarg_places, &mut out);
             param_args(param_arg_regs, &mut out);
         }
         MirInstr::PointerStorageTake {
@@ -279,8 +263,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, base, index]);
-            places(base_place.iter_mut(), &mut out);
-            places(index_place.iter_mut(), &mut out);
+            places_regs_mut(base_place.iter_mut(), &mut out);
+            places_regs_mut(index_place.iter_mut(), &mut out);
             if let Some(call) = call {
                 subscript_call(call, &mut out);
             }
@@ -298,8 +282,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, object]);
             out.extend([lower, upper, step].into_iter().flatten());
-            places(object_place.iter_mut(), &mut out);
-            places(arg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(object_place.iter_mut(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
                 subscript_call(call, &mut out);
             }
@@ -318,9 +302,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
                 subscript_arg(arg, &mut out);
             }
-            places(object_place.iter_mut(), &mut out);
-            places(arg_places.iter_mut().flatten(), &mut out);
-            places(kwarg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(object_place.iter_mut(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(kwarg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
                 subscript_call(call, &mut out);
             }
@@ -339,20 +323,20 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             for arg in args {
                 subscript_arg(arg, &mut out);
             }
-            places(receiver_place.iter_mut(), &mut out);
-            places(arg_places.iter_mut().flatten(), &mut out);
-            places(value_place.iter_mut(), &mut out);
+            places_regs_mut(receiver_place.iter_mut(), &mut out);
+            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
+            places_regs_mut(value_place.iter_mut(), &mut out);
             subscript_call(call, &mut out);
         }
         MirInstr::Store { place: target, src } => {
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
             out.push(src);
         }
         MirInstr::StoreRef {
             place: target,
             reference,
         } => {
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
             out.push(reference);
         }
         MirInstr::MakeTuple { dest, elems, .. } | MirInstr::MakeSimd { dest, elems, .. } => {
@@ -376,7 +360,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, value]);
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
         }
         MirInstr::VariantSetInitWith {
             dest,
@@ -385,7 +369,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, factory]);
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
         }
         MirInstr::VariantDeinitWith {
             dest,
@@ -408,13 +392,42 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place: target,
             marker,
         } => {
-            place(target, &mut out);
+            place_regs_mut(target, &mut out);
             out.push(marker);
         }
-        MirInstr::DropPlace { place: target } => place(target, &mut out),
+        MirInstr::DropPlace { place: target } => place_regs_mut(target, &mut out),
         MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
     }
     out
+}
+
+/// The index registers of a place's projections.
+fn place_regs_mut<'a>(place: &'a mut MirPlace, out: &mut Vec<&'a mut Reg>) {
+    for projection in &mut place.proj {
+        if let Proj::Index(reg) = projection {
+            out.push(reg);
+        }
+    }
+}
+
+/// The index registers of every place.
+fn places_regs_mut<'a>(
+    places: impl IntoIterator<Item = &'a mut MirPlace>,
+    out: &mut Vec<&'a mut Reg>,
+) {
+    for item in places {
+        place_regs_mut(item, out);
+    }
+}
+
+/// A call's keyword registers, then those of the places they read.
+fn keyword_regs_mut<'a>(
+    kwargs: &'a mut [(String, Reg)],
+    kwarg_places: &'a mut [Option<MirPlace>],
+    out: &mut Vec<&'a mut Reg>,
+) {
+    out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
+    places_regs_mut(kwarg_places.iter_mut().flatten(), out);
 }
 
 /// Prune `blocks` from block 0 and renumber their local targets; the

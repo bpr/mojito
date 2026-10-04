@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Constructing a type parameter through `Copyable`'s initializer
+  (`Self.T(copy=self.x)` in a generic struct's method, `T(copy=x)` in a
+  generic `def`) copies the source as the bound type does, in the template,
+  in an instance clone, and natively; `Int(copy=x)` names a built-in's copy
+  initializer. `type.construct` carries the initializer's keyword arguments
+  (textual schema 1.19). Such a call used to fail with "Undefined variable
+  'Self'" (`assets/ok/type_param_copy_construction.mojo`).
+
 - A uniquely named `def` keyed on a `DType` binder, on a parameter used as a
   lane width, or on a layout operand (`lane[dt: DType]` constructing
   `Scalar[dt](v)`, `wide[w: Int]` constructing `SIMD[DType.int32, w](v)`,

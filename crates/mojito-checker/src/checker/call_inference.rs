@@ -154,11 +154,21 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let Ty::Param { binder, .. } = ty else {
+        let Ty::Param { binder, bounds, .. } = ty else {
             return Err(TypeError::InvariantViolation(format!(
                 "constructing '{name}' names no type parameter"
             )));
         };
+        if let Some(bound) = bounds.iter().find(|bound| {
+            self.traits
+                .get(bound.as_str())
+                .is_some_and(|info| info.methods.contains_key("__init__"))
+        }) {
+            return Err(TypeError::Unsupported(format!(
+                "constructing type parameter '{name}' through the `__init__` requirement \
+                 of trait '{bound}'"
+            )));
+        }
         let ([], [], [source]) = (param_args, args, kwargs) else {
             return Err(TypeError::BadCall {
                 func: name.to_string(),
@@ -291,7 +301,7 @@ impl Checker {
         {
             return element;
         }
-        if param_args.is_empty() && args.is_empty() {
+        if param_args.is_empty() {
             let type_parameter = self
                 .tparams
                 .iter()
@@ -310,12 +320,13 @@ impl Checker {
                     ..
                 },
             ) = type_parameter
-                && (!kwargs.is_empty()
+                && (!args.is_empty()
+                    || !kwargs.is_empty()
                     || bounds
                         .iter()
                         .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable")))
             {
-                if !kwargs.is_empty() {
+                if !(args.is_empty() && kwargs.is_empty()) {
                     return self.infer_type_param_copy_construction(
                         span, name, ty, param_args, args, kwargs,
                     );

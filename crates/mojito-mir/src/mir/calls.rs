@@ -15,6 +15,10 @@ pub(super) type FieldwiseCallArguments = (
     Vec<Option<MirPlace>>,
 );
 
+/// A call's keyword registers and, aligned with them, the retained caller
+/// place each reads.
+pub(super) type LoweredKeywords = (Vec<(String, Reg)>, Vec<Option<MirPlace>>);
+
 /// Whether a value of this type owns storage that destruction must release:
 /// an aggregate (a struct with a destructor or owning fields, tuple/pack
 /// storage, a variant, or a still-abstract parameter type). Kept textually
@@ -577,7 +581,7 @@ impl Flatten<'_> {
         &mut self,
         arguments: &[mojito_ast::ast::KwArg],
         view_result: bool,
-    ) -> (Vec<(String, Reg)>, Vec<Option<MirPlace>>) {
+    ) -> LoweredKeywords {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for argument in arguments {
@@ -598,7 +602,7 @@ impl Flatten<'_> {
     pub(super) fn copy_construction_keywords(
         &mut self,
         arguments: &[mojito_ast::ast::KwArg],
-    ) -> Option<(Vec<(String, Reg)>, Vec<Option<MirPlace>>)> {
+    ) -> Option<LoweredKeywords> {
         let [argument] = arguments else {
             return None;
         };

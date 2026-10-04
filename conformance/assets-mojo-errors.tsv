@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	502
+# swept-count	503
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -502,6 +502,7 @@ assets/type_error/tuple_unpack_place_element_not_implicitly_copyable.mojo	compil
 assets/type_error/type_argument_origin_function_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'items' argument and passed mutably to 'default' argument in 'pick' call
 assets/type_error/type_argument_origin_method_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'insert' call
 assets/type_error/type_argument_origin_pointer_write_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'value' argument in 'unsafe_write' call
+assets/type_error/type_param_positional_construction.mojo	compile-reject	agree	error: cannot construct 'T' with itself, you can remove the constructor call
 assets/type_error/typelist_bad_predicate.mojo	compile-reject	agree	error: invalid call to 'all': 'all' parameter 'predicate' has '__generator_type[Type: AnyStruct[Int]] Bool' type, but value has type '__generator_type[T: Copyable] AnyType'
 assets/type_error/typelist_index_out_of_range.mojo	runs	subset	the pin runs it;Mojito rejects: out of range
 assets/type_error/typelist_size_removed_alias.mojo	compile-reject	agree	error: 'TypeList[Int, Bool]' value has no attribute 'size'
