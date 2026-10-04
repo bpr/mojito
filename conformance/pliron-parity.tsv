@@ -497,6 +497,7 @@ assets/ok/pointer_type_argument_interior_clone_binder.mojo	main	exe-differential
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
 assets/ok/print_argument_drop_order.mojo	main	exe-differential	sanitized
+assets/ok/print_argument_read_in_place.mojo	main	exe-differential	sanitized
 assets/ok/print_keywords_file.mojo	main	exe-differential	sanitized
 assets/ok/raise_borrowed_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized

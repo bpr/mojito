@@ -616,20 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R264 `print` of a type-parameter-typed value in a generic `def`
-  leaks a copy**
-
-  Problem: `print(y)` with `y: T` inside `def f[T: ImplicitlyCopyable &
-  Writable & Deinitable](x: T)` copies `y` and never destroys the copy, where
-  the pin reads `y` in place.
-  - A `x.copy()` temporary passed to `print` in the same body is never
-    destroyed either; the pin destroys it after the call.
-  - MIR lowers the named argument as a `var.use` copy with no argument place,
-    so nothing owns the copy after `print` returns.
-  - Probe: `conformance/probes/generic_print_parameter_value_leaks_copy.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R23 An in-place update of a container element under a live view of
   it is not rejected**
 

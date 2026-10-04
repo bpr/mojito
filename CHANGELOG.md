@@ -301,6 +301,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `print` reads its arguments as the pin's read collector does: a named value
+  of a type parameter (`print(y)` with `y: T`) is read in place instead of
+  copied and leaked, and an owned temporary (`print(x.copy())`,
+  `print(IC(5))`) is destroyed once `print` returns instead of never, on the
+  VM and natively (`assets/ok/print_argument_read_in_place.mojo`).
+
 - `len(a)` of a homogeneous collector (`def count(*a: IC)`) or of a named
   tuple reads the storage in place, as the pin's `len[T: Sized](value: T)`
   does, where it used to copy every element and never destroy the copies,

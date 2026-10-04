@@ -492,9 +492,11 @@ impl Checker {
             let ty = self.infer(arg)?;
             self.borrow_reference_result_argument(arg);
             self.borrow_nominal_place_argument(arg, &ty);
+            self.borrow_parameter_place_argument(arg, &ty);
             self.borrow_storage_element_argument(arg);
-            // `print` writes through `Writable`, taking no ownership.
-            self.record_unconsumed_temporary(arg);
+            // `print` writes through `Writable`, taking no ownership: it
+            // reads a temporary the caller destroys once it returns.
+            self.record_read_temporary_argument(arg);
             let runtime_ty = default_literal(&ty);
             if runtime_ty != ty {
                 self.record_literal_materializations(arg, &ty, &runtime_ty)?;

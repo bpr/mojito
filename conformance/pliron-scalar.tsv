@@ -497,6 +497,7 @@ assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scala
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/print_argument_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_keywords_file.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_borrowed_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape

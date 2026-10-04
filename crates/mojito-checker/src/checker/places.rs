@@ -82,6 +82,18 @@ impl Checker {
         }
     }
 
+    /// Record an owned temporary a builtin reads, as a `read` parameter
+    /// binds one ([`read_temporary_arguments`]): the caller destroys it once
+    /// the call returns.
+    pub(super) fn record_read_temporary_argument(&self, expr: &Expr) {
+        if !is_place_expr(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
+            self.read_temporary_arguments
+                .borrow_mut()
+                .insert(expr.source_span());
+        }
+        self.record_unconsumed_temporary(expr);
+    }
+
     /// Record a call result the enclosing body owns but cannot destroy: its
     /// type is one of that body's own type parameters, whose bounds do not
     /// prove `Deinitable`. The parameter must be in scope here — the same
