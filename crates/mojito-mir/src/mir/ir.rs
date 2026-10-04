@@ -985,6 +985,13 @@ pub enum MirInstr {
         /// (`bytes[Int]()`) is bound from here by the elaborator; a resolved
         /// call keeps none.
         instantiated_args: Vec<TyArg>,
+        /// The position in `args` of a whole type pack spread into the
+        /// callee's collector (`show(*args)`): the register holds the
+        /// caller's collector, a `VariadicPack` over a pack still a
+        /// parameter, and `arg_places` retains the collector's place when
+        /// the pack is read. The elaborator replaces the argument with the
+        /// bound pack's element places; concrete MIR carries none.
+        spread: Option<usize>,
     },
     /// A call through a runtime function value. Callable parameters use this
     /// instruction instead of treating the parameter name as a global symbol.

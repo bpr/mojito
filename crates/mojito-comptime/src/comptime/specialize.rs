@@ -1164,6 +1164,7 @@ impl Elab<'_> {
             &mut final_body,
             &specialized_params,
             &type_pack_expansions,
+            &self.served_packs,
         );
         let mut specialized_ret = ret.clone();
         if let Some(ret) = &mut specialized_ret {
@@ -2273,7 +2274,7 @@ impl Elab<'_> {
             },
             template.span,
         );
-        expand_pack_spreads_in_stmt(&mut spec, &type_pack_expansions);
+        expand_pack_spreads_in_stmt(&mut spec, &type_pack_expansions, &self.served_packs);
         // Every specialization reuses the template's spans (correct provenance),
         // so checked facts keyed by source location would collide across
         // specializations of one template. Stamp each subtree with a unique
@@ -3267,6 +3268,7 @@ impl Elab<'_> {
                 &mut clone.body,
                 &clone.params,
                 &type_pack_expansions,
+                &self.served_packs,
             );
         }
         substitute_type_bindings_in_block(&mut clone.body, &type_bindings);

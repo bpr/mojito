@@ -5,7 +5,10 @@
 # each call and unrolls the loop per instance. The length is spelled as the
 # pin reads it at compile time: `args.__len__()`, `Ts.length`, or `len(Ts)`.
 # An owned (`var`) collector is served the same way; its pack is destroyed
-# last to first after the last element use.
+# last to first after the last element use. A pack spread whole into another
+# served `def` (`tally(10, *rest)`, `drain(*items^)`) or into `print` is a
+# call MIR carries with the collector as its spread argument; the elaborator
+# passes the bound pack's elements.
 def count[*Ts: Writable](*args: *Ts) -> Int:
     return len(args)
 
@@ -52,8 +55,19 @@ def drain[*Ts: Writable & Movable](var *items: *Ts) -> Int:
     return len(items)
 
 
+def relay[*Ts: Writable](*rest: *Ts) -> Int:
+    print(*rest, sep="/")
+    return tally(10, *rest)
+
+
+def forward_owned[*Ts: Writable & Movable](var *items: *Ts) -> Int:
+    return drain(*items^)
+
+
 def main():
     print(count(), count(1), count("a", 2.5, True))
+    print(relay("r", 2, 3.5))
+    print(forward_owned(True, "owned"))
     print(drain(1, "two", 3.5))
     print(tally(10, "x", 2))
     second(1, "two", 3.0)

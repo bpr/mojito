@@ -21,6 +21,18 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
     }
 }
 
+/// Splice the collector a call spreads whole (`show(*args)`) into its
+/// positional arguments, element by element, so the callee's own matcher
+/// collects them. Only the erased oracle runs a template's spread as it
+/// stands; elaborated MIR carries none.
+pub(super) fn splice_pack_spread(argv: &mut Vec<Value>, spread: Option<usize>) {
+    if let Some(position) = spread
+        && let Some(Value::Tuple(elements)) = argv.get(position).cloned()
+    {
+        argv.splice(position..=position, elements);
+    }
+}
+
 /// Match positional + keyword arguments to a function's parameter slots, producing
 /// the ordered argument values the frame binds — filling defaults and collecting a
 /// trailing `*args` into a `List` according to the shared call contract.

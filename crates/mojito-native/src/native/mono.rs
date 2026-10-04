@@ -8,6 +8,8 @@
 use equiv::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use spread::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -302,6 +304,7 @@ mod infer;
 mod instances;
 mod promote;
 mod specializer;
+mod spread;
 mod substitute;
 mod symbolic;
 mod unify;

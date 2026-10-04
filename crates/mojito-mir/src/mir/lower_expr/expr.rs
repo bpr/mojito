@@ -320,7 +320,7 @@ impl Flatten<'_> {
         d
     }
 
-    pub(super) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
+    pub(in crate::mir) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
         if let ExprKind::Identifier(name) = &inner.kind {
             let var = self.expression_var(name, inner);
             // A `mut` parameter's slot holds the handle to the caller's
@@ -507,6 +507,7 @@ impl Flatten<'_> {
                 ],
                 receiver: None,
                 instantiated_args: Vec::new(),
+                spread: None,
             });
             return d;
         }
@@ -536,6 +537,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         });
         d
     }
@@ -591,6 +593,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         });
         d
     }
@@ -613,6 +616,7 @@ impl Flatten<'_> {
                 param_arg_regs: Vec::new(),
                 receiver: None,
                 instantiated_args: Vec::new(),
+                spread: None,
             });
             return dest;
         }
@@ -633,6 +637,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         });
         d
     }
@@ -673,6 +678,7 @@ impl Flatten<'_> {
                         param_arg_regs: Vec::new(),
                         receiver: None,
                         instantiated_args: Vec::new(),
+                        spread: None,
                     });
                     register
                 }

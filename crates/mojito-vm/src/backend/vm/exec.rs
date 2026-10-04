@@ -366,10 +366,12 @@ impl VmBackend {
                 param_arg_regs,
                 receiver,
                 instantiated_args,
+                spread,
                 ..
             } => {
                 let mut argv: Vec<Value> =
                     args.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                splice_pack_spread(&mut argv, *spread);
                 let mut kw: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))

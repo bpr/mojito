@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R255**.
+Next free ID: **R257**.
 
 ## Ordered Work
 
@@ -60,25 +60,6 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R251 (P3b) A pack spread into or out of a pack-keyed `def` keys a
-  clone**
-
-  Problem: a `def` that spreads its collector (`show(*a)`, `print(*a)`),
-  names the pack in a signature type (`-> Tuple[*Ts]`, `Variant[*Ts]`), or
-  is the callee some call spreads a pack into, is unrolled in the AST per
-  call.
-  - MIR lowering expands no spread: a symbolic pack's spread has no element
-    count, and a clone's concrete spread into a template-served callee is
-    "call spread outside a specialized type pack" (`inference.rs`).
-  - A spread into a served callee is a call whose arguments are the pack's
-    element places; a spread in a result type is `expand_pack_spread` over
-    the bound pack at substitution.
-  - `collect_forward_targets`, `block_spreads_pack`, and
-    `signature_spreads_pack` (`comptime.rs`) keep such a `def` on the
-    cloner.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R252 (P3b) A binding of an element's type under a served pack loop
   keys a clone**
 
@@ -89,6 +70,31 @@ correctness fix to existing behavior is allowed.
   - The binding's slot type names the index, so each unrolled copy needs a
     slot of its own, which is R247's gap at a pack element.
   - Depends on R247.
+  - Model: Fable, Planned.
+
+- [ ] **R255 (P3b) A collector-less pack-keyed `def` whose signature spreads
+  the pack keys a clone**
+
+  Problem: `first_variant[*Ts: Movable]() -> Variant[*Ts]` returning
+  `Variant[*Ts](3)` is cloned per explicit application
+  (`assets/ok/variadic_pack_forwarding_generic_def.mojo`).
+  - The checker would type the body with `Variant[*Ts]` an application of a
+    variadic struct over an open pack, and the elaborator expand the result
+    and the construction with `expand_pack_spread` once the pack is bound.
+  - A `def` with a collector spreads the pack whole into `print` or another
+    served `def` from its template already; a spread in a type is the gap.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R256 (P3b) A pack spread into a pack-keyed method keys a clone**
+
+  Problem: a `def` that spreads its collector into a method's collector
+  (`Sink().take(*a)`) stays on the cloner, since `pack_spread_callees`
+  (`comptime.rs`) admits only `print` and a served `def` as the callee.
+  - Admit a method once its template serves it; the elaborator's expansion
+    (`expand_pack_spreads`) needs the position on `MirInstr::MethodCall`
+    as `Call` carries it.
+  - Depends on R5.
   - Model: Fable, Planned.
 
 - [ ] **R253 (P3b) The cloner's type-pack branch and the `PackElements`

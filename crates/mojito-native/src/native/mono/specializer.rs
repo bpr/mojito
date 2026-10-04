@@ -381,6 +381,7 @@ impl<'a> Specializer<'a> {
             e.function.get_or_insert_with(|| key.template.clone());
             e
         })?;
+        expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
@@ -1300,6 +1301,7 @@ impl<'a> Specializer<'a> {
                             param_arg_regs: Vec::new(),
                             receiver: None,
                             instantiated_args: Vec::new(),
+                            spread: None,
                         },
                     ));
                 }
@@ -1738,6 +1740,7 @@ impl<'a> Specializer<'a> {
                                 param_arg_regs: Vec::new(),
                                 receiver: None,
                                 instantiated_args: Vec::new(),
+                                spread: None,
                             };
                             continue;
                         }

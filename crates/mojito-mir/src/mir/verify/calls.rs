@@ -42,9 +42,20 @@ pub(super) fn verify_call_instruction(
             kwarg_places,
             capture_accesses,
             param_arg_regs,
+            spread,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+            if let Some(position) = spread {
+                verify_pack_spread(
+                    prefix,
+                    cx.function,
+                    *position,
+                    args,
+                    declared(cx.declarations, callee),
+                    errors,
+                );
+            }
             if let Some(declaration) = declared(cx.declarations, callee) {
                 verify_direct_call(
                     prefix,
@@ -166,6 +177,43 @@ pub(super) fn verify_call_instruction(
         }
         MirInstr::CallIndirect { .. } => verify_indirect_call(cx, instruction, errors),
         _ => {}
+    }
+}
+
+/// A whole pack spread into the callee's collector (`show(*args)`): the
+/// position names an argument whose register holds a `VariadicPack` over a
+/// pack still a parameter, which only a template holds, and a declared
+/// callee collects a positional pack. `print` is undeclared and collects.
+fn verify_pack_spread(
+    prefix: &str,
+    function: &MirFunction,
+    position: usize,
+    args: &[Reg],
+    declaration: Option<&MirFunctionDeclaration>,
+    errors: &mut Vec<String>,
+) {
+    let Some(argument) = args.get(position) else {
+        errors.push(format!(
+            "{prefix}: call spreads argument {position} but passes {} arguments",
+            args.len()
+        ));
+        return;
+    };
+    match function.reg_types.get(&argument.0) {
+        Some(Ty::VariadicPack(element))
+            if mojito_types::types::pack_spread(std::slice::from_ref(&**element)).is_some() => {}
+        Some(found) => errors.push(format!(
+            "{prefix}: spread argument {position} has type {found}, not a pack collector"
+        )),
+        None => errors.push(format!("{prefix}: spread argument {position} has no type")),
+    }
+    if let Some(declaration) = declaration
+        && declaration.variadic.is_none()
+    {
+        errors.push(format!(
+            "{prefix}: a pack is spread into '{}', which collects no positional pack",
+            declaration.lowered_name
+        ));
     }
 }
 

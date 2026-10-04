@@ -108,6 +108,9 @@ impl Flatten<'_> {
         expression: &Expr,
         view_result: bool,
     ) -> (Reg, Option<MirPlace>) {
+        if let ExprKind::Spread(operand) = &expression.kind {
+            return self.lower_pack_spread_argument(expression, operand);
+        }
         let adjustments = self.checked_adjustments(expression);
         // A `^` the checker bound to a read parameter lends its place like a
         // plain read argument.
@@ -430,6 +433,7 @@ impl Flatten<'_> {
                         param_arg_regs: Vec::new(),
                         receiver: None,
                         instantiated_args: Vec::new(),
+                        spread: None,
                     });
                     dest
                 }
@@ -516,6 +520,40 @@ impl Flatten<'_> {
             place: place.clone(),
         });
         value
+    }
+
+    /// A whole pack spread into a callee's collector (`show(*args)`,
+    /// `show(*args^)`): the caller's collector, read in place and retained
+    /// as the argument's place, or moved out of its slot when transferred.
+    /// The call records the position (`MirInstr::Call::spread`) and the
+    /// elaborator expands it into the bound pack's element places. Any other
+    /// operand is the unexpanded spread the expression lowering rejects.
+    fn lower_pack_spread_argument(
+        &mut self,
+        expression: &Expr,
+        operand: &Expr,
+    ) -> (Reg, Option<MirPlace>) {
+        if let ExprKind::Transfer(moved) = &operand.kind
+            && matches!(moved.kind, ExprKind::Identifier(_))
+        {
+            return (self.transfer(operand, moved), None);
+        }
+        let Some(place) = self
+            .simple_place(operand)
+            .filter(|place| matches!(place.ty, Some(Ty::VariadicPack(_))))
+        else {
+            return (self.expr(expression), None);
+        };
+        let value = self.fresh_typed(
+            operand.source_span(),
+            Some(place.root),
+            place.ty.clone().unwrap_or(Ty::Error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: value,
+            place: place.clone(),
+        });
+        (value, Some(place))
     }
 
     /// `view_result`: see [`Self::borrows_view_result`].

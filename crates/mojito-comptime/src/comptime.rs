@@ -1144,7 +1144,7 @@ pub fn elaborate_prepared(
         specializable: collect_specializable(program, &bound_generics),
         bound_generics,
         pack_generics,
-        forward_targets: collect_forward_targets(program),
+        served_packs: served_pack_defs(program),
         comptime_generics: collect_comptime_generic_templates(program),
         dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
@@ -1580,70 +1580,92 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
 }
 
 /// Whether a top-level `def` keyed on a type pack is served by its template:
-/// every compile-time parameter is a type parameter, the pack among them;
-/// the collector is read or owned (`var *args`, destroyed last to first
-/// after its last element use; an element transferred out by subscript is
-/// rejected, as the pin rejects it, since the collector is a `VariadicPack`);
-/// no signature type and no call spreads the pack whole (`Tuple[*Ts]`,
-/// `other(*args)`), which only an instance expands, and no caller spreads
-/// a pack into the `def` (`forward_targets`), since a clone's whole-pack
-/// forward binds the callee's clone; no binding declared in a served loop
-/// takes an element's type, which would need a slot per unrolled copy; and
-/// the body keys no clone. The check types such a body once, with the
-/// collector a pack of the symbolic `Ts` and each `args[i]` the dependent
-/// `Ts[i]`, and the elaborator below MIR binds the pack from the call.
-fn pack_def_template_served(statement: &Stmt, forward_targets: &HashSet<String>) -> bool {
+/// its name is among [`served_pack_defs`].
+fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) -> bool {
+    matches!(&statement.kind, StmtKind::Def { name, .. } if served_packs.contains(name))
+}
+
+/// The names of the pack-keyed top-level `def`s the template serves. Every
+/// declaration of the name passes the shape test ([`pack_def_shape_served`]),
+/// and every callee a body spreads its pack into is `print` or a served name
+/// too, by fixpoint: a served body's spread is a call of the callee's
+/// template, which the elaborator expands into the bound pack's elements, so
+/// a spread into a cloned callee (a constructor, a method, a `def` the
+/// template does not serve) keeps the spreading `def` on the cloner. An
+/// overloaded name is served or cloned whole, since a forward (`tally(*rest)`)
+/// may bind any of its declarations.
+fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
+    let mut spreads: HashMap<String, Vec<String>> = HashMap::new();
+    let mut cloned: HashSet<String> = HashSet::new();
+    for statement in program {
+        let StmtKind::Def { name, .. } = &statement.kind else {
+            continue;
+        };
+        if !pack_keyed_declaration(statement) {
+            continue;
+        }
+        match pack_def_shape_served(statement) {
+            Some(callees) => spreads.entry(name.clone()).or_default().extend(callees),
+            None => {
+                cloned.insert(name.clone());
+            }
+        }
+    }
+    let mut served: HashSet<String> = spreads
+        .keys()
+        .filter(|name| !cloned.contains(*name))
+        .cloned()
+        .collect();
+    loop {
+        let before = served.len();
+        let kept: HashSet<String> = served
+            .iter()
+            .filter(|name| {
+                spreads[*name]
+                    .iter()
+                    .all(|callee| callee == "print" || served.contains(callee))
+            })
+            .cloned()
+            .collect();
+        served = kept;
+        if served.len() == before {
+            return served;
+        }
+    }
+}
+
+/// Whether a pack-keyed `def`'s own shape lets its template serve it, and
+/// the callees its body spreads its pack into when so: every compile-time
+/// parameter is a type parameter, the pack among them; the collector is read
+/// or owned (`var *args`, destroyed last to first after its last element use;
+/// an element transferred out by subscript is rejected, as the pin rejects
+/// it, since the collector is a `VariadicPack`); every spread of the pack is
+/// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); no
+/// binding declared in a served loop takes an element's type, which would
+/// need a slot per unrolled copy; and the body keys no clone. The check types
+/// such a body once, with the collector a pack of the symbolic `Ts` and each
+/// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
+/// pack from the call.
+fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
     let StmtKind::Def {
         name,
         type_params,
         params,
-        ret,
         body,
         ..
     } = &statement.kind
     else {
-        return false;
+        return None;
     };
     let packs = def_pack_names(type_params, params);
-    pack_keyed_declaration(statement)
-        && !forward_targets.contains(name)
-        && type_params.iter().all(|parameter| {
-            matches!(
-                classify_ct_param(parameter, type_params, name),
-                Some(ParamDecl::Type { .. })
-            )
-        })
-        && !signature_spreads_pack(params, ret.as_ref())
-        && !block_spreads_pack(body, &packs)
-        && !loop_binds_pack_element(body, &packs, false)
-        && !def_body_keys_specialization(body, &packs)
-}
-
-/// The names every call of the program spreads an argument into
-/// (`other(*args)`): a type-pack `def` among them keeps its clone, since the
-/// forwarding clone binds the callee's clone whole.
-fn collect_forward_targets(program: &[Stmt]) -> HashSet<String> {
-    struct Finder {
-        targets: HashSet<String>,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if let ExprKind::Call { name, args, .. } = &expr.kind
-                && args
-                    .iter()
-                    .any(|argument| matches!(&argument.kind, ExprKind::Spread(_)))
-            {
-                self.targets.insert(name.clone());
-            }
-        }
-    }
-
-    let mut finder = Finder {
-        targets: HashSet::new(),
-    };
-    mojito_ast::visit::walk_block(&mut finder, program);
-    finder.targets
+    let shape = type_params.iter().all(|parameter| {
+        matches!(
+            classify_ct_param(parameter, type_params, name),
+            Some(ParamDecl::Type { .. })
+        )
+    }) && !loop_binds_pack_element(body, &packs, false)
+        && !def_body_keys_specialization(body, &packs);
+    shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
 
 /// Whether a binding declared under a `comptime for` of `stmts` takes an
@@ -1709,61 +1731,51 @@ fn loop_binds_pack_element(stmts: &[Stmt], packs: &HashSet<String>, in_loop: boo
     })
 }
 
-/// Whether a parameter annotation or the result type applies a pack spread
-/// (`Tuple[*Ts]`, `Variant[*Ts]`), beyond the collector's own `*Ts`.
-fn signature_spreads_pack(params: &[FnParam], ret: Option<&Type>) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_type(&mut self, ty: &Type) {
-            if let Type::Named(_, args) = ty {
-                self.found |= args.iter().any(|argument| {
-                    matches!(argument, ParamArg::Type(Type::Named(name, _) | Type::SelfParam(name))
-                        if name.starts_with('*'))
-                });
-            }
-        }
-    }
-
-    let mut finder = Finder { found: false };
-    for ty in params.iter().map(|parameter| &parameter.ty).chain(ret) {
-        mojito_ast::visit::walk_type(&mut finder, ty);
-    }
-    finder.found
-}
-
-/// Whether a block spreads one of `packs` into a call (`other(*args)`), a
-/// nested `def` included.
-fn block_spreads_pack(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
+/// The callees a block spreads one of `packs` into as a call argument
+/// (`other(*args)`, `other(*args^)`), a nested `def` included; `None` when a
+/// spread of one of `packs` stands anywhere else (a method call, a
+/// parameterized call), which only a clone expands.
+fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<String>> {
     struct Finder<'a> {
         packs: &'a HashSet<String>,
-        found: bool,
+        callees: Vec<String>,
+        spreads: usize,
     }
 
     impl mojito_ast::visit::Visitor for Finder<'_> {
         fn visit_expr(&mut self, expr: &Expr) {
-            if let ExprKind::Spread(inner) = &expr.kind {
-                let spread = match &inner.kind {
-                    ExprKind::Identifier(name) => Some(name),
-                    ExprKind::Transfer(moved) => match &moved.kind {
+            match &expr.kind {
+                ExprKind::Spread(inner) => {
+                    let spread = match &inner.kind {
                         ExprKind::Identifier(name) => Some(name),
+                        ExprKind::Transfer(moved) => match &moved.kind {
+                            ExprKind::Identifier(name) => Some(name),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                };
-                self.found |= spread.is_some_and(|name| self.packs.contains(name));
+                    };
+                    self.spreads +=
+                        usize::from(spread.is_some_and(|name| self.packs.contains(name)));
+                }
+                ExprKind::Call { name, args, .. } => {
+                    self.callees.extend(
+                        args.iter()
+                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
+                            .map(|_| name.clone()),
+                    );
+                }
+                _ => {}
             }
         }
     }
 
     let mut finder = Finder {
         packs,
-        found: false,
+        callees: Vec::new(),
+        spreads: 0,
     };
     mojito_ast::visit::walk_block(&mut finder, stmts);
-    finder.found
+    (finder.callees.len() == finder.spreads).then_some(finder.callees)
 }
 
 fn collect_reference_origin_parameters(
@@ -2344,8 +2356,8 @@ struct CtStruct<'a> {
 /// its compile-time arguments. This predicate is intentionally independent of
 /// the top-level registry: nested generic pack functions need the same delayed
 /// elaboration even though their lexical specialization happens later.
-fn is_specializable_declaration(statement: &Stmt, forward_targets: &HashSet<String>) -> bool {
-    is_specializable_declaration_in(statement, &|_| false, forward_targets)
+fn is_specializable_declaration(statement: &Stmt, served_packs: &HashSet<String>) -> bool {
+    is_specializable_declaration_in(statement, &|_| false, served_packs)
 }
 
 /// The registry-aware form: `is_value_struct` recognizes a single bound that
@@ -2354,7 +2366,7 @@ fn is_specializable_declaration(statement: &Stmt, forward_targets: &HashSet<Stri
 fn is_specializable_declaration_in(
     statement: &Stmt,
     is_value_struct: &dyn Fn(&str) -> bool,
-    forward_targets: &HashSet<String>,
+    served_packs: &HashSet<String>,
 ) -> bool {
     match &statement.kind {
         StmtKind::Def {
@@ -2370,7 +2382,7 @@ fn is_specializable_declaration_in(
                     || (type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
-                        && !pack_def_template_served(statement, forward_targets))
+                        && !pack_def_template_served(statement, served_packs))
                     // A `[dtype: DType]` parameter keys a clone per call:
                     // source validation checks the template symbolically,
                     // and only a concrete lane executes.
@@ -2428,8 +2440,8 @@ struct Elab<'a> {
     /// deferred call keeps the template as a signature-only stub for the
     /// discovery check.
     pack_generics: HashSet<String>,
-    /// The names some call spreads a pack into ([`collect_forward_targets`]).
-    forward_targets: HashSet<String>,
+    /// The pack-keyed `def`s the template serves ([`served_pack_defs`]).
+    served_packs: HashSet<String>,
     /// The subset of `specializable` specialized only for its compile-time
     /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
     /// A call that omits a parameter consults the checker-recorded
@@ -3015,14 +3027,14 @@ fn collect_specializable<'a>(
             _ => None,
         })
         .collect();
-    let forward_targets = collect_forward_targets(program);
+    let served_packs = served_pack_defs(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
             && (is_specializable_declaration_in(
                 s,
                 &|bound| struct_names.contains(bound),
-                &forward_targets,
+                &served_packs,
             ) || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
@@ -3056,12 +3068,12 @@ fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
             families.entry(name.clone()).or_default().push(statement);
         }
     }
-    let forward_targets = collect_forward_targets(program);
+    let served_packs = served_pack_defs(program);
     families.retain(|_, declarations| {
         declarations.len() > 1
             && declarations.iter().any(|s| {
                 comptime_keyed_declaration(s)
-                    || (pack_keyed_declaration(s) && !pack_def_template_served(s, &forward_targets))
+                    || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
                     || dtype_keyed_declaration(s)
             })
     });
@@ -3268,12 +3280,11 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
 /// ([`collect_overload_families`]), whose request path tells its declarations
 /// apart, since overload selection is the checker's.
 fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let forward_targets = collect_forward_targets(program);
+    let served_packs = served_pack_defs(program);
     program
         .iter()
         .filter(|statement| {
-            pack_keyed_declaration(statement)
-                && !pack_def_template_served(statement, &forward_targets)
+            pack_keyed_declaration(statement) && !pack_def_template_served(statement, &served_packs)
         })
         .filter_map(|statement| match &statement.kind {
             StmtKind::Def { name, .. } => Some(name.clone()),
@@ -3349,7 +3360,7 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
 /// selection is the checker's.
 fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
-    let forward_targets = collect_forward_targets(program);
+    let served_packs = served_pack_defs(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -3362,7 +3373,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
             let StmtKind::Def { params, .. } = &statement.kind else {
                 return None;
             };
-            if is_specializable_declaration(statement, &forward_targets)
+            if is_specializable_declaration(statement, &served_packs)
                 || def_counts[name.as_str()] != 1
             {
                 return None;
@@ -3546,7 +3557,7 @@ impl<'a> Elab<'a> {
             return false;
         };
         self.overload_families.contains_key(name)
-            && !is_specializable_declaration(statement, &self.forward_targets)
+            && !is_specializable_declaration(statement, &self.served_packs)
     }
 
     /// Whether `name` is an overloaded template family: a call to it

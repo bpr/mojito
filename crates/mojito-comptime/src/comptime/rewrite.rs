@@ -84,18 +84,20 @@ pub(super) fn materialize_expression(expr: &Expr, consts: &HashMap<String, CtVal
 /// no nested binders, so they use a one-scope rewriter; bodies use the scoped
 /// entry points below.
 pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>>) {
-    PackRewriter::new(packs).expand_type(ty);
+    PackRewriter::new(packs, &HashSet::new()).expand_type(ty);
 }
 
 /// Expand pack operations in one specialized function body. Runtime pack
 /// identity comes from the already-specialized `$pack[...]` parameter type, not
-/// from a name-to-length side table.
+/// from a name-to-length side table. `served_callees` are the pack-keyed
+/// `def`s the template serves, into which a spread expands element by element.
 pub(super) fn expand_pack_spreads_in_function_body(
     statements: &mut [Stmt],
     parameters: &[FnParam],
     type_packs: &HashMap<String, Vec<Type>>,
+    served_callees: &HashSet<String>,
 ) {
-    let mut rewriter = PackRewriter::new(type_packs);
+    let mut rewriter = PackRewriter::new(type_packs, served_callees);
     rewriter.declare_parameters(parameters);
     rewriter.expand_block(statements);
 }
@@ -106,8 +108,9 @@ pub(super) fn expand_pack_spreads_in_function_body(
 pub(super) fn expand_pack_spreads_in_stmt(
     statement: &mut Stmt,
     type_packs: &HashMap<String, Vec<Type>>,
+    served_callees: &HashSet<String>,
 ) {
-    PackRewriter::new(type_packs).expand_statement(statement);
+    PackRewriter::new(type_packs, served_callees).expand_statement(statement);
 }
 
 pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt {
@@ -780,16 +783,21 @@ struct PackRewriter {
     type_scopes: Vec<HashMap<String, ElabBindingId>>,
     runtime_packs: HashMap<ElabBindingId, usize>,
     type_packs: HashMap<ElabBindingId, Vec<Type>>,
+    /// The pack-keyed `def`s the template serves: a spread into one is the
+    /// call of its template, which binds the pack from the elements, so the
+    /// clone spells the elements where a cloned callee takes the pack whole.
+    served_callees: HashSet<String>,
 }
 
 impl PackRewriter {
-    fn new(type_packs: &HashMap<String, Vec<Type>>) -> Self {
+    fn new(type_packs: &HashMap<String, Vec<Type>>, served_callees: &HashSet<String>) -> Self {
         let mut rewriter = Self {
             next_binding: 0,
             value_scopes: vec![HashMap::new()],
             type_scopes: vec![HashMap::new()],
             runtime_packs: HashMap::new(),
             type_packs: HashMap::new(),
+            served_callees: served_callees.clone(),
         };
         let mut packs: Vec<_> = type_packs
             .iter()
@@ -1414,10 +1422,12 @@ impl PackRewriter {
                     self.expand_expression(&mut argument.value);
                 }
                 // `print` is compiler-known and binds a forwarded pack as its
-                // elements, as a tuple construction does.
+                // elements, as a tuple construction does, and so does a
+                // template-served `def`, whose template the call binds.
                 if name == "__RuntimeTuple"
                     || name == "Tuple"
-                    || (name == "print" && self.resolve_value(name).is_none())
+                    || ((name == "print" || self.served_callees.contains(name.as_str()))
+                        && self.resolve_value(name).is_none())
                 {
                     *args = self.expand_tuple_spread_arguments(std::mem::take(args));
                 }

@@ -20,7 +20,7 @@ impl Elab<'_> {
         is_specializable_declaration_in(
             statement,
             &|name| self.structs.contains_key(name),
-            &self.forward_targets,
+            &self.served_packs,
         )
     }
 

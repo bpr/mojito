@@ -459,6 +459,7 @@ pub(super) fn substitute_instruction(
                 param_arg_regs: Vec::new(),
                 receiver: None,
                 instantiated_args: Vec::new(),
+                spread: None,
             };
         }
         CallIndirect {

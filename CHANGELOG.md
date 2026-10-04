@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pack-keyed `def` that spreads its pack whole into `print` or into
+  another served `def` (`show(*a)`, `tally(10, *rest)`, `drain(*items^)`)
+  is served by its template: MIR carries the call with the collector as its
+  spread argument (`MirInstr::Call::spread`, textual schema 1.17), the
+  ownership analysis sees the collector lent or moved whole, and the
+  elaborator replaces the argument with the bound pack's element places
+  before binding the callee, on the VM and natively; the erased oracle
+  splices the collector at the call. A `def` is served when every callee it
+  spreads into is, by fixpoint, and a clone that spreads its bound pack into
+  a served `def` passes the elements itself (`assets/ok/pack_template_served.mojo`'s
+  `relay` and `forward_owned`, `assets/ok/pack_forwarding_print.mojo`,
+  `assets/ok/pack_argument_destroyed_after_call.mojo`,
+  `assets/ok/pack_overload_sibling_forward.mojo`).
 - A pack-keyed `def` with an owned `var` collector is served by its
   template, as one with a read collector is: the body is checked once with
   the collector a `VariadicPack` of the symbolic `Ts`, each element is read

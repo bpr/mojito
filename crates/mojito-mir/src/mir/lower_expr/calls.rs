@@ -47,6 +47,7 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         Some(dest)
@@ -548,6 +549,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         });
         Some(dest)
     }

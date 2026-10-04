@@ -299,6 +299,13 @@ impl Decoder {
                     .ok()
                     .map(|found| self.ty_args(found))
                     .unwrap_or_default(),
+                // Schema 1.17 records the position of a whole pack spread
+                // into the callee's collector; an older artifact carries
+                // none.
+                spread: self
+                    .field(fields, "spread")
+                    .ok()
+                    .and_then(|found| self.option_uint(found)),
             }),
             "call.indirect" => Some(MirInstr::CallIndirect {
                 dest: self.req(value, fields, "dest", Self::reg)?,

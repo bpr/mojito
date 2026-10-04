@@ -495,9 +495,9 @@ for the pruning. Every other `comptime for` — over a list, a pack's
 elements themselves, a reflection query, or with a local `comptime` binding
 in its body, and every one outside a generic `def` — is unrolled in the AST
 as before. A type pack crosses the waist the same way: a pack-keyed `def`
-the template serves (`pack_def_template_served`: a read collector, no spread
-of the pack in a call or a signature type, no caller spreading a pack into
-it, no element-typed binding under the loop) keeps its body; the checker
+the template serves (`served_pack_defs`: a read or owned collector, every
+spread of the pack a call argument into `print` or another served `def`, no
+element-typed binding under the loop) keeps its body; the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
@@ -507,7 +507,15 @@ MIR records the elements the checker solved for the call
 binds the pack whole (`bind_pack`: the `RuntimePack` every spelling of the
 pack substitutes to, and the element tuple its parameter expressions fold
 under), so the loop's trip count and each copy's element type close at
-unrolling and the instance is named by its elements.
+unrolling and the instance is named by its elements. A pack spread whole
+into another served `def` or into `print` (`show(*args)`, `drain(*args^)`)
+is a call whose spread argument is the collector itself, read in place or
+moved, at the position `MirInstr::Call::spread` names; the ownership
+analysis sees the whole collector lent or moved, and the elaborator
+(`expand_pack_spreads`) replaces the argument with one place read or move
+per element of the bound pack before it binds the callee, so concrete MIR
+carries no spread. A clone that spreads its bound pack into a served `def`
+spells the elements itself (`PackRewriter::served_callees`).
 
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a

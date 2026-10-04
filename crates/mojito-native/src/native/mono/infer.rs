@@ -175,6 +175,14 @@ impl Specializer<'_> {
         // to a parametric caller, which unification leaves as it stands.
         for (decl, argument) in declaration.param_decls.iter().zip(instantiated) {
             match (decl, argument) {
+                // A pack the caller forwarded whole (`show(*args)`) was
+                // recorded as the caller's own pack, which substitution has
+                // bound to its elements.
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements)))
+                    if !elements.iter().any(is_symbolic) =>
+                {
+                    bind_pack(&decl.binder(), elements.clone(), &mut bindings);
+                }
                 (ParamDecl::Type { .. }, TyArg::Ty(ty)) if !is_symbolic(ty) => {
                     bind_type(&decl.binder(), ty, &mut bindings).map_err(|e| {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))

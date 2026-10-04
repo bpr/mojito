@@ -613,9 +613,15 @@ branch for the class is deleted, and so is its certificate class.
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's
   length as a loop bound cross the waist, and the elaborator binds the pack
   from the call's recorded elements; an owned pack is destroyed last to
-  first after its last element use. The spreads and the element-typed
-  binding keep the clone (R251–R252), and the certificate class waits on
-  them and on the methods (R253).
+  first after its last element use. The third landed 2026-10-03: a pack
+  spread whole into `print` or another served `def` crosses the waist as
+  the call's spread argument (`MirInstr::Call::spread`, schema 1.17), which
+  the elaborator expands into the bound pack's element places, and a
+  spreading `def` is served when every callee it spreads into is. A
+  collector-less signature spread (`-> Variant[*Ts]`) and a spread into a
+  method still key a clone (R255, R256), the element-typed binding keeps
+  the clone (R252), and the certificate class waits on them and on the
+  methods (R253).
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
   only of a concrete type, and a compile-time layout query names the target
   it is answered for. A concrete type does not make layout independent of

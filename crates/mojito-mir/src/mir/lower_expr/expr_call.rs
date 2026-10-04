@@ -594,6 +594,9 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver: None,
             instantiated_args,
+            spread: args
+                .iter()
+                .position(|argument| matches!(argument.kind, ExprKind::Spread(_))),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);
@@ -794,6 +797,7 @@ impl Flatten<'_> {
                 param_arg_regs,
                 receiver,
                 instantiated_args: Vec::new(),
+                spread: None,
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return dest;

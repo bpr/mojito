@@ -1118,11 +1118,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
-- A type pack the template serves: `pack_def_template_served`,
-  `def_pack_names`, `collect_forward_targets`, `block_spreads_pack`,
-  `signature_spreads_pack`, and `loop_binds_pack_element` (`comptime.rs`)
-  decide it, and `comptime_for_is_template_served` admits a pack's length
-  as a bound; `Checker::pack_length_binder`/`pack_length_query`
+- A type pack the template serves: `served_pack_defs` (a fixpoint over
+  `pack_def_shape_served`, `pack_spread_callees`, `def_pack_names`, and
+  `loop_binds_pack_element`, `comptime.rs`) names the served `def`s and
+  `pack_def_template_served` reads it; `PackRewriter::served_callees`
+  (`comptime/rewrite.rs`) spells a clone's spread into a served callee
+  element by element; `comptime_for_is_template_served` admits a pack's
+  length as a bound; a whole-pack spread is `MirInstr::Call::spread`
+  (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
+  `verify/calls.rs`; `splice_pack_spread`, `backend/vm/calls.rs`, for the
+  erased oracle) and `native::mono::spread` (`mono/spread.rs`:
+  `expand_pack_spreads`, after `substitute_function`) replaces it with the
+  bound pack's element places; `Checker::pack_length_binder`/`pack_length_query`
   (`checker/constraints.rs`) read `args.__len__()`, `Ts.length`, and
   `len(Ts)` as `PackQuery::Length` for the loop bound and as a
   `ConstraintOperand::PackLength` in a `comptime if`; a pack element's

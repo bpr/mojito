@@ -641,6 +641,7 @@ impl VmBackend {
             param_arg_regs,
             receiver,
             instantiated_args,
+            spread,
             ..
         } = instruction
         else {
@@ -652,10 +653,11 @@ impl VmBackend {
         let Some(index) = prog.index_of(&func.0) else {
             return Ok(None);
         };
-        let positional: Vec<Value> = args
+        let mut positional: Vec<Value> = args
             .iter()
             .map(|reg| caller.registers[reg.0 as usize].clone())
             .collect();
+        splice_pack_spread(&mut positional, *spread);
         let keywords: Vec<(String, Value)> = kwargs
             .iter()
             .map(|(name, reg)| (name.clone(), caller.registers[reg.0 as usize].clone()))
