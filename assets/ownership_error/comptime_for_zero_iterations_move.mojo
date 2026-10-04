@@ -1,8 +1,9 @@
-# Ledgered divergence (docs/roadmap.md R21): a `comptime for` over
-# `range(0)` consumes `a` in its body, and `a` is used after the loop. The
-# pin decides the body as a loop body with its trip count unknown and
-# rejects the use; Mojito unrolls zero iterations before the move analysis.
-# Rule and probes: docs/notes/comptime-region-ownership.md.
+# A `comptime for` over `range(0)` consumes `a` in its body, and `a` is used
+# after the loop. The body is decided as a loop body with its trip count
+# unknown, as the pin decides it: the template keeps the loop through the
+# move analysis, and the use after it is rejected whatever the trip count
+# (docs/notes/comptime-region-ownership.md, l1).
+# expect: use of uninitialized value 'a'
 struct Thing(Movable):
     var s: String
 

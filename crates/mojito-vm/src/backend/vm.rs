@@ -1054,6 +1054,71 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
 /// parameters: a comparison over value binders, constants, and expressions
 /// of them. A condition over a type binder has no erased reading, since an
 /// erased frame carries no type argument.
+/// The block a `comptime for` header hands control to on the erased path,
+/// which runs the loop as written: the index slot holds the iteration's
+/// value, or nothing before the first and after the last, so the header
+/// steps it from the range the frame's reified parameters decide — a
+/// zero step is an empty range, as `range` is — and clears it on exit.
+fn comptime_for_next(
+    header: &MirTerm,
+    function: &MirFunction,
+    variables: &mut [Value],
+    comptime: &[(String, Value)],
+) -> Result<usize, RuntimeError> {
+    let MirTerm::ComptimeFor {
+        slot,
+        start,
+        stop,
+        step,
+        body,
+        exit,
+        ..
+    } = header
+    else {
+        return Err(RuntimeError::Unsupported(
+            "a compile-time loop header was expected".to_string(),
+        ));
+    };
+    let unsupported = |what: &str| {
+        RuntimeError::Unsupported(format!(
+            "the erased oracle cannot decide the comptime for {what} `{start}..{stop}:{step}`"
+        ))
+    };
+    let named: HashMap<String, CtValue> = function
+        .var_names
+        .iter()
+        .zip(variables.iter())
+        .chain(comptime.iter().map(|(name, value)| (name, value)))
+        .filter_map(|(name, value)| runtime_value_as_ct(value).map(|value| (name.clone(), value)))
+        .collect();
+    let bound = |expr: &mojito_types::param_expr::ParamExpr, what: &str| {
+        let value = expr.evaluate_named(&named).map_err(|_| unsupported(what))?;
+        mojito_types::param_expr::fold::integer_value(&value)
+            .and_then(|value| value.to_i64())
+            .ok_or_else(|| unsupported(what))
+    };
+    let (start, stop, step) = (
+        bound(start, "start")?,
+        bound(stop, "stop")?,
+        bound(step, "step")?,
+    );
+    let slot = *slot as usize;
+    let next = match &variables[slot] {
+        Value::Int(current) => current
+            .checked_add(step)
+            .ok_or_else(|| unsupported("index"))?,
+        _ => start,
+    };
+    let continues = (step > 0 && next < stop) || (step < 0 && next > stop);
+    if continues {
+        variables[slot] = Value::Int(next);
+        Ok(*body)
+    } else {
+        variables[slot] = Value::None;
+        Ok(*exit)
+    }
+}
+
 fn comptime_branch_holds(
     cond: &GenericConstraint,
     function: &MirFunction,

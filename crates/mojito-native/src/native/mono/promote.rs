@@ -167,6 +167,7 @@ fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
                     *var = renumber(*var);
                 }
             }
+            MirTerm::ComptimeFor { slot, .. } => *slot = renumber(*slot),
             MirTerm::Jump(_)
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }

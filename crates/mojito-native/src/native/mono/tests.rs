@@ -995,6 +995,70 @@ fn trivial_value_and_pack_clauses_are_decided() {
 }
 
 #[test]
+fn comptime_for_unrolls_one_copy_per_iteration() {
+    // The template carries the loop as a `comptime_for` header; each instance
+    // replaces it with one copy of the body per index value, the reads of the
+    // index folded, and keeps no header.
+    let source = "def total[n: Int]() -> Int:\n\
+         \x20   var sum = 0\n\
+         \x20   comptime for i in range(n):\n\
+         \x20       sum += i\n\
+         \x20   return sum\n\
+         def main():\n\
+         \x20   print(total[3]())\n";
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile the loop");
+    let comptime_fors = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
+            .count()
+    };
+    let additions = |function: &MirFunction| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter(|instruction| matches!(instruction, MirInstr::BinOp { .. }))
+            .count()
+    };
+    let template = compiled
+        .drop_elaborated_mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "total")
+        .map(|(_, function)| function)
+        .expect("the template is lowered");
+    assert_eq!(comptime_fors(template), 1);
+    assert_eq!(additions(template), 1);
+    let specialized = specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize the loop");
+    let instance = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("total$"))
+        .map(|(_, function)| function)
+        .expect("the instance is emitted");
+    assert_eq!(comptime_fors(instance), 0);
+    assert_eq!(additions(instance), 3, "one body copy per iteration");
+    assert!(
+        instance.blocks.iter().flat_map(|block| &block.instrs).all(
+            |instruction| !matches!(instruction, MirInstr::UseVar { var, .. }
+                if instance.var_names.get(*var as usize).is_some_and(|name| name == "i"))
+        ),
+        "every read of the index folds to its value"
+    );
+}
+
+#[test]
 fn comptime_branch_selection_keeps_the_taken_arm() {
     // The template carries the region as a `comptime_branch`; each instance
     // keeps the taken arm alone, with the destroy drop elaboration placed at

@@ -1434,10 +1434,48 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     })
 }
 
-/// Whether a block directly contains a `comptime for`, under the same scope
-/// rule as [`block_has_comptime`].
-fn block_has_comptime_for(stmts: &[Stmt]) -> bool {
-    block_has_statement(stmts, |kind| matches!(kind, StmtKind::ComptimeFor { .. }))
+/// Whether a block directly contains a `comptime for` its template does not
+/// serve, under the same scope rule as [`block_has_comptime`].
+fn block_has_unkept_comptime_for(stmts: &[Stmt]) -> bool {
+    block_has_statement(stmts, |kind| {
+        matches!(kind, StmtKind::ComptimeFor { iter, body, .. }
+            if !comptime_for_is_template_served(iter, body))
+    })
+}
+
+/// Whether a generic `def`'s template serves a `comptime for`: the iterable
+/// is a `range` whose bounds are parameter expressions — literals, names,
+/// `Self.` members, and arithmetic over them — and the body declares no
+/// `comptime` binding of its own, which the elaborator above MIR would have
+/// to evaluate with the index unknown. Such a loop is checked once with the
+/// index symbolic, carried by MIR as a loop header, and unrolled below MIR;
+/// any other — over a compile-time list, a pack, a reflection query — is
+/// unrolled in the AST, on a clone per instantiation.
+pub(super) fn comptime_for_is_template_served(iter: &Expr, body: &[Stmt]) -> bool {
+    fn parameter_shaped(expression: &Expr) -> bool {
+        match &expression.kind {
+            ExprKind::Int(_) | ExprKind::Identifier(_) => true,
+            ExprKind::Member { object, .. } => {
+                matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+            }
+            ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner),
+            ExprKind::Infix(
+                InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Pow
+                | InfixOp::Shl,
+                left,
+                right,
+            ) => parameter_shaped(left) && parameter_shaped(right),
+            _ => false,
+        }
+    }
+    matches!(&iter.kind, ExprKind::Call { name, args, .. }
+        if name == "range" && !args.is_empty() && args.iter().all(parameter_shaped))
+        && !block_has_statement(body, |kind| matches!(kind, StmtKind::Comptime { .. }))
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
@@ -1475,12 +1513,13 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
 }
 
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
-/// unrolls a `comptime for`, or asserts a `rebind` over its parameters. A
-/// `comptime if` does not: the template keeps the region, the check types
-/// every arm with the binders symbolic, and the elaborator below MIR
-/// selects.
+/// unrolls a `comptime for` over a compile-time list or a pack, or asserts
+/// a `rebind` over its parameters. A `comptime if` and a `comptime for`
+/// over a `range` do not: the template keeps the region, the check types
+/// it with the binders symbolic, and the elaborator below MIR selects or
+/// unrolls.
 fn def_body_keys_specialization(stmts: &[Stmt]) -> bool {
-    block_has_comptime_for(stmts) || block_has_rebind(stmts)
+    block_has_unkept_comptime_for(stmts) || block_has_rebind(stmts)
 }
 
 fn collect_reference_origin_parameters(

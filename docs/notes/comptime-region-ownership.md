@@ -101,9 +101,17 @@ and the elaborator decides the condition under the instance's bindings,
 keeps the taken arm with the destroys placed at its entry, and prunes the
 other arm. `c2`, `c4`, and `c5` reject and are `assets/ownership_error/`
 fixtures; `c3` destroys `a` at the `else` arm's entry, the pin's order;
-`c7`'s leak is the raise-path entry of the roadmap (R20), unchanged. A `comptime
-for` is still unrolled first (roadmap R21), and the `--comptime-regions
-keep` flag below is gone: what it reproduced is the production path.
+`c7`'s leak is the raise-path entry of the roadmap (R20), unchanged. A
+`comptime for` over a `range` in a generic `def` follows the rule the same
+day: the template keeps the loop, the checker types the body once with the
+index symbolic, MIR carries it as the `ComptimeFor` header whose successors
+are the body and the exit, the move analysis and drop elaboration decide it
+as the loop of the same shape, and the elaborator unrolls it with the drops
+the analysis placed in the body coming with each copy. `l1`, `l2`, and `l3`
+reject and are `assets/ownership_error/` fixtures; `l4`, `l5`, and `l6`
+match the pin's output, destructor order included, as
+`assets/ownership_ok/` fixtures; `l7` rejects. The `--comptime-regions keep`
+flag below is gone: what it reproduced is the production path.
 
 ## The experiment (superseded)
 
@@ -130,12 +138,12 @@ path with the rule in force, on the representation of 2026-10-02:
 Every probe's verdict then matches the pin's, and every accepted probe's
 output matches the pin's byte for byte, except `c7` (the raise leak above,
 present with and without the experiment) and `l6`/`l7`, where the checker's
-symbolic validation of the template rejects a compile-time `break` and
-`continue` before elaboration (`'continue' outside of a loop`), which the
-`comptime for` entry of the roadmap (R1) covers. The fold changes no output: the
+symbolic validation of the day rejected a compile-time `break` and
+`continue` before elaboration (`'continue' outside of a loop`); the MIR
+loop form landed on 2026-10-03 honors both. The fold changes no output: the
 `--erased` run of each probe prints the same lines.
 
-## What P3a took and P3b takes from this
+## What P3a and P3b took from this
 
 - The structured compile-time conditional and loop lower to HIR as a branch
   and a loop whose condition is a parameter expression, not a value. The

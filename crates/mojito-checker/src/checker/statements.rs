@@ -1861,16 +1861,15 @@ impl Checker {
             // declaration's parameters symbolic, under source validation and
             // in a template body the executable check keeps: the condition is
             // recorded for the MIR branch, and the elaborator selects. A
-            // `comptime for` reaches the checker only under source
-            // validation; the executable check sees its unrolling, so a
-            // surviving loop is an elaboration defect.
+            // `comptime for` is checked once with its index symbolic the same
+            // way: a kept `range` loop records its bounds for the MIR loop
+            // header, and the elaborator unrolls.
             StmtKind::ComptimeIf { branches, orelse } => {
                 self.check_conditional(branches, orelse.as_deref(), ret, in_loop, true)
             }
-            StmtKind::ComptimeFor { var, iter, body } if self.source_validation => {
-                self.check_comptime_for(var, iter, body, ret, in_loop)
+            StmtKind::ComptimeFor { var, iter, body } => {
+                self.check_comptime_for(stmt, var, iter, body, ret)
             }
-            StmtKind::ComptimeFor { .. } => Err(TypeError::Unsupported("comptime for".to_string())),
             // A kept compile-time block is straight-line code, so what it
             // initializes stays initialized after it.
             StmtKind::Scope(body) => self.check_scoped_block(body, ret, in_loop),

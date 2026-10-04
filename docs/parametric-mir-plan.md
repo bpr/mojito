@@ -599,7 +599,15 @@ branch for the class is deleted, and so is its certificate class.
   entries.
 - **P3b. `comptime for` over a value index**, then **heterogeneous pack
   expansion**. They share the loop form and differ in their correctness
-  conditions, so they are two steps.
+  conditions, so they are two steps. The first landed 2026-10-03: MIR
+  carries a `range` loop as the `ComptimeFor` header — the loop's own index
+  binder and three parameter-expression bounds — the ownership analysis
+  decides it as a loop with its trip count unknown, and the elaborator
+  unrolls it under each instance's bindings with the nested loops and the
+  `comptime if`s over the index decided per copy, before substitution. The
+  cloner's class keeps only the loops the template does not serve: over a
+  list, a pack, a reflection query, or with a local `comptime` binding in
+  the body. Schema 1.16.
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
   only of a concrete type, and a compile-time layout query names the target
   it is answered for. A concrete type does not make layout independent of
@@ -693,7 +701,8 @@ regions. Later forms may bump it again (decision D5).
     time on every row.
 - **D5. The MIR text schema.** Decided at P3a (2026-10-03): the bumps are
   allowed, and every earlier minor stays readable. Schema 1.15 carries the
-  `comptime_branch` terminator; the reader accepts 1.0 through 1.15.
+  `comptime_branch` terminator and 1.16 the `comptime_for` header; the
+  reader accepts 1.0 through 1.16.
 
 ## What would stop the plan
 

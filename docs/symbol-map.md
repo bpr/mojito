@@ -1085,6 +1085,40 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 | Pipeline ordering | `compiler.rs` | CLI, architecture doc, compiler tests. |
 | Support status | `docs/features.md` | Roadmap/todo only if future work changes. |
 
+## The compile-time loop (2026-10-03)
+
+- `MirTerm::ComptimeFor { index, slot, start, stop, step, body, exit }`
+  (`mir/ir.rs`) is the `comptime for` header: HIR's
+  `Terminator::ComptimeLoop { iter, var, binding, index, body, exit }`
+  (`hir.rs`, lowered in `Lower::stmt` with the loop variable declared as a
+  `for` variable is), lowered by `Flatten::lower_term` (`mir/lower_stmt.rs`)
+  from the checker's `SemanticAdjustment::ComptimeIteration` (recorded by
+  `Checker::record_comptime_iteration` inside `check_comptime_for`,
+  `checker/comptime_validation.rs`, the bounds compiled by
+  `compile_dependent_ct_expr`), its slot the checked binding's
+  (`binding_var`). `mir.rs::loop_index_scopes` puts each loop's index among
+  the `EnclosingBinders` of its body blocks, so a bracket argument built
+  from it (`g[i]()`) resolves. `verify/scope.rs` (`Scope::declare_loop_indices`)
+  brings the indices into scope and checks the bounds; `verify/concrete.rs`
+  rejects a survivor; the text form is `comptime_for` (schema 1.16).
+- `mir/ir.rs` gained `instruction_regs_mut`, `terminator_regs_mut`,
+  `terminator_targets`, and `terminator_targets_mut`, the register and
+  target visitors a copied block is renumbered through, and
+  `block_successors` is public.
+- `native::mono::unroll` (`mono/unroll.rs`): `unroll_comptime_loops` runs
+  before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
+  pick a loop and its body, `copy_body` appends one finished copy per
+  iteration (fresh registers, `substitute_value_parameter_reads` with the
+  index among the locals, `substitute_blocks_metadata`, nested `unroll_in`,
+  `select_comptime_branches_in`), `retarget` chains the copies, and
+  `forget_registers` drops the dead body's tables. `comptime_for_next`
+  (`backend/vm.rs`) runs the header on the erased path from the index slot.
+- The cloner keys a top-level `def` on a `comptime for` its template does
+  not serve (`comptime_for_is_template_served`, `comptime.rs`) or a `rebind`;
+  `Elab::keep_template_comptime_for` keeps the served loop and
+  `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
+  `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
+
 ## The compile-time branch and the request path (2026-10-03)
 
 - `MirTerm::ComptimeBranch { cond: GenericConstraint, .. }` (`mir/ir.rs`) is
@@ -1111,7 +1145,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
   `FunctionFrame` around a nested materialization. The cloner's
   `comptime if` class is gone: `def_body_keys_specialization` keys a
-  top-level `def` on a `comptime for` or a `rebind` only, and
+  top-level `def` on an unserved `comptime for` or a `rebind` only, and
   `template_serves_binders` admits a scalar value parameter an application
   binds (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Layout` keeps
   a layout constant symbolic through elaboration.

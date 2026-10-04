@@ -342,6 +342,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_overloaded_def",
     "comptime_if_overloaded_def_explicit",
     "comptime_if_template_served",
+    "template_folded_value",
     "type_predicate_comptime_if",
 ];
 

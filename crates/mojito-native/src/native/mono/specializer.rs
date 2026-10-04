@@ -369,12 +369,14 @@ impl<'a> Specializer<'a> {
         let scope = self
             .declarations
             .get(key.template.as_str())
+            .copied()
             .map_or(&[][..], |declaration| &declaration.param_decls);
         let bindings = &Bindings {
             layout: self.layout_oracle(),
             ..bindings.clone()
         };
         default_construct_simd_parameters(&mut function, bindings);
+        self.unroll_comptime_loops(&key.template, &mut function, scope, bindings)?;
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| key.template.clone());
             e
@@ -821,7 +823,7 @@ impl<'a> Specializer<'a> {
 
     /// [`Self::select_comptime_branches`] over one block list and the
     /// regions below it; whether any branch was decided.
-    fn select_comptime_branches_in(
+    pub(super) fn select_comptime_branches_in(
         &mut self,
         template: &str,
         blocks: &mut [MirBlock],

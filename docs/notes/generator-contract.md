@@ -297,7 +297,8 @@ the package list, so neither is reshaped later.
 
 - **Compile-time regions.** A `comptime if` arm and a `comptime for` body
   are checked under assumptions the taken arm supplies. How ownership joins
-  them is its own roadmap entry (R21), and the guarantee above is stated for
+  them is settled (`docs/notes/comptime-region-ownership.md`: as the
+  runtime region of the same shape), and the guarantee above is stated for
   bodies without them.
 - **Value-dependent register types.** Rows 23 and 27 need a type over a
   parameter expression. That is the common type vocabulary entry.

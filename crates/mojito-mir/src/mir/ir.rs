@@ -48,6 +48,366 @@ pub fn prune_unreachable_blocks(function: &mut MirFunction) {
     renumber_escapes(&mut function.blocks, &kept);
 }
 
+/// Every register a terminator reads, mutably.
+pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
+    match term {
+        MirTerm::Branch { cond, .. } => vec![cond],
+        MirTerm::Return(Some(reg))
+        | MirTerm::ReturnWithCleanup {
+            value: Some(reg), ..
+        } => vec![reg],
+        MirTerm::Jump(_)
+        | MirTerm::ComptimeBranch { .. }
+        | MirTerm::ComptimeFor { .. }
+        | MirTerm::Return(None)
+        | MirTerm::ReturnWithCleanup { value: None, .. }
+        | MirTerm::FallOff
+        | MirTerm::EscapeJump { .. } => Vec::new(),
+    }
+}
+
+/// Every block of the same list a terminator names: a `try` region's
+/// escape targets are the enclosing function's and are not among them.
+pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
+    match term {
+        MirTerm::Jump(to) => vec![*to],
+        MirTerm::Branch { then_b, else_b, .. }
+        | MirTerm::ComptimeBranch { then_b, else_b, .. }
+        | MirTerm::ComptimeFor {
+            body: then_b,
+            exit: else_b,
+            ..
+        } => vec![*then_b, *else_b],
+        MirTerm::Return(_)
+        | MirTerm::ReturnWithCleanup { .. }
+        | MirTerm::FallOff
+        | MirTerm::EscapeJump { .. } => Vec::new(),
+    }
+}
+
+/// [`terminator_targets`], mutably.
+pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
+    match term {
+        MirTerm::Jump(to) => vec![to],
+        MirTerm::Branch { then_b, else_b, .. }
+        | MirTerm::ComptimeBranch { then_b, else_b, .. }
+        | MirTerm::ComptimeFor {
+            body: then_b,
+            exit: else_b,
+            ..
+        } => vec![then_b, else_b],
+        MirTerm::Return(_)
+        | MirTerm::ReturnWithCleanup { .. }
+        | MirTerm::FallOff
+        | MirTerm::EscapeJump { .. } => Vec::new(),
+    }
+}
+
+/// Every register an instruction defines or reads, mutably.
+///
+/// The registers of its places and subscript arguments are included, and
+/// none of a `try` region's blocks, which the caller walks itself.
+/// Renumbering a copied block rewrites them all.
+pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
+    fn place<'a>(place: &'a mut MirPlace, out: &mut Vec<&'a mut Reg>) {
+        for projection in &mut place.proj {
+            if let Proj::Index(reg) = projection {
+                out.push(reg);
+            }
+        }
+    }
+    fn places<'a>(places: impl IntoIterator<Item = &'a mut MirPlace>, out: &mut Vec<&'a mut Reg>) {
+        for item in places {
+            place(item, out);
+        }
+    }
+    fn subscript_arg<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
+        match arg {
+            MirSubscriptArg::Index(reg) => out.push(reg),
+            MirSubscriptArg::Slice {
+                lower, upper, step, ..
+            } => out.extend([lower, upper, step].into_iter().flatten()),
+        }
+    }
+    fn param_args<'a>(args: &'a mut [MirParamArg], out: &mut Vec<&'a mut Reg>) {
+        out.extend(args.iter_mut().filter_map(|arg| arg.value.as_mut()));
+    }
+    fn subscript_call<'a>(call: &'a mut MirSubscriptCall, out: &mut Vec<&'a mut Reg>) {
+        param_args(&mut call.param_arg_regs, out);
+    }
+    let mut out = Vec::new();
+    match instruction {
+        MirInstr::EstablishLoans { loans, marker, .. } => {
+            places(loans.iter_mut().map(|loan| &mut loan.place), &mut out);
+            out.push(marker);
+        }
+        MirInstr::InvalidateInteriors { marker, .. } => out.push(marker),
+        MirInstr::MakeRef {
+            dest,
+            place: target,
+        } => {
+            out.push(dest);
+            place(target, &mut out);
+        }
+        MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
+        MirInstr::CopyValue { dest, value } => out.extend([dest, value]),
+        MirInstr::WriteRef { reference, value } => out.extend([reference, value]),
+        MirInstr::MakeClosure { dest, captures, .. } => {
+            out.push(dest);
+            places(
+                captures.iter_mut().map(|capture| &mut capture.place),
+                &mut out,
+            );
+        }
+        MirInstr::KeepAlive { .. }
+        | MirInstr::DropVar { .. }
+        | MirInstr::ConsumeVar { .. }
+        | MirInstr::GetIter { .. }
+        | MirInstr::Unsupported(_)
+        | MirInstr::Try { .. } => {}
+        MirInstr::Const { dest, .. }
+        | MirInstr::ConstructTypeParam { dest, .. }
+        | MirInstr::SizeOf { dest, .. }
+        | MirInstr::TypeName { dest, .. }
+        | MirInstr::HasNext { dest, .. }
+        | MirInstr::Next { dest, .. } => out.push(dest),
+        MirInstr::MaterializeLiteral { dest, value, .. } => out.extend([dest, value]),
+        MirInstr::UseVar { dest, .. } => out.push(dest),
+        MirInstr::MovePlace {
+            dest,
+            place: target,
+        }
+        | MirInstr::LoadPlace {
+            dest,
+            place: target,
+        } => {
+            out.push(dest);
+            place(target, &mut out);
+        }
+        MirInstr::DefVar { src, .. } => out.push(src),
+        MirInstr::UnOp { dest, a, .. } => out.extend([dest, a]),
+        MirInstr::BinOp { dest, a, b, .. } => out.extend([dest, a, b]),
+        MirInstr::Call {
+            dest,
+            args,
+            kwargs,
+            arg_places,
+            kwarg_places,
+            param_arg_regs,
+            ..
+        } => {
+            out.push(dest);
+            out.extend(args.iter_mut());
+            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
+            places(arg_places.iter_mut().flatten(), &mut out);
+            places(kwarg_places.iter_mut().flatten(), &mut out);
+            param_args(param_arg_regs, &mut out);
+        }
+        MirInstr::CallIndirect {
+            dest,
+            callee,
+            args,
+            kwargs,
+            callee_place,
+            arg_places,
+            kwarg_places,
+            param_arg_regs,
+            ..
+        } => {
+            out.extend([dest, callee]);
+            out.extend(args.iter_mut());
+            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
+            places(callee_place.iter_mut(), &mut out);
+            places(arg_places.iter_mut().flatten(), &mut out);
+            places(kwarg_places.iter_mut().flatten(), &mut out);
+            param_args(param_arg_regs, &mut out);
+        }
+        MirInstr::MethodCall {
+            dest,
+            recv,
+            args,
+            kwargs,
+            recv_place,
+            arg_places,
+            kwarg_places,
+            param_arg_regs,
+            ..
+        } => {
+            out.extend([dest, recv]);
+            out.extend(args.iter_mut());
+            out.extend(kwargs.iter_mut().map(|(_, reg)| reg));
+            places(recv_place.iter_mut(), &mut out);
+            places(arg_places.iter_mut().flatten(), &mut out);
+            places(kwarg_places.iter_mut().flatten(), &mut out);
+            param_args(param_arg_regs, &mut out);
+        }
+        MirInstr::PointerStorageTake {
+            dest,
+            pointer,
+            index,
+            ..
+        }
+        | MirInstr::PointerStorageDestroy {
+            dest,
+            pointer,
+            index,
+            ..
+        } => out.extend([dest, pointer, index]),
+        MirInstr::UninitStorage { dest, init } => {
+            out.push(dest);
+            out.extend(init.iter_mut());
+        }
+        MirInstr::UninitStorageTake { dest, storage, .. }
+        | MirInstr::UninitStorageDestroy { dest, storage, .. } => out.extend([dest, storage]),
+        MirInstr::GetField { dest, base, .. } => out.extend([dest, base]),
+        MirInstr::Index {
+            dest,
+            base,
+            index,
+            base_place,
+            index_place,
+            call,
+            ..
+        } => {
+            out.extend([dest, base, index]);
+            places(base_place.iter_mut(), &mut out);
+            places(index_place.iter_mut(), &mut out);
+            if let Some(call) = call {
+                subscript_call(call, &mut out);
+            }
+        }
+        MirInstr::Slice {
+            dest,
+            object,
+            lower,
+            upper,
+            step,
+            object_place,
+            arg_places,
+            call,
+            ..
+        } => {
+            out.extend([dest, object]);
+            out.extend([lower, upper, step].into_iter().flatten());
+            places(object_place.iter_mut(), &mut out);
+            places(arg_places.iter_mut().flatten(), &mut out);
+            if let Some(call) = call {
+                subscript_call(call, &mut out);
+            }
+        }
+        MirInstr::MultiIndex {
+            dest,
+            object,
+            args,
+            object_place,
+            arg_places,
+            kwargs,
+            kwarg_places,
+            call,
+        } => {
+            out.extend([dest, object]);
+            for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
+                subscript_arg(arg, &mut out);
+            }
+            places(object_place.iter_mut(), &mut out);
+            places(arg_places.iter_mut().flatten(), &mut out);
+            places(kwarg_places.iter_mut().flatten(), &mut out);
+            if let Some(call) = call {
+                subscript_call(call, &mut out);
+            }
+        }
+        MirInstr::MultiSet {
+            receiver,
+            receiver_place,
+            args,
+            arg_places,
+            value,
+            value_place,
+            call,
+            ..
+        } => {
+            out.extend([receiver, value]);
+            for arg in args {
+                subscript_arg(arg, &mut out);
+            }
+            places(receiver_place.iter_mut(), &mut out);
+            places(arg_places.iter_mut().flatten(), &mut out);
+            places(value_place.iter_mut(), &mut out);
+            subscript_call(call, &mut out);
+        }
+        MirInstr::Store { place: target, src } => {
+            place(target, &mut out);
+            out.push(src);
+        }
+        MirInstr::StoreRef {
+            place: target,
+            reference,
+        } => {
+            place(target, &mut out);
+            out.push(reference);
+        }
+        MirInstr::MakeTuple { dest, elems, .. } | MirInstr::MakeSimd { dest, elems, .. } => {
+            out.push(dest);
+            out.extend(elems.iter_mut());
+        }
+        MirInstr::MakeVariant { dest, value, .. } => out.extend([dest, value]),
+        MirInstr::VariantIs { dest, variant, .. }
+        | MirInstr::VariantGet { dest, variant, .. }
+        | MirInstr::VariantTake { dest, variant, .. } => out.extend([dest, variant]),
+        MirInstr::VariantSet {
+            dest,
+            place: target,
+            value,
+            ..
+        }
+        | MirInstr::VariantReplace {
+            dest,
+            place: target,
+            value,
+            ..
+        } => {
+            out.extend([dest, value]);
+            place(target, &mut out);
+        }
+        MirInstr::VariantSetInitWith {
+            dest,
+            place: target,
+            factory,
+            ..
+        } => {
+            out.extend([dest, factory]);
+            place(target, &mut out);
+        }
+        MirInstr::VariantDeinitWith {
+            dest,
+            variant,
+            handler,
+            ..
+        } => out.extend([dest, variant, handler]),
+        MirInstr::SimdCast { dest, value, .. } | MirInstr::SimdBitcast { dest, value, .. } => {
+            out.extend([dest, value]);
+        }
+        MirInstr::SimdShuffle {
+            dest, value, other, ..
+        } => {
+            out.extend([dest, value]);
+            out.extend(other.iter_mut());
+        }
+        MirInstr::Raise { src } => out.push(src),
+        MirInstr::Drop { reg } => out.push(reg),
+        MirInstr::ConsumePlace {
+            place: target,
+            marker,
+        } => {
+            place(target, &mut out);
+            out.push(marker);
+        }
+        MirInstr::DropPlace { place: target } => place(target, &mut out),
+        MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
+    }
+    out
+}
+
 /// Prune `blocks` from block 0 and renumber their local targets; the
 /// returned table maps each old index to its new one. Nested regions are
 /// pruned the same way, and their escape targets are left for the caller,
@@ -82,7 +442,12 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
         match &mut block.term {
             MirTerm::Jump(to) => target(to),
             MirTerm::Branch { then_b, else_b, .. }
-            | MirTerm::ComptimeBranch { then_b, else_b, .. } => {
+            | MirTerm::ComptimeBranch { then_b, else_b, .. }
+            | MirTerm::ComptimeFor {
+                body: then_b,
+                exit: else_b,
+                ..
+            } => {
                 target(then_b);
                 target(else_b);
             }
@@ -100,10 +465,16 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
 
 /// The blocks of the same list a block hands control to: its terminator's
 /// targets, and the escape targets of every region it holds.
-fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
+pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
     let mut successors = match &block.term {
         MirTerm::Jump(to) => vec![*to],
-        MirTerm::Branch { then_b, else_b, .. } | MirTerm::ComptimeBranch { then_b, else_b, .. } => {
+        MirTerm::Branch { then_b, else_b, .. }
+        | MirTerm::ComptimeBranch { then_b, else_b, .. }
+        | MirTerm::ComptimeFor {
+            body: then_b,
+            exit: else_b,
+            ..
+        } => {
             vec![*then_b, *else_b]
         }
         MirTerm::Return(_)
@@ -1076,6 +1447,21 @@ pub enum MirTerm {
         cond: Box<GenericConstraint>,
         then_b: MirBlockId,
         else_b: MirBlockId,
+    },
+    /// A `comptime for` header: a loop whose index is the parameter binder
+    /// `index`, read by the body through the slot `slot`, over the range the
+    /// parameter expressions `start`, `stop`, and `step` span. The body's
+    /// back edge jumps here; `exit` follows the loop. Ownership and drops
+    /// treat it as a loop with its trip count unknown; the elaborator unrolls
+    /// it, so concrete MIR carries none.
+    ComptimeFor {
+        index: mojito_types::param_expr::ParamRef,
+        slot: VarId,
+        start: mojito_types::param_expr::ParamExpr,
+        stop: mojito_types::param_expr::ParamExpr,
+        step: mojito_types::param_expr::ParamExpr,
+        body: MirBlockId,
+        exit: MirBlockId,
     },
     Return(Option<Reg>),
     /// Return after evaluating `value`, carrying structured loop-owned cleanup

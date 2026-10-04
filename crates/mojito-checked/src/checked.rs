@@ -423,6 +423,19 @@ pub struct InteriorInvalidation {
     pub include_base_generation: bool,
 }
 
+/// A `comptime for` over a `range(...)` of parameter expressions.
+///
+/// The loop's own index binder, and the range's start, stop, and step over
+/// the binders in scope. The body is checked once with the index symbolic;
+/// `native::mono` unrolls it under each instance's bindings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComptimeIteration {
+    pub index: mojito_types::param_expr::ParamRef,
+    pub start: mojito_types::param_expr::ParamExpr,
+    pub stop: mojito_types::param_expr::ParamExpr,
+    pub step: mojito_types::param_expr::ParamExpr,
+}
+
 /// Checker decisions which lowering must apply explicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -667,6 +680,10 @@ pub enum SemanticAdjustment {
     /// the binders in scope: MIR carries it on the branch, and the elaborator
     /// decides it. A condition with no such record is lowered as a thunk.
     ComptimeCondition(mojito_types::types::GenericConstraint),
+    /// A `comptime for` iterable the checker compiled as a range over the
+    /// binders in scope, recorded on the iterable: MIR carries it on the
+    /// loop header, and the elaborator unrolls it.
+    ComptimeIteration(Box<ComptimeIteration>),
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -2507,7 +2524,9 @@ fn build_checked_declarations(
                 StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
                     (CheckedDeclKind::Binding, name.clone())
                 }
-                StmtKind::For { var, .. } => (CheckedDeclKind::Binding, var.clone()),
+                StmtKind::For { var, .. } | StmtKind::ComptimeFor { var, .. } => {
+                    (CheckedDeclKind::Binding, var.clone())
+                }
                 StmtKind::Try {
                     except: Some((Some(name), _)),
                     ..

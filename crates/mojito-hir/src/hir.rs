@@ -232,6 +232,20 @@ pub enum Terminator {
         then_b: BlockId,
         else_b: BlockId,
     },
+    /// A `comptime for` header: the iterable is a compile-time range MIR
+    /// lowers as parameter expressions; the loop variable `var` is the
+    /// checked binding `binding`, interned at `index` here and bound to its
+    /// runtime slot by MIR as a `for` variable is; `body` is the loop body
+    /// (its back edge jumps here) and `exit` the block after the loop. The
+    /// elaborator unrolls it.
+    ComptimeLoop {
+        iter: HirExpr,
+        var: String,
+        binding: Option<mojito_types::origin::OwnerId>,
+        index: VarId,
+        body: BlockId,
+        exit: BlockId,
+    },
     Return(Option<HirExpr>),
     /// A return nested in one or more iterator-driven loops. The value is
     /// evaluated before `cleanup` is destroyed (innermost iterator first), so
@@ -775,6 +789,10 @@ fn collect_function_implicit_names(
                     collect_function_implicit_names(body, explicit, names);
                 }
             }
+            StmtKind::ComptimeFor { iter, body, .. } => {
+                collect_named_expr(iter, names);
+                collect_function_implicit_names(body, explicit, names);
+            }
             StmtKind::Try {
                 body,
                 except,
@@ -937,6 +955,10 @@ impl Lower {
             | Terminator::ComptimeBranch { then_b, else_b, .. } => {
                 self.g.add_edge(self.cur, *then_b, ());
                 self.g.add_edge(self.cur, *else_b, ());
+            }
+            Terminator::ComptimeLoop { body, exit, .. } => {
+                self.g.add_edge(self.cur, *body, ());
+                self.g.add_edge(self.cur, *exit, ());
             }
             // No in-graph edge: `Return`/`FallOff` leave the CFG; `EscapeJump`
             // targets a block in the *enclosing* CFG (not a node here).
@@ -1126,6 +1148,45 @@ impl Lower {
             }
 
             StmtKind::Scope(body) => self.scoped_block(body),
+
+            // A `comptime for` is a loop whose header advances a compile-time
+            // index: the body is analysed once as a loop body with the trip
+            // count unknown, `break` and `continue` are the loop's, and the
+            // elaborator unrolls it.
+            StmtKind::ComptimeFor { var, iter, body } => {
+                let iter = self.expr(iter);
+                let header = self.new_block();
+                let body_b = self.new_block();
+                let exit = self.new_block();
+                self.seal(Terminator::Jump(header));
+                self.cur = header;
+                self.scopes.push(HashMap::new());
+                let index = self.declare_var(var);
+                let binding = self
+                    .checked
+                    .declaration_at(&s.source_span())
+                    .and_then(|declaration| declaration.binding);
+                self.seal(Terminator::ComptimeLoop {
+                    iter,
+                    var: var.clone(),
+                    binding,
+                    index,
+                    body: body_b,
+                    exit,
+                });
+                self.cur = body_b;
+                self.loops.push(LoopFrame {
+                    header,
+                    exit,
+                    escape: false,
+                    cleanup: Vec::new(),
+                });
+                self.block(body);
+                self.loops.pop();
+                self.scopes.pop();
+                self.seal(Terminator::Jump(header));
+                self.cur = exit;
+            }
 
             StmtKind::While { cond, body, orelse } => {
                 let header = self.new_block();
@@ -1522,6 +1583,7 @@ fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
                 }
                 StmtKind::While { body, .. }
                 | StmtKind::For { body, .. }
+                | StmtKind::ComptimeFor { body, .. }
                 | StmtKind::With { body, .. }
                 | StmtKind::Scope(body) => walk(body, names),
                 StmtKind::Try {

@@ -61,7 +61,9 @@ assets/ok/comptime_applied_constant_in_signature.mojo	main	exe-differential	sani
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_body_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_iteration_scope.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
@@ -811,7 +813,9 @@ assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
+assets/ownership_ok/comptime_for_break_continue.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_loop_carried_refill.mojo	main	exe-differential	sanitized
+assets/ownership_ok/comptime_for_per_iteration_value.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_if_conditional_use_then_after.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_mutation_then_break_no_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential	sanitized
@@ -878,8 +882,6 @@ assets/extensions/ok/subtree_pointer_generic_return_deref.mojo	main	exe-differen
 assets/extensions/ok/subtree_pointer_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/template_served_iterable_def.mojo	main	exe-differential	sanitized
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
-assets/extensions/ownership_ok/comptime_for_body_move_without_refill.mojo	main	exe-differential	sanitized
-assets/extensions/ownership_ok/comptime_for_zero_iterations_move.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized

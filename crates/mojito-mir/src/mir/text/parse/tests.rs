@@ -999,6 +999,38 @@ fn comptime_branch_terminator_reprints() {
 }
 
 #[test]
+fn comptime_for_terminator_reprints() {
+    use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
+    let context = ParamContext::detached();
+    let constant = |value: i64| context.constant(CtValue::Int(value)).expect("a constant");
+    let mut function = function_with(vec![Ty::Int], Vec::new());
+    function.n_vars = 1;
+    function.var_names = vec!["i".to_string()];
+    function.blocks[0].term = MirTerm::ComptimeFor {
+        index: ParamRef {
+            id: ParamId::new("$comptime_for@f:10..18", 0),
+            name: "i".into(),
+        },
+        slot: 0,
+        start: constant(0),
+        stop: constant(4),
+        step: constant(1),
+        body: 1,
+        exit: 2,
+    };
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Jump(0),
+    });
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Return(None),
+    });
+    let program = program_with(vec![("comptime_for".into(), function)]);
+    assert_reprints(&program);
+}
+
+#[test]
 fn nested_try_regions_reprint_without_region_source_marks() {
     let region_block = |term: MirTerm| MirBlock {
         instrs: vec![MirInstr::KeepAlive { var: 0 }],

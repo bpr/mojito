@@ -28,7 +28,8 @@ pub(super) fn verify_scope(
     declarations: &MirDeclarations,
     errors: &mut Vec<String>,
 ) {
-    let scope = Scope::of_function(name, declarations);
+    let mut scope = Scope::of_function(name, declarations);
+    scope.declare_loop_indices(&function.blocks);
     let head = format!("MIR function '{name}'");
     let mut cx = ScopeCx {
         scope: &scope,
@@ -196,6 +197,35 @@ impl Scope {
         scope
     }
 
+    /// Bring every `comptime for` index of `blocks` into scope: a loop's own
+    /// `Int` binder, declared by no signature, that the body's types and
+    /// conditions name.
+    fn declare_loop_indices(&mut self, blocks: &[MirBlock]) {
+        for block in blocks {
+            if let MirTerm::ComptimeFor { index, .. } = &block.term {
+                self.kinds.insert(index.id.clone(), MetaTy::value(Ty::Int));
+            }
+            for instruction in &block.instrs {
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    for region in std::iter::once(body)
+                        .chain(handler.iter().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter())
+                        .chain(finalbody.iter())
+                    {
+                        self.declare_loop_indices(region);
+                    }
+                }
+            }
+        }
+    }
+
     fn declare(&mut self, decls: &[ParamDecl]) {
         for decl in decls {
             self.kinds.insert(decl.id().clone(), declared_kind(decl));
@@ -255,8 +285,25 @@ impl ScopeCx<'_> {
                     self.walk(&format!("block {index} {what}"), ty);
                 }
             }
-            if let MirTerm::ComptimeBranch { cond, .. } = &block.term {
-                self.constraint(&format!("block {index} compile-time branch"), cond);
+            match &block.term {
+                MirTerm::ComptimeBranch { cond, .. } => {
+                    self.constraint(&format!("block {index} compile-time branch"), cond);
+                }
+                MirTerm::ComptimeFor {
+                    index: binder,
+                    start,
+                    stop,
+                    step,
+                    ..
+                } => {
+                    let role = format!("block {index} compile-time loop");
+                    self.reference(&role, &binder.id, &binder.name, None, &[]);
+                    for bound in [start, stop, step] {
+                        let mut nested = Vec::new();
+                        self.expr_nodes(&role, "compile-time loop bound", bound, &mut nested);
+                    }
+                }
+                _ => {}
             }
         }
     }

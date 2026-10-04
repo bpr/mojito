@@ -8,6 +8,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` holding a `comptime for` over a `range` is served by its
+  template, so the loop crosses the MIR waist as itself: the checker types
+  the body once with the index a symbolic `Int` binder of the loop's own and
+  records the range's bounds as parameter expressions, HIR and MIR lower the
+  loop with the new `ComptimeFor` header (MIR text schema 1.16,
+  `comptime_for`), the ownership analysis and drop elaboration decide it as
+  a loop with its trip count unknown — so a move in a `range(0)` body with a
+  use after the loop and a move in a `range(1)` body without a refill now
+  reject as the pin rejects them, and a compile-time `break` and `continue`
+  are the loop's, destroying the iteration's values where the pin does —
+  and `native::mono` unrolls it under each instance's bindings before
+  substitution: one copy of the body per index value with fresh registers,
+  the index folded, the loops nested in the copy unrolled and the `comptime
+  if`s over the index decided per copy, and the copies chained where the
+  loop stood. Arithmetic bounds, a loop nested over the outer index, a value
+  parameter applied to the index, a loop inside a `try` region, two loops of
+  one name, and a loop-local `var` per iteration run on one template, which
+  also closes the per-iteration scope defect of a generic `def`'s loop. The
+  erased oracle runs a kept loop from its index slot. The cloner keeps only
+  the loops the template does not serve — over a list, a pack, a reflection
+  query, or with a local `comptime` binding in the body — and the AST
+  unroller now refuses a compile-time `break` or `continue` it would splice
+  into the wrong loop.
 - A `def` holding a `comptime if` is served by its template, the first
   compile-time construct to cross the MIR waist as itself: the checker types
   every arm with the binders symbolic and records each condition it compiles

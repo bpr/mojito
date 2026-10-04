@@ -459,7 +459,10 @@ fn block_field_live_out(
     root: &DeinitRoot,
 ) -> FieldSet {
     match &blocks[b].term {
-        MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::ComptimeBranch { .. } => {
+        MirTerm::Jump(_)
+        | MirTerm::Branch { .. }
+        | MirTerm::ComptimeBranch { .. }
+        | MirTerm::ComptimeFor { .. } => {
             let mut out = FieldSet::new();
             for s in successors(&blocks[b].term) {
                 if let Some(live) = live_in.get(s) {

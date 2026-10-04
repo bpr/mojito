@@ -420,7 +420,10 @@ pub(super) fn summarize_interior_region(
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
                 add_interior_state(&mut flow.exits, &state);
             }
-            MirTerm::Jump(_) | MirTerm::Branch { .. } | MirTerm::ComptimeBranch { .. } => {}
+            MirTerm::Jump(_)
+            | MirTerm::Branch { .. }
+            | MirTerm::ComptimeBranch { .. }
+            | MirTerm::ComptimeFor { .. } => {}
         }
     }
     flow

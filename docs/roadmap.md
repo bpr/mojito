@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R245**.
+Next free ID: **R250**.
 
 ## Ordered Work
 
@@ -60,21 +60,6 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R1 (P3b) MIR cannot express a `comptime for`**
-
-  Problem: a `comptime for` over a compile-time range or list is unrolled in
-  the AST before the check.
-  - MIR gains a structured compile-time loop whose body is analysed once with
-    its index symbolic.
-  - The elaborator unrolls it, with compile-time `break` and `continue`,
-    which the checker's symbolic validation rejects today (`'continue'
-    outside of a loop`: `conformance/probes/comptime_region_l6_*.mojo`).
-  - The body is analysed as a loop body with its trip count unknown
-    (`docs/notes/comptime-region-ownership.md`).
-  - Delete the cloner's branch and the certificate class.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2 (P3b) MIR cannot express a type pack**
 
   Problem: a pack-keyed body is unrolled in the AST, per call, before the
@@ -86,6 +71,55 @@ correctness fix to existing behavior is allowed.
     implicit narrowing `docs/pliron-future.md` §Corpus sweep still records.
   - Delete the cloner's branch and the certificate class.
   - Depends on R1.
+  - Model: Fable, Planned.
+
+- [ ] **R246 (P3b) A `comptime for` over a compile-time collection, a
+  reflection query, or with a local `comptime` binding in its body still
+  keys a clone**
+
+  Problem: the template serves a `comptime for` only over a `range` of
+  parameter expressions whose body declares no `comptime` binding
+  (`comptime_for_is_template_served`); every other loop of a generic `def`
+  is unrolled in the AST on a clone per instantiation.
+  - A loop over a compile-time list, tuple, dictionary, or set binds its
+    variable to an element value MIR has no parameter expression for.
+  - A bound that queries a reflection handle (`range(r.field_count())`) and
+    a body binding `comptime FT = types[i]` are evaluated by the elaborator
+    above MIR, which has no value for the index
+    (`assets/ok/reflection_symbolic_fields.mojo`).
+  - A pack loop is R2's.
+  - Depends on R2.
+  - Model: Fable, Planned.
+
+- [ ] **R247 (P3b) A value declared in a template-served `comptime for` whose
+  type names the index does not elaborate**
+
+  Problem: `var v = SIMD[DType.int32, i](7)` inside `comptime for i in
+  range(1, n)` in a generic `def` fails with "place rooted at slot 3 lacks
+  complete checked type metadata"; the pin prints `17` for `n = 3`.
+  - The checker records a vector construction only at a known width, so the
+    binding has no checked type at a symbolic index (R140 is the same gap at
+    a layout constant's width).
+  - The unroller copies the body with the original's variable slots, so a
+    slot whose type depends on the index would hold one type per copy where
+    `var_tys` has one entry (`mono/unroll.rs`); each copy needs its own
+    slot for such a binding.
+  - Depends on R140.
+  - Model: Fable, Planned.
+
+- [ ] **R248 (P3b) A thunk condition inside a template-served `comptime for`
+  cannot read the index**
+
+  Problem: `comptime if is_even(i):` inside `comptime for i in range(n)` in
+  a generic `def` fails with "compile-time application of
+  `$comptime$thunked$0` binds 2 of its 1 parameters"; the pin accepts it.
+  - The thunk the checker lifts for an application in a condition is a
+    function over the owner's binders (`ComptimeThunks`); the loop's index
+    is a binder of the loop, not the owner, so the application neither
+    declares nor passes it.
+  - The thunk needs the indices of the loops enclosing the condition among
+    its binders, and the unroller must bind them per copy.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R3 (P3c) A body keyed on a `DType` or a vector width has no MIR
@@ -345,6 +379,22 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R249 (P5) The erased oracle resumes a kept `comptime for` mid-range
+  after a compile-time `break`**
+
+  Problem: the erased path runs a `ComptimeFor` header from its index slot
+  — nothing before the first iteration, the previous value after — and
+  clears the slot only when the range ends (`comptime_for_next`,
+  `backend/vm.rs`), so a frame that leaves the loop through a `break` and
+  enters it again, from a runtime loop around it, resumes at the index the
+  `break` left.
+  - Concrete MIR carries no header: the elaborator unrolls the loop, so the
+    production path is unaffected.
+  - A per-frame loop state, or a slot reset on every exit edge, fixes it;
+    entry R10 deletes the oracle and the question with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R17 (P5) The erased oracle cannot bind a static receiver from a
   binder its frame does not hold**
 
@@ -457,24 +507,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `conformance/probes/raise_path_live_value_leaks.mojo`
     (`docs/notes/comptime-region-ownership.md`, `c7`).
   - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R21 The move analysis sees an unrolled `comptime for`**
-
-  Problem: the pin decides a compile-time region as the runtime region of
-  the same shape, with the condition opaque and the trip count unknown;
-  Mojito unrolls a `comptime for` before the move analysis, so it runs what
-  the pin rejects.
-  - A move in a `comptime for` body over `range(0)` with a use after, and a
-    move in a `range(1)` body without a refill: both accepted, both rejected
-    by the pin (`assets/extensions/ownership_ok/comptime_for_*`).
-  - A `comptime if` follows the rule since 2026-10-03: its template keeps
-    the region through the move analysis, and the three untaken-arm probes
-    reject (`assets/ownership_error/comptime_if_untaken_*`).
-  - The rule and the probes: `docs/notes/comptime-region-ownership.md`. The
-    fix is the MIR compile-time loop, R1; this entry withdraws the two
-    fixtures when it lands.
-  - Depends on R1.
   - Model: Fable, Planned.
 
 - [ ] **R22 A value read of a homogeneous collector's element copies the
@@ -1665,21 +1697,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R40 Each unrolled `comptime for` iteration shares the enclosing scope**
-
-  Problem: `comptime for i in range(2):` with `var v: Int = i` in its body
-  prints `0` then `1` at the pin, while Mojito reports "'v' is already
-  declared in this scope".
-  - The elaborator splices every unrolled copy of the body into the enclosing
-    block (`comptime/elab.rs`, the `ComptimeFor` arm), so the second copy
-    redeclares the first's locals; the validator checks the body once in its
-    own scope and accepts it.
-  - A `comptime n = names[i]` binding in the body fails the same way.
-  - Pinned by `conformance/probes/comptime_for_body_scope.mojo`.
-  - Each iteration needs its own scope, or its locals renamed.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R41 A reflection method call in a runtime position is rejected**
 
@@ -3020,6 +3037,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
     its clone (2026-09-28).
   - Ledger name: `pointer-type-argument-uninitialized-interior`.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R245 A compile-time `break` or `continue` in a `comptime for` the
+  elaborator unrolls in the AST is rejected**
+
+  Problem: the pin honors a `break` or `continue` in every `comptime for`;
+  Mojito honors one only in a loop its template serves (a `range` loop of a
+  generic `def`), and rejects it with "a 'break' or 'continue' in a comptime
+  for over 'i' the elaborator unrolls" everywhere else.
+  - A loop in a non-generic `def` or a method, over a compile-time
+    collection or a pack, or with a local `comptime` binding in its body is
+    unrolled above MIR, where a spliced copy's `break` would leave the
+    enclosing loop instead (`comptime/elab.rs::unroll_comptime_for`).
+  - Closes when every `comptime for` is served by its template (R246, R2)
+    and a method's compile-time control flow is (stage P3e of
+    `docs/parametric-mir-plan.md`).
+  - Ledger name: `comptime-for-break-in-unrolled-loop`.
+  - Depends on R246.
   - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape

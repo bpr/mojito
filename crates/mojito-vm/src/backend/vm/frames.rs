@@ -237,6 +237,17 @@ impl VmBackend {
                     self.frames.push(frame);
                     continue;
                 }
+                header @ MirTerm::ComptimeFor { .. } => {
+                    frame.block = comptime_for_next(
+                        header,
+                        &prog.mir.functions[frame.function].1,
+                        &mut frame.variables,
+                        &frame.comptime,
+                    )?;
+                    frame.instruction = 0;
+                    self.frames.push(frame);
+                    continue;
+                }
                 MirTerm::Return(reg) => reg
                     .as_ref()
                     .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),

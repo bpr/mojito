@@ -61,7 +61,9 @@ assets/ok/comptime_applied_constant_in_signature.mojo	-	ineligible	no-scalar-ent
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_body_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape

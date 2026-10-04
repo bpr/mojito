@@ -1771,8 +1771,12 @@ impl Flatten<'_> {
                 reassigned_names: self.reassigned_names.clone(),
                 returns_reference: self.returns_reference,
             };
+            let loop_scopes = loop_index_scopes(&region_cfg);
             for hb in region_cfg.g.node_indices() {
                 fl.cur = map[&hb];
+                fl.enclosing_binders = self
+                    .enclosing_binders
+                    .with(loop_scopes.get(&hb).into_iter().flatten());
                 for instr in &region_cfg.g[hb].instrs {
                     fl.lower_instr(instr, outer_map);
                 }
@@ -2822,6 +2826,38 @@ impl Flatten<'_> {
                 then_b: map[then_b],
                 else_b: map[else_b],
             },
+            // A header with no recorded range is the explicit boundary: the
+            // iterable is one the elaborator unrolls in the AST, never a loop
+            // the check kept.
+            Terminator::ComptimeLoop {
+                iter,
+                var,
+                binding,
+                index,
+                body,
+                exit,
+            } => {
+                if let Some(iteration) = comptime_iteration(iter) {
+                    // The slot the body's reads of the variable resolve to:
+                    // the checked binding's, as a `for` variable's.
+                    let slot = binding.map_or(*index, |owner| self.binding_var(owner, var));
+                    MirTerm::ComptimeFor {
+                        index: iteration.index,
+                        slot,
+                        start: iteration.start,
+                        stop: iteration.stop,
+                        step: iteration.step,
+                        body: map[body],
+                        exit: map[exit],
+                    }
+                } else {
+                    self.emit(MirInstr::Unsupported(format!(
+                        "comptime for over `{:?}` is not a compile-time range",
+                        iter.syntax.kind
+                    )));
+                    MirTerm::Jump(map[exit])
+                }
+            }
             Terminator::Return(expression) => {
                 let value = expression.as_ref().map(|e| self.lower_return_value(e));
                 self.flush_argument_anchors();

@@ -272,16 +272,20 @@ impl Checker {
 
     /// Check a `comptime for` body once, its variable bound to the element
     /// type of the iterable: `Int` for `range(...)`, the element of a
-    /// compile-time list or a value pack. Unrolling is the elaborator's; the
-    /// body may run zero times, so definite initialization is unchanged.
+    /// compile-time list or a value pack. The body is a loop body — a
+    /// compile-time `break` and `continue` are a loop's — that may run zero
+    /// times, so definite initialization is unchanged. A `range` over
+    /// parameter expressions is recorded on the iterable for the MIR loop
+    /// header; the elaborator unrolls it.
     pub(super) fn check_comptime_for(
         &mut self,
+        stmt: &Stmt,
         var: &str,
         iter: &Expr,
         body: &[Stmt],
         ret: Option<&Ty>,
-        in_loop: bool,
     ) -> Result<(), TypeError> {
+        let source = iter;
         let iter = self.inline_local_comptime_values(iter);
         let element = self.comptime_iteration_element(&iter)?;
         let before = self.uninitialized.borrow().clone();
@@ -290,15 +294,20 @@ impl Checker {
             bindings.insert(var.to_string());
         }
         let binds_index = element == Ty::Int;
-        let shadowed = binds_index
-            .then(|| comptime_index_binder(var, &iter))
-            .and_then(|binder| {
-                self.innermost_value_scope()
-                    .and_then(|scope| scope.insert(var.to_string(), binder))
-            });
-        let result = self
-            .declare_immutable(var, element)
-            .and_then(|()| self.check_block(body, ret, in_loop));
+        let binder = binds_index.then(|| comptime_index_binder(var, &iter));
+        if let Some(binder) = &binder {
+            self.record_comptime_iteration(source, &iter, binder)?;
+        }
+        let shadowed = binder.and_then(|binder| {
+            self.innermost_value_scope()
+                .and_then(|scope| scope.insert(var.to_string(), binder))
+        });
+        let result = self.declare_immutable(var, element).and_then(|()| {
+            // The loop variable's binding, which the MIR header's slot is
+            // minted from as a `for` statement's is.
+            self.record_statement_binding(stmt, var);
+            self.check_block(body, ret, true)
+        });
         if binds_index && let Some(scope) = self.innermost_value_scope() {
             match shadowed {
                 Some(previous) => scope.insert(var.to_string(), previous),
@@ -308,6 +317,64 @@ impl Checker {
         self.pop_scope();
         *self.uninitialized.borrow_mut() = before;
         result
+    }
+
+    /// Record a `range(...)` iterable as the loop header's parameter
+    /// expressions, each bound compiled over the binders in scope
+    /// (`SemanticAdjustment::ComptimeIteration`). A bound the compiler does
+    /// not close — a pack length, a compile-time list's — is left unrecorded
+    /// under source validation, where the loop is the cloner's to unroll, and
+    /// is the explicit boundary in the executable check, which only sees a
+    /// loop the elaborator kept.
+    fn record_comptime_iteration(
+        &self,
+        source: &Expr,
+        iter: &Expr,
+        binder: &ParamExpr,
+    ) -> Result<(), TypeError> {
+        let (ExprKind::Call { name, args, .. }, Some(index)) = (&iter.kind, binder.as_decl_ref())
+        else {
+            return Ok(());
+        };
+        if name != "range" {
+            return Ok(());
+        }
+        let bounds = args
+            .iter()
+            .map(|arg| self.compile_dependent_ct_expr(arg))
+            .collect::<Result<Vec<_>, _>>();
+        let bounds = match bounds {
+            Ok(bounds) => bounds,
+            Err(_) if self.source_validation => return Ok(()),
+            Err(error) => {
+                return Err(TypeError::Unsupported(format!(
+                    "comptime for bound is not a parameter expression: {error}"
+                )));
+            }
+        };
+        let constant = |value: i64| {
+            self.param_context
+                .constant(mojito_types::ct::CtValue::Int(value))
+                .map_err(|error| TypeError::Unsupported(error.to_string()))
+        };
+        let (start, stop, step) = match bounds.as_slice() {
+            [stop] => (constant(0)?, stop.clone(), constant(1)?),
+            [start, stop] => (start.clone(), stop.clone(), constant(1)?),
+            [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
+            _ => return Ok(()),
+        };
+        self.operation_adjustments.borrow_mut().insert(
+            source.source_span(),
+            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
+                mojito_checked::checked::ComptimeIteration {
+                    index: index.clone(),
+                    start,
+                    stop,
+                    step,
+                },
+            )),
+        );
+        Ok(())
     }
 
     /// The value-parameter scope beside the innermost open type-parameter

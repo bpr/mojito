@@ -195,22 +195,8 @@ impl Elab<'_> {
                 }
             }
             StmtKind::ComptimeFor { var, iter, body } => {
-                let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
-                    if env.contains_key(&pack_binding_marker(name)));
-                if !is_pack
-                    && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
-                    && let CtValue::Tuple(elements) = self.eval(iter, env)?
-                {
-                    return Err(ComptimeError::NotIterable(tuple_type_spelling(&elements)));
-                }
-                for v in self.eval_iter(iter, env)? {
-                    self.burn()?;
-                    let subs: Subs = &|n| (n == var).then(|| v.clone());
-                    let substituted: Vec<Stmt> = body
-                        .iter()
-                        .map(|s| rewrite_stmt_cloned(s, subs, false))
-                        .collect();
-                    splice_selected_block(stmt, self.block(&substituted, env, in_fn)?, out);
+                if !self.keep_template_comptime_for(stmt, env, in_fn, out)? {
+                    self.unroll_comptime_for(stmt, var, iter, body, env, in_fn, out)?;
                 }
             }
             StmtKind::VarDecl { name, ty, value } => {
@@ -1101,6 +1087,87 @@ impl Elab<'_> {
         out.push(rebuilt(stmt, StmtKind::ComptimeIf { branches, orelse }));
         Ok(true)
     }
+
+    /// Unroll a `comptime for` here, one copy of the body per element of the
+    /// iterable with the loop variable substituted, each copy spliced into
+    /// the enclosing block as a scope of its own. A compile-time `break` or
+    /// `continue` would leave the wrong loop from a spliced copy, so only
+    /// the loop MIR carries — a generic `def`'s — honors one.
+    #[allow(clippy::too_many_arguments, reason = "one statement's parts")]
+    fn unroll_comptime_for(
+        &self,
+        stmt: &Stmt,
+        var: &str,
+        iter: &Expr,
+        body: &[Stmt],
+        env: &mut HashMap<String, CtValue>,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), ComptimeError> {
+        let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
+            if env.contains_key(&pack_binding_marker(name)));
+        if !is_pack
+            && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
+            && let CtValue::Tuple(elements) = self.eval(iter, env)?
+        {
+            return Err(ComptimeError::NotIterable(tuple_type_spelling(&elements)));
+        }
+        if body_leaves_loop(body) {
+            return Err(ComptimeError::NotComptime(format!(
+                "a 'break' or 'continue' in a comptime for over '{var}' the elaborator unrolls; only a generic def's loop carries one"
+            )));
+        }
+        for v in self.eval_iter(iter, env)? {
+            self.burn()?;
+            let subs: Subs = &|n| (n == var).then(|| v.clone());
+            let substituted: Vec<Stmt> = body
+                .iter()
+                .map(|s| rewrite_stmt_cloned(s, subs, false))
+                .collect();
+            splice_selected_block(stmt, self.block(&substituted, env, in_fn)?, out);
+        }
+        Ok(())
+    }
+
+    /// Keep a `comptime for` the template serves
+    /// ([`comptime_for_is_template_served`]) in the body of the generic `def`
+    /// being elaborated as a template: the body is elaborated with the loop
+    /// variable a binder too, so a `comptime if` or a loop over it stays, and
+    /// the statement is rebuilt for the check, which types the body once
+    /// with the index symbolic and records the range for the MIR loop header
+    /// the elaborator below MIR unrolls — a compile-time `break` and
+    /// `continue` are that loop's. Returns `false`, emitting nothing, for any
+    /// other loop, which is unrolled here.
+    fn keep_template_comptime_for(
+        &self,
+        stmt: &Stmt,
+        env: &HashMap<String, CtValue>,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> Result<bool, ComptimeError> {
+        let StmtKind::ComptimeFor { var, iter, body } = &stmt.kind else {
+            return Ok(false);
+        };
+        if !in_fn || !comptime_for_is_template_served(iter, body) {
+            return Ok(false);
+        }
+        let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
+            return Ok(false);
+        };
+        binders.insert(var.clone());
+        self.template_binders.borrow_mut().push(binders);
+        let body = self.block(body, &mut env.clone(), true);
+        self.template_binders.borrow_mut().pop();
+        out.push(rebuilt(
+            stmt,
+            StmtKind::ComptimeFor {
+                var: var.clone(),
+                iter: iter.clone(),
+                body: body?,
+            },
+        ));
+        Ok(true)
+    }
 }
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a
@@ -1141,6 +1208,34 @@ fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     };
     mojito_ast::visit::walk_expr(&mut finder, expression);
     finder.found
+}
+
+/// Whether a loop body holds a `break` or `continue` of its own: one at its
+/// level or in an arm or `try` region there, not one inside a loop of its
+/// own nested in it.
+fn body_leaves_loop(body: &[Stmt]) -> bool {
+    body.iter().any(|statement| match &statement.kind {
+        StmtKind::Break | StmtKind::Continue => true,
+        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            branches.iter().any(|(_, arm)| body_leaves_loop(arm))
+                || orelse.as_deref().is_some_and(body_leaves_loop)
+        }
+        StmtKind::Scope(body) | StmtKind::With { body, .. } => body_leaves_loop(body),
+        StmtKind::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } => {
+            body_leaves_loop(body)
+                || except
+                    .as_ref()
+                    .is_some_and(|(_, handler)| body_leaves_loop(handler))
+                || orelse.as_deref().is_some_and(body_leaves_loop)
+                || finalbody.as_deref().is_some_and(body_leaves_loop)
+        }
+        _ => false,
+    })
 }
 
 fn splice_selected_block(source: &Stmt, block: Vec<Stmt>, out: &mut Vec<Stmt>) {

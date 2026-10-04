@@ -10,8 +10,14 @@
 #   caught big | 2
 #   even odd
 #
-# P3b adds a `comptime for` beside the region; P3c a `SIMD[dt, n]` body; P3d
-# a value-keyed struct; P3e a method with its own binders and a nested `def`.
+# P3b (2026-10-03): a `comptime for` over the value binder beside the region,
+# with a `comptime if` over its index, a loop nested over the index, and a
+# compile-time `continue`, in the same template-served `def`. Expected
+# output, VM and native:
+#   0 0 3 | 1 4 9
+#
+# P3c adds a `SIMD[dt, n]` body; P3d a value-keyed struct; P3e a method with
+# its own binders and a nested `def`.
 @fieldwise_init
 struct Box[T: Copyable & Deinitable & Writable](Copyable, Movable):
     var v: Self.T
@@ -47,7 +53,23 @@ def parity[n: Int]() -> String:
         return "odd"
 
 
+def steps[n: Int]() -> String:
+    var out = String("")
+    comptime for i in range(n + 1):
+        comptime if i == 2:
+            continue
+        var sum = 0
+        comptime for j in range(i):
+            sum += j
+        out += String(sum) + " "
+    out += "|"
+    comptime for i in range(1, n + 1):
+        out += " " + String(i * i)
+    return out
+
+
 def main() raises:
     print(describe[Int, 4](1), "|", describe[Float64, 4](2.5), "|", describe[Int, 1](0))
     print(guarded[5](), "|", guarded[2]())
     print(parity[4](), parity[7]())
+    print(steps[3]())

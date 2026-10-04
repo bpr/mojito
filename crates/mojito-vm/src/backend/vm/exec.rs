@@ -2221,6 +2221,9 @@ impl VmBackend {
                             *else_b
                         };
                 }
+                header @ MirTerm::ComptimeFor { .. } => {
+                    block = comptime_for_next(header, &prog.mir.functions[function].1, vars, &[])?;
+                }
                 MirTerm::Return(r) => {
                     let v = r
                         .as_ref()

@@ -699,6 +699,15 @@ impl Decoder {
                 then_b: self.req(value, fields, "then", Self::block_id)?,
                 else_b: self.req(value, fields, "else", Self::block_id)?,
             }),
+            "comptime_for" => Some(MirTerm::ComptimeFor {
+                index: self.req(value, fields, "index", Self::binder_ref)?,
+                slot: self.req(value, fields, "slot", Self::var)?,
+                start: self.req(value, fields, "start", Self::param_expr)?,
+                stop: self.req(value, fields, "stop", Self::param_expr)?,
+                step: self.req(value, fields, "step", Self::param_expr)?,
+                body: self.req(value, fields, "body", Self::block_id)?,
+                exit: self.req(value, fields, "exit", Self::block_id)?,
+            }),
             "return" => Some(MirTerm::Return(self.req(
                 value,
                 fields,

@@ -332,6 +332,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ReceiverFromFirstArgument { .. }
         | SemanticAdjustment::Truthiness
         | SemanticAdjustment::ComptimeCondition(..)
+        | SemanticAdjustment::ComptimeIteration(..)
         | SemanticAdjustment::Move
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)

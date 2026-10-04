@@ -305,6 +305,7 @@ mod specializer;
 mod substitute;
 mod symbolic;
 mod unify;
+mod unroll;
 
 #[cfg(test)]
 mod tests;

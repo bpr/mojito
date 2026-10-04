@@ -1385,6 +1385,86 @@ struct Flatten<'a> {
     returns_reference: bool,
 }
 
+/// The `comptime for` indices in scope at each block of a CFG, outermost
+/// first: a loop's body blocks — those its body reaches without passing its
+/// header or exit — see the loop's `Int` binder as a value binder of the
+/// body. The binder is the one the checker recorded on the iterable.
+fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
+    fn targets(term: Option<&Terminator>) -> Vec<hir::BlockId> {
+        match term {
+            Some(Terminator::Jump(to)) => vec![*to],
+            Some(
+                Terminator::Branch { then_b, else_b, .. }
+                | Terminator::ComptimeBranch { then_b, else_b, .. },
+            ) => vec![*then_b, *else_b],
+            Some(Terminator::ComptimeLoop { body, exit, .. }) => vec![*body, *exit],
+            Some(
+                Terminator::Return(_)
+                | Terminator::ReturnWithCleanup { .. }
+                | Terminator::FallOff
+                | Terminator::EscapeJump(_),
+            )
+            | None => Vec::new(),
+        }
+    }
+    let g = &cfg.g;
+    let mut scopes: HashMap<hir::BlockId, Vec<ParamDecl>> = HashMap::new();
+    let mut loops: Vec<(Vec<hir::BlockId>, ParamDecl)> = Vec::new();
+    for header in g.node_indices() {
+        let Some(Terminator::ComptimeLoop {
+            iter, body, exit, ..
+        }) = &g[header].term
+        else {
+            continue;
+        };
+        let Some(index) = comptime_iteration(iter).map(|iteration| iteration.index) else {
+            continue;
+        };
+        let decl = ParamDecl::Value {
+            id: index.id.clone(),
+            name: index.name.to_string(),
+            ty: Box::new(Ty::Int),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        };
+        let mut members = Vec::new();
+        let mut pending = vec![*body];
+        while let Some(block) = pending.pop() {
+            if block == header || block == *exit || members.contains(&block) {
+                continue;
+            }
+            members.push(block);
+            pending.extend(targets(g[block].term.as_ref()));
+        }
+        loops.push((members, decl));
+    }
+    // An enclosing loop's body holds the nested loop's, so the larger body
+    // is the outer scope.
+    loops.sort_by_key(|(members, _)| std::cmp::Reverse(members.len()));
+    for (members, decl) in loops {
+        for block in members {
+            scopes.entry(block).or_default().push(decl.clone());
+        }
+    }
+    scopes
+}
+
+/// The range a `comptime for` iterable was checked as, when the checker
+/// recorded one (`SemanticAdjustment::ComptimeIteration`).
+fn comptime_iteration(iter: &hir::HirExpr) -> Option<mojito_checked::checked::ComptimeIteration> {
+    iter.adjustments
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
+                Some((**iteration).clone())
+            }
+            _ => None,
+        })
+}
+
 /// Names whose binding may change after the first assignment (or that a nested
 /// `def` captures). CFG-lowered rebindings appear as `HirInstr::Bind`; opaque
 /// statements — notably `try` regions, whose sub-CFGs lower separately — are
@@ -2722,8 +2802,13 @@ fn lower_cfg_nested(
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
         };
+        let loop_scopes = loop_index_scopes(cfg);
         for hb in cfg.g.node_indices() {
             fl.cur = map[&hb];
+            // A `comptime for` body sees the loop's index as a value binder,
+            // so a bracket argument built from it (`g[i]()`) resolves.
+            fl.enclosing_binders =
+                enclosing_binders.with(loop_scopes.get(&hb).into_iter().flatten());
             for instr in &cfg.g[hb].instrs {
                 // At the function level the "outer" map is this function's own map
                 // (a `try`'s escape targets are this function's loop blocks).

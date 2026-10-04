@@ -33,6 +33,11 @@ impl FnLowering<'_> {
                 format!("a compile-time branch on `{cond:?}` reached native lowering"),
                 None,
             )),
+            // Concrete MIR carries none: the elaborator unrolls the loop.
+            MirTerm::ComptimeFor { index, .. } => Err(self.unsupported(
+                format!("a compile-time loop over `{index}` reached native lowering"),
+                None,
+            )),
             MirTerm::Return(value) => self.lower_return_edge(ctx, value.as_ref().copied(), &[]),
             MirTerm::ReturnWithCleanup { value, cleanup } => {
                 self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)

@@ -545,7 +545,7 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
 pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
     match term {
         MirTerm::Branch { cond, .. } => vec![*cond],
-        MirTerm::ComptimeBranch { .. } => Vec::new(),
+        MirTerm::ComptimeBranch { .. } | MirTerm::ComptimeFor { .. } => Vec::new(),
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..

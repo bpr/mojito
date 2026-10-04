@@ -1,8 +1,8 @@
-# Ledgered divergence (docs/roadmap.md R21): a `comptime for` over
-# `range(1)` consumes `a` in its body without refilling it. The pin rejects
-# the consume as a use on the back edge; Mojito unrolls the one iteration
-# before the move analysis. Rule and probes:
-# docs/notes/comptime-region-ownership.md.
+# A `comptime for` over `range(1)` consumes `a` in its body without refilling
+# it. The body is decided as a loop body with its trip count unknown, as the
+# pin decides it: the consume is a use on the back edge, rejected whatever
+# the trip count (docs/notes/comptime-region-ownership.md, l3).
+# expect: use of uninitialized value 'a'
 struct Thing(Movable):
     var s: String
 
