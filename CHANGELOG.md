@@ -301,6 +301,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value read of a homogeneous collector's element (`var x = a[1]` inside
+  `def h(*a: IC)`) copies that element alone, as the pin does: MIR loads the
+  element place and runs the checked value copy on it, where it used to copy
+  the whole collector and never destroy the extra copies. A field read
+  through an element (`a[0].n`) copies nothing, on the VM and natively
+  (`assets/ok/variadic_element_value_read.mojo`). `len(a)` still copies the
+  collector (roadmap R263).
+
 - Elaborating a deeply nested type no longer takes time quadratic in its
   depth: expanding polymorphic recursion (`depth(W[T](x.copy()), n - 1)`)
   reaches the 4096-instance budget after under 2 s of debug-build

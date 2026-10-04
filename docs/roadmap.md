@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R263**.
+Next free ID: **R265**.
 
 ## Ordered Work
 
@@ -616,21 +616,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R22 A value read of a homogeneous collector's element copies the
-  whole collector**
+- [ ] **R263 `len` of a homogeneous collector copies the whole collector**
 
-  Problem: `var x = a[1]` inside `def h(*a: IC)` runs the copy constructor of
-  every element of `a`, where the pin copies the one element. The extra
-  copies are never destroyed.
-  - MIR reads the collector as a value before indexing it, which is the
-    lifecycle copy of the whole storage.
-  - An element passed to a read parameter or to `print` is read in place and
-    copies nothing (`assets/ok/pack_element_read_borrowed.mojo`).
-  - A `Tuple` local's element is copied alone, as at the pin.
-  - The lever is `index_expr` (`mir/lower_expr/expr_access.rs`): load the
-    element place and copy that, as a field read does.
-  - Probe:
-    `conformance/probes/variadic_element_value_read_copies_collector.mojo`.
+  Problem: `len(a)` inside `def count(*a: IC)` runs the copy constructor of
+  every element of `a`, where the pin copies nothing. The copies are never
+  destroyed.
+  - MIR passes the collector to `len` as a `var.use` copy; the checker's
+    `borrow_nominal_place_argument` lends only a named nominal struct.
+  - An element read (`var x = a[1]`, `print(a[1])`) already reads the element
+    place alone (`assets/ok/variadic_element_value_read.mojo`).
+  - Probe: `conformance/probes/variadic_collector_len_copies_collector.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R264 `print` of a type-parameter-typed value in a generic `def`
+  leaks a copy**
+
+  Problem: `print(y)` with `y: T` inside `def f[T: ImplicitlyCopyable &
+  Writable & Deinitable](x: T)` copies `y` and never destroys the copy, where
+  the pin reads `y` in place.
+  - A `x.copy()` temporary passed to `print` in the same body is never
+    destroyed either; the pin destroys it after the call.
+  - MIR lowers the named argument as a `var.use` copy with no argument place,
+    so nothing owns the copy after `print` returns.
+  - Probe: `conformance/probes/generic_print_parameter_value_leaks_copy.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 

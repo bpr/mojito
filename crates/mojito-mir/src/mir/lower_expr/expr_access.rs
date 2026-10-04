@@ -297,6 +297,9 @@ impl Flatten<'_> {
             return dest;
         }
         let has_call = self.checked_call_contract(e).is_some();
+        if !has_call && let Some(d) = self.storage_element_read(e, object) {
+            return d;
+        }
         let (base, base_place) = if has_call {
             self.lower_call_receiver(object)
         } else {
@@ -566,5 +569,55 @@ impl Flatten<'_> {
             return copied;
         }
         dest
+    }
+
+    /// A value read of a homogeneous collector's element (`a[i]` over
+    /// `*a: T`) loads the element place, as a field read does, and runs the
+    /// checked value-copy boundary on that element alone; reading the
+    /// collector as a value first would copy its whole storage.
+    fn storage_element_read(&mut self, e: &Expr, object: &Expr) -> Option<Reg> {
+        if !matches!(
+            self.intrinsic_index_dispatch(object),
+            Some(MirIntrinsicSubscript::VariadicStorage)
+        ) {
+            return None;
+        }
+        let place = self.try_place(e)?;
+        let root = place.root;
+        let loaded = self.fresh_typed(
+            span(e),
+            Some(root),
+            place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(e))
+                .unwrap_or(Ty::Error),
+        );
+        self.emit_interior_invalidations(e, None);
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place,
+        });
+        if !self.checked_adjustments(e).iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
+            )
+        }) {
+            return Some(loaded);
+        }
+        let ty = self
+            .f
+            .reg_types
+            .get(&loaded.0)
+            .cloned()
+            .or_else(|| self.checked_ty(e))
+            .unwrap_or(Ty::Error);
+        let copied = self.fresh_typed(span(e), Some(root), ty);
+        self.emit(MirInstr::CopyValue {
+            dest: copied,
+            value: loaded,
+        });
+        Some(copied)
     }
 }
