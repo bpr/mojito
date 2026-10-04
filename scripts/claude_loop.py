@@ -28,9 +28,11 @@ open entries top-down, each preceded by its open prerequisites from any track.
 still run first. `--only` runs exactly the named entries.
 
 Each entry's `Model:` bullet, `Opus|Fable, Planned|Not Planned`, picks the
-Claude model; the `Planned` word only says whether the entry wanted a plan
-first, and a plan file already at the repository root is handed to the session
-that carries its task out.
+Claude model and whether the task is planned first. A `Planned` entry with no
+plan file at the repository root gets a plan session before the session that
+carries it out, which is handed the plan; a plan pass that fails or writes no
+plan file leaves the task unexecuted. `--no-auto-plan` skips that pass, and a
+plan file already at the root is handed to the executing session either way.
 
 Usage:
   scripts/claude_loop.py --list [--track pmir]
@@ -40,6 +42,7 @@ Usage:
   scripts/claude_loop.py --only R40 --only R41
   scripts/claude_loop.py --start R3 --until R9
   scripts/claude_loop.py --plan -n 3          # plan the next three instead
+  scripts/claude_loop.py --no-auto-plan       # execute Planned entries unplanned
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
 """
@@ -101,7 +104,9 @@ def on_roadmap(task: Task) -> bool:
     return any(e.id == task.id and not e.checked for e in roadmap.parse().entries)
 
 
-def build_prompt(task: Task, mode: str) -> str:
+def build_prompt(task: Task, mode: str, has_plan: bool | None = None) -> str:
+    """The session prompt; `has_plan` overrides looking for the plan file, so a
+    dry run's execute prompt after a plan pass reads as the real one will."""
     header = (
         f"Roadmap task {task.id} from docs/roadmap.md (track `{task.track}`): "
         f"\"{task.title}\".\n\n"
@@ -153,7 +158,7 @@ def build_prompt(task: Task, mode: str) -> str:
             "so. Where the plan picked a Mojito-only option, follow Mojo "
             "instead. Leave the plan file itself alone.\n"
         )
-        if plan.exists()
+        if (plan.exists() if has_plan is None else has_plan)
         else "\nCarry this task out as-is; there is no plan file for it.\n"
     )
     return header + opening + (
@@ -322,9 +327,15 @@ def model_for(args, task: Task) -> str:
     return {"Opus": args.opus_model, "Fable": args.fable_model}[name]
 
 
-def mode_for(args, task: Task) -> str:
-    """`"plan"` to write the plan file only, `"execute"` to carry the task out."""
-    return "plan" if args.plan else "execute"
+def modes_for(args, task: Task) -> list[str]:
+    """The task's sessions in order: `"plan"` writes the plan file only,
+    `"execute"` carries the task out. A `Planned` entry with no plan file yet
+    is planned before it is carried out."""
+    if args.plan:
+        return ["plan"]
+    if task.planned and not args.no_auto_plan and not plan_path(task).exists():
+        return ["plan", "execute"]
+    return ["execute"]
 
 
 def main() -> int:
@@ -347,6 +358,8 @@ def main() -> int:
                    help="model for an entry with no Model: bullet")
     p.add_argument("--plan", action="store_true",
                    help="write each task's plan file instead of carrying the task out")
+    p.add_argument("--no-auto-plan", action="store_true",
+                   help="carry Planned entries out without a plan session first")
     p.add_argument("--permission-mode", default="bypassPermissions")
     p.add_argument("--claude", default="claude", help="claude executable")
     p.add_argument("--claude-arg", action="append", default=[],
@@ -394,14 +407,14 @@ def main() -> int:
     quick = 0
     while tasks := pending(args, done, troubled, skip):
         current = tasks[0]
-        mode = mode_for(args, current)
-        prompt = build_prompt(current, mode)
-        model = model_for(args, current)
+        modes = modes_for(args, current)
+        for mode in modes:
+            prompt = build_prompt(current, mode, True if "plan" in modes else None)
+            model = model_for(args, current)
 
-        if args.dry_run:
-            print(f"== {current.describe()}\n== model {model} ({mode})\n{prompt}")
-            ok, landed = True, True
-        else:
+            if args.dry_run:
+                print(f"== {current.describe()}\n== model {model} ({mode})\n{prompt}")
+                continue
             committing = commit and mode == "execute"
             untracked_before = untracked_files() if committing else set()
             msg_before = read_commit_msg()
@@ -425,6 +438,7 @@ def main() -> int:
                 print(f"claude_loop: session for {current.id} failed", file=sys.stderr)
             if not (ok and landed):
                 troubled.add(current.id)
+                break
 
         done.add(current.id)
         ran += 1
