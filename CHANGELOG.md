@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `repr` of a sized scalar names its type as upstream's
+  `SIMD.write_repr_to` does: `repr(Int8(3))` and `repr(Float32(0.5))` print
+  `Int8(3)` and `Float32(0.5)` on the VM and natively, where the VM printed
+  the bare lane and native code labelled every float `Float64(`, and the VM
+  writes a wider vector as `SIMD[DType.int32, 2](1, 2)` instead of
+  `[1, 2]` (`Dtype::repr_alias`; `assets/ok/repr_sized_scalars.mojo`).
+  Native `repr` of a wider vector remains unsupported (roadmap R275).
 - A runtime read through a `comptime names = reflect[T].field_names()`
   binding (`print(names[i])` under `comptime for i in range(len(names))`,
   `len(names)`) is now rejected with the pin's "cannot materialize comptime

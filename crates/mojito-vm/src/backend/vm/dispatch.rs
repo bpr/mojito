@@ -723,8 +723,13 @@ impl VmBackend {
                     (true, _) => format!("Int({digits})"),
                 });
             }
-            if let Some(text) = self.simd_integer_text(prog, &value)? {
-                return Ok(text);
+            if let Value::Simd { dtype, lanes } = &value {
+                let cells = self.simd_lane_texts(prog, *dtype, lanes)?;
+                return Ok(match (repr, cells.as_slice()) {
+                    (true, _) => simd_repr(*dtype, &cells),
+                    (false, [lane]) => lane.clone(),
+                    (false, _) => format!("[{}]", cells.join(", ")),
+                });
             }
             if repr {
                 return Ok(scalar_repr(&value));
@@ -861,40 +866,54 @@ impl VmBackend {
         ))
     }
 
-    /// The display text of an integer `SIMD` value — a sized scalar such as
-    /// `Int32` or a vector's `[l0, l1, ...]` — with every lane through the
-    /// bundled digit bodies at the dtype's signedness, as native `print_simd`
-    /// emits it. `None` for float and bool lanes, and without the bundled
-    /// stdlib.
-    fn simd_integer_text(
+    /// The text of each lane of a `SIMD` value, as upstream's
+    /// `_write_scalar` writes it: integer lanes through the bundled digit
+    /// bodies at the dtype's signedness, as native `print_simd` emits them,
+    /// and float and bool lanes through their display.
+    fn simd_lane_texts(
         &mut self,
         prog: &Prog,
-        value: &Value,
-    ) -> Result<Option<String>, RuntimeError> {
-        let Value::Simd {
-            dtype,
-            lanes: crate::runtime::SimdLanes::Int(lanes),
-        } = value
-        else {
-            return Ok(None);
-        };
-        let signed = crate::runtime::integer_dtype_bits(*dtype).is_some_and(|(_, signed)| signed);
-        let mut cells = Vec::with_capacity(lanes.len());
-        for &lane in lanes {
-            let scalar = if signed {
-                Value::Int(lane as i64)
-            } else {
-                Value::UInt(lane as u64)
-            };
-            let Some(digits) = self.integer_digits(prog, &scalar)? else {
-                return Ok(None);
-            };
-            cells.push(digits);
+        dtype: mojito_ast::ast::Dtype,
+        lanes: &crate::runtime::SimdLanes,
+    ) -> Result<Vec<String>, RuntimeError> {
+        use crate::runtime::SimdLanes;
+        match lanes {
+            SimdLanes::Int(lanes) => {
+                let signed =
+                    crate::runtime::integer_dtype_bits(dtype).is_some_and(|(_, signed)| signed);
+                lanes
+                    .iter()
+                    .map(|&lane| {
+                        let scalar = if signed {
+                            Value::Int(lane as i64)
+                        } else {
+                            Value::UInt(lane as u64)
+                        };
+                        Ok(self
+                            .integer_digits(prog, &scalar)?
+                            .unwrap_or_else(|| lane.to_string()))
+                    })
+                    .collect()
+            }
+            SimdLanes::Float(lanes) => Ok(lanes
+                .iter()
+                .map(|&lane| crate::runtime::float_display(lane))
+                .collect()),
+            SimdLanes::Bool(lanes) => Ok(lanes
+                .iter()
+                .map(|&lane| if lane { "True" } else { "False" }.to_string())
+                .collect()),
         }
-        Ok(Some(match cells.as_slice() {
-            [lane] => lane.clone(),
-            _ => format!("[{}]", cells.join(", ")),
-        }))
+    }
+}
+
+/// Upstream's `SIMD.write_repr_to` over lane texts: the scalar alias at
+/// width 1 (`Int32(-5)`, `Float32(0.5)`), else `SIMD[DType.int32, 2](1, 2)`.
+fn simd_repr(dtype: mojito_ast::ast::Dtype, cells: &[String]) -> String {
+    let lanes = cells.join(", ");
+    match (cells.len(), dtype.repr_alias()) {
+        (1, Some(alias)) => format!("{alias}({lanes})"),
+        (width, _) => format!("SIMD[DType.{}, {width}]({lanes})", dtype.name()),
     }
 }
 

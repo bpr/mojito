@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R275**.
+Next free ID: **R277**.
 
 ## Ordered Work
 
@@ -559,6 +559,19 @@ change that needs a new `MJRT_ABI_VERSION`.
     (`instance_method_clone`), so the nesting probes are linear.
   - The lever is a clone index keyed by the instance's arguments rather
     than by a spelled symbol.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R275 Native `repr` of a `SIMD` vector wider than one lane is
+  unsupported**
+
+  Problem: `repr(SIMD[DType.int32, 2](1, 2))` prints
+  `SIMD[DType.int32, 2](1, 2)` at the pin and on the VM, but the native
+  backend stops with "unsupported type `Simd { … width: Known(2) }`".
+  - Pliron's `lower_repr_builtin` (`lower/methods.rs`) labels only scalar
+    registers; a vector register reaches no arm.
+  - The text is upstream's `SIMD.write_repr_to`: `SIMD[`, the dtype's repr,
+    the width, then the lanes as `print_simd` writes them.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1733,21 +1746,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R43 `repr` of a sized scalar omits or misstates its type name**
-
-  Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
-  `Int8(3)` at the pin, but `0.5` and `3` on the VM, and `Float64(0.5)` and
-  `3` natively.
-  - The VM's `scalar_repr` (`backend/vm/dispatch.rs`) labels only `Int`,
-    `UInt`, and `Float64`, so a `SIMD` width-1 value falls through to its
-    display.
-  - Pliron's `lower_repr_builtin` (`lower/methods.rs`) labels every float
-    scalar `Float64(`, `Float16` and `Float32` included.
-  - The label is the scalar alias (`Dtype::scalar_alias`); the value text
-    stays the float-format divergence the Dragonbox item owns.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R46 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
   `concat`**
@@ -3153,6 +3151,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     replace the builtin.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R276 `SIMD` writes its text in the host where upstream's writes it in
+  Mojo**
+
+  Problem: `print` and `repr` of a `SIMD` value are built into the VM
+  (`format_value`, `simd_repr` in `backend/vm/dispatch.rs`) and the native
+  lowering (`lower_repr_builtin`, `print_simd`). Upstream's `SIMD` is a
+  stdlib struct whose `write_to` and `write_repr_to` are Mojo, choosing the
+  scalar alias through `_scalar_repr_alias`.
+  - The texts match the pin; the shape does not.
+  - A bundled `struct SIMD` needs everything R160 needs for `DType`, plus
+    `Ty::Simd`'s slots served by a nominal struct.
+  - Depends on R160.
+  - Model: Fable, Not Planned.
 
 - [ ] **R161 `Tuple`'s default initializer stores into private storage where
   upstream marks `self` initialized and writes each element through a

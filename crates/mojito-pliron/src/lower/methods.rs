@@ -435,15 +435,14 @@ impl FnLowering<'_> {
                 self.format_scalar(ctx, scalar, value, dest)?
             };
             let label = match scalar {
-                ScalarTy::Int => Some("Int("),
-                ScalarTy::UInt => Some("UInt("),
-                ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
-                    Some("Float64(")
-                }
+                ScalarTy::Int => Some("Int"),
+                ScalarTy::UInt => Some("UInt"),
+                ScalarTy::Float64 => Some("Float64"),
+                ScalarTy::Sized(dtype) => dtype.repr_alias(),
                 _ => None,
             };
             let (source, len) = if let Some(label) = label {
-                self.wrap_repr_scalar(ctx, source, len, label, dest)
+                self.wrap_repr_scalar(ctx, source, len, &format!("{label}("), dest)
             } else {
                 (source, len)
             };

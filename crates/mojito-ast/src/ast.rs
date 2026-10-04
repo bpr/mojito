@@ -398,6 +398,18 @@ impl Dtype {
         })
     }
 
+    /// The type name a width-1 `SIMD` of this dtype spells its `repr` with
+    /// (`Int32(4)`, `Float64(0.5)`), as upstream's `_scalar_repr_alias`
+    /// answers it: every scalar alias, `Int` and `Float64` included, and
+    /// `None` for `bool`, whose `SIMD[DType.bool, 1]` keeps the verbose form.
+    pub const fn repr_alias(self) -> Option<&'static str> {
+        match self {
+            Self::Int => Some("Int"),
+            Self::Float64 => Some("Float64"),
+            _ => self.scalar_alias(),
+        }
+    }
+
     /// The dtype a scalar alias names (`"Int32"` → `Int32`), or `None`.
     pub fn from_scalar_alias(name: &str) -> Option<Self> {
         // Mojo's `Byte` is an exact public alias of `UInt8`, not a distinct
