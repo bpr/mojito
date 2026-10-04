@@ -616,25 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R27 A returned reference may declare a wider origin than its place**
-
-  Problem: the pin compares a returned place's origin with the declared one
-  exactly, and Mojito accepts any declared origin the place lies within.
-  - `def peek(ref self) -> ref[origin_of(self)] Self.T` with `return
-    self.item` runs on Mojito. The pin reports "cannot return reference with
-    incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'".
-  - A `List` subscript is the same: the pin wants
-    `origin_of(self.items)._get_owned_interior["element"]`, and Mojito also
-    takes `origin_of(self.items)` and `origin_of(self)`.
-  - The lever is the return check's `origins/subst.rs:origin_is_within`
-    (`statements.rs`, `StmtKind::Return`).
-  - Pinned by `conformance/probes/reference_return_wider_origin.mojo`.
-  - Every fixture and bundled accessor that declares an owner's origin for a
-    field must be found and respelled first.
-  - Depends on R26: the bundled accessors this respelling touches forward
-    their result through a named call, which is rejected until that lands.
-  - Model: Opus, Planned.
-
 - [ ] **R28 A store to a field of `self` under a live view of it is accepted**
 
   Problem: in a `mut self` method, `var view = self.name.strip()` then

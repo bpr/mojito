@@ -3849,6 +3849,57 @@ fn checks_reference_returns_substitution_and_escapes() {
 }
 
 #[test]
+fn returned_reference_origin_must_be_the_declared_one() {
+    let slot = "struct Slot:\n    var item: Int\n    var items: List[Int]\n    def __init__(out self):\n        self.item = 1\n        self.items = [1]\n";
+    for (signature, body) in [
+        (
+            "peek(ref self) -> ref[origin_of(self.item)] Int",
+            "self.item",
+        ),
+        (
+            "at(ref self, i: Int) -> ref[origin_of(self.items)._get_owned_interior[\"element\"]] Int",
+            "self.items[i]",
+        ),
+        ("whole(ref self) -> ref[origin_of(self)] Self", "self"),
+    ] {
+        assert!(
+            check_source(&format!(
+                "{slot}    def {signature}:\n        return {body}\n"
+            ))
+            .is_ok(),
+            "{signature}"
+        );
+    }
+    for (signature, body) in [
+        ("peek(ref self) -> ref[origin_of(self)] Int", "self.item"),
+        (
+            "at(ref self, i: Int) -> ref[origin_of(self.items)] Int",
+            "self.items[i]",
+        ),
+        (
+            "at(ref self, i: Int) -> ref[origin_of(self)] Int",
+            "self.items[i]",
+        ),
+    ] {
+        assert!(
+            matches!(
+                check_source(&format!(
+                    "{slot}    def {signature}:\n        return {body}\n"
+                )),
+                Err(TypeError::ReturnOriginIncompatible)
+            ),
+            "{signature}"
+        );
+    }
+    assert!(matches!(
+        check_source(&format!(
+            "{slot}def pick[o: Origin](ref[o] s: Slot) -> ref[o] Int:\n    return s.item\n"
+        )),
+        Err(TypeError::ReturnOriginIncompatible)
+    ));
+}
+
+#[test]
 fn checks_reference_aggregate_permissions_initialization_and_escape() {
     let mutable_box = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] Int\n\n";
     let immutable_box = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=False]]:\n    var value: ref[origin] Int\n\n";
@@ -4123,7 +4174,7 @@ def main():
 #[test]
 fn checks_ref_self_return_origin() {
     assert!(check_source(
-        "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self] Int:\n        return self.value\n"
+        "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self.value] Int:\n        return self.value\n"
     )
     .is_ok());
     assert!(matches!(

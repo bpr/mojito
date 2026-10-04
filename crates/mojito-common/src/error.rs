@@ -186,6 +186,10 @@ pub enum TypeError {
     },
     /// A reference return is rooted in storage not named by its declared origin.
     ReturnsReferenceToLocal,
+    /// A reference return names storage within its declared origin but not
+    /// that origin itself (a field of the declared owner, an element of the
+    /// declared container).
+    ReturnOriginIncompatible,
     /// A store into storage that outlives the frame carries a loan rooted in
     /// frame-local storage — the store-outward twin of the return escape.
     StoredReferenceEscapesOrigin,
@@ -634,6 +638,12 @@ impl fmt::Display for TypeError {
                 write!(
                     f,
                     "returned reference escapes storage outside its declared origin"
+                )
+            }
+            Self::ReturnOriginIncompatible => {
+                write!(
+                    f,
+                    "cannot return reference with incompatible origin: the returned place lies within the declared origin but is not that origin"
                 )
             }
             Self::PostInstantiation {

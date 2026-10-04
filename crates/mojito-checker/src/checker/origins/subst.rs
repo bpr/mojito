@@ -562,6 +562,54 @@ pub(in crate::checker) fn origin_is_within(
     }
 }
 
+/// Whether a returned reference's origin is one its declaration names: every
+/// member of `actual` must be a member of `declared` itself, not storage
+/// within one. A field is a different origin from its owner, and an element
+/// interior from its container, as upstream's return check compares them.
+/// An index whose value is not part of the origin identity stands for the one
+/// element segment at its position, a declared `_subtree` covers the places
+/// beneath its base, and an untracked declared origin accepts any reference.
+pub(in crate::checker) fn origin_is_declared(
+    actual: &mojito_types::origin::Origin,
+    declared: &mojito_types::origin::Origin,
+) -> bool {
+    use mojito_types::origin::{Origin, OriginSeg};
+    let same_segment = |actual: &OriginSeg, declared: &OriginSeg| {
+        let element =
+            |segment: &OriginSeg| matches!(segment, OriginSeg::AnyIndex | OriginSeg::Interior(_));
+        actual == declared
+            || (matches!(actual, OriginSeg::AnyIndex) && element(declared))
+            || (matches!(declared, OriginSeg::AnyIndex) && element(actual))
+    };
+    let same_path = |actual: &[OriginSeg], declared: &[OriginSeg]| {
+        actual.len() == declared.len()
+            && actual
+                .iter()
+                .zip(declared)
+                .all(|(actual, declared)| same_segment(actual, declared))
+    };
+    match (actual, declared) {
+        (Origin::Union(members), _) => members
+            .iter()
+            .all(|member| origin_is_declared(member, declared)),
+        (_, Origin::Union(members)) => members
+            .iter()
+            .any(|member| origin_is_declared(actual, member)),
+        (_, Origin::Untracked { .. }) => true,
+        (Origin::Place(actual), Origin::Place(declared)) => {
+            actual.root == declared.root
+                && match declared.path.split_last() {
+                    Some((OriginSeg::Subtree, base)) => actual
+                        .path
+                        .get(..base.len())
+                        .is_some_and(|prefix| same_path(prefix, base)),
+                    _ => same_path(&actual.path, &declared.path),
+                }
+        }
+        _ => actual == declared,
+    }
+}
+
 pub(in crate::checker) fn ref_parameter_is_writable(
     parameter: &FnParam,
     type_params: &[mojito_ast::ast::TypeParam],

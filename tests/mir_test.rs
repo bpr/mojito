@@ -2755,7 +2755,7 @@ fn union_interior_return_keeps_every_possible_generation() {
 #[test]
 fn checked_lowering_records_declaration_contracts() {
     use mojito::{Ty, check_program};
-    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self] Int:\n        return self.value\n\ndef plain() -> Int:\n    return 1\n\ndef failing() raises:\n    raise Error(\"boom\")\n\ndef main():\n    print(plain())\n    try:\n        failing()\n    except err:\n        print(err)\n";
+    let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self.value] Int:\n        return self.value\n\ndef plain() -> Int:\n    return 1\n\ndef failing() raises:\n    raise Error(\"boom\")\n\ndef main():\n    print(plain())\n    try:\n        failing()\n    except err:\n        print(err)\n";
     let program = parse(src).expect("parse");
     let checked = check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);

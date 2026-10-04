@@ -549,7 +549,7 @@ fn plain_subscript_assignment_writes_through_a_reference_getter() {
     // No `__setitem__` anywhere: `a[i] = v` selects the mutable-reference
     // `__getitem__` and finishes with a reference write, on Array and on a
     // user struct alike.
-    let src = "@fieldwise_init\nstruct Cell:\n    var v: Int\n\n@fieldwise_init\nstruct Grid:\n    var cell: Cell\n    def __getitem__(ref self, i: Int) -> ref[origin_of(self)] Cell:\n        return self.cell\n\ndef main():\n    var a = [1, 2, 3]\n    a[0] = 5\n    a[1] = a[2] + 10\n    print(a)\n    var g = Grid(Cell(1))\n    g[0] = Cell(9)\n    print(g[0].v)\n";
+    let src = "@fieldwise_init\nstruct Cell:\n    var v: Int\n\n@fieldwise_init\nstruct Grid:\n    var cell: Cell\n    def __getitem__(ref self, i: Int) -> ref[origin_of(self.cell)] Cell:\n        return self.cell\n\ndef main():\n    var a = [1, 2, 3]\n    a[0] = 5\n    a[1] = a[2] + 10\n    print(a)\n    var g = Grid(Cell(1))\n    g[0] = Cell(9)\n    print(g[0].v)\n";
     assert_eq!(
         run_compiled(src).expect("compile the reference-getter assignment"),
         "[5, 13, 3]\n9\n"

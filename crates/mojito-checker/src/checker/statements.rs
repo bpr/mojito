@@ -2180,18 +2180,30 @@ impl Checker {
                     // List bridges its raw pointer slot to `element`, while Dict
                     // bridges its entries List to the replace-on-lookup `value`
                     // generation. Callers inherit the public region, never the
-                    // implementation storage origin. Keep this privilege at the
-                    // return boundary, restricted to compiler-shipped source paths.
-                    let bundled_collection_interior_bridge =
-                        self.self_ty.as_ref().is_some_and(|ty| {
+                    // implementation storage origin. `Tuple`, `MaybeUninit` and
+                    // `Variant` read a compiler-private storage field where
+                    // upstream casts a pointer carrying `self`'s origin. Keep
+                    // this privilege at the return boundary, restricted to
+                    // compiler-shipped source paths.
+                    let bundled_private_storage_bridge =
+                        (self.self_ty.as_ref().is_some_and(|ty| {
                             list_element(ty).is_some()
                                 || dict_elements(ty).is_some()
                                 || array_element(ty).is_some()
                                 || mojito_types::types::optional_element(ty).is_some()
                                 || mojito_types::types::owned_pointer_element(ty).is_some()
-                        }) && is_bundled_collection_source(e.source.as_deref());
-                    if !origin_is_within(&actual, &allowed) && !bundled_collection_interior_bridge {
-                        return Err(TypeError::ReturnsReferenceToLocal);
+                        }) && is_bundled_collection_source(e.source.as_deref()))
+                            || is_bundled_private_storage_source(e.source.as_deref());
+                    if !bundled_private_storage_bridge {
+                        // The returned place must be the declared origin
+                        // itself: a field of a declared owner, or an element of
+                        // a declared container, is a different origin.
+                        if !origin_is_within(&actual, &allowed) {
+                            return Err(TypeError::ReturnsReferenceToLocal);
+                        }
+                        if !origin_is_declared(&actual, &allowed) {
+                            return Err(TypeError::ReturnOriginIncompatible);
+                        }
                     }
                 }
                 // `expected` is the referent type for a reference-returning

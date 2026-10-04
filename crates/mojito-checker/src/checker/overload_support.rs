@@ -513,6 +513,21 @@ pub(super) fn is_bundled_stdlib_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/utils/variant.mojo")
 }
 
+/// The bundled modules whose `ref[self]` accessors read a compiler-private
+/// storage field (`Tuple`'s `__RuntimeTuple`, `MaybeUninit`'s
+/// `__UninitStorage`, `Variant`'s `__VariantStorage`) where upstream reaches the same storage through a raw
+/// pointer carrying `self`'s origin. Their returns keep the owner's origin.
+pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
+    let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
+        return false;
+    };
+    let stdlib = root.join("stdlib");
+    let source = Path::new(stamped_source_module(source));
+    source == stdlib.join("std/builtin/tuple.mojo")
+        || source == stdlib.join("std/memory/maybe_uninit.mojo")
+        || source == stdlib.join("std/utils/variant.mojo")
+}
+
 /// Whether a source belongs to a bundled standard-library module, directly or
 /// through a specialization tag layered on its path.
 ///

@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A returned reference must now name its declared origin itself, as the pin
+  compares them: `return self.item` under `ref[origin_of(self)]`, and
+  `return self.items[i]` under `ref[origin_of(self.items)]`, are rejected
+  with "cannot return reference with incompatible origin" instead of running,
+  since a field is a different origin from its owner and an element interior
+  from its container.
+
 - Forwarding a named accessor's reference result as a method's own
   (`return self.items.unsafe_get(index)` under
   `ref[origin_of(self.items)._get_owned_interior["element"]]`) now stays

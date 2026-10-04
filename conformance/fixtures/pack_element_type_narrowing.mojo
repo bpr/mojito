@@ -6,9 +6,9 @@
 # Both compilers reject this file from the template (`cases.tsv` row
 # `pack-element-type-narrowing`): the pinned Mojo names the element
 # `Ts.values[...]`, Mojito `Ts[i]`. `rebind[T](...)` is the explicit retyping,
-# and `assets/ok/pack_element_rebind.mojo` is the spelling both accept. The
-# pin also rejects `get`'s `ref[origin_of(self)]` into `self.storage`; that
-# spelling is not what this case claims.
+# and `assets/ok/pack_element_rebind.mojo` is the spelling both accept. `get`
+# declares the origin of `self.storage`, the field its element lives in, so
+# the returned origin is not what either compiler rejects.
 from std.os import abort
 
 struct Bag[*Ts: Movable](
@@ -21,7 +21,7 @@ struct Bag[*Ts: Movable](
     def __init__(out self, var *args: *Self.Ts):
         self.storage = Tuple[*Self.Ts](*args^)
 
-    def get[T: AnyType](ref self) -> ref[origin_of(self)] T:
+    def get[T: AnyType](ref self) -> ref[origin_of(self.storage)] T:
         comptime for i in range(Self.Ts.length):
             comptime if Self.Ts[i] == T:
                 return self.storage[i]
