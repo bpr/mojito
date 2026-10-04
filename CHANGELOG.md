@@ -301,6 +301,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A tuple display or bare `Tuple(...)` call infers a string element as
+  `String`, as upstream's `Tuple.__init__(var *args: *Ts)` infers `Ts`, so
+  `var t: Tuple[Int, String] = Tuple(1, "x")`, or a `var w = (1, "q")`
+  bound later to a `Tuple[Int, String]`, type-checks where it reported a
+  `Tuple[Int, StringLiteral]` mismatch. An annotated tuple binding,
+  parameter, or field keeps `reverse` and `concat`
+  (`assets/ok/tuple_annotated_binding.mojo`); natively, either transform
+  over a `String` element still double-frees it (roadmap R277).
 - `repr` of a sized scalar names its type as upstream's
   `SIMD.write_repr_to` does: `repr(Int8(3))` and `repr(Float32(0.5))` print
   `Int8(3)` and `Float32(0.5)` on the VM and natively, where the VM printed

@@ -1246,11 +1246,13 @@ impl Checker {
                 self.record_array_literal_construction(expr.source_span(), &result)?;
                 Ok(result)
             }
-            // A tuple literal keeps each element's own type (heterogeneous).
+            // A tuple literal keeps each element's own type (heterogeneous),
+            // a string element materialized to `String` as the pin infers
+            // the pack.
             ExprKind::TupleLit(elems) => {
                 let tys = elems
                     .iter()
-                    .map(|e| self.infer(e))
+                    .map(|e| self.tuple_element_ty(e))
                     .collect::<Result<Vec<_>, _>>()?;
                 for (value, ty) in elems.iter().zip(&tys) {
                     self.check_consuming(value, ty, "Tuple display element")?;
@@ -2226,6 +2228,16 @@ impl Checker {
         }
     }
 
+    /// The element type a tuple infers for one argument: its own type, with
+    /// a string literal materialized to the nominal `String`, as upstream's
+    /// `Tuple.__init__(var *args: *Ts)` infers `Ts`.
+    pub(super) fn tuple_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
+        match self.infer(element)? {
+            Ty::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            ty => Ok(ty),
+        }
+    }
+
     pub(super) fn infer_list_elem(&self, elems: &[Expr]) -> Result<Ty, TypeError> {
         let mut acc: Option<Ty> = None;
         for e in elems {
@@ -2429,7 +2441,7 @@ impl Checker {
         if param_args.is_empty() {
             return args
                 .iter()
-                .map(|arg| self.infer(arg))
+                .map(|arg| self.tuple_element_ty(arg))
                 .collect::<Result<Vec<_>, _>>()
                 .map(|elements| self.public_tuple_type(elements));
         }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R277**.
+Next free ID: **R278**.
 
 ## Ordered Work
 
@@ -545,6 +545,22 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R277 Native `Tuple.reverse` and `Tuple.concat` over a `String`
+  element double-free it**
+
+  Problem: `var t = (1, String("x"))` then `t.reverse()` (or
+  `t.concat(Tuple(True))`) prints the result and then traps with "vm: double
+  free of Pointer allocation" natively, where the pin and the VM run to
+  completion.
+  - An `Int`/`Bool` tuple is clean; the `String` element is destroyed both in
+    the result and in the receiver the transform read.
+  - The transform result is built by the `TupleTransformRequest` clone, so
+    the suspect is the native lowering copying the element without the
+    `String` copy that the VM's clone performs.
+  - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R262 Finding a nested instance's method clone still spells every
   level of its type**
@@ -1746,25 +1762,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R46 A tuple binding with a `Tuple[...]` annotation loses `reverse` and
-  `concat`**
-
-  Problem: `var t: Tuple[Int, String] = (1, "x")` followed by `t.reverse()`
-  or `t.concat(Tuple(True))` runs at the pin, while Mojito reports "type
-  'Tuple$t2[y3:Inty6:String][Int, String]' has no method 'reverse'".
-  - The same calls work on an unannotated binding (`var t = (1, "x")`) and
-    on `var t = Tuple(1, "x")`.
-  - The annotation resolves to the minted `Tuple$t2[...]` struct, so method
-    lookup reports the missing member before the builtin tuple path
-    (`infer_tuple_method`, reached from `method_calls/intrinsic_receivers.rs`) or a
-    `TupleTransformRequest` for the clone is ever considered.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan decides whether the annotation should keep the public `Tuple`
-    spelling or the lookup should fall through, and lists the other members the
-    minted spelling hides.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R47 A generic struct's `Tuple` field over its parameter cannot be read**
 
