@@ -301,6 +301,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A runtime read through a `comptime names = reflect[T].field_names()`
+  binding (`print(names[i])` under `comptime for i in range(len(names))`,
+  `len(names)`) is now rejected with the pin's "cannot materialize comptime
+  value ... not 'ImplicitlyCopyable'", since the name list is a compile-time
+  `Array` like a list display, instead of printing; and
+  `materialize[names[i]]()` and `materialize[names]()` now cross the element
+  or the whole list explicitly, as at the pin, where the crossing took a
+  bare binding only (`assets/ok/reflection_field_name_materialize.mojo`,
+  `assets/type_error/comptime_field_names_runtime_use.mojo`).
 - `reflect[T].is_struct()` now answers `True` for every type Mojito names —
   `Int`, `Float64`, `Bool`, `NoneType`, a vector, `DType`, and a field
   handle over an `Int` field — as the pin's `#kgen.is_struct_type` does,

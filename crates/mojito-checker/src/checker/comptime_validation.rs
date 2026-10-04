@@ -571,30 +571,39 @@ impl Checker {
         )
     }
 
-    /// `materialize[X]()` under source validation: the runtime value of a
-    /// compile-time binding has the binding's own checked type (the display
-    /// the elaborator materializes types the same way).
+    /// `materialize[X]()` under source validation: upstream's
+    /// `materialize[value: T]() -> T`, so the runtime value has the type of
+    /// its compile-time operand — a binding's own checked type (a bound
+    /// `field_names()` list is no declared binding), or that of a
+    /// compile-time expression over the bindings in scope (`names[i]`). The
+    /// elaborator materializes the operand's display the same way.
     pub(super) fn infer_materialize_crossing(
         &self,
         param_args: &[ParamArg],
     ) -> Result<Ty, TypeError> {
-        let unsupported = || {
-            TypeError::Unsupported("materialize[...]() takes one compile-time binding".to_string())
-        };
-        let [target] = param_args else {
-            return Err(unsupported());
-        };
-        let (ParamArg::Value(Expr {
-            kind: ExprKind::Identifier(name),
-            ..
-        })
-        | ParamArg::Type(SourceType::Named(name, _))) = target
-        else {
-            return Err(unsupported());
-        };
-        self.lookup(name)
-            .cloned()
-            .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
+        match param_args {
+            [
+                ParamArg::Value(
+                    operand @ Expr {
+                        kind: ExprKind::Identifier(name),
+                        ..
+                    },
+                ),
+            ] => match self.lookup(name) {
+                Some(ty) => Ok(ty.clone()),
+                None => self
+                    .materialized_field_names(operand)?
+                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone())),
+            },
+            [ParamArg::Type(SourceType::Named(name, _))] => self
+                .lookup(name)
+                .cloned()
+                .ok_or_else(|| TypeError::UndefinedVariable(name.clone())),
+            [ParamArg::Value(operand)] => self.infer(operand),
+            _ => Err(TypeError::Unsupported(
+                "materialize[...]() takes one compile-time value".to_string(),
+            )),
+        }
     }
 
     /// The parameter-list reference of the variadic pack a spread names: a

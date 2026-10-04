@@ -85,6 +85,21 @@ impl Checker {
         }
     }
 
+    /// The runtime type `materialize[names]()` gives a name bound to
+    /// `field_names()`: the elaborator materializes the closed list as a
+    /// `List[String]` display. `None` for any other operand.
+    pub(super) fn materialized_field_names(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        Ok(match self.reflection_list(expr)? {
+            Some((ReflectQuery::FieldNames, _)) => Some(mojito_types::types::list_type(
+                mojito_types::types::nominal_type(
+                    mojito_symbol::symbol::STDLIB_STRING_STRUCT,
+                    Vec::new(),
+                ),
+            )),
+            _ => None,
+        })
+    }
+
     /// The compile-time value of a reflection query, for the constant and
     /// dependent-expression evaluators. `None` when `expr` is no query.
     pub(super) fn eval_reflection_expr(&self, expr: &Expr) -> Result<Option<CtValue>, TypeError> {

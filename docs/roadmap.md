@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R272**.
+Next free ID: **R275**.
 
 ## Ordered Work
 
@@ -736,6 +736,18 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     agree.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R274 A subscript of a list literal stops at run time**
+
+  Problem: `print([1, 2][0])` prints `1` at the pin and stops in Mojito with
+  "reference binding to a non-place expression".
+  - `List.__getitem__` borrows its receiver, and a list literal is no place;
+    a call result (`make()[1]`) is materialized as a temporary and works.
+  - The reflection crossing folds `r.field_names()[i]` to its element, so
+    only a written literal reaches this.
+  - Probe: `conformance/probes/list_literal_subscript.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R87 A loan carried only by a container's element type does not keep
   its source alive**
@@ -1722,20 +1734,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R42 A field name under a symbolic index prints without `materialize`**
-
-  Problem: `print(names[i])` inside `comptime for i in range(len(names))`
-  over `comptime names = reflect[T].field_names()` prints at Mojito, while
-  the pin rejects it with "cannot materialize comptime value of type
-  'Array[StringSpan[...]]'" and needs `materialize[names[i]]()`.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - `materialize[names[i]]()` fails at the instance in turn ("Undefined
-    variable 'materialize'"): the elaborator's crossing takes a bare binding
-    only.
-  - Depends on R40 for the `comptime n = names[i]` workaround, and on R41
-    for which handle results may materialize at all.
-  - Model: Opus, Planned.
-
 - [ ] **R43 `repr` of a sized scalar omits or misstates its type name**
 
   Problem: `repr(Float32(0.5))` and `repr(Int8(3))` print `Float32(0.5)` and
@@ -2413,6 +2411,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R272 A reflected field name materializes as `String`, not
+  `StringSpan[ImmStaticOrigin]`**
+
+  Problem: `materialize[names[i]]()` over `comptime names =
+  reflect[T].field_names()` is a `String` in Mojito and a
+  `StringSpan[ImmStaticOrigin]` at the pin, so the crossing diagnostic
+  spells `Array[String, Int(2)]` where the pin spells
+  `Array[StringSpan[ImmStaticOrigin], Int(2)]`.
+  - The elaborator answers `field_names()` with a list of plain compile-time
+    strings (`comptime/eval.rs::eval_reflection_method`), which materialize
+    as `String` literals.
+  - A program that annotates the element as a `StringSpan` is rejected where
+    the pin runs it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -3071,6 +3085,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `docs/parametric-mir-plan.md`).
   - Ledger name: `comptime-for-break-in-unrolled-loop`.
   - Depends on R246.
+  - Model: Opus, Not Planned.
+
+- [ ] **R273 A runtime read of a symbolic `field_names()` binding in a
+  generic body that is never called is accepted**
+
+  Problem: `print(names[i])` over `comptime names = reflect[T].field_names()`
+  in a generic `def` that no call instantiates runs in Mojito, while the pin
+  rejects the template ("cannot materialize comptime value of type
+  'Array[StringSpan[ImmStaticOrigin], ...]'").
+  - An instantiated body is rejected as the pin does: the elaborator's
+    crossing pass sees the closed list per instance
+    (`assets/type_error/comptime_field_names_runtime_use.mojo`).
+  - Source validation types `names[i]` and `len(names)` through
+    `checker/reflection.rs::infer_reflection` without knowing whether the
+    position is a runtime one; a compile-time binding or `materialize`
+    operand reaches the same path.
+  - Pinned by `conformance/probes/reflected_names_runtime_read_uncalled.mojo`.
+  - Ledger name: `reflected-names-runtime-read-uncalled`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape

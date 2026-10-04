@@ -184,7 +184,13 @@ impl Elab<'_> {
         // it folds to the literal form of that answer where it stands. A
         // handle over a subject still a parameter does not evaluate here, and
         // its query is left for the checker to type symbolically.
-        if let Some(handle) = reflection_query(expr, &binding)
+        // A subscript of a closed list answer (`r.field_names()[1]`) folds
+        // with it, to the element the runtime `__getitem__` would read.
+        let query = match &expr.kind {
+            ExprKind::Index { object, .. } => reflection_query(object, &binding),
+            _ => reflection_query(expr, &binding),
+        };
+        if let Some(handle) = query
             && self.eval(handle, env).is_ok()
         {
             let mut literal = lit_result(&self.eval(expr, env)?, expr.span)?;
@@ -194,19 +200,24 @@ impl Elab<'_> {
             return Ok(());
         }
         match &mut expr.kind {
-            // `materialize[NAME]()`: the binding's literal form. Any other
-            // spelling is left for the checker to report.
+            // `materialize[X]()`: the literal form of a binding, or of a
+            // compile-time expression over the bindings (`names[i]`). An
+            // operand that does not evaluate here is left for the checker.
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
             } if name == "materialize" && args.is_empty() && kwargs.is_empty() => {
-                if let [ParamArg::Value(argument)] = param_args.as_slice()
-                    && let ExprKind::Identifier(bound) = &argument.kind
-                    && let Some(value) = binding(bound)
-                {
-                    *expr = lit_result(value, expr.span)?;
+                let [ParamArg::Value(argument)] = param_args.as_slice() else {
+                    return Ok(());
+                };
+                let value = match &argument.kind {
+                    ExprKind::Identifier(bound) => binding(bound).cloned(),
+                    _ => self.eval(argument, env).ok(),
+                };
+                if let Some(value) = value {
+                    *expr = lit_result(&value, expr.span)?;
                 }
                 Ok(())
             }

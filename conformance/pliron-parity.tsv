@@ -518,6 +518,7 @@ assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitize
 assets/ok/reference_result_view_conversion.mojo	main	exe-differential	sanitized
 assets/ok/reference_return_forwarded_accessor.mojo	main	exe-differential	sanitized
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
+assets/ok/reflection_field_name_materialize.mojo	main	exe-differential	sanitized
 assets/ok/reflection_runtime_query.mojo	main	exe-differential	sanitized
 assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized

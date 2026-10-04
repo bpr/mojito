@@ -948,7 +948,7 @@ impl Elab<'_> {
         })?;
         match method {
             "field_count" => Ok(CtValue::Int(info.fields.len() as i64)),
-            "field_names" => Ok(CtValue::Tuple(
+            "field_names" => Ok(CtValue::List(
                 info.fields
                     .iter()
                     .map(|field| CtValue::Str(field.name.clone()))
