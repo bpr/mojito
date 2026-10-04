@@ -442,17 +442,23 @@ Three decisions shaped this, against the pack precedent above.
   or float literal into a symbolic lane and refuses `Int`, `Float64`, a
   sized scalar, and `Bool`, which is what the pin rejects
   (`assets/type_error/simd_symbolic_scalar_operand_rejected.mojo`).
-- **A lane fact is recorded only when known.** `SimdLength`,
-  `DtypeConstant`, a cast, shuffle, `to_bits`, or float-query adjustment, a
-  hash leaf clone, and a SIMD construction's dimensions are recorded only for
-  known slots. A body typed under a symbolic slot keeps its clone check
-  (`template_certificate` refuses a `DType` binder), so the clone records
-  its own concrete facts. A symbolic slot is a register type a generator may
-  carry (*Register types*): the parametric verifier checks its binders and
-  kind, the concrete verifier rejects it, and layout refuses it. A slot
-  holding an evaluated application (`SIMD[DType.float32, M]` over an applied
-  module constant) is concrete to every consumer that reads the lane count
-  (`SimdWidth::known`) and symbolic to type identity.
+- **A lane fact carries its slots.** A SIMD construction's dimensions,
+  `SimdLength`, `DtypeConstant`, a cast, and a `to_bits` adjustment record
+  the `SimdDtype`/`SimdWidth` slots themselves, known or symbolic (2026-10-03,
+  R3): MIR's `MakeSimd`, `SimdCast`, and `SimdBitcast` carry them (schema
+  1.18), a symbolic `v.length` or `v.dtype` lowers to the evaluation of its
+  parameter expression, derivation substitutes them through the vector type
+  they are the slots of (`templates::derive_adjustment`), and the elaborator
+  closes them per instance as it closes a register type. A shuffle, slice,
+  or join adjustment, a float-query adjustment, and a hash leaf clone are
+  still recorded only for known slots, since their mask or leaf is the
+  width's or the dtype's; a `def` body holding one keeps its clone. A
+  symbolic slot is a register type a generator may carry (*Register types*):
+  the parametric verifier checks its binders and kind, the concrete verifier
+  rejects it, and layout refuses it. A slot holding an evaluated application
+  (`SIMD[DType.float32, M]` over an applied module constant) is concrete to
+  every consumer that reads the lane count (`SimdWidth::known`) and symbolic
+  to type identity.
 
 What the pin licenses, probed 2026-09-22 (Mojo 1.2.0.dev2026092105) and
 pinned by `assets/ok/simd_symbolic_surface.mojo` and the eight

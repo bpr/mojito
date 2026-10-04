@@ -892,6 +892,18 @@ impl Flatten<'_> {
             }
             return self.anchor_borrowing_temporary(expression, value, loans, "$view_recv_r");
         }
+        // A value binder of the enclosing declaration (`dt.is_integral()` in
+        // a `DType`-keyed body) is a value the elaborator folds, not a place:
+        // the receiver is read through its slot and no place is retained.
+        if let ExprKind::Identifier(name) = &expression.kind
+            && self
+                .enclosing_binders
+                .values
+                .iter()
+                .any(|(binder, _)| binder.name.as_ref() == name.as_str())
+        {
+            return (self.expr(expression), None);
+        }
         match self.try_place(expression) {
             Some(place) => {
                 let value = self.fresh(expression.source_span(), Some(place.root));

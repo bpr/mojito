@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R257**.
+Next free ID: **R262**.
 
 ## Ordered Work
 
@@ -156,15 +156,87 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R3 (P3c) A body keyed on a `DType` or a vector width has no MIR
-  form**
+- [ ] **R257 (P3c) A lane gather at a symbolic width keys a clone**
 
-  Problem: `SIMD[dt, n]` is concrete in every MIR register, so a body over a
-  symbolic `dt` or `n` is cloned per value.
-  - Its registers use the parameter-expression types already specified.
-  - Layout, lane arithmetic, and SIMD intrinsics are resolved by the
-    elaborator.
-  - Delete the cloner's branch and the certificate class.
+  Problem: `v.shuffle[...]()`, `v.slice[w, offset=o]()`, and `v.join(w)` in
+  a `DType`- or width-keyed `def` keep the `def` on the cloner
+  (`lane_def_shape_served`), where every other lane form is served by the
+  template.
+  - `SimdShuffle` carries its mask as a list of known lane indices, which
+    `join` and `slice` build from the receiver's width; the checker records
+    the adjustment only at a known width (`infer_simd_join`,
+    `infer_simd_slice`, `infer_simd_shuffle`).
+  - The gather needs a form over the width's parameter expression — a
+    `join` as "the receiver's lanes then the argument's", a `slice` as an
+    offset and an output width — that the elaborator expands to the mask
+    once the width is known.
+  - `assets/ok/simd_symbolic_surface.mojo`'s `doubled` is the body that
+    waits.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R258 (P3c) A `DType` float query over a binder keys a clone**
+
+  Problem: `DType.mantissa_width[dt]()` and the other float-format queries
+  over a `DType` binder keep a `def` on the cloner, where the checker folds
+  them only at a known dtype (`DtypeFloatQuery`).
+  - The answer is a function of the dtype, so it is a parameter expression
+    the elaborator can evaluate once `dt` is bound, as the defaulted
+    `to_bits` target already is (`symbolic_unsigned_dtype_of`).
+  - `assets/ok/dtype_float_queries.mojo`'s `mantissa_of` is the body that
+    waits.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R259 (P3c) A hash of a lane value in a lane-keyed `def` keys a
+  clone**
+
+  Problem: `hash(v)` over a vector whose dtype or width is a binder keeps
+  the `def` on the cloner: the hasher's SIMD leaf is demanded by the closed
+  vector type (`record_hash_leaf` skips a symbolic one), and a served
+  template has none to demand.
+  - The elaborator must demand the leaf for each instance's closed vector
+    type, as it enqueues a display instance for `print`.
+  - A `hash` of a width-one lane (`hash(v[0])`) needs no leaf and is served
+    today; the exclusion is syntactic and keeps every `hash(...)` call.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R261 (P3c) A local `comptime` binding in a lane-keyed `def` keys a
+  clone**
+
+  Problem: `comptime lane = dt` in a `DType`-keyed `def` keeps the `def` on
+  the cloner (`lane_def_shape_served`): the cloner's body elaboration
+  evaluates a local `comptime` binding before the check, and a value over
+  the `def`'s own binder is "not a compile-time type" there.
+  - A served template needs the binding left to the checker, which already
+    binds a local `comptime` `DType` symbolically (`comptime_dtypes`), and
+    MIR lowers the statement as an ordinary binding of its value.
+  - The same gap keeps a `comptime for` with such a binding on the cloner
+    (R246).
+  - `assets/ok/simd_symbolic_surface.mojo`'s `rebound` is the body that
+    waits.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R260 (P3c) An overloaded lane-keyed `def` is cloned per call**
+
+  Problem: a `DType`- or width-keyed `def` sharing its name with another
+  declaration (`kind[dt: DType](a: Scalar[dt])` beside `kind(a: String)`)
+  stays a template family on the cloner (`dtype_generic_template_names`),
+  while a uniquely named one is served by its template.
+  - A bound generic is admitted by name (`collect_bound_generic_templates`
+    requires a unique name), since overload selection is the checker's and
+    the elaborator's registry is name-keyed; the checker's recorded
+    instantiation names the selected overload, which is what a served call
+    would carry.
+  - The `DTypeVectorDef` census class and the `DType` stub path
+    (`dtype_generic_template_names`, `omits_dtype_param`) go when this and
+    R257–R259 land; a lane-keyed struct member is R4's and a method's own
+    lane binder R5's.
+  - `assets/ok/dtype_keyed_overload_family.mojo` and
+    `assets/ok/dtype_keyed_overload_beside_plain.mojo` are the bodies that
+    wait.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -177,6 +249,9 @@ correctness fix to existing behavior is allowed.
   - A struct declaration is a generator in MIR, and the elaborator mints its
     instances and their members.
   - The `Tuple` and `TString` request types leave the driver.
+  - A lane-keyed `def` applying such a struct over its own binder
+    (`Walker[dt]` in `assets/ok/template_method_struct_lane.mojo`'s `show`)
+    keeps its clone until then (`lane_def_shape_served`).
   - Depends on R2 and R3.
   - Model: Fable, Planned.
 
@@ -2411,22 +2486,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R140 A vector constructed at a layout constant's width has no
   checked type**
 
-  Problem: `SIMD[DType.float32, S](3.0)` over `comptime S = size_of[Pair]()`
-  runs at the pin, which keeps the width the application `size_of[Pair]()`
-  through the check; Mojito stops at MIR lowering with "register has no
-  checked type".
-  - The constant itself works since 2026-10-03: a value read is the layout
-    query the elaborator answers under its target, and `SIMD[DType.float32,
-    S]` in a signature is `SIMD[DType.float32, size_of[Pair]()]`, which a
-    `16`-lane vector does not convert to
+  Problem: `def h[T: AnyType](x: SIMD[DType.float32, size_of[T]()])` runs at
+  the pin, which keeps the width the application `size_of[T]()` through the
+  check; Mojito rejects the signature with "not a compile-time Int constant:
+  not an associated comptime expression".
+  - The constant and the construction work since 2026-10-03: a value read
+    is the layout query the elaborator answers under its target,
+    `SIMD[DType.float32, S]` in a signature is `SIMD[DType.float32,
+    size_of[Pair]()]`, which a `16`-lane vector does not convert to, and
+    `SIMD[DType.float32, S](3.0)` over `comptime S = size_of[Pair]()` is a
+    construction at the application's width, which the elaborator closes
     (`assets/ok/comptime_layout_constant.mojo`,
     `assets/type_error/comptime_layout_constant_mismatch.mojo`).
-  - The checker records a SIMD construction's dimensions only at a known
-    width (`simd_constructions`), so a construction at a symbolic width has
-    no `ConstructSimd` fact and no type. `size_of[T]()` spelled in a
-    signature is the same gap.
-  - The lever is the `DType`/vector body entry: a construction at a
-    parameter-expression width is what it gives MIR.
+  - A `size_of[T]()` spelled directly in a signature's width slot is not
+    read as the application the module constant is (`simd_width` in
+    `type_resolution.rs`).
   - Probe: `conformance/probes/ctfe_layout_in_signature.mojo`.
   - Depends on R3.
   - Model: Fable, Not Planned.

@@ -264,7 +264,7 @@ impl Checker {
         for (id, dimensions) in &facts.simd_constructions {
             self.simd_constructions
                 .borrow_mut()
-                .insert(span(id)?, *dimensions);
+                .insert(span(id)?, dimensions.clone());
         }
         for (id, base) in &facts.contextual_bases {
             self.contextual_bases

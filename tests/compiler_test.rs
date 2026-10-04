@@ -2584,26 +2584,26 @@ fn template_vector_keyed_members_derive() {
 }
 
 #[test]
-fn template_value_keyed_lane_def_derives() {
+fn template_value_keyed_lane_def_is_template_served() {
     // A `DType`- or lane-keyed `def` with no compile-time control flow is
-    // specialized per call; source validation checks its template, so every
-    // instance derives from it.
+    // served by its template: the cloner mints no instance, and the
+    // elaborator closes the lane slots per call.
     let source = "def lane[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return len(one) + v\n\ndef wide[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    return len(lanes)\n\ndef main():\n    print(lane[DType.int16](2), lane[DType.float32](9), wide[4](2))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("lane$") || name.starts_with("wide$"))
-            .collect();
-        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        assert_eq!(
+            census
+                .cloned
+                .count(mojito::census::CloneClass::DTypeVectorDef),
+            0,
+            "no lane-keyed def clone: {census:?}"
+        );
+        assert!(
+            !census.cloned.minted("lane") && !census.cloned.minted("wide"),
+            "the templates serve every call: {census:?}"
+        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 10 4\n"

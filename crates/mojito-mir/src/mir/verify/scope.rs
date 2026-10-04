@@ -284,6 +284,18 @@ impl ScopeCx<'_> {
                 for (what, ty) in instruction_named_types(instruction) {
                     self.walk(&format!("block {index} {what}"), ty);
                 }
+                // A SIMD instruction's slots are the slots of the vector type
+                // it builds, checked as that type is.
+                if let MirInstr::MakeSimd { dtype, width, .. }
+                | MirInstr::SimdCast { dtype, width, .. }
+                | MirInstr::SimdBitcast { dtype, width, .. } = instruction
+                {
+                    let built = Ty::Simd {
+                        dtype: dtype.clone(),
+                        width: width.clone(),
+                    };
+                    self.walk(&format!("block {index} vector slots"), &built);
+                }
             }
             match &block.term {
                 MirTerm::ComptimeBranch { cond, .. } => {

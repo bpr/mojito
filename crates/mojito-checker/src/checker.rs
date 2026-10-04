@@ -753,7 +753,7 @@ pub struct Checker {
     /// value is the loan mutability, solved like the explicit construction
     /// path's `BorrowRefArguments`.
     conversion_source_borrows: RefCell<FactMap<SourceSpan, bool>>,
-    simd_constructions: RefCell<FactMap<SourceSpan, (Dtype, i64)>>,
+    simd_constructions: RefCell<FactMap<SourceSpan, (SimdDtype, SimdWidth)>>,
     /// Checked operation decisions — `Variant` construction/tag/projection/
     /// update and origin-bearing pointer construction — keyed by the source
     /// expression.  These cross the typed boundary so MIR never reinterprets

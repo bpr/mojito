@@ -64,6 +64,15 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if contains_type_param(found) || contains_type_param(expected) {
         return true;
     }
+    // A vector whose lane dtype or width is still a parameter expression is
+    // a generator's pattern: it stands for every vector whose known slots
+    // agree with its known ones, a native scalar (`Int`, `Float64`, a
+    // `Bool` lane) included.
+    if let Some(compatible) = symbolic_simd_compatible(found, expected)
+        .or_else(|| symbolic_simd_compatible(expected, found))
+    {
+        return compatible;
+    }
     // Pointer provenance erases from the runtime ABI: `unsafe_origin_cast` retypes
     // a pointer without any runtime operation (lowering forwards the
     // receiver register), so ABI compatibility compares elements only. The
@@ -129,6 +138,39 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     mojito_types::types::value_coerces(found, expected)
         || mojito_types::types::value_coerces(expected, found)
+}
+
+/// Whether `actual` fits the vector `pattern` when one of the pattern's
+/// slots is symbolic; `None` when the pattern is not such a vector.
+fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
+    let Ty::Simd { dtype, width } = pattern else {
+        return None;
+    };
+    if !dtype.is_symbolic() && !width.is_symbolic() {
+        return None;
+    }
+    let (actual_dtype, actual_width) = match actual {
+        Ty::Bool => (
+            mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
+            mojito_types::types::SimdWidth::Known(1),
+        ),
+        other => match mojito_types::types::simd_slots(other) {
+            Some(slots) => slots,
+            None => return Some(false),
+        },
+    };
+    Some(
+        slot_fits(dtype.known(), actual_dtype.known())
+            && slot_fits(width.known(), actual_width.known()),
+    )
+}
+
+/// Whether two vector slots agree where both are known.
+fn slot_fits<T: PartialEq>(known: Option<T>, actual: Option<T>) -> bool {
+    match (known, actual) {
+        (Some(known), Some(actual)) => known == actual,
+        _ => true,
+    }
 }
 
 pub(super) fn declared<'a>(

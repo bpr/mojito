@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.17
+# Mojito Textual MIR Format, Version 1.18
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.17 is implemented end to end for inspection and loading: canonical
+Version 1.18 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.17
+mojito-mir 1.18
 ```
 
-The writer emits 1.17. The reader accepts 1.0 through 1.17; *Schema 1.0*
+The writer emits 1.18. The reader accepts 1.0 through 1.18; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -143,6 +143,13 @@ the argument that is the caller's collector (`show(*args)`), a
 The elaborator replaces the argument with the bound pack's element places,
 so elaborated MIR records `absent`. An older artifact reads as recording no
 spread.
+
+Minor version 18 lets a SIMD instruction's lane slots stay symbolic: the
+`dtype` and `width` fields of `simd.make`, `simd.cast`, and `simd.bits` take
+`ct_expr(...)`, the parameter expression a generator names (`Scalar[dt](x)`
+in a `DType`-keyed `def`), exactly as the `simd` type record's slots do. The
+elaborator closes them per instance, so elaborated MIR holds known slots. A
+1.17 consumer rejects the spelling, which is the intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -598,7 +605,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeTuple` | `tuple.make` |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` |
-| `MakeSimd` / `SimdCast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.shuffle` |
+| `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18) |
 | `Raise` / `Try` | `raise` / `try` |
 | `Drop` / `DropVar` | `drop.reg` / `drop.var` |
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
@@ -635,7 +642,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.17
+mojito-mir 1.18
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

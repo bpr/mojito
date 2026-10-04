@@ -423,16 +423,17 @@ impl Checker {
                 ..
             } = &expr.kind
             {
-                // A symbolic construction records no dimensions: the body it
-                // sits in keeps its clone check.
+                // A construction's dimensions are its slots: known, or the
+                // parameter expressions a generator names, which the
+                // elaborator closes per instance.
                 let dimensions = if name == "SIMD" {
-                    self.simd_dims(param_args).ok().and_then(|(dtype, width)| {
+                    self.simd_dims(param_args).ok().map(|(dtype, width)| {
                         let width = if width.is_inferred() {
-                            i64::try_from(args.len()).unwrap_or(0)
+                            SimdWidth::Known(i64::try_from(args.len()).unwrap_or(0))
                         } else {
-                            width.known()?
+                            width
                         };
-                        Some((dtype.known()?, width))
+                        (dtype, width)
                     })
                 } else if name == "Scalar" && param_args.len() == 1 {
                     // `Scalar[DType.x](arg)` is width-1 SIMD construction; the
@@ -440,12 +441,12 @@ impl Checker {
                     // scalars, matching `simd_ty`.
                     self.dtype_from_arg(&param_args[0])
                         .ok()
-                        .and_then(|dtype| dtype.known())
-                        .map(|dtype| (dtype, 1))
+                        .map(|dtype| (dtype, SimdWidth::Known(1)))
                 } else {
                     Dtype::from_scalar_alias(name)
                         .map(|dtype| (dtype, 1))
                         .or_else(|| param_args.is_empty().then(|| self.vector_alias(name))?)
+                        .map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
                 };
                 if let Some(dimensions) = dimensions {
                     self.simd_constructions

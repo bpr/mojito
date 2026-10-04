@@ -1095,8 +1095,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             tag,
             &[
                 ("dest", reg_value(*dest)),
-                ("dtype", dtype.name().into()),
-                ("width", width.to_string()),
+                ("dtype", simd_dtype_slot(dtype)),
+                ("width", simd_width_slot(width)),
                 ("elems", regs(elems)),
             ],
         ),
@@ -1116,8 +1116,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("value", reg_value(*value)),
-                ("dtype", dtype.name().into()),
-                ("width", width.to_string()),
+                ("dtype", simd_dtype_slot(dtype)),
+                ("width", simd_width_slot(width)),
             ],
         ),
         MirInstr::SimdShuffle {
@@ -1617,24 +1617,8 @@ fn ty_value(ty: &Ty) -> String {
         Ty::Simd { dtype, width } => record(
             "simd",
             &[
-                (
-                    "dtype",
-                    match dtype {
-                        mojito_types::types::SimdDtype::Known(dtype) => dtype.name().into(),
-                        mojito_types::types::SimdDtype::Expr(expr) => {
-                            positional("ct_expr", &param_expr(expr))
-                        }
-                    },
-                ),
-                (
-                    "width",
-                    match width {
-                        mojito_types::types::SimdWidth::Known(width) => width.to_string(),
-                        mojito_types::types::SimdWidth::Expr(expr) => {
-                            positional("ct_expr", &param_expr(expr))
-                        }
-                    },
-                ),
+                ("dtype", simd_dtype_slot(dtype)),
+                ("width", simd_width_slot(width)),
             ],
         ),
         Ty::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
@@ -1933,6 +1917,24 @@ fn checked_const(value: &CheckedConst) -> String {
 /// A parameter expression in schema 1.1's typed structural form. Operands
 /// print in canonical order, references by owner symbol and slot (or by
 /// signature depth and index); no address or process-local key is written.
+/// A vector's lane dtype: the dtype's name, or `ct_expr(...)` while the slot
+/// is a parameter expression (the `simd` type record and the SIMD
+/// instructions spell it alike).
+fn simd_dtype_slot(dtype: &mojito_types::types::SimdDtype) -> String {
+    match dtype {
+        mojito_types::types::SimdDtype::Known(dtype) => dtype.name().into(),
+        mojito_types::types::SimdDtype::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
+/// A vector's width: the lane count, or `ct_expr(...)` while symbolic.
+fn simd_width_slot(width: &mojito_types::types::SimdWidth) -> String {
+    match width {
+        mojito_types::types::SimdWidth::Known(width) => width.to_string(),
+        mojito_types::types::SimdWidth::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
 fn param_expr(value: &ParamExpr) -> String {
     let meta = ("type", meta_ty(value.meta()));
     match value.kind() {

@@ -4,7 +4,7 @@ use crate::fact_store::{FactMap, FactSet, FactVec};
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{Expr, ExprKind, PrefixOp};
 use mojito_common::token::{SourceSpan, Span};
-use mojito_types::types::Ty;
+use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -687,9 +687,13 @@ pub enum SemanticAdjustment {
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
+    /// `SIMD[dt, width](elems)`, a `Scalar[dt](x)`, or a scalar alias:
+    /// the construction's lane dtype and width, each a known slot or the
+    /// parameter expression a generator names, which the elaborator closes
+    /// per instance.
     ConstructSimd {
-        dtype: mojito_ast::ast::Dtype,
-        width: i64,
+        dtype: SimdDtype,
+        width: SimdWidth,
     },
     /// `size_of[T]()` resolved to one concrete checked type. MIR retains the
     /// type so every executable backend consults the shared native layout.
@@ -706,31 +710,33 @@ pub enum SemanticAdjustment {
         ty: Ty,
     },
     /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
-    /// value. The target dtype and lane width are resolved at checking; MIR
-    /// carries them so the VM never derives semantics from a runtime value.
+    /// value. The target dtype and lane width are the checker's slots, known
+    /// or a generator's parameter expressions; MIR carries them so the VM
+    /// never derives semantics from a runtime value.
     SimdCast {
-        dtype: mojito_ast::ast::Dtype,
-        width: i64,
+        dtype: SimdDtype,
+        width: SimdWidth,
     },
     /// `v.to_bits[DType.target]()` — lane-wise bit reinterpretation of a
     /// SIMD value as the unsigned `dtype` (at least as wide as the source
     /// lane; narrower sources zero-extend). Resolved at checking like
     /// `SimdCast`.
     SimdToBits {
-        dtype: mojito_ast::ast::Dtype,
-        width: i64,
+        dtype: SimdDtype,
+        width: SimdWidth,
     },
-    /// `v.length` on a SIMD value — the checker-resolved lane count, lowered
-    /// as an `Int` constant.
+    /// `v.length` on a SIMD value — the lane count, lowered as an `Int`
+    /// constant when known and as the evaluation of its parameter
+    /// expression in a generator.
     SimdLength {
-        width: i64,
+        width: SimdWidth,
     },
     /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
-    /// or value (`Int32.dtype`, `v.dtype`) — the checker-resolved dtype,
-    /// lowered as a dtype constant. A value receiver still lowers for its
-    /// effects.
+    /// or value (`Int32.dtype`, `v.dtype`) — the dtype, lowered as a dtype
+    /// constant when known and as a read of its binder in a generator. A
+    /// value receiver still lowers for its effects.
     DtypeConstant {
-        dtype: mojito_ast::ast::Dtype,
+        dtype: SimdDtype,
     },
     /// `DType.mantissa_width[dtype]()` and the other floating-point format
     /// queries — the checker-resolved answer, lowered as an `Int` constant.
@@ -1100,7 +1106,7 @@ pub struct DiscoveryResult {
     pub subscript_descriptors:
         FactMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
     pub iteration_protocols: FactMap<SourceSpan, IterationProtocol>,
-    pub simd_constructions: FactMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+    pub simd_constructions: FactMap<SourceSpan, (SimdDtype, SimdWidth)>,
     pub operation_adjustments: FactMap<SourceSpan, SemanticAdjustment>,
     pub parameterized_method_calls: FactMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
     pub tuple_unpack_plans: FactMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
@@ -1579,7 +1585,7 @@ impl CheckedProgram {
             (Vec<Option<mojito_types::types::SliceKind>>, bool),
         >,
         iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: &HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+        simd_constructions: &HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
         operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
         parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
         tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
@@ -1800,7 +1806,7 @@ fn build_checked_expressions(
         (Vec<Option<mojito_types::types::SliceKind>>, bool),
     >,
     iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
-    simd_constructions: &HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+    simd_constructions: &HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
     operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
     parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
     tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
@@ -1839,7 +1845,7 @@ fn build_checked_expressions(
         subscript_descriptors:
             &'a HashMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
         iteration_protocols: &'a HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: &'a HashMap<SourceSpan, (mojito_ast::ast::Dtype, i64)>,
+        simd_constructions: &'a HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
         operation_adjustments: &'a HashMap<SourceSpan, SemanticAdjustment>,
         parameterized_method_calls: &'a HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
         tuple_unpack_plans: &'a HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
@@ -2151,8 +2157,8 @@ fn build_checked_expressions(
             }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
-                    dtype: *dtype,
-                    width: *width,
+                    dtype: dtype.clone(),
+                    width: width.clone(),
                 });
             }
             if let Some(operation) = self.operation_adjustments.get(&span) {

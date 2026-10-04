@@ -20,6 +20,27 @@ impl FnLowering<'_> {
     /// Construct a SIMD value with the VM's per-lane conversions. Width-one
     /// aliases remain SSA scalars; wider values assemble a vector lane by
     /// lane (one element splats).
+    /// The known lane dtype and width of a SIMD instruction. Concrete MIR
+    /// holds known slots; a symbolic one is a generator form the elaborator
+    /// closes before lowering, so meeting it here is the unsupported boundary.
+    pub(super) fn concrete_simd_slots(
+        &self,
+        dest: Reg,
+        dtype: &mojito_types::types::SimdDtype,
+        width: &mojito_types::types::SimdWidth,
+    ) -> Result<(Dtype, usize), PlironError> {
+        match (
+            dtype.known(),
+            width.known().and_then(|width| usize::try_from(width).ok()),
+        ) {
+            (Some(dtype), Some(width)) => Ok((dtype, width)),
+            _ => Err(self.unsupported_reg(
+                format!("SIMD instruction over the symbolic slots `SIMD[{dtype}, {width}]`"),
+                dest,
+            )),
+        }
+    }
+
     pub(super) fn lower_make_simd(
         &mut self,
         ctx: &mut Context,

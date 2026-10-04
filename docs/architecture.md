@@ -536,7 +536,10 @@ is still symbolic, exactly as upstream does; the equality is asserted on each
 clone. Every method body of a struct keyed on a `DType` or vector value
 (`value_keyed_struct`), which the elaborator specializes whole and drops, is
 checked the same way, to produce its template only: a body this check cannot
-type gets no verdict, and its specializations keep their own check. Bodies
+type gets no verdict, and its specializations keep their own check. A
+`DType`- or lane-keyed `def` (`value_keyed_def`) is checked here too, and
+again as a retained bound generic by the executable pass when its template
+serves it. Bodies
 without such constructs are declared but left to the
 executable check; a struct keyed on a struct-typed value parameter registers
 as a template shell and keeps its per-instantiation check. Validation then runs the
@@ -616,14 +619,20 @@ trait bound: every dtype-gated operator and method is licensed through
 `SimdDtype::licenses` (the constraint is the instantiation's to check, as
 upstream defers `constrained[...]`), an integer or float literal splats into
 it where a concrete scalar does not (`types::splats_to`), and a lane fact the
-checker records for lowering (`SimdLength`, `DtypeConstant`, a cast or
-shuffle adjustment) is recorded only when the slot is known — such a body
-keeps its clone check. Applying a `DType`-keyed struct in a validated body
-closes its `Scalar[Self.dt]` members under the application's values, to a
-concrete lane or to the caller's own symbolic `dt`. A symbolic slot never
-crosses the MIR waist: `validate_dependent_bindings` refuses it, the
-elaborator still clones every such body per call or per application, and
-lowering reads only known slots.
+checker records for lowering (a construction's dimensions, `SimdLength`,
+`DtypeConstant`, a cast or `to_bits` adjustment) carries the slots
+themselves, known or symbolic; a shuffle, slice, or join is recorded only at
+a known width, since its mask is the width's. Applying a `DType`-keyed struct
+in a validated body closes its `Scalar[Self.dt]` members under the
+application's values, to a concrete lane or to the caller's own symbolic
+`dt`. A symbolic slot crosses the MIR waist as a register type and in
+`MakeSimd`, `SimdCast`, and `SimdBitcast` (schema 1.18): the parametric
+verifier checks its binders and kind, the concrete verifier rejects it, and
+the elaborator closes it per instance as it closes a register type. A
+uniquely named `DType`- or lane-keyed `def` whose body holds no other form
+is a bound generic served by its template (`served_lane_defs`); a struct
+keyed on a lane and a method with a lane binder of its own are still cloned
+(roadmap R4, R5).
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
 parameter — a `def`'s type parameter, or `Self` in a generic struct's method —
@@ -657,9 +666,9 @@ template, so validation is the only check it gets, and its instances inherit
 the facts of the arms the elaborator selects instead of being inferred
 (Stage 3, *Checked Templates*). A run that ends without a verdict — it
 reached a member of a struct-value-keyed template shell — withdraws every
-certificate it produced. A pack-, `DType`-, or vector-keyed body's
-certificate is always incomplete, and so is a reflection-reading body's, so
-their instances keep the clone check. The verdict-only
+certificate it produced. A pack-keyed body's certificate is always
+incomplete, and so are a reflection-reading body's and a lane-keyed struct
+member's, so their instances keep the clone check. The verdict-only
 `validate_comptime_templates` remains for clients without a catalog, and
 `comptime::elaborate`, the composed-stage seam, runs the same three steps
 through it.
@@ -786,10 +795,13 @@ statically evident, a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
 without an argument for a required parameter, and a **`DType`-keyed** `def`
-(`dtype_generic_template_names`) whose call omits only its lane: the lane is
-the argument's own, which the checker reads off a `Scalar[dt]` slot and the
-elaborator cannot. A call that omits a SIMD width is not in that subset —
-the pin does not infer one either. An overloaded name with a
+(`dtype_generic_template_names`) the template does not serve — an
+overloaded one, or one whose body shuffles, slices, joins, or hashes a
+lane value, queries a float format over its binder, binds a local
+`comptime`, or holds a nested `def` — whose call omits only its lane: the
+lane is the argument's own, which the checker reads off a `Scalar[dt]` slot
+and the elaborator cannot. A call that omits a SIMD width is not in that
+subset — the pin does not infer one either. An overloaded name with a
 compile-time-keyed or type-pack declaration among its overloads is a *family*
 (`collect_overload_families`): no call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type

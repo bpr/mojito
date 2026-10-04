@@ -21,6 +21,7 @@ impl Elab<'_> {
             statement,
             &|name| self.structs.contains_key(name),
             &self.served_packs,
+            &self.served_lanes,
         )
     }
 

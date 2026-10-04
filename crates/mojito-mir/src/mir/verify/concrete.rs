@@ -192,6 +192,15 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps the layout query of `{ty}` in elaborated MIR"
             ));
         }
+        MirInstr::MakeSimd { dtype, width, .. }
+        | MirInstr::SimdCast { dtype, width, .. }
+        | MirInstr::SimdBitcast { dtype, width, .. }
+            if dtype.is_symbolic() || width.is_symbolic() =>
+        {
+            errors.push(format!(
+                "{head} keeps the symbolic vector slots `SIMD[{dtype}, {width}]` in elaborated MIR"
+            ));
+        }
         MirInstr::MaterializeLiteral { target: ty, .. }
         | MirInstr::PointerStorageTake { element: ty, .. }
         | MirInstr::PointerStorageDestroy { element: ty, .. }

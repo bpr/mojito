@@ -8,6 +8,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A uniquely named `def` keyed on a `DType` binder, on a parameter used as a
+  lane width, or on a layout operand (`lane[dt: DType]` constructing
+  `Scalar[dt](v)`, `wide[w: Int]` constructing `SIMD[DType.int32, w](v)`,
+  `bits[dt: DType, w: Int](v: SIMD[dt, w])`) is served by its template
+  instead of being cloned per call: the checker records every lane fact —
+  a construction's dimensions, a cast, a `to_bits`, `v.length`, `v.dtype` —
+  as the `SimdDtype`/`SimdWidth` slots themselves, MIR carries the slots in
+  its register types and in `MakeSimd`, `SimdCast`, and `SimdBitcast`
+  (textual schema 1.18, `ct_expr(...)` in their `dtype` and `width` fields),
+  a symbolic lane count or dtype read lowers to the evaluation of its
+  parameter expression, a literal beside a symbolic lane materializes to
+  it, a `Scalar[dt]` splats into a `SIMD[dt, w]`, a `comptime if` over the
+  binder (`dt.is_integral()`) reads the binder's slot in its thunk, and the
+  elaborator binds `dt` and `w` from the call's recorded arguments or a
+  vector argument's own slots and closes every slot per instance, on the VM
+  and natively (`assets/ok/lane_template_served.mojo`,
+  `assets/ok/template_value_keyed_lane_def.mojo`,
+  `assets/ok/simd_symbolic_surface.mojo`). A `def` whose body shuffles,
+  slices, joins, or hashes a lane value, queries a float format over its
+  binder, binds a local `comptime`, or holds a nested `def`, and every
+  overloaded lane-keyed `def`, still clone per call (roadmap R257–R261); a struct keyed on a lane and a
+  method with a lane binder of its own wait on R4 and R5.
 - A pack-keyed `def` that spreads its pack whole into `print` or into
   another served `def` (`show(*a)`, `tally(10, *rest)`, `drain(*items^)`)
   is served by its template: MIR carries the call with the collector as its

@@ -233,7 +233,7 @@ impl Flatten<'_> {
             .into_iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ConstructSimd { dtype, width } => {
-                    usize::try_from(width).ok().map(|width| (dtype, width))
+                    Some((dtype, width))
                 }
                 _ => None,
             })?;
@@ -241,7 +241,9 @@ impl Flatten<'_> {
         // A nullary construction splats a zero lane.
         let elems = match (kwargs, args) {
             ([fill], _) => vec![self.expr(&fill.value)],
-            ([], []) if dtype == Dtype::Bool => vec![self.constant(e, Const::Bool(false))],
+            ([], []) if dtype.known() == Some(Dtype::Bool) => {
+                vec![self.constant(e, Const::Bool(false))]
+            }
             ([], []) => vec![self.constant(e, Const::IntLiteral(0.into()))],
             _ => self.args(args),
         };
@@ -613,13 +615,17 @@ impl Flatten<'_> {
     /// Materialize an exact-literal register as the checked `target`: a
     /// numeric scalar through `MaterializeLiteral`, a multi-lane vector as the
     /// one-element splat explicit `SIMD[dt, w](literal)` construction emits.
+    /// A vector whose width is still a parameter expression splats too: the
+    /// instance's width may be above one.
     pub(in crate::mir) fn materialize_literal(
         &mut self,
         value: Reg,
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
-        if mojito_types::types::simd_shape(target).is_some_and(|(_, width)| width > 1) {
+        if mojito_types::types::simd_slots(target)
+            .is_some_and(|(_, width)| width.known().is_none_or(|width| width > 1))
+        {
             return self.splat_scalar(value, target, source);
         }
         let dest = self.fresh_typed(source, None, target.clone());
@@ -639,9 +645,7 @@ impl Flatten<'_> {
         target: &Ty,
         source: SourceSpan,
     ) -> Reg {
-        let Some((dtype, width)) = mojito_types::types::simd_shape(target)
-            .and_then(|(dtype, width)| usize::try_from(width).ok().map(|width| (dtype, width)))
-        else {
+        let Some((dtype, width)) = mojito_types::types::simd_slots(target) else {
             return value;
         };
         let dest = self.fresh_typed(source, None, target.clone());

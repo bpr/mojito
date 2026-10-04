@@ -1560,18 +1560,27 @@ impl VmBackend {
                         *val = self.call_dunder(prog, &name, "__int__", vec![receiver])?;
                     }
                 }
-                regs[dest.0 as usize] = simd_from_values(*dtype, *width, &vals)?;
+                let (dtype, width) = concrete_simd_slots(dtype, width)?;
+                regs[dest.0 as usize] = simd_from_values(dtype, width, &vals)?;
             }
             MirInstr::SimdCast {
-                dest, value, dtype, ..
+                dest,
+                value,
+                dtype,
+                width,
             } => {
-                regs[dest.0 as usize] = crate::runtime::simd_cast(*dtype, &regs[value.0 as usize])?;
+                let (dtype, _) = concrete_simd_slots(dtype, width)?;
+                regs[dest.0 as usize] = crate::runtime::simd_cast(dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdBitcast {
-                dest, value, dtype, ..
+                dest,
+                value,
+                dtype,
+                width,
             } => {
+                let (dtype, _) = concrete_simd_slots(dtype, width)?;
                 regs[dest.0 as usize] =
-                    crate::runtime::simd_to_bits(*dtype, &regs[value.0 as usize])?;
+                    crate::runtime::simd_to_bits(dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdShuffle {
                 dest,
@@ -2320,5 +2329,23 @@ impl VmBackend {
             return self.read_reference(&reference, frame_id, vars);
         }
         load_place(vars, regs, place)
+    }
+}
+
+/// The known lane dtype and width of a SIMD instruction. Concrete MIR holds
+/// known slots; a symbolic one is a generator form the elaborator closes
+/// before the VM runs, so meeting it here is the unsupported boundary.
+fn concrete_simd_slots(
+    dtype: &mojito_types::types::SimdDtype,
+    width: &mojito_types::types::SimdWidth,
+) -> Result<(mojito_ast::ast::Dtype, usize), RuntimeError> {
+    match (
+        dtype.known(),
+        width.known().and_then(|width| usize::try_from(width).ok()),
+    ) {
+        (Some(dtype), Some(width)) => Ok((dtype, width)),
+        _ => Err(RuntimeError::Unsupported(format!(
+            "a SIMD instruction over the symbolic slots `SIMD[{dtype}, {width}]` reached the VM"
+        ))),
     }
 }

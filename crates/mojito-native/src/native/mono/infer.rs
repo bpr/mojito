@@ -188,6 +188,28 @@ impl Specializer<'_> {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
                     })?;
                 }
+                // A value the checker solved from an argument's type (`dt`
+                // from a `Scalar[dt]` parameter) binds here, as does an
+                // expression the caller's bindings close (an applied local
+                // constant); one still over the caller's binders is
+                // unification's.
+                (
+                    ParamDecl::Value {
+                        variadic: false, ..
+                    },
+                    TyArg::Val(value),
+                ) if !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) => {
+                    let closed = match value {
+                        CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
+                            Ok(value) => value,
+                            Err(_) => continue,
+                        },
+                        value => value.clone(),
+                    };
+                    bind_value(&decl.binder(), &closed, &mut bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                    })?;
+                }
                 // A type pack's solution is the element list the checker
                 // recorded, bound whole.
                 (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {

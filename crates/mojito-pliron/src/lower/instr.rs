@@ -419,6 +419,7 @@ impl FnLowering<'_> {
                 param_arg_regs,
                 receiver: _,
                 instantiated_args: _,
+                spread: _,
             } => {
                 // The callee's compiled signature is authoritative for the
                 // raising ABI.
@@ -749,19 +750,28 @@ impl FnLowering<'_> {
                 dtype,
                 width,
                 elems,
-            } => self.lower_make_simd(ctx, *dest, *dtype, *width, elems),
+            } => {
+                let (dtype, width) = self.concrete_simd_slots(*dest, dtype, width)?;
+                self.lower_make_simd(ctx, *dest, dtype, width, elems)
+            }
             MirInstr::SimdCast {
                 dest,
                 value,
                 dtype,
                 width,
-            } => self.lower_simd_cast(ctx, *dest, *value, *dtype, *width),
+            } => {
+                let (dtype, width) = self.concrete_simd_slots(*dest, dtype, width)?;
+                self.lower_simd_cast(ctx, *dest, *value, dtype, width)
+            }
             MirInstr::SimdBitcast {
                 dest,
                 value,
                 dtype,
                 width,
-            } => self.lower_simd_bitcast(ctx, *dest, *value, *dtype, *width),
+            } => {
+                let (dtype, width) = self.concrete_simd_slots(*dest, dtype, width)?;
+                self.lower_simd_bitcast(ctx, *dest, *value, dtype, width)
+            }
             MirInstr::SimdShuffle {
                 dest,
                 value,

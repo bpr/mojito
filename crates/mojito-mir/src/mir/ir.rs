@@ -1276,33 +1276,36 @@ pub enum MirInstr {
         checked: bool,
     },
     /// SIMD construction `SIMD[DType.<dt>, width](elems)` (or a scalar-alias like
-    /// `Int32(x)`). The element `dtype`/`width` — compile-time parameters the MIR
-    /// is otherwise untyped about — are resolved here at lowering; `elems` are the
+    /// `Int32(x)`). The element `dtype`/`width` are the construction type's
+    /// slots: known, or in a generator the parameter expressions the body
+    /// names (`Scalar[dt](x)`, `SIMD[dt, 2 * n](x)`), which the elaborator
+    /// closes per instance; concrete MIR holds known slots. `elems` are the
     /// lane values (exactly `width`, or one to splat).
     MakeSimd {
         dest: Reg,
-        dtype: Dtype,
-        width: usize,
+        dtype: mojito_types::types::SimdDtype,
+        width: mojito_types::types::SimdWidth,
         elems: Vec<Reg>,
     },
     /// Elementwise dtype conversion `v.cast[DType.<dt>]()`. The target
-    /// `dtype`/`width` are checker-resolved compile-time parameters, like
+    /// `dtype`/`width` are the result type's slots, like
     /// [`MirInstr::MakeSimd`]'s.
     SimdCast {
         dest: Reg,
         value: Reg,
-        dtype: Dtype,
-        width: usize,
+        dtype: mojito_types::types::SimdDtype,
+        width: mojito_types::types::SimdWidth,
     },
     /// Lane-wise bit reinterpretation `v.to_bits[DType.<dt>]()`: each lane's
     /// bit pattern zero-extended into the unsigned target `dtype` (at least
     /// as wide as the source lane; `bool` reads as 0/1). The target
-    /// `dtype`/`width` are checker-resolved compile-time parameters.
+    /// `dtype`/`width` are the result type's slots, like
+    /// [`MirInstr::MakeSimd`]'s.
     SimdBitcast {
         dest: Reg,
         value: Reg,
-        dtype: Dtype,
-        width: usize,
+        dtype: mojito_types::types::SimdDtype,
+        width: mojito_types::types::SimdWidth,
     },
     /// Lane gather `v.shuffle[*mask]()`, `v.slice[...]()`, or `v.join(w)`:
     /// result lane `i` is lane `mask[i]` of `value`'s lanes followed by

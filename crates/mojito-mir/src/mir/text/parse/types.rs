@@ -105,18 +105,8 @@ impl Decoder {
                 // Either slot may be a `ct_expr(...)` while symbolic; the
                 // rebuild folds a closed one back to its constant.
                 "simd" => {
-                    let dtype = self.req(value, fields, "dtype", |d, v| match &v.kind {
-                        ValueKind::Positional(tag, inner) if tag == "ct_expr" => d
-                            .param_expr(inner)
-                            .map(mojito_types::types::SimdDtype::Expr),
-                        _ => d.dtype(v).map(mojito_types::types::SimdDtype::Known),
-                    })?;
-                    let width = self.req(value, fields, "width", |d, v| match &v.kind {
-                        ValueKind::Positional(tag, inner) if tag == "ct_expr" => d
-                            .param_expr(inner)
-                            .map(mojito_types::types::SimdWidth::Expr),
-                        _ => d.int64(v).map(mojito_types::types::SimdWidth::Known),
-                    })?;
+                    let dtype = self.req(value, fields, "dtype", Self::simd_dtype_slot)?;
+                    let width = self.req(value, fields, "width", Self::simd_width_slot)?;
                     self.unknown(fields, &["dtype", "width"]);
                     mojito_types::types::simd_ty_from_slots(dtype, width)
                         .map_err(|error| self.error(value.span, error.to_string()))
@@ -575,6 +565,33 @@ impl Decoder {
     /// constructors, so a parsed expression is canonical whatever order the
     /// text spelled it in. Schema 1.0's name-only tree is accepted in a 1.0
     /// artifact and translated through the artifact's declared binders.
+    /// A vector's lane dtype slot: a dtype name, or `ct_expr(...)` while it
+    /// is a parameter expression.
+    pub(super) fn simd_dtype_slot(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::types::SimdDtype> {
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => self
+                .param_expr(inner)
+                .map(mojito_types::types::SimdDtype::Expr),
+            _ => self.dtype(value).map(mojito_types::types::SimdDtype::Known),
+        }
+    }
+
+    /// A vector's width slot: a lane count, or `ct_expr(...)` while symbolic.
+    pub(super) fn simd_width_slot(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::types::SimdWidth> {
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => self
+                .param_expr(inner)
+                .map(mojito_types::types::SimdWidth::Expr),
+            _ => self.int64(value).map(mojito_types::types::SimdWidth::Known),
+        }
+    }
+
     pub(super) fn param_expr(&mut self, value: &Value) -> Option<ParamExpr> {
         match &value.kind {
             ValueKind::Positional(tag, inner) => match tag.as_str() {

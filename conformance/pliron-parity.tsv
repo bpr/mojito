@@ -215,6 +215,7 @@ assets/ok/lambda_basic.mojo	main	exe-differential	sanitized
 assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
 assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
+assets/ok/lane_template_served.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
 assets/ok/line_continuation.mojo	main	exe-differential	sanitized

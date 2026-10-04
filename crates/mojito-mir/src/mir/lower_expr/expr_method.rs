@@ -87,8 +87,16 @@ impl Flatten<'_> {
     /// (`Box[String]`). The bracket content is a compile-time argument the
     /// checker already resolved into its symbol selection — never lowered.
     pub(super) fn type_receiver_name<'e>(&self, object: &'e Expr) -> Option<&'e str> {
+        // A value binder of the enclosing declaration (`dt.is_integral()` in
+        // a `DType`-keyed body) is a value, read through its slot.
         let not_a_local = |name: &'e String| {
-            (!self.vars.iter().any(|local| local == name)).then_some(name.as_str())
+            (!self.vars.iter().any(|local| local == name)
+                && !self
+                    .enclosing_binders
+                    .values
+                    .iter()
+                    .any(|(binder, _)| binder.name.as_ref() == name.as_str()))
+            .then_some(name.as_str())
         };
         match &object.kind {
             ExprKind::TypeApply { name, .. } => Some(name.as_str()),
@@ -301,7 +309,7 @@ impl Flatten<'_> {
                 dest,
                 value,
                 dtype,
-                width: usize::try_from(width).unwrap_or(0),
+                width,
             });
             return Some(dest);
         }

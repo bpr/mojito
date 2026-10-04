@@ -2147,12 +2147,10 @@ impl Checker {
             };
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
-            if let Some(dtype) = dtype?.known() {
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype },
-                );
-            }
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
+            );
             return Ok(Ty::Dtype);
         }
         // `T.size` where `T` is a generic type parameter and a bound trait
@@ -2194,29 +2192,25 @@ impl Checker {
             ));
         }
         // `v.length` on a SIMD value (a native scalar is a width-1 vector)
-        // is upstream's lane-count parameter, folded to an `Int` constant. A
-        // symbolic width folds nothing: the body keeps its clone check.
+        // is upstream's lane-count parameter: an `Int` constant when known,
+        // the width's parameter expression in a generator.
         if field == "length"
             && let Some((_, width)) = simd_slots(&obj_ty)
         {
-            if let Some(width) = width.known() {
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::SemanticAdjustment::SimdLength { width },
-                );
-            }
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::SimdLength { width },
+            );
             return Ok(Ty::Int);
         }
-        // `v.dtype` is upstream's lane-dtype parameter, folded to a constant.
+        // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"
             && let Some(dtype) = simd_dtype(&obj_ty)
         {
-            if let Some(dtype) = dtype?.known() {
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype },
-                );
-            }
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
+            );
             return Ok(Ty::Dtype);
         }
         if let Ty::Struct(sname, targs) = &obj_ty {

@@ -567,21 +567,21 @@ impl Decoder {
             }),
             "simd.make" => Some(MirInstr::MakeSimd {
                 dest: self.req(value, fields, "dest", Self::reg)?,
-                dtype: self.req(value, fields, "dtype", Self::dtype)?,
-                width: self.req(value, fields, "width", Self::uint)?,
+                dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,
+                width: self.req(value, fields, "width", Self::simd_width_slot)?,
                 elems: self.req(value, fields, "elems", |d, v| Some(d.regs(v)))?,
             }),
             "simd.cast" => Some(MirInstr::SimdCast {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
-                dtype: self.req(value, fields, "dtype", Self::dtype)?,
-                width: self.req(value, fields, "width", Self::uint)?,
+                dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,
+                width: self.req(value, fields, "width", Self::simd_width_slot)?,
             }),
             "simd.bits" => Some(MirInstr::SimdBitcast {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
-                dtype: self.req(value, fields, "dtype", Self::dtype)?,
-                width: self.req(value, fields, "width", Self::uint)?,
+                dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,
+                width: self.req(value, fields, "width", Self::simd_width_slot)?,
             }),
             "simd.shuffle" => Some(MirInstr::SimdShuffle {
                 dest: self.req(value, fields, "dest", Self::reg)?,

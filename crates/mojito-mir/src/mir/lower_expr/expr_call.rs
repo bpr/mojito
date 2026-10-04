@@ -336,7 +336,7 @@ impl Flatten<'_> {
                 dest,
                 value,
                 dtype,
-                width: usize::try_from(width).unwrap_or(0),
+                width,
             });
             return dest;
         }
@@ -360,7 +360,7 @@ impl Flatten<'_> {
                 dest,
                 value,
                 dtype,
-                width: usize::try_from(width).unwrap_or(0),
+                width,
             });
             return dest;
         }

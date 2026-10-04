@@ -43,12 +43,13 @@ impl Checker {
                 });
             }
         }
-        if let (Some(dtype), Some(width)) = (target.known(), width.known()) {
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::SemanticAdjustment::SimdToBits { dtype, width },
-            );
-        }
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::SimdToBits {
+                dtype: target.clone(),
+                width: width.clone(),
+            },
+        );
         simd_of(target, width)
     }
 
@@ -99,9 +100,8 @@ impl Checker {
         // elementwise, `select` blends through a bool mask, the lane
         // reductions collapse to the canonicalized width-1 scalar
         // (`reduce_and`/`reduce_or` to `Bool`). A symbolic dtype licenses
-        // every dtype-gated method and a symbolic width records no lane
-        // fact: both are the instantiation's to check, and a body typed
-        // under them keeps its clone check.
+        // every dtype-gated method, and a lane fact records the symbolic
+        // slot: both are the instantiation's to check.
         match method {
             // `Copyable.copy` on a scalar or vector is the value read
             // itself (the builtin-copy rule of the nominal resolver).
@@ -126,12 +126,13 @@ impl Checker {
                         context: "SIMD.cast".to_string(),
                     });
                 }
-                if let (Some(dtype), Some(width)) = (target.known(), width.known()) {
-                    self.operation_adjustments.borrow_mut().insert(
-                        span.clone(),
-                        mojito_checked::checked::SemanticAdjustment::SimdCast { dtype, width },
-                    );
-                }
+                self.operation_adjustments.borrow_mut().insert(
+                    span.clone(),
+                    mojito_checked::checked::SemanticAdjustment::SimdCast {
+                        dtype: target.clone(),
+                        width: width.clone(),
+                    },
+                );
                 simd_of(target, width)
             }
             "select" if dtype.licenses(|d| d == Dtype::Bool) && args.len() == 2 => {

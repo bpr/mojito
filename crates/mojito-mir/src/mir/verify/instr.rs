@@ -349,11 +349,15 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     "{prefix}: literal materialization has non-scalar target {target}"
                 ));
             }
+            // A target whose lane dtype is still a parameter expression takes
+            // either literal; the instance's dtype decides the value.
+            let symbolic_lane = matches!(target, Ty::Simd { dtype, .. } if dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
                 let valid_source = match found {
                     Ty::IntLiteral => valid_target,
                     Ty::FloatLiteral => {
                         matches!(target, Ty::Float64)
+                            || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
                     }
@@ -610,11 +614,15 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
     let valid_simd_width = |width: usize| width >= 1 && width.is_power_of_two();
     match instruction {
         // Widths are validated during checked elaboration; this is the
-        // phase-boundary backstop for assembled artifacts.
+        // phase-boundary backstop for assembled artifacts. A width that is
+        // still a parameter expression is checked once an instance closes
+        // it; `verify/scope.rs` checks its binders and kind here.
         MirInstr::MakeSimd { width, .. }
         | MirInstr::SimdCast { width, .. }
         | MirInstr::SimdBitcast { width, .. } => {
-            if !valid_simd_width(*width) {
+            if let Some(width) = width.known()
+                && !usize::try_from(width).is_ok_and(valid_simd_width)
+            {
                 errors.push(format!(
                     "{prefix}: SIMD width {width} is not a positive power of two"
                 ));

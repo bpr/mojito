@@ -2192,13 +2192,15 @@ pub fn splats_to(ty: &Ty, dtype: &SimdDtype) -> bool {
 /// Whether the runtime scalar `from` splats across the multi-lane vector `to`.
 ///
 /// Upstream's `@implicit SIMD.__init__(Scalar[dtype])`: an `Int32` into
-/// `SIMD[DType.int32, 4]`. A `Bool` is no `Scalar`, and an exact literal
-/// materializes through its own initializer instead.
+/// `SIMD[DType.int32, 4]`, or a `Scalar[dt]` into `SIMD[dt, width]` while
+/// the width is a parameter expression, since the instance's may be above
+/// one. A `Bool` is no `Scalar`, and an exact literal materializes through
+/// its own initializer instead.
 pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
     matches!(
         to,
-        Ty::Simd { dtype, width: SimdWidth::Known(width) }
-            if *width > 1
+        Ty::Simd { dtype, width }
+            if width.known().is_none_or(|width| width > 1)
                 && !matches!(from, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
                 && splats_to(from, dtype)
     )

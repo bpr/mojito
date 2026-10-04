@@ -138,6 +138,12 @@ pub(super) fn bind_explicit_value_arguments(
                         error.function.get_or_insert_with(|| target.to_string());
                         error
                     })?,
+                    // The checker's recorded solution for the call already
+                    // bound the binder (a local `comptime` `DType` spelled in
+                    // the brackets); the register is its runtime shadow.
+                    (None, None) if bindings.values.contains_key(&declaration.binder()) => {
+                        continue;
+                    }
                     (None, None) => {
                         return Err(MonoError {
                             function: Some(target.to_string()),
@@ -290,6 +296,32 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             Ty::Ref(a) if p.mutability == a.mutability => unify(&p.referent, &a.referent, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        // A vector's lane dtype or width that is a bare binder binds from the
+        // argument's slot (`Scalar[dt]` against a `Float32`, `SIMD[dt, n]`
+        // against a four-lane vector); a compound expression (`2 * n`) is
+        // bound from the call's recorded arguments, as the pin binds it from
+        // the brackets, and only its evaluation is compared.
+        Ty::Simd { dtype, width } => {
+            let Some((actual_dtype, actual_width)) = mojito_types::types::simd_slots(actual) else {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
+            };
+            unify_simd_slot(
+                dtype.is_expr().then(|| slot_expr(dtype)).flatten(),
+                dtype.known().map(CtValue::Dtype),
+                actual_dtype.known().map(CtValue::Dtype),
+                pattern,
+                actual,
+                bindings,
+            )?;
+            unify_simd_slot(
+                width.is_expr().then(|| width_expr(width)).flatten(),
+                width.known().map(CtValue::Int),
+                actual_width.known().map(CtValue::Int),
+                pattern,
+                actual,
+                bindings,
+            )
+        }
         // Callable contracts unify on their runtime structure — parameters,
         // return, raising — never on the environment (`thin` vs
         // `capturing[...]`) or origin spellings, which erase from the ABI.
@@ -479,6 +511,42 @@ pub(super) fn bind_value(
             bindings.values.insert(binder.clone(), value.clone());
             Ok(())
         }
+    }
+}
+
+/// One slot of a vector pattern against the argument's: a bare binder
+/// binds the known value, a known slot must match, and any other expression
+/// is left to the recorded arguments.
+fn unify_simd_slot(
+    expr: Option<&ParamExpr>,
+    known: Option<CtValue>,
+    actual: Option<CtValue>,
+    pattern: &Ty,
+    actual_ty: &Ty,
+    bindings: &mut Bindings,
+) -> Result<(), String> {
+    match (expr.map(ParamExpr::kind), known, actual) {
+        (Some(ParamKind::DeclRef(reference)), _, Some(value)) => {
+            bind_value(reference, &value, bindings)
+        }
+        (None, Some(known), Some(value)) if known != value => {
+            Err(format!("expected `{pattern}`, found `{actual_ty}`"))
+        }
+        _ => Ok(()),
+    }
+}
+
+const fn slot_expr(dtype: &SimdDtype) -> Option<&ParamExpr> {
+    match dtype {
+        SimdDtype::Expr(expr) => Some(expr),
+        SimdDtype::Known(_) => None,
+    }
+}
+
+const fn width_expr(width: &SimdWidth) -> Option<&ParamExpr> {
+    match width {
+        SimdWidth::Expr(expr) => Some(expr),
+        SimdWidth::Known(_) => None,
     }
 }
 

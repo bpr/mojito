@@ -41,8 +41,8 @@ pub(super) fn default_construct_simd_parameters(function: &mut MirFunction, bind
             function.reg_types.insert(lane.0, lane_ty);
             block.instrs[index] = MirInstr::MakeSimd {
                 dest,
-                dtype,
-                width,
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width as i64),
                 elems: vec![lane],
             };
             block.instrs.insert(
@@ -342,12 +342,31 @@ pub(super) fn substitute_instruction(
 ) -> Result<(), MonoError> {
     use MirInstr::{
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
-        EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeTuple, MakeVariant,
+        EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
         MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, PointerStorageDestroy,
-        PointerStorageTake, SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName,
-        UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
+        PointerStorageTake, SimdBitcast, SimdCast, SizeOf, Slice, Store, StoreRef, Try, TryNext,
+        TypeName, UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet,
+        VariantSetInitWith,
     };
     match instruction {
+        // A SIMD instruction's slots close as the vector type they build
+        // does; one the bindings leave symbolic stays for the concreteness
+        // check to name.
+        MakeSimd { dtype, width, .. }
+        | SimdCast { dtype, width, .. }
+        | SimdBitcast { dtype, width, .. } => {
+            let built = substitute_ty(
+                &Ty::Simd {
+                    dtype: dtype.clone(),
+                    width: width.clone(),
+                },
+                bindings,
+            )?;
+            if let Some((closed_dtype, closed_width)) = mojito_types::types::simd_slots(&built) {
+                *dtype = closed_dtype;
+                *width = closed_width;
+            }
+        }
         EstablishLoans { loans, .. } => {
             for loan in loans {
                 substitute_place(&mut loan.place, bindings)?;

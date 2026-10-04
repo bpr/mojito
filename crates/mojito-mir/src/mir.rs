@@ -2574,6 +2574,22 @@ impl Flatten<'_> {
     /// value binders: its constants, binder reads, and the `+`, `*`, `-`, and
     /// negation it is built from. `None` for any other shape.
     fn inferred_value_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
+        // A binder of any scalar type reads its own slot; a `DType` constant
+        // is its own; the arithmetic below is over `Int` alone.
+        if let mojito_types::param_expr::ParamKind::DeclRef(_) = expr.kind() {
+            return self.enclosing_value_binder_read(expr, site);
+        }
+        if let mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Dtype(
+            dtype,
+        )) = expr.kind()
+        {
+            let dest = self.fresh_typed(site.clone(), None, Ty::Dtype);
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::Dtype(*dtype),
+            });
+            return Some(dest);
+        }
         if *expr.meta() != mojito_types::param_expr::MetaTy::value(Ty::Int) {
             return None;
         }
@@ -2590,9 +2606,6 @@ impl Flatten<'_> {
                     k: Const::Int(value),
                 });
                 return Some(dest);
-            }
-            mojito_types::param_expr::ParamKind::DeclRef(_) => {
-                return self.enclosing_value_binder_read(expr, site);
             }
             mojito_types::param_expr::ParamKind::Op { op, operands } => (op, operands),
             _ => return None,
@@ -2657,6 +2670,7 @@ impl Flatten<'_> {
             return self.receiver_value_parameter_read(&reference.name, site);
         }
         let var = self.var(&reference.name);
+        self.var_types.entry(var).or_insert_with(|| ty.clone());
         let dest = self.fresh_typed(site.clone(), Some(var), ty);
         self.emit(MirInstr::UseVar {
             dest,
@@ -3367,10 +3381,7 @@ fn close_register_types(
                         dest, dtype, width, ..
                     } => Some((
                         dest,
-                        Some(Ty::Simd {
-                            dtype: mojito_types::types::SimdDtype::Known(*dtype),
-                            width: mojito_types::types::SimdWidth::Known(*width as i64),
-                        }),
+                        mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone()).ok(),
                     )),
                     // A shuffle keeps the source dtype at the mask's width.
                     MirInstr::SimdShuffle {

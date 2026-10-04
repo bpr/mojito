@@ -1969,6 +1969,20 @@ fn substituted_facts(
             .collect::<Option<_>>()
             .ok_or("an operation adjustment has no derivation recipe")?,
         expression_types: typed(&template.expression_types),
+        // A construction's slots close under the instance as its type does.
+        simd_constructions: template
+            .simd_constructions
+            .iter()
+            .map(|(id, (dtype, width))| {
+                let realized = substitute(&Ty::Simd {
+                    dtype: dtype.clone(),
+                    width: width.clone(),
+                });
+                let slots = mojito_types::types::simd_slots(&realized)
+                    .unwrap_or_else(|| (dtype.clone(), width.clone()));
+                (*id, slots)
+            })
+            .collect(),
         expression_place_types: typed(&template.expression_place_types),
         binding_types: typed(&template.binding_types),
         expression_effects: template

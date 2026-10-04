@@ -6,28 +6,51 @@ use super::*;
 use mojito_ast::ast::SubscriptArg;
 impl Flatten<'_> {
     pub(super) fn member_expr(&mut self, e: &Expr, object: &Expr, field: &str) -> Reg {
-        // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`)
-        // are checker-folded constants.
+        // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`) are
+        // the lane slots: a known one is a constant, and one a generator
+        // names is the evaluation of its parameter expression.
         let folded =
             self.checked_adjustments(e)
                 .into_iter()
                 .find_map(|adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::SimdLength { width } => {
-                        Some(Const::Int(width))
+                        Some(match width {
+                            mojito_types::types::SimdWidth::Known(width) => Ok(Const::Int(width)),
+                            mojito_types::types::SimdWidth::Expr(expr) => Err(expr),
+                        })
                     }
                     mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype } => {
-                        Some(Const::Dtype(dtype))
+                        Some(match dtype {
+                            mojito_types::types::SimdDtype::Known(dtype) => Ok(Const::Dtype(dtype)),
+                            mojito_types::types::SimdDtype::Expr(expr) => Err(expr),
+                        })
                     }
                     _ => None,
                 });
-        if let Some(constant) = folded {
+        if let Some(folded) = folded {
             // A value receiver (`f().dtype`) still runs; a type operand
             // or `DType` itself was never typed as a value.
             if !matches!(object.kind, ExprKind::Identifier(_)) && self.checked_ty(object).is_some()
             {
                 self.expr(object);
             }
-            return self.constant(e, constant);
+            return match folded {
+                Ok(constant) => self.constant(e, constant),
+                Err(expr) => {
+                    if let Some(value) = self.inferred_value_register(&expr, &span(e)) {
+                        return value;
+                    }
+                    let dest = self.fresh(span(e), None);
+                    self.emit(MirInstr::Unsupported(format!(
+                        "lane slot `{expr}` has no runtime form"
+                    )));
+                    self.emit(MirInstr::Const {
+                        dest,
+                        k: Const::None,
+                    });
+                    dest
+                }
+            };
         }
         // A pure field chain rooted at a variable (`p.a`, `p.a.b`) lowers to
         // a `LoadPlace` (a place read) so the ownership analysis sees *which*

@@ -16,7 +16,7 @@ use crate::checked::{
     SemanticAdjustment,
 };
 use mojito_common::token::{Span, SyntaxId};
-use mojito_types::types::{ParamDecl, Ty};
+use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty};
 
 /// The identity of one prepared generic declaration.
 ///
@@ -241,25 +241,32 @@ pub fn derive_adjustment(
         // operand's reflected dunder, is re-selected on the instance's
         // types (`realize_operator`).
         SemanticAdjustment::ReflectedOperator => Some(SemanticAdjustment::ReflectedOperator),
-        // A `DType` member names one closed dtype under every instance.
+        // A lane dtype or width is a slot of a vector type: a known one is
+        // the same under every instance, and one naming the template's
+        // binders closes under the instance's arguments as the type does.
         SemanticAdjustment::DtypeConstant { dtype } => {
-            Some(SemanticAdjustment::DtypeConstant { dtype: *dtype })
+            let (dtype, _) = substitute_simd_slots(dtype, &SimdWidth::Known(1), substitute);
+            Some(SemanticAdjustment::DtypeConstant { dtype })
         }
-        // A reinterpretation, a cast, or a lane count is recorded only over a
-        // closed receiver, whose dtype and width are the same under every
-        // instance; one over a lane-shaped receiver records nothing, and the
-        // instance records its own (`simd_to_bits`, `simd_casts`,
-        // `simd_lengths`).
-        SemanticAdjustment::SimdToBits { dtype, width } => Some(SemanticAdjustment::SimdToBits {
-            dtype: *dtype,
-            width: *width,
-        }),
-        SemanticAdjustment::SimdCast { dtype, width } => Some(SemanticAdjustment::SimdCast {
-            dtype: *dtype,
-            width: *width,
-        }),
+        SemanticAdjustment::SimdToBits { dtype, width } => {
+            let (dtype, width) = substitute_simd_slots(dtype, width, substitute);
+            Some(SemanticAdjustment::SimdToBits { dtype, width })
+        }
+        SemanticAdjustment::SimdCast { dtype, width } => {
+            let (dtype, width) = substitute_simd_slots(dtype, width, substitute);
+            Some(SemanticAdjustment::SimdCast { dtype, width })
+        }
         SemanticAdjustment::SimdLength { width } => {
-            Some(SemanticAdjustment::SimdLength { width: *width })
+            let (_, width) = substitute_simd_slots(
+                &SimdDtype::Known(mojito_ast::ast::Dtype::Int),
+                width,
+                substitute,
+            );
+            Some(SemanticAdjustment::SimdLength { width })
+        }
+        SemanticAdjustment::ConstructSimd { dtype, width } => {
+            let (dtype, width) = substitute_simd_slots(dtype, width, substitute);
+            Some(SemanticAdjustment::ConstructSimd { dtype, width })
         }
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which
@@ -336,7 +343,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::Move
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)
-        | SemanticAdjustment::ConstructSimd { .. }
         | SemanticAdjustment::SizeOf { .. }
         | SemanticAdjustment::DtypeFloatQuery { .. }
         | SemanticAdjustment::SimdShuffle { .. }
@@ -531,6 +537,21 @@ pub const fn kept_place_argument(argument: &crate::checked::CheckedCallArgument)
 /// `receiver` is the one convention beyond a read or `mut` receiver the call
 /// may take, `values` admits a by-value parameter of any type, which then
 /// takes no adjustment at all, and `raising` admits a callee that raises.
+/// A lane dtype and width rewritten by `substitute`, through the vector type
+/// they are the slots of: a known slot stays, and one over the template's
+/// binders closes as the instance's type does.
+fn substitute_simd_slots(
+    dtype: &SimdDtype,
+    width: &SimdWidth,
+    substitute: &dyn Fn(&Ty) -> Ty,
+) -> (SimdDtype, SimdWidth) {
+    let realized = substitute(&Ty::Simd {
+        dtype: dtype.clone(),
+        width: width.clone(),
+    });
+    mojito_types::types::simd_slots(&realized).unwrap_or_else(|| (dtype.clone(), width.clone()))
+}
+
 fn closed_contract(
     call: &TemplateCallContract,
     receiver: Option<mojito_ast::ast::ArgConvention>,
@@ -1707,7 +1728,7 @@ pub struct CheckedBodyFacts {
     /// The dtype and width of each `SIMD`, `Scalar`, or scalar-alias
     /// construction. Only a closed construction records one, and its
     /// dimensions are the same in every instance.
-    pub simd_constructions: Vec<(OccurrenceId, (mojito_ast::ast::Dtype, i64))>,
+    pub simd_constructions: Vec<(OccurrenceId, (SimdDtype, SimdWidth))>,
     /// The `to_bits` reinterpretations whose result width the template left
     /// open (a lane-shaped receiver), each with its receiver occurrence. An
     /// instance records the `SimdToBits` adjustment from its substituted

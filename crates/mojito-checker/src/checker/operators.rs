@@ -203,6 +203,21 @@ impl Checker {
             self.record_literal_materializations(left, &lt, target)?;
             self.record_literal_materializations(right, &rt, target)?;
         }
+        // A literal beside a scalar whose lane dtype is still a parameter
+        // (`a + 1.5` over `a: Scalar[dt]`) materializes to that scalar, as it
+        // does beside a closed one: the instance's lane decides the value.
+        if common.is_none() {
+            for (literal, literal_ty, lane) in [(right, &rt, &lt), (left, &lt, &rt)] {
+                if let Ty::Simd { dtype, width } = lane
+                    && *width == SimdWidth::Known(1)
+                    && dtype.is_symbolic()
+                    && matches!(literal_ty, Ty::IntLiteral | Ty::FloatLiteral)
+                    && splats_to(literal_ty, dtype)
+                {
+                    self.record_literal_materializations(literal, literal_ty, lane)?;
+                }
+            }
+        }
         // Integer powers of exact literals stay exact. A fractional exponent
         // is not rational in general, so this is the semantic boundary where
         // both operands become Float64 and runtime `powf` takes over.

@@ -262,6 +262,14 @@ impl Checker {
                 if let Some(n) = self.comptimes.get(name) {
                     return Ok(CtValue::IntLiteral(n.clone()));
                 }
+                // A local `comptime` `DType` binding (`comptime c = pick(True)`)
+                // is its dtype, known or the expression a template names.
+                if let Some(dtype) = self.comptime_dtypes.get(name) {
+                    return Ok(match dtype {
+                        SimdDtype::Known(dtype) => CtValue::Dtype(*dtype),
+                        SimdDtype::Expr(expr) => CtValue::Expr(expr.clone()),
+                    });
+                }
                 // The enclosing struct's own parameter is spelled `Self.<name>`
                 // inside the body (the `Member` arm below); the bare spelling
                 // is upstream's error.

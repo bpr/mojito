@@ -625,7 +625,18 @@ branch for the class is deleted, and so is its certificate class.
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
   only of a concrete type, and a compile-time layout query names the target
   it is answered for. A concrete type does not make layout independent of
-  the target.
+  the target. The first step landed 2026-10-03 for a uniquely named `def`
+  keyed on a `DType` binder, a lane width, or a layout operand: the checker
+  records every lane fact as its slots, MIR carries the slots in its
+  register types and in `MakeSimd`, `SimdCast`, and `SimdBitcast` (schema
+  1.18), a symbolic lane count or dtype read is the evaluation of its
+  parameter expression, and the elaborator binds the lane binders from the
+  call's recorded arguments or a vector argument's slots and closes the slots
+  per instance. The cloner keeps a `def` whose body shuffles, slices, joins,
+  or hashes a lane value, queries a float format over its binder, binds a
+  local `comptime`, or holds a nested `def`, and every overloaded one
+  (R257–R261); the lane-keyed struct members wait on P3d (R4) and a method's
+  own lane binder on P3e (R5).
 - **P3d. Struct generators.** Value-keyed and variadic structs, `Tuple` and
   `TString` included, are declared once and instantiated by the elaborator.
 - **P3e.** Three steps: a method's own compile-time parameters, nested

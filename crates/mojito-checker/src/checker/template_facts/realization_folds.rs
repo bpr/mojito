@@ -19,7 +19,7 @@ use mojito_checked::templates::{
 use mojito_common::error::TypeError;
 use mojito_common::timing;
 use mojito_common::token::SyntaxId;
-use mojito_types::types::{ParamDecl, Ty};
+use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty};
 use std::collections::{HashMap, HashSet};
 
 impl Checker {
@@ -356,10 +356,12 @@ pub(super) fn realize_value_shaped_constructions(
         {
             continue;
         }
-        let dimensions = fact_at(&facts.expression_types, id)
+        let (dtype, width) = fact_at(&facts.expression_types, id)
             .and_then(mojito_types::types::simd_shape)
             .ok_or("a construction's lane dtype or width stays open in the instance")?;
-        facts.simd_constructions.push((id, dimensions));
+        facts
+            .simd_constructions
+            .push((id, (SimdDtype::Known(dtype), SimdWidth::Known(width))));
     }
     Ok(())
 }
@@ -393,7 +395,13 @@ pub(super) fn realize_simd_intrinsics(
         {
             return Err("a reinterpretation's target is narrower than the instance's lane");
         }
-        realized.push((*id, SemanticAdjustment::SimdToBits { dtype, width }));
+        realized.push((
+            *id,
+            SemanticAdjustment::SimdToBits {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            },
+        ));
     }
     for (id, receiver) in &template.simd_casts {
         let (dtype, width) =
@@ -403,12 +411,23 @@ pub(super) fn realize_simd_intrinsics(
         if dtype == mojito_ast::ast::Dtype::Bool || source == mojito_ast::ast::Dtype::Bool {
             return Err("a cast's instance lane is `bool`");
         }
-        realized.push((*id, SemanticAdjustment::SimdCast { dtype, width }));
+        realized.push((
+            *id,
+            SemanticAdjustment::SimdCast {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            },
+        ));
     }
     for (id, receiver) in &template.simd_lengths {
         let (_, width) =
             shape(*receiver).ok_or("a lane count's receiver width stays open in the instance")?;
-        realized.push((*id, SemanticAdjustment::SimdLength { width }));
+        realized.push((
+            *id,
+            SemanticAdjustment::SimdLength {
+                width: SimdWidth::Known(width),
+            },
+        ));
     }
     if realized.is_empty() {
         return Ok(());
@@ -1010,19 +1029,18 @@ pub(super) fn construct_folded_vectors(
     facts: &mut CheckedBodyFacts,
     occurrences: &[Occurrence],
 ) -> bool {
-    use mojito_types::types::{SimdDtype, SimdWidth};
     for occurrence in occurrences
         .iter()
         .filter(|occurrence| matches!(occurrence.vector_fold, Some(VectorFold::Construction)))
     {
         let Some(Ty::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(width),
+            dtype: dtype @ SimdDtype::Known(_),
+            width: width @ SimdWidth::Known(_),
         }) = fact_at(&facts.expression_types, occurrence.id)
         else {
             return false;
         };
-        let dimensions = (*dtype, *width);
+        let dimensions = (dtype.clone(), width.clone());
         upsert(&mut facts.simd_constructions, occurrence.id, dimensions);
     }
     let order = |id: &OccurrenceId| occurrences.iter().position(|found| found.id == *id);

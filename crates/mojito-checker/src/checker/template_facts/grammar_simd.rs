@@ -11,16 +11,12 @@ impl BodyShape<'_> {
     /// A construction of a closed `SIMD`, `Scalar`, or scalar-alias value
     /// from closed scalars (`UInt8(1)`, `SIMD[DType.uint8, 2](1, 2)`).
     ///
-    /// Inference records a construction's dtype and width only when both
-    /// are closed, so a recorded one is the same under every instance. It
-    /// selects no callee and converts nothing, and its value is admitted
-    /// only where a closed value may go ([`Self::simd_value`]).
-    ///
-    /// A construction whose dtype or width names one of the declaration's
-    /// own value binders (`Scalar[dt](x)`, `SIMD[DType.int32, w](x)`)
-    /// records no dimensions: the elaborator folds each binder in the
-    /// instance, whose record is the substituted construction type's shape
-    /// (`realize_value_shaped_constructions`).
+    /// Inference records a construction's dtype and width as its slots: a
+    /// closed one is the same under every instance, and one naming the
+    /// declaration's own value binders (`Scalar[dt](x)`, `SIMD[DType.int32,
+    /// w](x)`) closes under the instance's arguments as the construction
+    /// type does. It selects no callee and converts nothing, and its value
+    /// is admitted only where a closed value may go ([`Self::simd_value`]).
     pub(super) fn simd_construction(
         &self,
         id: OccurrenceId,
@@ -40,7 +36,8 @@ impl BodyShape<'_> {
                 let recorded = fact_at(&facts.simd_constructions, id).is_some();
                 fact_at(&facts.expression_types, id).is_some_and(|ty| {
                     (recorded && !mojito_types::types::is_symbolic(ty))
-                        || (!recorded && (self.value_shaped_simd(ty) || self.struct_lane_simd(ty)))
+                        || self.value_shaped_simd(ty)
+                        || self.struct_lane_simd(ty)
                 }) && fact_at(&facts.call_parameters, id).is_none()
                     && fact_at(&facts.overload_targets, id).is_none()
                     && fact_at(&facts.generic_instantiations, id).is_none()
@@ -62,11 +59,10 @@ impl BodyShape<'_> {
     ///
     /// Each is a compiler-known operation on `Ty::Simd`: it selects no
     /// callee, converts nothing, and records at most its shape, the
-    /// `SimdToBits`, `SimdCast`, or `SimdLength` adjustment, which inference
-    /// writes only over a closed receiver and which is then the same under
-    /// every instance. Over a lane-shaped receiver the template records no
-    /// adjustment, and the instance records its own from the substituted
-    /// types (`realize_simd_intrinsics`). A lane read and a reduction stand
+    /// `SimdToBits`, `SimdCast`, or `SimdLength` adjustment, whose slots
+    /// close under the instance as the types do. Over a lane-shaped
+    /// receiver the instance records its own from the substituted types
+    /// (`realize_simd_intrinsics`), checking its source lane. A lane read and a reduction stand
     /// on a receiver whose dtype is closed, so their results are closed, or,
     /// a lane read, on a value-shaped vector of a known width above one
     /// ([`Self::value_shaped_vector`]), whose lane is value-shaped; a
@@ -331,19 +327,17 @@ impl BodyShape<'_> {
             (
                 Some(SemanticAdjustment::SimdToBits { .. }),
                 ExprKind::Invoke { .. } | ExprKind::MethodCall { .. },
-            ) => !mojito_types::types::is_symbolic(ty),
+            ) => true,
             // A recorded cast stands under every instance only when its
             // source lane is closed too, since a `bool` source refuses; over
             // a value-shaped or lane-shaped source the instance checks its
             // own lane.
-            (Some(SemanticAdjustment::SimdCast { .. }), ExprKind::Invoke { .. }) => {
-                !mojito_types::types::is_symbolic(ty)
-                    && source.is_some_and(|source| {
-                        !mojito_types::types::is_symbolic(source)
-                            || self.value_shaped_scalar(source)
-                            || self.lane_shaped_simd(source)
-                    })
-            }
+            (Some(SemanticAdjustment::SimdCast { .. }), ExprKind::Invoke { .. }) => source
+                .is_some_and(|source| {
+                    !mojito_types::types::is_symbolic(source)
+                        || self.value_shaped_scalar(source)
+                        || self.lane_shaped_simd(source)
+                }),
             (Some(SemanticAdjustment::SimdLength { .. }), ExprKind::Member { .. }) => true,
             _ => false,
         };

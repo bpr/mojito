@@ -884,15 +884,15 @@ fn instruction_families_reprint_byte_identically() {
         },
         MirInstr::MakeSimd {
             dest: Reg(35),
-            dtype: Dtype::Float32,
-            width: 4,
+            dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
+            width: mojito_types::types::SimdWidth::Known(4),
             elems: vec![Reg(1), Reg(2), Reg(3), Reg(4)],
         },
         MirInstr::SimdCast {
             dest: Reg(36),
             value: Reg(35),
-            dtype: Dtype::Int32,
-            width: 4,
+            dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
+            width: mojito_types::types::SimdWidth::Known(4),
         },
         MirInstr::SimdShuffle {
             dest: Reg(37),

@@ -335,9 +335,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `value_keyed_struct` names a struct keyed on a `DType` or vector value,
   every member of which is validated, with no verdict where it cannot be
   typed, as is the body `value_keyed_def` names (a `def` keyed on a
-  `DType` binder or using a parameter as a lane width, which the elaborator
-  specializes per call — `mojito_ast::simd_width::def_uses_layout_dependent_param`,
-  shared with the elaborator, is the lane-width scan), and
+  `DType` binder or using a parameter as a lane width, which the executable
+  pass checks again as a bound generic when `comptime.rs`'s
+  `served_lane_defs` serves it and the elaborator clones per call otherwise
+  — `mojito_ast::simd_width::def_uses_layout_dependent_param`, shared with
+  the elaborator, is the lane-width scan), and
   `validate_comptime_method_bodies` checks a method body
   `mojito_ast::simd_width::method_constructs_at_own_lane` names (one
   constructing a vector at its own binder's lane, stubbed by the
@@ -352,7 +354,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SimdWidth::Expr` slot, `annotations::simd_of` builds the type through
   `types::simd_ty_from_slots`, and the SIMD sites in `operators.rs`,
   `method_calls/simd_receivers.rs`, `indexing.rs`, and `builtins.rs` gate on
-  `SimdDtype::licenses` and record lane facts only for known slots. `checker.rs`
+  `SimdDtype::licenses` and record each lane fact as its slots, known or
+  symbolic (a shuffle, slice, or join only at a known width). `checker.rs`
   re-exports `validates_body` as `validates_comptime_body`, the body gate
   `explicit_destroy::check` reuses for its `DestroyScope::ValidatedTemplates`
   run. The same page owns a pack that is still a parameter:
@@ -977,7 +980,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry. `template_serves_def` says
   which generic `def` keeps its template at every closed call: a plain
-  trait-bound one, with type parameters only and no such construct. An
+  trait-bound one, with type parameters and scalar or `DType` value
+  parameters named at most as lane slots (`template_serves_binders`), and no
+  such construct; `comptime.rs`'s `served_lane_defs` admits a `DType`- or
+  lane-keyed `def` whose body holds no form MIR lacks a symbolic lane for
+  (`lane_def_shape_served`). An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type`, `native/mono/substitute.rs`).
