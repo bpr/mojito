@@ -349,6 +349,7 @@ assets/type_error/overloading_same_arity.mojo	compile-reject	agree	error: ambigu
 assets/type_error/owned_comprehension_linear_element.mojo	compile-reject	agree	error: value of type '_ListIter[Conn, origin_of(conns)].Element' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/owned_iteration_linear_element.mojo	compile-reject	agree	error: value of type '_ListIter[Conn, origin_of(conns)].Element' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/owned_iteration_linear_user_iterator.mojo	compile-reject	agree	error: constraint for 'Iterator' does not imply constraint for ancestor trait 'Deinitable'; strengthen the derived constraint by adding the ancestor's constraint with 'and'
+assets/type_error/owned_pack_element_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/owned_pack_iteration_linear_break.mojo	compile-reject	agree	error: value of type 'Conn' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/owned_pointer_linear_pointee_must_be_consumed.mojo	compile-reject	agree	error: 'leaked' abandoned without being explicitly destroyed: Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()` to consume an `OwnedPointer` whose element type is not `Deinitable`
 assets/type_error/owned_pointer_take_is_renamed.mojo	compile-reject	agree	error: 'OwnedPointer[Int]' value has no attribute 'take'

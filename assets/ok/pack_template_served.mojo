@@ -4,6 +4,8 @@
 # length as the `comptime_for` header, and the elaborator binds the pack from
 # each call and unrolls the loop per instance. The length is spelled as the
 # pin reads it at compile time: `args.__len__()`, `Ts.length`, or `len(Ts)`.
+# An owned (`var`) collector is served the same way; its pack is destroyed
+# last to first after the last element use.
 def count[*Ts: Writable](*args: *Ts) -> Int:
     return len(args)
 
@@ -44,8 +46,15 @@ def pair[*Ts: Writable](*items: *Ts) -> Int:
     return 0
 
 
+def drain[*Ts: Writable & Movable](var *items: *Ts) -> Int:
+    comptime for i in range(items.__len__()):
+        print("drain:", items[i])
+    return len(items)
+
+
 def main():
     print(count(), count(1), count("a", 2.5, True))
+    print(drain(1, "two", 3.5))
     print(tally(10, "x", 2))
     second(1, "two", 3.0)
     triangle("a", "b", "c")

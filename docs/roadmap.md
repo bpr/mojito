@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R254**.
+Next free ID: **R255**.
 
 ## Ordered Work
 
@@ -59,22 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R250 (P3b) A pack-keyed `def` with an owned collector keys a clone**
-
-  Problem: `def take[*Ts: Movable](var *args: *Ts)` is unrolled in the AST
-  per call, where a read collector's `def` is served by its template.
-  - A move of `args[i]^` under the served loop is a move of the dynamic
-    place `args[*]` to the ownership analysis, which decides the loop with
-    its trip count unknown and would see the second copy move a path the
-    first already moved; the pin moves one element per copy.
-  - The loop form needs an element place keyed by the index expression,
-    distinct per iteration, and the owned pack's reverse destruction over
-    the elements left (`assets/ok/owned_pack_destroyed_in_reverse.mojo`).
-  - `pack_def_template_served` (`comptime.rs`) keeps such a `def` on the
-    cloner.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R251 (P3b) A pack spread into or out of a pack-keyed `def` keys a
   clone**

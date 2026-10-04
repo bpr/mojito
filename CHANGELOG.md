@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pack-keyed `def` with an owned `var` collector is served by its
+  template, as one with a read collector is: the body is checked once with
+  the collector a `VariadicPack` of the symbolic `Ts`, each element is read
+  in place, and the pack is destroyed last to first after its last element
+  use, on the VM and natively (`assets/ok/pack_template_served.mojo`'s
+  `drain`, `assets/ok/owned_pack_destroyed_in_reverse.mojo`). An element
+  transferred out by subscript (`a[i]^`) is rejected, as the pin rejects it
+  (`assets/type_error/owned_pack_element_transfer.mojo`).
 - A `def` keyed on a type pack is served by its template when its collector
   is read and its body neither spreads the pack nor binds an element's type
   under its loop: the checker types the body once with the collector a pack
@@ -20,9 +28,8 @@ to evolve under the `0.x` compatibility rules.
   (`assets/ok/pack_template_served.mojo`). The erased oracle reads a pack's
   length from its collector's arity or the call's recorded elements.
   `len(args)` as a `comptime for` bound is rejected, as the pin rejects it
-  (`assets/type_error/comptime_for_runtime_pack_length.mojo`). The owned
-  collector, the spreads, and the element-typed binding keep their clone
-  (roadmap R250–R252).
+  (`assets/type_error/comptime_for_runtime_pack_length.mojo`). The spreads
+  and the element-typed binding keep their clone (roadmap R251–R252).
 - A generic `def` holding a `comptime for` over a `range` is served by its
   template, so the loop crosses the MIR waist as itself: the checker types
   the body once with the index a symbolic `Int` binder of the loop's own and

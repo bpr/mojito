@@ -1581,8 +1581,9 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
 
 /// Whether a top-level `def` keyed on a type pack is served by its template:
 /// every compile-time parameter is a type parameter, the pack among them;
-/// the collector is read, not `var` (an owned element moved per unrolled
-/// copy is a per-instance ownership fact the loop form does not carry yet);
+/// the collector is read or owned (`var *args`, destroyed last to first
+/// after its last element use; an element transferred out by subscript is
+/// rejected, as the pin rejects it, since the collector is a `VariadicPack`);
 /// no signature type and no call spreads the pack whole (`Tuple[*Ts]`,
 /// `other(*args)`), which only an instance expands, and no caller spreads
 /// a pack into the `def` (`forward_targets`), since a clone's whole-pack
@@ -1611,10 +1612,6 @@ fn pack_def_template_served(statement: &Stmt, forward_targets: &HashSet<String>)
                 classify_ct_param(parameter, type_params, name),
                 Some(ParamDecl::Type { .. })
             )
-        })
-        && !params.iter().any(|parameter| {
-            parameter.kind == ParamKind::Variadic
-                && matches!(parameter.convention, Some(ArgConvention::Var))
         })
         && !signature_spreads_pack(params, ret.as_ref())
         && !block_spreads_pack(body, &packs)
@@ -3129,10 +3126,7 @@ fn declaration_takes(
         .iter()
         .filter(|parameter| {
             parameter.kind == mojito_ast::ast::ParamKind::Regular
-                && !matches!(
-                    parameter.convention,
-                    Some(mojito_ast::ast::ArgConvention::Out)
-                )
+                && !matches!(parameter.convention, Some(ArgConvention::Out))
         })
         .map(spell);
     expected
