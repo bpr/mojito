@@ -1722,21 +1722,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R268 `reflect[Int].is_struct()` answers `False`**
-
-  Problem: the pin answers `True` for every builtin scalar and `String`
-  (`reflect[Int].is_struct()`, `reflect[Float64].is_struct()`), and so for a
-  field handle over an `Int` field (`reflect[Point].field["y"].is_struct()`),
-  while Mojito prints `False`.
-  - `eval_reflection_method` (`comptime/eval.rs`) answers `is_struct` by
-    matching `Ty::Struct`, and a builtin scalar is a `Ty::Int`-style type of
-    its own.
-  - The same probe shows the pin's `field_count()` is 1 for `Int`,
-    `Float64`, and `Bool` and 3 for `String`, which R76 must match when it
-    lands.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R42 A field name under a symbolic index prints without `materialize`**
 
   Problem: `print(names[i])` inside `comptime for i in range(len(names))`

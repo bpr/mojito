@@ -148,8 +148,9 @@ impl Checker {
     }
 
     /// Answer a query: from the struct table for a registered struct (its
-    /// arguments, symbolic or not, bind the field types), `False` for
-    /// `is_struct()` of any other closed type, and a `ParamKind::Reflect`
+    /// arguments, symbolic or not, bind the field types), `True` for
+    /// `is_struct()` of any other closed type (only an MLIR primitive, which
+    /// Mojito never spells, answers `False` at the pin), and a `ParamKind::Reflect`
     /// node for a subject that is still a parameter.
     pub(super) fn eval_reflection(
         &self,
@@ -174,7 +175,7 @@ impl Checker {
             }
             _ => {
                 return match query {
-                    ReflectQuery::IsStruct => Ok(CtValue::Bool(false)),
+                    ReflectQuery::IsStruct => Ok(CtValue::Bool(true)),
                     query => Err(TypeError::NotComptime(format!(
                         "reflect[{subject}].{query} requires a struct type"
                     ))),

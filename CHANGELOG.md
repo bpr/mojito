@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `reflect[T].is_struct()` now answers `True` for every type Mojito names —
+  `Int`, `Float64`, `Bool`, `NoneType`, a vector, `DType`, and a field
+  handle over an `Int` field — as the pin's `#kgen.is_struct_type` does,
+  instead of `False` for every type that is not a declared struct; and
+  `reflect[NoneType]` resolves its subject in the elaborator
+  (`assets/ok/reflection_runtime_query.mojo`,
+  `conformance/probes/reflection_builtin_is_struct.mojo`).
 - A reflection query in a runtime position (`print(r.field_count())` after
   `comptime r = reflect[Point]`, `reflect[Point].is_struct()`,
   `r.field_index["y"]()`, `r.field_names()[1]`) now prints its answer, as

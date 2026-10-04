@@ -1,7 +1,8 @@
 # A reflection query in a runtime position calls upstream's static
 # `Reflected[T]` method, whose compile-time answer materializes where it
 # stands: through a bound handle or spelled directly, in a free function or
-# a method.
+# a method. Every type Mojito names is a Mojo struct, a builtin scalar and a
+# field handle over one included.
 @fieldwise_init
 struct Point:
     var x: Int
@@ -29,3 +30,5 @@ def main():
     print(r.field_index["x"](), reflect[Point].field_index["y"]())
     print(len(r.field_names()), r.field_names()[1])
     print(Holder().second())
+    print(reflect[Int].is_struct(), reflect[Float64].is_struct())
+    print(reflect[String].is_struct(), r.field["y"].is_struct())

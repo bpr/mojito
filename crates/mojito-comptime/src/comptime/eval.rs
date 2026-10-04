@@ -933,8 +933,10 @@ impl Elab<'_> {
         method: &str,
         outer_scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
+        // Every type Mojito names is a Mojo struct; only an MLIR primitive,
+        // which no Mojito program spells, answers `False` at the pin.
         if method == "is_struct" {
-            return Ok(CtValue::Bool(matches!(ty, Ty::Struct(_, _))));
+            return Ok(CtValue::Bool(true));
         }
         let Ty::Struct(name, arguments) = ty else {
             return Err(ComptimeError::NotComptime(format!(
