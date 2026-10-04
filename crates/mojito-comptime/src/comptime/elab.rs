@@ -541,7 +541,7 @@ impl Elab<'_> {
             Type::Int => Ok(Ty::Int),
             Type::UInt => Ok(Ty::UInt),
             Type::Bool => Ok(Ty::Bool),
-            Type::StringLiteral => Ok(Ty::StringLiteral),
+            Type::StringLiteral | Type::ClosedStringLiteral => Ok(Ty::StringLiteral),
             Type::Float64 => Ok(Ty::Float64),
             Type::None => Ok(Ty::None),
             Type::Named(name, args) => self.type_from_name(name, args, scope),

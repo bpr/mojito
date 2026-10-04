@@ -443,7 +443,7 @@ fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr
         ));
     }
     let literal = match ty {
-        Type::StringLiteral => Some(ExprKind::Str(String::new())),
+        Type::StringLiteral | Type::ClosedStringLiteral => Some(ExprKind::Str(String::new())),
         Type::None => Some(ExprKind::None),
         _ => None,
     };

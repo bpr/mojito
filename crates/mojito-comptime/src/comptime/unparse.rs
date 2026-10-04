@@ -129,7 +129,7 @@ fn render_type(ty: &Type) -> String {
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
-        Type::StringLiteral => "StringLiteral".to_string(),
+        Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::Float64 => "Float64".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) => format!("{name}{}", render_param_args(args)),

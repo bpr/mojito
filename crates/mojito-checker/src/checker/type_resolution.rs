@@ -97,6 +97,7 @@ impl Checker {
             SourceType::UInt => Ty::UInt,
             SourceType::Bool => Ty::Bool,
             SourceType::StringLiteral => self.bare_string_literal()?,
+            SourceType::ClosedStringLiteral => Ty::StringLiteral,
             SourceType::Float64 => Ty::Float64,
             SourceType::None => Ty::None,
             SourceType::Func {

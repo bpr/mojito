@@ -103,6 +103,12 @@ pub enum Type {
     /// source. A bare `String` annotation parses as `Named("String")` and
     /// resolves to the prelude's nominal self-hosted struct.
     StringLiteral,
+    /// The closed type of one string literal, `StringLiteral[value]` at the
+    /// pin, whose value Mojito does not track. The elaborator spells a binder
+    /// bound to an inferred literal's type with it (a pack element
+    /// `"two"` binds), so the annotation it substitutes stays concrete where
+    /// the open bare spelling would not. The parser never constructs it.
+    ClosedStringLiteral,
     Float64,
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
@@ -2122,6 +2128,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 | Type::UInt
                 | Type::Bool
                 | Type::StringLiteral
+                | Type::ClosedStringLiteral
                 | Type::Float64
                 | Type::None
                 | Type::SelfParam(_)

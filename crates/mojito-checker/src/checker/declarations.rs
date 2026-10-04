@@ -183,7 +183,7 @@ pub(super) fn definitely_initializes_self_field(body: &[Stmt], field: &str) -> b
 /// per-call inferred literal type.
 pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     match annotation {
-        SourceType::StringLiteral => true,
+        SourceType::StringLiteral | SourceType::ClosedStringLiteral => true,
         SourceType::Named(name, args) => {
             matches!(name.as_str(), "$pack" | "__RuntimeTuple")
                 || (name == "StringLiteral" && args.is_empty())

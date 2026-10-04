@@ -335,6 +335,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `comptime T = Ts[i]` then `var first: T = args[i]` in a pack-keyed `def`
+  types a `StringLiteral` element's local as that literal's closed type, as
+  the pin does, instead of failing with "'StringLiteral[_]' is not
+  concrete": the elaborator spells a binder bound to an inferred literal's
+  type with the compiler-only `Type::ClosedStringLiteral`
+  (`assets/ok/pack_element_alias_string_literal.mojo`).
+
 - `print(Ts[i]())` in a template-served pack-keyed `def` prints each
   element's default instead of failing with "vm backend does not support the
   built-in or callee 'Ts'", and `Ts.length` over a `Defaultable` pack no

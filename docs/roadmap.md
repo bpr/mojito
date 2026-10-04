@@ -1971,20 +1971,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R297 A `comptime` alias of a `StringLiteral` pack element is not
-  concrete**
-
-  Problem: `comptime T = Ts[i]` then `var first: T = args[i]`, called as
-  `alias(1, "two", True)`, fails with "'StringLiteral[_]' is not concrete,
-  use '[]' to bind missing parameters", while the pin prints `1`, `two`,
-  `True`.
-  - The clone binds the element as the open `StringLiteral[_]` the call's
-    argument types it, not the closed literal type the pin infers.
-  - An `Int` or `Float64` element runs.
-  - Found while landing R252 (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R65 Upstream `DType` names with no Mojito dtype are rejected**
 
   Problem: `print(DType.uint128)` runs at the pin (`uint128`), while Mojito

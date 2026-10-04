@@ -1420,7 +1420,7 @@ fn ast_raw(
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
-        Type::StringLiteral => "StringLiteral".to_string(),
+        Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::Float64 => "Float64".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
@@ -1689,7 +1689,7 @@ fn annotation_display(ty: &Type) -> String {
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
         Type::Float64 => "Float64".to_string(),
-        Type::StringLiteral => "StringLiteral".to_string(),
+        Type::StringLiteral | Type::ClosedStringLiteral => "StringLiteral".to_string(),
         Type::None => "None".to_string(),
         Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()

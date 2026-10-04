@@ -2022,6 +2022,7 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
         | Type::UInt
         | Type::Bool
         | Type::StringLiteral
+        | Type::ClosedStringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
@@ -2099,7 +2100,7 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
         Type::Int => Some(Ty::Int),
         Type::UInt => Some(Ty::UInt),
         Type::Bool => Some(Ty::Bool),
-        Type::StringLiteral => Some(Ty::StringLiteral),
+        Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::StringLiteral),
         Type::Float64 => Some(Ty::Float64),
         Type::None => Some(Ty::None),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
@@ -2136,7 +2137,7 @@ fn source_type_from_ty_with_origins(
         Ty::Int | Ty::IntLiteral => Type::Int,
         Ty::UInt => Type::UInt,
         Ty::Bool => Type::Bool,
-        Ty::StringLiteral => Type::StringLiteral,
+        Ty::StringLiteral => Type::ClosedStringLiteral,
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
         Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),

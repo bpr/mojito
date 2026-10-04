@@ -2390,7 +2390,9 @@ impl Flatten<'_> {
             mojito_ast::ast::Type::Int => "Int",
             mojito_ast::ast::Type::UInt => "UInt",
             mojito_ast::ast::Type::Bool => "Bool",
-            mojito_ast::ast::Type::StringLiteral => "StringLiteral",
+            mojito_ast::ast::Type::StringLiteral | mojito_ast::ast::Type::ClosedStringLiteral => {
+                "StringLiteral"
+            }
             mojito_ast::ast::Type::Float64 => "Float64",
             mojito_ast::ast::Type::None => "NoneType",
             mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,

@@ -424,6 +424,7 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
         | Type::UInt
         | Type::Bool
         | Type::StringLiteral
+        | Type::ClosedStringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
@@ -1045,6 +1046,7 @@ pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
         | Type::UInt
         | Type::Bool
         | Type::StringLiteral
+        | Type::ClosedStringLiteral
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)

@@ -673,6 +673,7 @@ impl Elab<'_> {
             | Type::UInt
             | Type::Bool
             | Type::StringLiteral
+            | Type::ClosedStringLiteral
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)
