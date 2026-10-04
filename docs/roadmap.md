@@ -616,24 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R29 A place passed to a `ref` parameter may alias a pack element**
-
-  Problem: `r(x, x)` against `r[*Ts](ref b: Int, *rest: *Ts)` prints `1` in
-  Mojito, while the pinned Mojo reports "aliasing values passed mutably to 'b'
-  argument and passed immutably to 'rest' argument".
-  - The pin infers the `ref` parameter mutable from the mutable place, and a
-    pack element is held by reference.
-  - With a regular `c: Int` in place of the pack both compilers accept the
-    call, because a trivial read parameter takes a copy.
-  - Mojito accepts a program the pin rejects, so this is a divergence.
-  - A `mut x: Int` parameter behaves alike: `both(k, k)` runs on Mojito and
-    the pin reports the same aliasing.
-  - Pinned by `conformance/probes/ref_argument_aliases_pack_element.mojo`.
-  - The plan must say whether the within-call exclusivity check or the `ref`
-    mutability inference is what is missing.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R30 A `var` of an opaque type is not required to be `Deinitable`**
 
   Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
@@ -1574,11 +1556,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   *args: *Ts)` is rejected with "'Span[_]' is not concrete; use '[]' to bind
   missing parameters"; the pin runs it.
   - The same pack on a module `def` takes the span.
-  - Once it binds, the method's collected elements also need judging by
-    argument exclusivity, as a free call's are: the method path passes no
-    `CollectedArguments` (`check_argument_origin_exclusivity` in
-    `method_calls/receiver_effects.rs`), and the pin rejects
-    `S().show(Span(xs), Span(xs))` over a `var xs`.
+  - Once it binds, argument exclusivity already judges the method's
+    collected elements, and the pin rejects `S().show(Span(xs), Span(xs))`
+    over a `var xs`.
   - `conformance/probes/method_pack_span_argument.mojo` pins it.
   - Found while judging variadic elements in argument exclusivity
     (2026-09-29).

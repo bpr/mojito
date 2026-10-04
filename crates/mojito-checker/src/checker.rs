@@ -2228,6 +2228,8 @@ struct MethodSig {
     /// The positional collector's convention (`var *args`), which a pack
     /// forwarded into it must match.
     variadic_convention: Option<ArgConvention>,
+    /// The positional collector's parameter name.
+    variadic_name: Option<String>,
     kw_variadic: Option<Box<Ty>>,
     kw_variadic_index: Option<usize>,
     positional_only: Option<usize>,
@@ -2308,6 +2310,7 @@ impl MethodSig {
             variadic: None,
             variadic_index: None,
             variadic_convention: None,
+            variadic_name: None,
             kw_variadic: None,
             kw_variadic_index: None,
             positional_only: None,
@@ -2747,6 +2750,8 @@ struct MethodCallResolution {
     variadic_element: Option<Ty>,
     /// The positional collector's declared convention.
     variadic_convention: Option<ArgConvention>,
+    /// The positional collector's parameter name.
+    variadic_name: Option<String>,
     keyword_element: Option<Ty>,
     conventions: Vec<Option<ArgConvention>>,
     self_convention: Option<ArgConvention>,

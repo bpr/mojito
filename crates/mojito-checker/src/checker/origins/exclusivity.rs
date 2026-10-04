@@ -16,7 +16,11 @@
 //! gathers is an argument of its own under the collector's name, and a
 //! tuple literal is its `Tuple` initializer's call over `var *args`: the pin
 //! rejects `show(Span(xs), Span(xs))` and `(Span(xs), Span(xs))` over a
-//! `var xs`.
+//! `var xs`. A gathered argument read by borrow is held by reference even
+//! when its type is trivial, so its own place conflicts with a mutable path
+//! to the same storage: the pin rejects `r(x, x)` over `r[*Ts](ref b: Int,
+//! *rest: *Ts)`, and `both(k, k)` over `both(mut a: Int, *b: Int)`, which
+//! the syntactic place rule never sees since it judges fixed slots only.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -105,6 +109,9 @@ pub(in crate::checker) struct ExclusivityReceiver<'a> {
 struct ArgumentAccess {
     name: String,
     own: Option<(OriginPlace, bool)>,
+    /// A positional collector gathers the argument, so its own place is
+    /// judged here rather than by the syntactic place rule.
+    gathered: bool,
     carried: Vec<(OriginPlace, bool)>,
     /// The callee only reads the places the argument's type carries.
     carried_read_only: bool,
@@ -115,6 +122,7 @@ impl ArgumentAccess {
         Self {
             name,
             own: None,
+            gathered: false,
             carried: Vec::new(),
             carried_read_only,
         }
@@ -130,16 +138,19 @@ impl ArgumentAccess {
     }
 
     /// Whether a mutable path of `self` overlaps any path of `other`,
-    /// other than the two arguments' own places.
+    /// other than the two arguments' own places unless one is gathered.
     fn mutably_overlaps(&self, other: &Self) -> bool {
+        let judges_own = self.gathered || other.gathered;
         let own_mutable = self
             .own
             .iter()
             .filter(|(_, mutable)| *mutable)
             .any(|(place, _)| {
                 other
-                    .carried
+                    .own
                     .iter()
+                    .filter(|_| judges_own)
+                    .chain(other.carried.iter())
                     .any(|(theirs, _)| places_overlap(place, theirs))
             });
         let carried_mutable =
@@ -218,27 +229,27 @@ impl Checker {
         args: &'a [Expr],
         resolve: impl Fn(&Ty) -> Result<Ty, TypeError>,
     ) -> CollectedArguments<'a> {
-        let elements = element.map_or_else(Vec::new, |element| {
-            let pack = matches!(
-                element,
-                Ty::Param { binder, .. } if binder.name.starts_with('*')
-            );
-            positions
-                .iter()
-                .map(|&position| {
-                    let bound = if pack {
-                        self.infer(&args[position]).ok()
-                    } else {
-                        resolve(element).ok()
-                    };
-                    (
-                        &args[position],
-                        std::iter::once(element.clone()).chain(bound).collect(),
-                    )
-                })
-                .collect()
-        });
+        let elements = self.gathered_elements(element, positions, args, resolve);
         self.collected_arguments(callee, elements)
+    }
+
+    /// The arguments a method's positional collector gathers, under the
+    /// collector's declared name and convention.
+    pub(in crate::checker) fn method_collected_arguments<'a>(
+        &self,
+        resolved: &'a MethodCallResolution,
+        args: &'a [Expr],
+    ) -> CollectedArguments<'a> {
+        CollectedArguments {
+            name: resolved.variadic_name.as_deref().unwrap_or("args"),
+            convention: resolved.variadic_convention,
+            elements: self.gathered_elements(
+                resolved.variadic_element.as_ref(),
+                &resolved.positional_overflow,
+                args,
+                |element| Ok(element.clone()),
+            ),
+        }
     }
 
     /// Reject a tuple literal two of whose elements reach overlapping caller
@@ -318,6 +329,7 @@ impl Checker {
                 receiver.object,
                 receiver.convention,
                 callee.nested_origins.read_only(),
+                false,
             );
             self.record_carried_places(&mut access, receiver.declared);
             self.record_carried_places(&mut access, receiver.bound);
@@ -341,6 +353,7 @@ impl Checker {
                 argument,
                 conventions.get(index).copied().flatten(),
                 callee.nested_origins.read_only(),
+                false,
             );
             for parameter in [callee.declared.get(index), callee.bound.get(index)]
                 .into_iter()
@@ -356,10 +369,12 @@ impl Checker {
                     collected.name.to_string(),
                     callee.nested_origins.read_only(),
                 );
+                access.gathered = true;
                 access.own = self.own_place(
                     argument,
                     collected.convention,
                     callee.nested_origins.read_only(),
+                    true,
                 );
                 for ty in types {
                     self.record_carried_places(&mut access, ty);
@@ -394,13 +409,16 @@ impl Checker {
     /// An argument passed by reference (`mut`/`ref`) reaches its own place
     /// mutably, a `ref` one immutably when the callee only reads
     /// (`ref_read_only`); a place argument read by borrow reaches it
-    /// immutably; a transferred, consumed, copied, or non-place argument
-    /// reaches no place of its own.
+    /// immutably; a transferred, consumed, or non-place argument reaches no
+    /// place of its own, nor does a read of a fixed slot that takes an
+    /// independent copy. A `gathered` read is held by reference whatever its
+    /// type.
     fn own_place(
         &self,
         argument: &Expr,
         convention: Option<ArgConvention>,
         ref_read_only: bool,
+        gathered: bool,
     ) -> Option<(OriginPlace, bool)> {
         if matches!(argument.kind, ExprKind::Transfer(_)) {
             return None;
@@ -411,9 +429,10 @@ impl Checker {
             Some(ArgConvention::Ref) => Some((place, !ref_read_only)),
             Some(ArgConvention::Var | ArgConvention::Deinit | ArgConvention::Out) => None,
             Some(ArgConvention::Imm) | None => {
-                let copied = self
-                    .infer(argument)
-                    .is_ok_and(|ty| self.call_read_is_independent_copy(&ty));
+                let copied = !gathered
+                    && self
+                        .infer(argument)
+                        .is_ok_and(|ty| self.call_read_is_independent_copy(&ty));
                 (!copied).then_some((place, false))
             }
         }
@@ -499,5 +518,37 @@ impl Checker {
             | Origin::Untracked { .. }
             | Origin::Unbound => {}
         }
+    }
+
+    /// Each gathered argument at `positions` with the types its access
+    /// carries origins through: a pack element binds to its argument's own
+    /// type, a homogeneous element to the type `resolve` gives it.
+    fn gathered_elements<'a>(
+        &self,
+        element: Option<&Ty>,
+        positions: &[usize],
+        args: &'a [Expr],
+        resolve: impl Fn(&Ty) -> Result<Ty, TypeError>,
+    ) -> Vec<(&'a Expr, Vec<Ty>)> {
+        element.map_or_else(Vec::new, |element| {
+            let pack = matches!(
+                element,
+                Ty::Param { binder, .. } if binder.name.starts_with('*')
+            );
+            positions
+                .iter()
+                .map(|&position| {
+                    let bound = if pack {
+                        self.infer(&args[position]).ok()
+                    } else {
+                        resolve(element).ok()
+                    };
+                    (
+                        &args[position],
+                        std::iter::once(element.clone()).chain(bound).collect(),
+                    )
+                })
+                .collect()
+        })
     }
 }

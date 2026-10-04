@@ -436,6 +436,7 @@ impl Checker {
             .iter()
             .map(|parameter| substitute_struct_origin_tails(parameter, &tail_bindings))
             .collect();
+        let collected = self.method_collected_arguments(resolved, args);
         self.check_argument_origin_exclusivity(
             &ExclusivityCallee {
                 name: method,
@@ -443,7 +444,7 @@ impl Checker {
                 declared: &declared,
                 bound: &resolved.param_types,
                 nested_origins: resolved.nested_origins,
-                collected: None,
+                collected: Some(&collected),
                 initializer: false,
             },
             Some(&ExclusivityReceiver {

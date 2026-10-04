@@ -341,6 +341,7 @@ impl Checker {
                     keyword_overflow: scored.keyword_overflow,
                     variadic_element: variadic.clone(),
                     variadic_convention: sig.variadic_convention,
+                    variadic_name: sig.variadic_name.clone(),
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
@@ -617,6 +618,7 @@ impl Checker {
             args,
             kwargs,
         )?;
+        let collected = self.method_collected_arguments(&selected, args);
         self.check_argument_origin_exclusivity(
             &ExclusivityCallee {
                 name: method,
@@ -624,7 +626,7 @@ impl Checker {
                 declared: &declared,
                 bound: &selected.param_types,
                 nested_origins: selected.nested_origins,
-                collected: None,
+                collected: Some(&collected),
                 initializer: false,
             },
             None,

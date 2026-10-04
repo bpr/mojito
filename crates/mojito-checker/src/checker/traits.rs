@@ -245,6 +245,7 @@ impl Checker {
                     variadic: None,
                     variadic_index: None,
                     variadic_convention: None,
+                    variadic_name: None,
                     kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
                     kw_variadic_index: kw_variadic_idx,
                     positional_only: m.positional_only,
@@ -1514,6 +1515,7 @@ impl Checker {
                 .map(|ty| Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))),
             variadic_index: req_sig.variadic_index,
             variadic_convention: req_sig.variadic_convention,
+            variadic_name: req_sig.variadic_name.clone(),
             kw_variadic: req_sig
                 .kw_variadic
                 .as_ref()

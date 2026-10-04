@@ -301,6 +301,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A place passed mutably and again into a positional collector read by
+  borrow (`r(x, x)` over `r[*Ts](ref b: Int, *rest: *Ts)`, `both(k, k)`
+  over `both(mut a: Int, *b: Int)`, `s.m(s.v)` over `m(mut self, *rest:
+  Int)`) is now rejected with "aliasing values passed mutably to 'b'
+  argument and passed immutably to 'rest' argument", as the pin rejects it,
+  instead of running: a gathered element is held by reference even when
+  its type is trivial, and a method's collector is now judged by argument
+  exclusivity as a free function's is
+  (`assets/type_error/ref_argument_aliases_pack_element.mojo`,
+  `assets/type_error/mut_argument_aliases_variadic_element.mojo`,
+  `assets/type_error/mut_receiver_aliases_method_variadic_element.mojo`).
 - A store to a field of `self` (or of a `mut` parameter) while a view of
   that field is live (`var view = self.name.strip()`, `self.name =
   String("q")`, then `view.byte_length()`) is now rejected as a use of the
