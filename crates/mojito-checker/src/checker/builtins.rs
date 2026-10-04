@@ -781,11 +781,12 @@ impl Checker {
 
     /// Type `len(x)`: every possible type of a dependent input must fulfill the
     /// same `Sized`/`__len__ -> Int` contract.
-    pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
+    pub(super) fn infer_len(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         // `len(Ts)` of a pack that is still a parameter.
         if let [pack] = args
-            && self.unbound_pack_named(pack).is_some()
+            && let Some(pack) = self.unbound_pack_named(pack)
         {
+            self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::Int);
         }
         let tys = self.builtin_args("len", 1, args)?;

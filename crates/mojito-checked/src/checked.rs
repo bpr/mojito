@@ -747,6 +747,13 @@ pub enum SemanticAdjustment {
     DtypeFloatQuery {
         value: i64,
     },
+    /// A compile-time query read as a runtime value — `Ts.length`,
+    /// `len(Ts)`, or `Ts.contains[X]()` of a `def`'s own pack — lowered as a
+    /// constant of the parameter expression, which the elaborator folds per
+    /// instance.
+    ParamValue {
+        value: mojito_types::param_expr::ParamExpr,
+    },
     /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
     /// lane gathers by checker-resolved compile-time indices; the result
     /// takes the mask's (power-of-two) width. A shuffle's mask has one index

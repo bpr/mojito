@@ -1904,6 +1904,7 @@ fn const_value(value: &Const) -> String {
         Const::Function(v) => positional("function", &symbol(v)),
         Const::Dtype(v) => positional("dtype", v.name()),
         Const::None => "none".into(),
+        Const::Param(v) => positional("param", &param_expr(v)),
     }
 }
 fn checked_const(value: &CheckedConst) -> String {

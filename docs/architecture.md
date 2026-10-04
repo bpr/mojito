@@ -515,7 +515,18 @@ analysis sees the whole collector lent or moved, and the elaborator
 (`expand_pack_spreads`) replaces the argument with one place read or move
 per element of the bound pack before it binds the callee, so concrete MIR
 carries no spread. A clone that spreads its bound pack into a served `def`
-spells the elements itself (`PackRewriter::served_callees`).
+spells the elements itself (`PackRewriter::served_callees`). A pack query
+read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
+`Ts.all_conforms_to[T]()` of a `def`'s or method's own pack — is upstream's
+`kgen.param.constant` with a symbolic attribute: the checker records the
+query as `SemanticAdjustment::ParamValue`, MIR lowers it as the constant
+`Const::Param` (schema 1.20) without lowering the pack operand, the
+parametric verifier checks its binders and the concrete verifier rejects a
+survivor, and `native::mono` folds it per instance
+(`answer_param_constants`, after the `comptime if`s are decided): a length
+through `eval_ct`, a membership or conformance through the oracle that
+decides a `comptime if`. A clone binds every pack before materialization
+and folds the same queries in the AST (`fold_pack_uses`).
 
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a

@@ -15,6 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::Const;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
 use mojito_types::types::{
@@ -295,6 +296,15 @@ impl ScopeCx<'_> {
                         width: width.clone(),
                     };
                     self.walk(&format!("block {index} vector slots"), &built);
+                }
+                if let MirInstr::Const {
+                    k: Const::Param(value),
+                    ..
+                } = instruction
+                {
+                    let role = format!("block {index} parameter constant");
+                    let mut nested = Vec::new();
+                    self.expr_nodes(&role, "parameter constant", value, &mut nested);
                 }
             }
             match &block.term {

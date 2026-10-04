@@ -848,9 +848,12 @@ impl Checker {
                 // parameter (`Self.Ts.contains[T]()`) is a `Bool` each
                 // instantiation folds.
                 if let ExprKind::Member { object, .. } = &callee.kind
-                    && self.unbound_pack_named(object).is_some()
-                    && self.compile_typelist_proposition(expr)?.is_some()
+                    && let Some(pack) = self.unbound_pack_named(object)
+                    && let Some(proposition) = self.compile_typelist_proposition(expr)?
                 {
+                    if let Some(query) = self.typelist_proposition_query(proposition) {
+                        self.record_pack_query_value(expr.source_span(), &pack, query);
+                    }
                     return Ok(Ty::Bool);
                 }
                 if let ExprKind::Member { object, field } = &callee.kind

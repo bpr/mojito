@@ -1109,7 +1109,7 @@ impl Elab<'_> {
             &self.struct_names,
             &self.applied_constants(),
         );
-        fold_pack_element_constructions(&mut final_body, &type_pack_values);
+        fold_pack_uses(&mut final_body, &type_pack_values);
         for parameter in &mut specialized_params {
             if let Some(default) = &mut parameter.default {
                 *default = materialize_expression(default, &subs);

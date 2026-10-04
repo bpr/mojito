@@ -405,6 +405,7 @@ impl<'a> Specializer<'a> {
         })?;
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
+        self.answer_param_constants(&mut function.blocks, bindings);
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
                 .folded_captures
@@ -895,6 +896,88 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(decided)
+    }
+
+    /// Fold every parameter constant of the instance to the value its
+    /// expression denotes under the bindings: a pack's length by
+    /// replacement, and a pack's membership, conformance, or predicate by the
+    /// oracle that decides a `comptime if`. One the bindings leave open stays for
+    /// the verifier's concrete mode to name.
+    fn answer_param_constants(&self, blocks: &mut [MirBlock], bindings: &Bindings) {
+        for block in blocks {
+            for instruction in &mut block.instrs {
+                if let MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } = instruction
+                {
+                    let regions = std::iter::once(body)
+                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter_mut())
+                        .chain(finalbody.iter_mut());
+                    for region in regions {
+                        self.answer_param_constants(region, bindings);
+                    }
+                    continue;
+                }
+                let MirInstr::Const {
+                    dest,
+                    k: Const::Param(value),
+                } = instruction
+                else {
+                    continue;
+                };
+                if let Some(k) = self.param_constant(value, bindings) {
+                    *instruction = MirInstr::Const { dest: *dest, k };
+                }
+            }
+        }
+    }
+
+    fn param_constant(&self, value: &ParamExpr, bindings: &Bindings) -> Option<Const> {
+        let proposition = match value.kind() {
+            ParamKind::PackQuery {
+                pack,
+                query: PackQuery::Conforms(trait_name),
+            } => Some(GenericConstraint::ConformsPack {
+                param: pack.clone(),
+                trait_name: trait_name.clone(),
+            }),
+            ParamKind::PackQuery {
+                pack,
+                query: PackQuery::Predicate { predicate, all },
+            } => Some(GenericConstraint::PackPredicate {
+                param: pack.clone(),
+                predicate: predicate.clone(),
+                all: *all,
+            }),
+            ParamKind::PackQuery {
+                pack,
+                query: PackQuery::Contains(element),
+            } => {
+                let element = match element.kind() {
+                    ParamKind::TypeShape(ty) => (**ty).clone(),
+                    ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+                    _ => return None,
+                };
+                Some(GenericConstraint::PackContains {
+                    param: pack.clone(),
+                    element: ConstraintOperand::Type(element),
+                })
+            }
+            _ => None,
+        };
+        match proposition {
+            Some(proposition) => self
+                .constraint_holds(&proposition, bindings, &mut HashSet::new())
+                .map(Const::Bool),
+            None => eval_ct(value, bindings)
+                .ok()
+                .and_then(|value| value_parameter_constant(&value, None)),
+        }
     }
 
     /// Answer every layout query of the instance from its now-concrete type

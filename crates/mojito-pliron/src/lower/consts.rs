@@ -55,6 +55,12 @@ impl FnLowering<'_> {
             // A bare function value is the two-word callable with a null
             // environment; its thunk ignores the environment argument.
             MirConst::Function(name) => self.lower_make_closure(ctx, dest, name, &[]),
+            // The elaborator folds every parameter constant; concrete MIR
+            // has none.
+            MirConst::Param(value) => Err(self.unsupported_reg(
+                format!("parameter constant `{value}` reached native lowering"),
+                dest,
+            )),
         }
     }
 

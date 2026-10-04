@@ -3239,6 +3239,7 @@ fn close_register_types(
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.
                             Const::Function(_) => None,
+                            Const::Param(value) => value.meta().as_value().cloned(),
                         };
                         Some((dest, ty))
                     }

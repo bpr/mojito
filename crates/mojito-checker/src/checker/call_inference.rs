@@ -571,7 +571,7 @@ impl Checker {
                 "min" | "max" => return self.infer_min_max(name, args),
                 "round" => return self.infer_round(args),
                 "input" => return self.infer_input(span, args),
-                "len" => return self.infer_len(args),
+                "len" => return self.infer_len(span, args),
                 "range" => return self.infer_range(args),
                 "Slice" | "slice" => return self.infer_slice_construction(name, args),
                 "Int" => return self.infer_conversion(&span, Ty::Int, args),

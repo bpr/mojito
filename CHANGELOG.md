@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def`'s or a method's own type pack answers `Us.length`, `len(Us)`,
+  `Us.contains[X]()`, and `Us.all_conforms_to[T]()` in a runtime position,
+  as the pin does: a template-served body carries the query as a parameter
+  constant (`Const::Param`, textual schema 1.20, upstream's
+  `kgen.param.constant`) that the elaborator folds per instance, on the VM
+  and natively, and a cloned `def` folds it at the clone. Such a query used
+  to fail with "Undefined variable 'Us'" or a MIR verifier error
+  (`assets/ok/pack_length_runtime_position.mojo`).
+
 - Constructing a type parameter through `Copyable`'s initializer
   (`Self.T(copy=self.x)` in a generic struct's method, `T(copy=x)` in a
   generic `def`) copies the source as the bound type does, in the template,

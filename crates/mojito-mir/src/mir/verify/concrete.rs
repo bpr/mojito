@@ -7,7 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{MirParamArg, MirSubscriptCall};
+use crate::mir::{Const, MirParamArg, MirSubscriptCall};
 
 /// The concreteness findings for one function body.
 ///
@@ -192,6 +192,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps the layout query of `{ty}` in elaborated MIR"
             ));
         }
+        MirInstr::Const {
+            k: Const::Param(value),
+            ..
+        } => errors.push(format!(
+            "{head} keeps the parameter constant `{value}` in elaborated MIR"
+        )),
         MirInstr::MakeSimd { dtype, width, .. }
         | MirInstr::SimdCast { dtype, width, .. }
         | MirInstr::SimdBitcast { dtype, width, .. }

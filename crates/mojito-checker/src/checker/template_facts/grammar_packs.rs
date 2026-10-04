@@ -327,8 +327,8 @@ impl BodyShape<'_> {
     /// ([`folded_literals`]).
     /// `Self.Ts.length` over the struct's own type pack, which the
     /// elaborator folds to the instance's element count
-    /// (`folded_literals`): the template typed it `Int` and recorded nothing
-    /// an instance keeps.
+    /// (`folded_literals`): the template typed it `Int` and recorded at most
+    /// the parameter value the fold answers, which no instance keeps.
     pub(super) fn pack_length(&self, expr: &Expr) -> bool {
         let ExprKind::Member { object, field } = &expr.kind else {
             return false;
@@ -341,7 +341,12 @@ impl BodyShape<'_> {
             && self.facts.is_none_or(|facts| {
                 let id = self.occurrence(expr);
                 fact_at(&facts.expression_types, id) == Some(&Ty::Int)
-                    && fact_at(&facts.operation_adjustments, id).is_none()
+                    && fact_at(&facts.operation_adjustments, id).is_none_or(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
+                        )
+                    })
             })
             && self.holds(MethodFeatures::STATEMENTS)
             && self.holds(MethodFeatures::COMPTIME_CONTROL)

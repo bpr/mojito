@@ -49,26 +49,73 @@ pub(super) fn materialize_block(
         .collect()
 }
 
-/// Elaborate every `Ts[k]()` of a pack-keyed `def` clone's body, its index
-/// already folded, into the bound element's own construction. The packs are
-/// not materialization constants: a bare pack name has no runtime spelling.
-pub(super) fn fold_pack_element_constructions(
-    body: &mut [Stmt],
-    packs: &HashMap<String, Vec<CtValue>>,
-) {
+/// Fold every use of a pack-keyed `def` clone's own packs: `Ts[k]()` at a
+/// folded index elaborates into the bound element's own construction, and the
+/// `TypeList` queries (`Ts.length`, `len(Ts)`, `Ts.contains[X]()`) into their
+/// answers. The packs are not materialization constants: a bare pack name has
+/// no runtime spelling. A nested declaration's own same-named type parameter
+/// shadows a pack throughout that declaration.
+pub(super) fn fold_pack_uses(body: &mut [Stmt], packs: &HashMap<String, Vec<CtValue>>) {
     struct Fold<'a> {
         packs: &'a HashMap<String, Vec<CtValue>>,
+        shadowing: HashMap<mojito_common::token::SyntaxId, Stmt>,
     }
     impl mojito_ast::visit::MutVisitor for Fold<'_> {
+        fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
+            let (StmtKind::Def { type_params, .. } | StmtKind::Struct { type_params, .. }) =
+                &statement.kind
+            else {
+                return;
+            };
+            let shadowed: HashSet<&str> = type_params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*'))
+                .filter(|name| self.packs.contains_key(*name))
+                .collect();
+            if shadowed.is_empty() {
+                return;
+            }
+            let inner: HashMap<String, Vec<CtValue>> = self
+                .packs
+                .iter()
+                .filter(|(name, _)| !shadowed.contains(name.as_str()))
+                .map(|(name, values)| (name.clone(), values.clone()))
+                .collect();
+            let mut placeholder = Stmt::new(StmtKind::Pass, statement.span);
+            placeholder.syntax_id = statement.syntax_id;
+            let mut declaration = std::mem::replace(statement, placeholder);
+            fold_pack_uses(std::slice::from_mut(&mut declaration), &inner);
+            self.shadowing.insert(declaration.syntax_id, declaration);
+        }
+
         fn visit_expr_mut(&mut self, expr: &mut Expr) {
             let subs: Subs = &|name| self.packs.get(name).cloned().map(CtValue::Tuple);
-            if let Some(construction) = pack_element_construction(expr, subs) {
-                *expr = construction;
+            if let Some(mut folded) = fold_pack_typelist_use(expr, subs) {
+                folded.syntax_id = expr.syntax_id;
+                *expr = folded;
             }
         }
     }
-    if !packs.is_empty() {
-        mojito_ast::visit::walk_block_mut(&mut Fold { packs }, body);
+    struct Restore(HashMap<mojito_common::token::SyntaxId, Stmt>);
+    impl mojito_ast::visit::MutVisitor for Restore {
+        fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
+            if matches!(statement.kind, StmtKind::Pass)
+                && let Some(declaration) = self.0.remove(&statement.syntax_id)
+            {
+                *statement = declaration;
+            }
+        }
+    }
+    if packs.is_empty() {
+        return;
+    }
+    let mut fold = Fold {
+        packs,
+        shadowing: HashMap::new(),
+    };
+    mojito_ast::visit::walk_block_mut(&mut fold, body);
+    if !fold.shadowing.is_empty() {
+        mojito_ast::visit::walk_block_mut(&mut Restore(fold.shadowing), body);
     }
 }
 
@@ -426,7 +473,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
 }
 
 /// Fold upstream's `TypeList` uses of a bound type pack in a runtime
-/// position — `Ts.length` / `Self.Ts.length` to the pack's length and
+/// position — `Ts.length` / `Self.Ts.length` / `len(Ts)` to the pack's length and
 /// `Ts.contains[X]()` to whether `X` names an element — so a specialized
 /// variadic struct's methods (`is_type_supported`, `__len__`) see literals.
 /// The conformance-dependent members (`all_conforms_to`, `all`, `any`) need
@@ -473,6 +520,18 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
     match &e.kind {
         ExprKind::Member { object, field } if field == "length" => {
             let length = pack_length(object, subs)?;
+            CtValue::Int(length as i64).materialize(e.span)
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+            let [pack] = args.as_slice() else {
+                return None;
+            };
+            let length = pack_length(pack, subs)?;
             CtValue::Int(length as i64).materialize(e.span)
         }
         ExprKind::Invoke {

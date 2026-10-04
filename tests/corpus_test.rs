@@ -344,6 +344,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_template_served",
     "template_folded_value",
     "type_predicate_comptime_if",
+    // R286, the erased oracle: a pack's length is its collector's runtime
+    // arity, and an unread `var` collector or a collector-less call has none.
+    "pack_length_runtime_position",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

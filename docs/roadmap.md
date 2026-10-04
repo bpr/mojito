@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R286**.
+Next free ID: **R292**.
 
 ## Ordered Work
 
@@ -296,6 +296,25 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R288 (P3e) A nested `def` that names its enclosing `def`'s type
+  binder fails MIR verification**
+
+  Problem: `def inner(y: T)` inside `def outer[T: Writable & Copyable](x:
+  T)`, and `return Us.length` in a nested `def` over the enclosing pack,
+  fail with "MIR function 'outer$inner' … names parameter `T` of `outer`
+  that no enclosing declaration binds", while the pin runs both.
+  - The cloned `outer` runs; the failure is the template's own MIR for the
+    nested function, whose scope (`Scope::of_function`, `verify/scope.rs`)
+    declares its own binders and its struct's but not its enclosing
+    function's.
+  - The nested body is a generator under the enclosing binders, as R6
+    states; MIR needs to record which declaration encloses it.
+  - A value binder works, because the nested body reads it as a captured
+    slot.
+  - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R7 (P3e) A compile-time evaluation mints its own clones**
 
   Problem: a generic call inside a compile-time evaluation is cloned in the
@@ -536,6 +555,37 @@ correctness fix to existing behavior is allowed.
   - No fixture pins it; `assets/ok/static_method_reads_struct_value_parameter.mojo`
     keeps to receivers the erased frame holds.
   - Entry R10 deletes the oracle and this gap with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R286 (P5) The erased oracle loses a pack's length once its
+  collector is gone**
+
+  Problem: `return 2 + Us.length` over `var *extra: *Us` that the body never
+  reads, or over a pack spelled only in the call
+  (`count[Int, String, Bool]()`), prints on concrete MIR and stops under
+  `--erased` with "the erased oracle cannot evaluate the parameter constant".
+  - The oracle reads a pack's length from its collector's runtime arity
+    (`erased_parameter_values`, `backend/vm.rs`); drop elaboration destroys
+    an unread `var` collector at entry, and a collector-less signature has
+    none.
+  - A `comptime for i in range(Us.length)` stops the same way.
+  - `assets/ok/pack_length_runtime_position.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R287 (P5) The erased oracle cannot answer a pack's membership or
+  conformance**
+
+  Problem: `Us.contains[Int]()` and `Us.all_conforms_to[Writable]()` in a
+  runtime position print on concrete MIR and stop under `--erased`.
+  - The erased frame carries one placeholder element per pack argument, so
+    it answers the length and nothing that needs an element's type.
+  - The elaborator answers both through the oracle that decides a
+    `comptime if` (`answer_param_constants`, `mono/specializer.rs`).
+  - Entry R10 deletes the oracle and the question with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1793,29 +1843,47 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R62 A `def`'s own type pack cannot be queried in a runtime position**
+- [ ] **R289 An explicit type argument before an inferred pack binds the
+  pack empty**
 
-  Problem: `return 1 + Us.length` fails with "Undefined variable 'Us'", while
-  the pinned Mojo runs it.
-  - A free `def count[*Us](var *extra: *Us)` and a method-own pack on any
-    struct fail the same way.
-  - A compile-time position (`comptime for i in range(Us.length)`) works, and
-    so does a variadic struct's own pack (`Self.Ts.length`) in a runtime
-    position.
-  - Only `generate_struct_spec` binds a pack into the substitutions that
-    `fold_pack_typelist_use` (`comptime/rewrite.rs`) reads during
-    materialization. `def` specialization never does.
-  - `def` specialization binds its packs for one fold only:
-    `fold_pack_element_constructions` elaborates `Ts[i]()`.
-  - Pinned by `conformance/fixtures/pack_length_runtime_position.mojo`
-    (`pack-length-runtime-position`, `mojo-only`).
-  - It stays in the elaborator, so it does not wait for R2's symbolic pack
-    work.
-  - The binding site is known, but the plan must enumerate the clone paths that
-    share it (free `def`, method-own pack, nested forwarding) and the
-    materialization rewrite each one runs.
+  Problem: `has[Int](7, "x", False)` against `def has[T: AnyType, *Us:
+  Writable](*extra: *Us)` fails with "'has$mono$TInt$T$pack$' expects 0
+  argument(s), got 3", while the pin prints the body's result.
+  - The instance key names `T` and an empty pack: the explicit argument
+    fills `T`, and the pack the call's arguments imply is never solved.
+  - With `T` inferred from an argument (`has(1, 7, "x")`) the call runs.
+  - Found while landing R62 (2026-10-04).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R290 A local `comptime` binding over a generic `def`'s binder is
+  rejected**
+
+  Problem: `comptime m = N + 1` in `def f[N: Int]()`, and `comptime n =
+  Us.length` over a pack, fail with "not a compile-time value: 'N' is not a
+  compile-time type", while the pin runs both.
+  - The elaborator evaluates a local `comptime` binding before the check,
+    where the binder has no value.
+  - R261 is the lane-keyed case of the same gap; the fix is the one it
+    names, leaving the binding to the checker, which binds it symbolically.
+  - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R291 A pack-keyed `def` spreading its collector into a method fails
+  on the cloner**
+
+  Problem: `def outer[*Us: Writable](*extra: *Us)` returning
+  `Plain().tally(*extra)` into a method with its own pack fails with
+  "register r5 has no checked type (Index …)" in the `outer` clone, while
+  the pin runs it.
+  - No pack query is involved: the forwarded collector's element reads
+    reach MIR untyped.
+  - R256 serves the shape from its template and assumes the cloner runs it
+    meanwhile; it does not.
+  - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R65 Upstream `DType` names with no Mojito dtype are rejected**
 

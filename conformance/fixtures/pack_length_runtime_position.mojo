@@ -1,8 +1,6 @@
 # A def's own pack queried in a runtime position: `Us.length` in a return
-# expression. The pinned Mojo runs it (prints 4 and 5); Mojito folds a pack's
-# `length` only inside a variadic struct's methods and rejects this with
-# "Undefined variable 'Us'". Tracked as `pack-length-runtime-position` in
-# `docs/roadmap.md`.
+# expression, of a method's own pack and of a free def's. Both print as the
+# pinned Mojo does (4 and 5).
 struct Plain:
     var n: Int
 

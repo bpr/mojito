@@ -5,6 +5,37 @@ use super::*;
 
 use mojito_ast::ast::SubscriptArg;
 impl Flatten<'_> {
+    /// The parameter expression the checker recorded for `e`, a compile-time
+    /// query read as a runtime value.
+    pub(super) fn param_value(&self, e: &Expr) -> Option<mojito_types::param_expr::ParamExpr> {
+        self.checked_adjustments(e)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ParamValue { value } => Some(value),
+                _ => None,
+            })
+    }
+
+    /// Lower `e`'s recorded parameter value: a closed one is its constant,
+    /// and one a generator names is a parameter constant the elaborator
+    /// folds per instance.
+    pub(super) fn param_value_register(
+        &mut self,
+        e: &Expr,
+        value: mojito_types::param_expr::ParamExpr,
+    ) -> Reg {
+        let k = match value.kind() {
+            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Int(n)) => {
+                Const::Int(*n)
+            }
+            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Bool(b)) => {
+                Const::Bool(*b)
+            }
+            _ => Const::Param(value),
+        };
+        self.constant(e, k)
+    }
+
     pub(super) fn member_expr(&mut self, e: &Expr, object: &Expr, field: &str) -> Reg {
         // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`) are
         // the lane slots: a known one is a constant, and one a generator

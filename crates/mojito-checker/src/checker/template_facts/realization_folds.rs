@@ -686,7 +686,8 @@ pub(super) fn folded_literals(
         .flat_map(|occurrence| occurrence.arguments.iter().copied())
         .collect();
     // A fold keeps the identity of the name, or of the use (`Self.Ts.length`)
-    // the template typed as the runtime `Int` it stands for.
+    // the template typed as the runtime `Int` it stands for, a parameter
+    // value at most.
     let named = |occurrence: &Occurrence| {
         let at = |id: &OccurrenceId| id.syntax == occurrence.id.syntax;
         template.expression_bindings.iter().any(|(id, _)| at(id))
@@ -694,7 +695,16 @@ pub(super) fn folded_literals(
                 .expression_types
                 .iter()
                 .any(|(id, ty)| at(id) && *ty == Ty::Int)
-                && !template.operation_adjustments.iter().any(|(id, _)| at(id)))
+                && !template
+                    .operation_adjustments
+                    .iter()
+                    .any(|(id, adjustment)| {
+                        at(id)
+                            && !matches!(
+                                adjustment,
+                                mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
+                            )
+                    }))
     };
     let arithmetic = folded_arithmetic(template, occurrences, &named)?;
     let mut literals: Vec<FoldedLiteral> = occurrences

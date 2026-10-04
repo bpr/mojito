@@ -638,6 +638,53 @@ impl Checker {
         }
     }
 
+    /// Record a query of a pack that is still a parameter, read as a runtime
+    /// value at `span`: the constant MIR carries and the elaborator folds.
+    pub(super) fn record_pack_query_value(
+        &self,
+        span: SourceSpan,
+        pack: &ParamExpr,
+        query: mojito_types::param_expr::PackQuery,
+    ) {
+        if let Some(pack) = pack.as_decl_ref() {
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value: self.param_context.pack_query(pack, query),
+                },
+            );
+        }
+    }
+
+    /// The pack query a `TypeList` proposition over a pack asks, when its
+    /// operand names a type.
+    pub(super) fn typelist_proposition_query(
+        &self,
+        proposition: GenericConstraint,
+    ) -> Option<mojito_types::param_expr::PackQuery> {
+        use mojito_types::param_expr::PackQuery;
+        Some(match proposition {
+            GenericConstraint::ConformsPack { trait_name, .. } => PackQuery::Conforms(trait_name),
+            GenericConstraint::PackPredicate { predicate, all, .. } => {
+                PackQuery::Predicate { predicate, all }
+            }
+            GenericConstraint::PackContains { element, .. } => {
+                let element = match element {
+                    ConstraintOperand::Type(ty) => ty,
+                    ConstraintOperand::Param(param) => self
+                        .ty_from_anno(&mojito_ast::ast::Type::Named(
+                            param.name.to_string(),
+                            Vec::new(),
+                        ))
+                        .ok()?,
+                    _ => return None,
+                };
+                PackQuery::Contains(self.param_context.type_shape(element))
+            }
+            _ => return None,
+        })
+    }
+
     /// The type of element `index` of a variadic pack that is still a
     /// parameter: the dependent `Ts[index]`, whose index is a compile-time
     /// expression over the parameters and `comptime for` variables in scope.

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.19
+# Mojito Textual MIR Format, Version 1.20
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.19 is implemented end to end for inspection and loading: canonical
+Version 1.20 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.19
+mojito-mir 1.20
 ```
 
-The writer emits 1.19. The reader accepts 1.0 through 1.19; *Schema 1.0*
+The writer emits 1.20. The reader accepts 1.0 through 1.20; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -158,6 +158,13 @@ with the `Copyable` initializer's borrowed source and `T()` leaves empty.
 The elaborator replaces the instruction with the bound type's construction,
 so elaborated MIR holds none. An older artifact reads as constructing with
 no argument.
+
+Minor version 20 adds the constant `param(param-expr)`: a compile-time query
+read as a runtime value (`Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
+`Ts.all_conforms_to[T]()` of a `def`'s own pack), upstream's
+`kgen.param.constant` with a symbolic attribute. The elaborator folds it to
+an `int` or `bool` per instance, so elaborated MIR holds none. A 1.19
+consumer rejects the spelling, which is the intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -364,7 +371,10 @@ record.
 
 `Const` is one of `int(sint)`, `float(bits_hex)`,
 `int_literal(decimal)`, `float_literal(exact)`, `bool(true|false)`,
-`string(string)`, `function(symbol)`, or `none`. Concrete `float` stores the
+`string(string)`, `function(symbol)`, `none`, or `param(param-expr)` (schema
+1.20), a parameter expression read as a runtime value — a pack's
+`length`, membership, or conformance — which a generator carries, the
+elaborator folds per instance, and concrete MIR never holds. Concrete `float` stores the
 exact IEEE-754 binary64 bits as 16 lowercase hex digits. `IntLiteral` uses
 arbitrary-precision decimal. `FloatLiteral` uses its canonical exact spelling
 and may never round through host `f64`: `-0.0` for negative zero, `{n}.0` for
@@ -650,7 +660,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.19
+mojito-mir 1.20
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

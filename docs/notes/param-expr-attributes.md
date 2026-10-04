@@ -294,7 +294,11 @@ test `param_expr_residual_is_not_false` pin this.
   callable contract. `types_compatible` refuses two distinct residuals over
   the same parameters (`residual_arguments_conflict`) instead of treating a
   shared parameter as a wildcard.
-- The VM materializes no residual or deferred value.
+- The VM materializes no residual or deferred value. A parameter constant
+  (`Const::Param`, a pack query read as a runtime value) is the one
+  expression a body runs: the elaborator folds it per instance, so concrete
+  MIR never holds one, and only the erased oracle evaluates it, against its
+  frame's reified parameters.
 - Native monomorphization closes a residual under the mono environment or
   reports the contextual unsupported boundary; lowering sees concrete types.
   Layout is asked only of a concrete type (`LayoutError::Symbolic`), and the
@@ -333,6 +337,7 @@ param_reflect   { subject, query }
 param_pack_query { pack, query }  (`pack` a `binder` record from 1.6)
 param_apply     { function, type, args, evaluated }  (from 1.14)
 operand_expr(<param-expr>)     an arithmetic constraint operand
+param(<param-expr>)            a parameter constant (from 1.20)
 ```
 
 `<meta>` is `meta_value(<type>)`, `meta_type`, `meta_reflected`,

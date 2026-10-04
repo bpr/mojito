@@ -1950,9 +1950,16 @@ fn substituted_facts(
         )
     };
     Ok(CheckedBodyFacts {
+        // A pack query the instance folded to its literal carries none.
         operation_adjustments: template
             .operation_adjustments
             .iter()
+            .filter(|(_, adjustment)| {
+                !matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
+                )
+            })
             .map(|(id, adjustment)| {
                 kept_binder_construction(template, *id, adjustment, &substitute)
                     .or_else(|| {

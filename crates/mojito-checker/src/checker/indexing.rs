@@ -2174,7 +2174,10 @@ impl Checker {
         }
         // `Ts.length` of a pack that is still a parameter is an `Int` no
         // instance has fixed yet.
-        if field == "length" && self.unbound_pack_named(object).is_some() {
+        if field == "length"
+            && let Some(pack) = self.unbound_pack_named(object)
+        {
+            self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::Int);
         }
         let obj_ty = self.infer(object)?;

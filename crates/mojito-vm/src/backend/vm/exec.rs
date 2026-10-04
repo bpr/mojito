@@ -142,7 +142,9 @@ impl VmBackend {
                 };
             }
             MirInstr::KeepAlive { .. } => {}
-            MirInstr::Const { dest, k } => regs[dest.0 as usize] = const_value(k),
+            MirInstr::Const { dest, k } => {
+                regs[dest.0 as usize] = const_value(k, &prog.mir.functions[function].1, vars)?;
+            }
             MirInstr::ConstructTypeParam {
                 dest,
                 param,

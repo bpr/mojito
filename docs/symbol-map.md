@@ -369,7 +369,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bounded `Ty::Param` view and `restore_pack_elements` the way back,
   `infer_pack_element_construction` types an element's `Ts[i]()` (each
   instance's construction is `comptime/rewrite.rs:pack_element_construction`,
-  reached for a `def` through `fold_pack_element_constructions`; stored to
+  reached for a `def` through `fold_pack_uses`; stored to
   the element's own storage, as `Tuple.__init__(out self)` stores it, the
   place is `indexing.rs:check_place_impl`'s compile-time index of the
   private storage, counted by
@@ -1158,6 +1158,32 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   pack's length; `erased_parameter_values` (`backend/vm.rs`) gives the
   erased frame each pack's arity, from the collector or the call's recorded
   elements.
+
+## The parameter constant (2026-10-04)
+
+- `Const::Param(ParamExpr)` (`mir/ir.rs`) is a parameter expression read as a
+  runtime value, the text form `param(...)` (schema 1.20). The checker
+  records it as `SemanticAdjustment::ParamValue { value }`
+  (`mojito-checked`, `checked.rs`) through `Checker::record_pack_query_value`
+  and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
+  `infer_member` (`Ts.length`, `indexing.rs`), `infer_len` (`len(Ts)`,
+  `builtins.rs`), and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
+  `Ts.all_conforms_to[T]()`, `inference.rs`); `derive_adjustment`
+  (`templates.rs`) substitutes it for an instance, and a struct clone's
+  derivation drops it where the clone folded the query
+  (`substituted_facts`, `folded_literals`). `Flatten::param_value` and
+  `param_value_register` (`mir/lower_expr/expr_access.rs`) lower it; the
+  pack operand is never lowered. `verify/scope.rs` checks its binders and
+  `verify/concrete.rs` rejects a survivor.
+- `Specializer::answer_param_constants` and `param_constant`
+  (`mono/specializer.rs`) fold it per instance: a length through `eval_ct`,
+  a membership or conformance as a `GenericConstraint` through
+  `constraint_holds` (`mono/availability.rs`). The erased oracle evaluates it
+  in `const_value` (`backend/vm.rs`) against `erased_parameter_values`.
+- On the cloner, `fold_pack_uses` (`comptime/rewrite.rs`, called from
+  `generate_def_spec`) folds a `def` clone's own pack uses — `Ts[k]()` and the
+  `TypeList` queries `fold_pack_typelist_use` answers — honouring a nested
+  declaration's same-named type parameter.
 
 ## The compile-time branch and the request path (2026-10-03)
 

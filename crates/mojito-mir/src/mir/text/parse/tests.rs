@@ -400,6 +400,32 @@ fn constant_families_reprint_byte_identically() {
     assert_reprints(&program);
 }
 
+/// A parameter constant reprints its expression: a pack's length, typed
+/// `Int`, and a closed expression alike.
+#[test]
+fn const_param_round_trips() {
+    let length = ParamContext::detached().pack_query(
+        &test_binder("Ts"),
+        mojito_types::param_expr::PackQuery::Length,
+    );
+    let instrs = vec![
+        MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Param(length),
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: Const::Param(constant(CtValue::Bool(true))),
+        },
+    ];
+    let program = program_with(vec![(
+        "consts".into(),
+        function_with(vec![Ty::Int, Ty::Bool], instrs),
+    )]);
+    assert!(write::program(&program).contains("param(param_pack_query"));
+    assert_reprints(&program);
+}
+
 #[test]
 fn unknown_value_grammar_tags_are_diagnosed() {
     assert!(

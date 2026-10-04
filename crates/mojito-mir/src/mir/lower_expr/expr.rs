@@ -87,6 +87,13 @@ impl Flatten<'_> {
             ExprKind::Infix(op, a, b) => self.infix_op(e, *op, a, b),
 
             // --- Calls / access ------------------------------------------------
+            // A pack query read as a runtime value is a parameter constant;
+            // its operand is a type, never lowered.
+            ExprKind::Call { .. } | ExprKind::Invoke { .. } | ExprKind::Member { .. }
+                if let Some(value) = self.param_value(e) =>
+            {
+                self.param_value_register(e, value)
+            }
             // NOTE: keyword args + default-slot matching (`call::match_call_slots`)
             // are a follow-up; the checker has already validated them, so only the
             // positional `args` are flattened here.

@@ -701,6 +701,11 @@ pub enum Const {
     /// A `DType` value.
     Dtype(mojito_ast::ast::Dtype),
     None,
+    /// A parameter expression read as a runtime value (`Ts.length`,
+    /// `len(Ts)`, `Ts.contains[X]()`): upstream's `kgen.param.constant` with
+    /// a symbolic attribute. A generator carries it and the elaborator folds
+    /// it under the instance's bindings; concrete MIR has none.
+    Param(mojito_types::param_expr::ParamExpr),
 }
 
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.

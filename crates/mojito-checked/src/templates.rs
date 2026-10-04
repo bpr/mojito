@@ -16,7 +16,8 @@ use crate::checked::{
     SemanticAdjustment,
 };
 use mojito_common::token::{Span, SyntaxId};
-use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty};
+use mojito_types::ct::CtValue;
+use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty, TyArg};
 
 /// The identity of one prepared generic declaration.
 ///
@@ -271,6 +272,25 @@ pub fn derive_adjustment(
         SemanticAdjustment::ConstructSimd { dtype, width } => {
             let (dtype, width) = substitute_simd_slots(dtype, width, substitute);
             Some(SemanticAdjustment::ConstructSimd { dtype, width })
+        }
+        // A parameter value's binders close under the instance's arguments
+        // as a type argument's value does.
+        SemanticAdjustment::ParamValue { value } => {
+            let realized = substitute(&Ty::Struct(
+                String::new(),
+                vec![TyArg::Val(CtValue::Expr(value.clone()))].into(),
+            ));
+            let value = match &realized {
+                Ty::Struct(_, args) => match args.first() {
+                    Some(TyArg::Val(CtValue::Expr(value))) => value.clone(),
+                    Some(TyArg::Val(value)) => mojito_types::param_expr::ParamContext::detached()
+                        .constant(value.clone())
+                        .ok()?,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            Some(SemanticAdjustment::ParamValue { value })
         }
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which

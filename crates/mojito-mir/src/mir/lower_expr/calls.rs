@@ -568,6 +568,7 @@ impl Flatten<'_> {
             Const::None => Some(Ty::None),
             Const::Dtype(_) => Some(Ty::Dtype),
             Const::Function(_) => self.checked_ty(e),
+            Const::Param(value) => value.meta().as_value().cloned(),
         };
         let d = match constant_ty {
             Some(ty) => self.fresh_typed(span(e), None, ty),

@@ -32,7 +32,7 @@ use mojito_native_core::target::NativeTarget;
 use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
-    ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
+    PackQuery, ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
 };
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg,

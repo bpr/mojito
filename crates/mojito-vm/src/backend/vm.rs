@@ -2020,9 +2020,15 @@ fn is_true(v: &Value) -> bool {
         || matches!(v, Value::Simd { dtype: mojito_ast::ast::Dtype::Bool, lanes: crate::runtime::SimdLanes::Bool(values) } if values == &[true])
 }
 
-/// Materialize a MIR constant into a runtime value.
-fn const_value(k: &Const) -> Value {
-    match k {
+/// Materialize a MIR constant into a runtime value. A parameter constant
+/// reaches the VM only on the erased path, which reads it against the
+/// frame's reified parameters as `comptime_for_next` reads a loop bound.
+fn const_value(
+    k: &Const,
+    function: &MirFunction,
+    variables: &[Value],
+) -> Result<Value, RuntimeError> {
+    Ok(match k {
         Const::Int(n) => Value::Int(*n),
         Const::Float(x) => Value::Float64(*x),
         Const::IntLiteral(value) => Value::IntLiteral(value.clone()),
@@ -2032,7 +2038,16 @@ fn const_value(k: &Const) -> Value {
         Const::Function(name) => Value::Function(name.clone()),
         Const::Dtype(dtype) => Value::Dtype(*dtype),
         Const::None => Value::None,
-    }
+        Const::Param(expr) => expr
+            .evaluate_named(&erased_parameter_values(function, variables, &[]))
+            .ok()
+            .and_then(ct_value_as_runtime)
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!(
+                    "the erased oracle cannot evaluate the parameter constant `{expr}`"
+                ))
+            })?,
+    })
 }
 
 mod calls;
