@@ -1768,6 +1768,7 @@ impl Flatten<'_> {
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
                 aggregate_loans: self.aggregate_loans.clone(),
+                conversion_view_loans: self.conversion_view_loans.clone(),
                 pending_argument_anchors: Vec::new(),
                 allow_argument_anchors: false,
                 transfer_domain_loans: self.transfer_domain_loans.clone(),

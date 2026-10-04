@@ -616,21 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R265 A method's reference result cannot be the source of a view
-  conversion**
-
-  Problem: `f(p.name_ref())` at a `StringSpan` parameter prints `4` at the
-  pin. Mojito's checker stops with "reference binding to a non-place
-  expression".
-  - `name_ref` returns `ref [self.name] String`; the view's `ref [origin]`
-    source should bind that referent.
-  - The same operand of `+=` (`out += p.name_ref()`) fails the same way.
-  - A subscript element (`f(xs[0])`) and an explicit
-    `StringSpan(p.name_ref())` run.
-  - Probe: `conformance/probes/reference_result_view_conversion.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R26 Forwarding a named accessor's reference result is rejected**
 
   Problem: `return self.items.unsafe_get(index)` under

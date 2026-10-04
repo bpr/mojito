@@ -375,6 +375,10 @@ impl Checker {
             if let Ok(place) = self.origin_place(expression) {
                 return vec![Origin::Place(place)];
             }
+            // A reference result lends the referent its origin names.
+            if let Some(reference) = self.infer_reference_value(expression) {
+                return vec![reference.origin];
+            }
             // A temporary source lends its materialized anonymous owner (a
             // frame-local slot), so the view cannot escape the frame.
             if let Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {

@@ -104,6 +104,12 @@ impl Flatten<'_> {
                 shared: false,
             }];
         }
+        if let Some(loans) = self
+            .conversion_view_loans
+            .get(&(std::ptr::from_ref::<Expr>(expression) as usize))
+        {
+            return loans.clone();
+        }
         // A materialized borrow-source temporary loans its hidden owned slot:
         // the consuming aggregate's binding keeps the temporary alive exactly
         // as long as the borrower, upstream's temporary-lifetime rule. The

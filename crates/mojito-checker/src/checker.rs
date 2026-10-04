@@ -1895,7 +1895,9 @@ impl Checker {
             self.conversion_source_borrows
                 .borrow_mut()
                 .insert(span.clone(), mutable);
-            if self.origin_place(expression).is_err() {
+            if self.origin_place(expression).is_err()
+                && self.infer_reference_value(expression).is_none()
+            {
                 self.materialize_borrow_owner(expression, mutable)?;
             }
         }

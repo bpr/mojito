@@ -1245,8 +1245,11 @@ impl Flatten<'_> {
         // A converted temporary's view is already bound to its
         // `$conv_view_r` slot by the conversion lowering; a second anchor
         // would duplicate that loan.
-        let anchored_by_conversion =
-            converted && mojito_checked::checked::materialized_borrow_owner(adjustments).is_some();
+        let anchored_by_conversion = converted
+            && (mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
+                || self
+                    .conversion_view_loans
+                    .contains_key(&(std::ptr::from_ref::<Expr>(expression) as usize)));
         if (call_temporary || subscript_view)
             && !anchored_by_conversion
             && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))

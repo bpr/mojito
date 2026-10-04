@@ -1337,6 +1337,11 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
+    /// The loans a view-constructor conversion's `$conv_view_r` slot holds
+    /// on a source that is not a named place (an accessor's reference result,
+    /// an intrinsic subscript element), keyed by the converted expression's
+    /// syntax identity: a binding of the converted value inherits them.
+    conversion_view_loans: HashMap<usize, Vec<MirLoan>>,
     /// Hidden `$arg_loan_r` slots created for loan-carrying temporary call
     /// arguments while lowering the current statement. Flushed as `KeepAlive`
     /// uses at the statement's end so the anchored loans live through the
@@ -2810,6 +2815,7 @@ fn lower_cfg_nested(
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
                 .collect(),
             aggregate_loans: HashMap::new(),
+            conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
             allow_argument_anchors: false,
             transfer_domain_loans: HashMap::new(),

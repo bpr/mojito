@@ -301,6 +301,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A reference result now converts to a borrowing view in place
+  (`width(p.name_ref())` or `out += p.name_ref()` over an accessor returning
+  `ref [self.name] String`, `width(pick(t))` over a free `ref` function), as
+  the pin does: the view's `ref [origin]` source binds the referent, instead
+  of being rejected as "reference binding to a non-place expression". A
+  binding annotated with the view type over such a source or a collection
+  element (`var v: StringSpan[origin_of(xs)] = xs[1]`) now keeps the source's
+  owner alive while the binding lives, instead of trapping on a use after
+  deallocation (`assets/ok/reference_result_view_conversion.mojo`).
+
 - A collection element now converts to a borrowing view argument in place
   (`out += parts[i]` over a `String` collector, `t += xs[0]` or
   `width(xs[1])` over a `List[String]`), as the pin does: the view's

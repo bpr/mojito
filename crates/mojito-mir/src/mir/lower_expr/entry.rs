@@ -261,6 +261,10 @@ impl Flatten<'_> {
                         marker,
                         dest_interior: None,
                     });
+                    if self.simple_place(e).is_none() {
+                        self.conversion_view_loans
+                            .insert(std::ptr::from_ref::<Expr>(e) as usize, loans.clone());
+                    }
                     self.aggregate_loans.insert(variable, loans);
                     let read = match view_ty {
                         Some(ty) => self.fresh_typed(span(e), Some(variable), ty),
