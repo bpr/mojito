@@ -938,6 +938,7 @@ impl Flatten<'_> {
                         });
                         result
                     };
+                    self.emit_interior_invalidations(target, None);
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,
@@ -1130,6 +1131,7 @@ impl Flatten<'_> {
                         });
                         result
                     };
+                    self.emit_interior_invalidations(target, None);
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,
@@ -1378,6 +1380,7 @@ impl Flatten<'_> {
                         });
                         result
                     };
+                    self.emit_interior_invalidations(target, None);
                     self.emit(MirInstr::WriteRef {
                         reference: handle,
                         value: result,

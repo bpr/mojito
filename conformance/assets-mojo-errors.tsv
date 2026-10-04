@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	492
+# swept-count	493
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -65,6 +65,7 @@ assets/ownership_error/interior_pointer_stale_after_mutation.mojo	compile-reject
 assets/ownership_error/interior_view_consume_after_mutation.mojo	compile-reject	agree	error: no matching function in initialization
 assets/ownership_error/interior_view_destroy_after_mutation.mojo	compile-reject	agree	error: no matching function in initialization
 assets/ownership_error/list_element_view_stale_after_append.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
+assets/ownership_error/list_element_view_stale_after_inplace_update.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
 assets/ownership_error/list_element_view_stale_after_store.mojo	compile-reject	agree	error: use of invalidated interior reference 'ys["element"]["bytes"]'
 assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
 assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'

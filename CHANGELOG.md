@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An in-place update of a container element through its reference
+  (`ys[0] += "tail"`) now stales a live view lent from that element
+  (`var v = ys[0].rstrip()`), so a later use of the view is rejected as an
+  invalidated interior reference, as the pin does, instead of trapping on
+  the VM with a use after deallocation
+  (`assets/ownership_error/list_element_view_stale_after_inplace_update.mojo`).
+
 - `print` reads its arguments as the pin's read collector does: a named value
   of a type parameter (`print(y)` with `y: T`) is read in place instead of
   copied and leaked, and an owned temporary (`print(x.copy())`,

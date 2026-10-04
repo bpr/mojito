@@ -616,22 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R23 An in-place update of a container element under a live view of
-  it is not rejected**
-
-  Problem: `var v = ys[0].rstrip()`, then `ys[0] += "tail"`, then `print(v)`
-  runs on Mojito and the VM traps with "use after Pointer deallocation". The
-  pin rejects the `print` with "use of invalidated interior reference
-  'ys["element"]["bytes"]'".
-  - The view lends `ys["element"]["bytes"]`, which `ys[0] = …` and
-    `ys.append(…)` both stale.
-  - The augmented store reaches the element through its reference and records
-    no interior invalidation, so nothing stales the view.
-  - Natively the same program would read freed bytes instead of trapping.
-  - Probe: `conformance/probes/list_element_view_inplace_update.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R24 An element of a `String` collector cannot be the operand of `+=`**
 
   Problem: `out += parts[i]` in `def join(var *parts: String) -> String`

@@ -1258,6 +1258,9 @@ impl Checker {
                                 .entry(site.clone())
                                 .or_insert_with(|| (vec![None], false));
                         }
+                        // The store writes the element through the handle, so
+                        // it stales every view lent below that element.
+                        self.record_place_write_invalidation(site.clone(), place);
                         self.expression_types
                             .borrow_mut()
                             .insert(site.clone(), target.clone());
