@@ -301,6 +301,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A direct `size_of[T]()` in a SIMD width now checks and runs in generic
+  parameters, return types, and vector constructions. The checker preserves
+  the layout application and substitutes its type operand before the
+  elaborator resolves the width; a literal lane count remains a different
+  checked type, matching Mojo (`assets/ok/comptime_layout_constant.mojo`).
 - A place passed mutably and again into a positional collector read by
   borrow (`r(x, x)` over `r[*Ts](ref b: Int, *rest: *Ts)`, `both(k, k)`
   over `both(mut a: Int, *b: Int)`, `s.m(s.v)` over `m(mut self, *rest:

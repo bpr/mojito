@@ -225,7 +225,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   in both annotation and expression shapes — the multi-element pointer
   marker — and the terminal conservative `._subtree` projection via
   `append_subtree`) and the annotation alias table (`StringSlice` →
-  `StringSpan`, `MutPointer`/`ImmPointer`).
+  `StringSpan`, `MutPointer`/`ImmPointer`). `size_of_operand` validates the
+  layout query shared by call inference and compile-time expression checking;
+  `constraints::eval_associated_ct` keeps it as `ParamContext::size_of` in a
+  SIMD width, and `types::substitute` replaces type binders inside the slots.
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
   `is_movable`, `is_copyable`, …). A type parameter is movable or

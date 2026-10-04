@@ -1827,6 +1827,42 @@ fn accepts_comptime_simd_width() {
 }
 
 #[test]
+fn layout_query_simd_widths_keep_application_identity() {
+    let prefix = "struct Pair:\n    var a: Int\n    var b: Bool\n\ndef h[T: AnyType](x: SIMD[DType.float32, size_of[T]()]) -> Int:\n    return Int(x[0])\n\n";
+    ok(&format!(
+        "{prefix}def main():\n    var v = SIMD[DType.float32, size_of[Pair]()](3.0)\n    var result = h[Pair](v)\n"
+    ));
+    let mismatch = err(&format!(
+        "{prefix}def main():\n    var result = h[Pair](SIMD[DType.float32, 16](3.0))\n"
+    ));
+    assert!(
+        matches!(mismatch, TypeError::TypeMismatch { expected, found, .. }
+            if expected == "SIMD[DType.float32, size_of[Pair]()]"
+                && found == "SIMD[DType.float32, 16]")
+    );
+    assert!(matches!(
+        err("def f(x: SIMD[DType.float32, size_of[Int, Bool]()]):\n    pass\n"),
+        TypeError::WrongTypeArgCount {
+            expected: 1,
+            got: 2,
+            ..
+        }
+    ));
+    assert!(matches!(
+        err("def f(x: SIMD[DType.float32, size_of[Int](1)]):\n    pass\n"),
+        TypeError::ArityMismatch {
+            expected: 0,
+            got: 1,
+            ..
+        }
+    ));
+    assert!(matches!(
+        err("def f(x: SIMD[DType.float32, size_of[3]()]):\n    pass\n"),
+        TypeError::TypeMismatch { expected, .. } if expected == "a type"
+    ));
+}
+
+#[test]
 fn rejects_non_power_of_two_width() {
     let e = err("var v: SIMD[DType.int32, 3] = SIMD[DType.int32, 3](1, 2, 3)\n");
     assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {e:?}");

@@ -2808,6 +2808,30 @@ impl Checker {
         }
     }
 
+    /// The type operand of a well-formed target-layout query.
+    pub(super) fn size_of_operand(
+        &self,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        let name = mojito_types::param_expr::SIZE_OF_FUNCTION;
+        if param_args.len() != 1 {
+            return Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: 1,
+                got: param_args.len(),
+            });
+        }
+        if !args.is_empty() {
+            return Err(TypeError::ArityMismatch {
+                name: name.to_string(),
+                expected: 0,
+                got: args.len(),
+            });
+        }
+        self.type_param_argument(&param_args[0], name)
+    }
+
     /// Resolve `SIMD[DType.<dt>, width]` from its two parameter arguments to its
     /// `(dtype, width)` slots (raw — not canonicalized).
     pub(super) fn simd_dims(

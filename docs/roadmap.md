@@ -2380,28 +2380,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R140 A vector constructed at a layout constant's width has no
-  checked type**
-
-  Problem: `def h[T: AnyType](x: SIMD[DType.float32, size_of[T]()])` runs at
-  the pin, which keeps the width the application `size_of[T]()` through the
-  check; Mojito rejects the signature with "not a compile-time Int constant:
-  not an associated comptime expression".
-  - The constant and the construction work since 2026-10-03: a value read
-    is the layout query the elaborator answers under its target,
-    `SIMD[DType.float32, S]` in a signature is `SIMD[DType.float32,
-    size_of[Pair]()]`, which a `16`-lane vector does not convert to, and
-    `SIMD[DType.float32, S](3.0)` over `comptime S = size_of[Pair]()` is a
-    construction at the application's width, which the elaborator closes
-    (`assets/ok/comptime_layout_constant.mojo`,
-    `assets/type_error/comptime_layout_constant_mismatch.mojo`).
-  - A `size_of[T]()` spelled directly in a signature's width slot is not
-    read as the application the module constant is (`simd_width` in
-    `type_resolution.rs`).
-  - Probe: `conformance/probes/ctfe_layout_in_signature.mojo`.
-  - Depends on R3.
-  - Model: Fable, Not Planned.
-
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.

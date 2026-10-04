@@ -333,21 +333,7 @@ impl Checker {
                 // the destination register.
                 "external_call" => return self.infer_external_call(param_args, args),
                 "size_of" => {
-                    if param_args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: "size_of".to_string(),
-                            expected: 1,
-                            got: param_args.len(),
-                        });
-                    }
-                    if !args.is_empty() {
-                        return Err(TypeError::ArityMismatch {
-                            name: "size_of".to_string(),
-                            expected: 0,
-                            got: args.len(),
-                        });
-                    }
-                    let ty = self.type_param_argument(&param_args[0], "size_of")?;
+                    let ty = self.size_of_operand(param_args, args)?;
                     self.operation_adjustments.borrow_mut().insert(
                         span,
                         mojito_checked::checked::SemanticAdjustment::SizeOf { ty },

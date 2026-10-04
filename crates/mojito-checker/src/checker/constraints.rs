@@ -282,6 +282,15 @@ impl Checker {
             ExprKind::TypeApply { name, args } => self
                 .ty_value_from_name(name, args)?
                 .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == mojito_types::param_expr::SIZE_OF_FUNCTION && kwargs.is_empty() => {
+                let ty = self.size_of_operand(param_args, args)?;
+                Ok(CtValue::Expr(self.param_context.size_of(ty)))
+            }
             // `Int(3)`: a scalar conversion of a compile-time value, which is
             // the declared type's ordinary literal materialization. It makes
             // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
@@ -515,11 +524,8 @@ impl Checker {
                 kwargs,
             } if kwargs.is_empty() => {
                 if name == mojito_types::param_expr::SIZE_OF_FUNCTION {
-                    let [argument] = param_args.as_slice() else {
-                        return None;
-                    };
-                    let ty = self.type_param_argument(argument, name).ok()?;
-                    return args.is_empty().then(|| context.size_of(ty));
+                    let ty = self.size_of_operand(param_args, args).ok()?;
+                    return Some(context.size_of(ty));
                 }
                 if !param_args.is_empty() {
                     return None;

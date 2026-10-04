@@ -2699,7 +2699,8 @@ pub fn substitute_packs<S: std::hash::BuildHasher>(
 }
 
 /// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
-/// unsolved parameter untouched). Recurses into struct type arguments.
+/// unsolved parameter untouched), including types embedded in parameter
+/// expressions and SIMD slots.
 pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
     match ty {
         Ty::Param {
@@ -2718,14 +2719,13 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             name.clone(),
             args.reusing(map_tyargs(args, |t| substitute(t, subst))),
         ),
-        Ty::Dependent(dependent) => {
+        Ty::Dependent(_) | Ty::Simd { .. } if is_symbolic(ty) => {
             let mut bindings = ParamBindings::new();
             for (id, ty) in subst {
                 bindings.bind_type(id.clone(), ty.clone());
             }
-            ParamContext::detached()
-                .replace(dependent.expr(), &bindings)
-                .map_or_else(|_| ty.clone(), DependentType::resolve)
+            replace_parameters(&ParamContext::detached(), ty, &bindings, 0)
+                .unwrap_or_else(|_| ty.clone())
         }
         Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute(elem, subst))),
         Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()),
