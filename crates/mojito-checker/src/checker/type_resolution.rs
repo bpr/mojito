@@ -494,6 +494,14 @@ impl Checker {
                 if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
                     return self.ty_from_anno(&SourceType::SelfParam(name.clone()));
                 }
+                // A `def`'s own `Ts[index]` while the pack is still a
+                // parameter: the dependent element type.
+                if let [mojito_ast::ast::ParamArg::Value(index)] = args.as_slice()
+                    && let Some(pack) =
+                        self.unbound_pack_type(&SourceType::Named(name.clone(), Vec::new()))
+                {
+                    return self.pack_element_type(&pack, index);
+                }
                 return Err(TypeError::UnknownType(name.clone()));
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value

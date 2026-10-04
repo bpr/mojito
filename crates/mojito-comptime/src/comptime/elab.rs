@@ -31,6 +31,13 @@ impl Elab<'_> {
         let mut type_aliases: HashMap<String, CtValue> = HashMap::new();
         let mut source_aliases: HashMap<String, Type> = HashMap::new();
         for stmt in stmts {
+            // `comptime T = Ts[i]` over a template's own type pack is the
+            // dependent element it denotes: later statements spell it
+            // `Ts[i]`, and the elaborator below MIR closes it per instance.
+            if let Some((name, element)) = self.template_pack_element_alias(&stmt.kind) {
+                source_aliases.insert(name, element);
+                continue;
+            }
             let first_new = out.len();
             self.stmt(stmt, env, in_fn, &mut out)?;
             // Runtime uses of the bindings elaborated so far cross explicitly
@@ -41,6 +48,8 @@ impl Elab<'_> {
                 for statement in &mut out[first_new..] {
                     *statement = rewrite_stmt_cloned(statement, subs, true);
                 }
+            }
+            if !source_aliases.is_empty() {
                 substitute_type_bindings_in_block(&mut out[first_new..], &source_aliases);
             }
             if let StmtKind::Comptime {
@@ -58,6 +67,14 @@ impl Elab<'_> {
             }
         }
         Ok(out)
+    }
+
+    /// The alias a statement of a template body declares of an element of
+    /// the template's own type pack ([`pack_element_alias`]).
+    fn template_pack_element_alias(&self, kind: &StmtKind) -> Option<(String, Type)> {
+        let binders = self.template_binders.borrow();
+        let binders = binders.last()?;
+        pack_element_alias(kind, &|base| binders.contains(&format!("*{base}")))
     }
 
     /// The module constants whose initializer applies a function, as source
@@ -1016,9 +1033,16 @@ impl Elab<'_> {
         }
         // A pack's collector stands for the pack in a bound (`len(args)`),
         // so it is a binder of the body too.
+        // A type pack is a binder under both spellings: `Ts` as the body
+        // names it, and `*Ts` marking it a pack ([`Self::block`]).
         let mut binders: HashSet<String> = type_params
             .iter()
-            .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+            .flat_map(|parameter| {
+                [
+                    parameter.name.trim_start_matches('*').to_string(),
+                    parameter.name.clone(),
+                ]
+            })
             .collect();
         binders.extend(def_pack_names(type_params, params));
         self.template_binders.borrow_mut().push(binders);

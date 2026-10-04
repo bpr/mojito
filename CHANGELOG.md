@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime T = Ts[i]` alias of a pack element under a pack-keyed `def`'s
+  `comptime for`, and a `Ts[i]` annotation spelled directly, are served by
+  the template, as the pin elaborates them: the alias stands for the
+  dependent element it denotes, so `var first: T = args[i]` and `T()` no
+  longer key a clone per call. A `Ts[i]` annotation used to fail with
+  "unknown type 'Ts'" (`assets/ok/pack_element_alias_served.mojo`).
+
 - A pack-keyed `def` whose `comptime for` binds an element (`var value =
   Ts[i]()`, `var first = args[i]`) is served by its template, as the pin
   elaborates it: each unrolled copy keeps its own local at its element's

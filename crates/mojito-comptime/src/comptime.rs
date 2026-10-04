@@ -1456,7 +1456,8 @@ fn block_has_unkept_comptime_for(stmts: &[Stmt], packs: &HashSet<String>) -> boo
 /// spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
 /// `len(args)` is a runtime value there), and arithmetic over them — and
 /// the body declares no `comptime` binding of its own, which the elaborator
-/// above MIR would have to evaluate with the index unknown. Such a loop is
+/// above MIR would have to evaluate with the index unknown, other than an
+/// alias of a pack element ([`pack_element_alias`]). Such a loop is
 /// checked once with the index symbolic, carried by MIR as a loop header,
 /// and unrolled below MIR; any other — over a compile-time list, a pack, a
 /// reflection query — is unrolled in the AST, on a clone per instantiation.
@@ -1516,7 +1517,42 @@ pub(super) fn comptime_for_is_template_served(
         if name == "range"
             && !args.is_empty()
             && args.iter().all(|bound| parameter_shaped(bound, packs)))
-        && !block_has_statement(body, &|kind| matches!(kind, StmtKind::Comptime { .. }))
+        && !block_has_statement(body, &|kind| {
+            matches!(kind, StmtKind::Comptime { .. })
+                && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
+        })
+}
+
+/// The alias a `comptime NAME = Ts[index]` statement declares of an element
+/// of a pack `is_pack` accepts, as the type `Ts[index]` it denotes: such an
+/// alias names a parameter expression, so a template carries it as that
+/// dependent element rather than evaluating it with the index unknown.
+pub(super) fn pack_element_alias(
+    kind: &StmtKind,
+    is_pack: &dyn Fn(&str) -> bool,
+) -> Option<(String, Type)> {
+    let StmtKind::Comptime {
+        name,
+        type_params,
+        ty: None,
+        where_clauses,
+        value,
+    } = kind
+    else {
+        return None;
+    };
+    let ExprKind::Index { object, index } = &value.kind else {
+        return None;
+    };
+    let ExprKind::Identifier(base) = &object.kind else {
+        return None;
+    };
+    (type_params.is_empty() && where_clauses.is_empty() && is_pack(base)).then(|| {
+        (
+            name.clone(),
+            Type::Named(base.clone(), vec![ParamArg::Value((**index).clone())]),
+        )
+    })
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested

@@ -60,19 +60,6 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R298 (P3b) A `comptime` alias of a pack element under a served
-  loop keys a clone**
-
-  Problem: `comptime T = Ts[i]` in a pack-keyed `def`'s `comptime for`
-  keeps the cloner (`def_body_keys_specialization`, `comptime.rs`), as
-  `var first: T = args[i]` under it does.
-  - A served body would carry the alias as the dependent `Ts[i]` it
-    denotes, which the element binding beside it already is.
-  - The cloned path also fails on a `StringLiteral` element (R297).
-  - Found while landing R252 (2026-10-04).
-  - Depends on R297.
-  - Model: Fable, Not Planned.
-
 - [ ] **R255 (P3b) A collector-less pack-keyed `def` whose signature spreads
   the pack keys a clone**
 
@@ -1958,15 +1945,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R296 A local annotated with a pack element's type is rejected**
+- [ ] **R296 A method local annotated with a struct pack element's type is
+  rejected**
 
-  Problem: `var value: Ts[i] = Ts[i]()` in a `def`'s `comptime for` fails
-  with "unknown type 'Ts'", and `var value: Self.Ts[i] = Self.Ts[i]()` in
-  a method with "dependent type indexing requires a type-valued associated
+  Problem: `var value: Self.Ts[i] = Self.Ts[i]()` in a method's `comptime
+  for` fails with "dependent type indexing requires a type-valued associated
   member" (`checker/type_resolution.rs`), while the pin prints each
   element's default.
-  - The unannotated `var value = Ts[i]()` runs, typed as the dependent
-    element; the annotation resolver has no pack-element form.
+  - A `def`'s own `Ts[i]` annotation resolves to the dependent element
+    (`assets/ok/pack_element_alias_served.mojo`); the `Self.Ts[i]` spelling
+    has no such form.
   - Found while landing R252 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
