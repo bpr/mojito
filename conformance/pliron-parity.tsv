@@ -173,6 +173,7 @@ assets/ok/generic_struct_generic_constructor_overload.mojo	main	exe-differential
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_template_reach.mojo	main	exe-differential	sanitized
+assets/ok/generic_struct_tuple_field.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
 assets/ok/hashable_extra_hash_overload.mojo	main	exe-differential	sanitized
 assets/ok/hashable_hasher_protocol.mojo	main	exe-differential	sanitized

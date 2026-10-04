@@ -694,6 +694,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             // and already-renamed instances keep their names; symbolic
             // applications stay for a later substitution or a contextual
             // rejection.
+            if name == mojito_types::types::TUPLE_TYPE_NAME
+                && let Some(specialized) = tuple_specialization(&args, bindings)
+            {
+                return Ok(Ty::Struct(specialized, original.reusing(args)));
+            }
             let concrete_name = if args.iter().any(arg_has_symbolic)
                 || nominal_template(name) != name
                 || !bindings.generic_templates.contains(name.as_str())
@@ -1018,6 +1023,7 @@ fn declared_associated_type(
     };
     let mut instance = Bindings {
         generic_templates: Rc::clone(&bindings.generic_templates),
+        tuple_specializations: Rc::clone(&bindings.tuple_specializations),
         associated_types: Rc::clone(&bindings.associated_types),
         self_instance: Some((template.clone(), peel_refs(&base).clone())),
         ..Bindings::default()
@@ -1030,4 +1036,24 @@ fn declared_associated_type(
     })?;
     apply_defaults(&declared.param_decls, &mut instance)?;
     substitute_ty(member, &instance).map(Some)
+}
+
+/// The specialization a closed public `Tuple` over `args` names, when the
+/// source declares it.
+fn tuple_specialization(args: &[TyArg], bindings: &Bindings) -> Option<String> {
+    if args.iter().any(arg_has_symbolic) {
+        return None;
+    }
+    let elements = args
+        .iter()
+        .map(|arg| match arg {
+            TyArg::Ty(ty) => Some(ty.clone()),
+            TyArg::Val(_) | TyArg::Origin(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let specialized = mojito_symbol::symbol::tuple_specialization_symbol(&elements);
+    bindings
+        .tuple_specializations
+        .contains(&specialized)
+        .then_some(specialized)
 }

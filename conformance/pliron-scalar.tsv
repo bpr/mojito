@@ -173,6 +173,7 @@ assets/ok/generic_struct_generic_constructor_overload.mojo	-	ineligible	no-scala
 assets/ok/generic_struct_instance_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_instance_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_template_reach.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_struct_tuple_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_bucketing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_extra_hash_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/hashable_hasher_protocol.mojo	-	ineligible	no-scalar-entry-shape

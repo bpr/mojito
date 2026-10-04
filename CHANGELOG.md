@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic struct's `Tuple` field over its parameter (`var pair:
+  Tuple[Self.T, Int]` on `Holder[T]`) reads and indexes as the closed
+  `Tuple` it names at each instance, from the struct's own methods and from
+  outside, as upstream does, on the VM and natively
+  (`assets/ok/generic_struct_tuple_field.mojo`). `some_int.pair[1]` stopped
+  at run time with "cannot index Tuple$t2[y3:Inty3:Int]", and natively the
+  instance's field had no declaration to lay out.
 - A tuple display or bare `Tuple(...)` call infers a string element as
   `String`, as upstream's `Tuple.__init__(var *args: *Ts)` infers `Ts`, so
   `var t: Tuple[Int, String] = Tuple(1, "x")`, or a `var w = (1, "q")`

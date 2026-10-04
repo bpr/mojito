@@ -455,18 +455,7 @@ impl Checker {
                 }
             }
             let place_ty = match &expr.kind {
-                ExprKind::Identifier(name) => self.lookup(name).cloned(),
-                ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
-                    let Ty::Struct(name, arguments) = base else {
-                        return None;
-                    };
-                    let info = self.structs.get(&name)?;
-                    let (_, field_ty) = info
-                        .fields
-                        .iter()
-                        .find(|(candidate, _)| candidate == field)?;
-                    Some(substitute(field_ty, &struct_subst(&info.decls, &arguments)))
-                }),
+                ExprKind::Identifier(_) | ExprKind::Member { .. } => self.place_storage_ty(expr),
                 ExprKind::Index { object, index } => self
                     .index_storage_ty(object, index)
                     .or_else(|| Some(ty.clone())),

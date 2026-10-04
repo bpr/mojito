@@ -1763,19 +1763,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R47 A generic struct's `Tuple` field over its parameter cannot be read**
-
-  Problem: a `Holder[T]` field `var pair: Tuple[Self.T, Int]` stops at
-  `some_int.pair[1]` with "cannot index Tuple$t2[y3:Inty3:Int]", where the
-  pin prints the element.
-  - A non-generic struct's `Tuple[Int, Int]` field indexes cleanly, and
-    the checker accepts both.
-  - The message is the VM's place projection (`backend/vm/places.rs`).
-  - Pinned by `conformance/probes/generic_struct_tuple_field.mojo`.
-  - Depends on R46, which decides whether such a field keeps the public
-    `Tuple` spelling the VM can project.
-  - Model: Opus, Not Planned.
-
 - [ ] **R51 A trait default body holding a `comptime if` never elaborates**
 
   Problem: a trait whose default method holds `comptime if True:` reports

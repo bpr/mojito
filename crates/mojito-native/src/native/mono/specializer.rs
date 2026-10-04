@@ -36,6 +36,15 @@ impl<'a> Specializer<'a> {
                     .map(|d| d.name.clone())
                     .collect(),
             ),
+            tuple_specializations: Rc::new(
+                source
+                    .declarations
+                    .structs
+                    .iter()
+                    .filter(|d| mojito_symbol::symbol::is_tuple_specialization_symbol(&d.name))
+                    .map(|d| d.name.clone())
+                    .collect(),
+            ),
             associated_types: Rc::new(
                 source
                     .declarations
@@ -174,6 +183,7 @@ impl<'a> Specializer<'a> {
     pub(super) fn base_bindings(&self) -> Bindings {
         Bindings {
             generic_templates: Rc::clone(&self.generic_templates),
+            tuple_specializations: Rc::clone(&self.tuple_specializations),
             associated_types: Rc::clone(&self.associated_types),
             ..Bindings::default()
         }

@@ -202,6 +202,10 @@ struct Bindings {
     /// instance symbol; checker-specialized structs with empty `param_decls`
     /// (the `Tuple$tN` family) keep their names.
     generic_templates: Rc<HashSet<String>>,
+    /// The `Tuple` specializations the source declares (`Tuple$t2[…]`).
+    /// Substitution names a public `Tuple` it closes by its specialization,
+    /// as the checker names a substituted use.
+    tuple_specializations: Rc<HashSet<String>>,
     /// Each source struct's parameters and unparameterized associated types.
     /// Substitution solves `C.Element` from them once `C` is bound to an
     /// instance, where no signature spelled the member for unification.
@@ -264,6 +268,7 @@ struct Specializer<'a> {
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
+    tuple_specializations: Rc<HashSet<String>>,
     associated_types: Rc<HashMap<String, AssociatedTypes>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,

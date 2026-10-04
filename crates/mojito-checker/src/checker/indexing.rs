@@ -132,7 +132,12 @@ impl Checker {
                     .fields
                     .iter()
                     .find(|(candidate, _)| candidate == field)?;
-                Some(substitute(field_ty, &struct_subst(&info.decls, &arguments)))
+                let field_ty = substitute(field_ty, &struct_subst(&info.decls, &arguments));
+                Some(if arguments.is_empty() {
+                    field_ty
+                } else {
+                    self.canonicalize_public_tuple_types(field_ty)
+                })
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
             ExprKind::MultiIndex { .. } => {
@@ -2219,8 +2224,15 @@ impl Checker {
             })?;
             if let Some((_, fty)) = info.fields.iter().find(|(n, _)| n == field) {
                 // The receiver's arguments — origin tail included — bind the
-                // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
-                return Ok(match substitute_at(fty, info, targs) {
+                // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`),
+                // and a public `Tuple` they close names its specialization.
+                let fty = substitute_at(fty, info, targs);
+                let fty = if targs.is_empty() {
+                    fty
+                } else {
+                    self.canonicalize_public_tuple_types(fty)
+                };
+                return Ok(match fty {
                     Ty::Ref(reference) => *reference.referent,
                     value => value,
                 });
