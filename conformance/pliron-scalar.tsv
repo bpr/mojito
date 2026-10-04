@@ -585,6 +585,7 @@ assets/ok/std_traits_origin_imports.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stored_array_span_iterators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_capacity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_default_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_element_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_escapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_grapheme_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_iadd_view_operand.mojo	-	ineligible	no-scalar-entry-shape

@@ -148,77 +148,12 @@ impl Flatten<'_> {
         }) {
             return self.reference_handle(e);
         }
-        // A free call's reference result is read out of a hidden handle slot
-        // that loans the storage its origin names, so the arguments it
-        // borrows from stay alive until the referent is copied. A method
-        // call's result takes the same path when its origin names an argument
-        // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
-        if (matches!(e.kind, ExprKind::Call { .. }) || self.reference_result_borrows_argument(e))
-            && self.reference_result(e).is_some()
-            && let Some(place) = self.materialize_reference_result_place(e)
+        // A conversion of an index-normalized source applies after the
+        // normalization below; every other conversion reads its source here,
+        // a reference result included.
+        if self.index_normalization(e).is_none()
+            && let Some(target) = self.implicit_conversion(e)
         {
-            let value_ty = place
-                .ty
-                .clone()
-                .or_else(|| self.checked_ty(e))
-                .unwrap_or(Ty::Error);
-            let read = self.fresh_typed(span(e), Some(place.root), value_ty.clone());
-            self.emit(MirInstr::LoadPlace { dest: read, place });
-            let dest = self.fresh_typed(span(e), None, value_ty);
-            self.emit(MirInstr::CopyValue { dest, value: read });
-            return dest;
-        }
-        if let Some(reference) = self.reference_result(e) {
-            let handle = self.reference_handle(e);
-            let value_ty = match self.f.reg_types.get(&handle.0) {
-                Some(Ty::Ref(reference)) => (*reference.referent).clone(),
-                _ => (*reference.referent).clone(),
-            };
-            let read = self.fresh_typed(span(e), None, value_ty.clone());
-            self.emit(MirInstr::ReadRef {
-                dest: read,
-                reference: handle,
-            });
-            // A reference-returning expression has two checked uses. `ref x =
-            // expression` is intercepted by the Borrow adjustment above and
-            // retains its handle. Every ordinary value use reads the referent
-            // into independently owned storage, so lifecycle types must run
-            // their copy initializer rather than alias backing storage.
-            let dest = self.fresh_typed(span(e), None, value_ty);
-            self.emit(MirInstr::CopyValue { dest, value: read });
-            return dest;
-        }
-        if let Some(target) = self.index_normalization(e) {
-            // The source Indexer is evaluated exactly once. The checked target
-            // may be concrete or an abstract trait-dispatch symbol; MethodCall
-            // already retargets the latter from the runtime receiver while
-            // preserving the selected signature.
-            let recv = self.expr_unconverted(e);
-            if let Some(source) = self.checked_ty(e) {
-                self.f.reg_types.entry(recv.0).or_insert(source);
-            }
-            let dest = self.fresh_typed(span(e), None, Ty::Int);
-            self.emit(MirInstr::MethodCall {
-                dest,
-                recv,
-                method: "__mlir_index__".to_string(),
-                resolved: Some(target),
-                raises: None,
-                reference_result: None,
-                result_adapter: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                recv_place: None,
-                recv_writes: false,
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-            });
-            return dest;
-        }
-        if let Some(target) = self.implicit_conversion(e) {
             // A view-constructor conversion (`BorrowConversionSource`) binds
             // its `ref [origin]` parameter to the source's caller place, and
             // the result register keeps the source root's provenance so the
@@ -240,17 +175,20 @@ impl Flatten<'_> {
                 let value = self.nominal_string_view_source(e, value, &target);
                 self.materialize_borrow_slot(e, owner, value)
             } else {
-                let source_place = adjustments
-                        .iter()
-                        .any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::BorrowConversionSource { .. }
-                            )
-                        })
-                        .then(|| self.simple_place(e))
-                        .flatten();
-                (self.expr_unconverted(e), source_place)
+                let borrows_source = adjustments.iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::BorrowConversionSource { .. }
+                    )
+                });
+                if borrows_source {
+                    self.borrowed_conversion_source(e)
+                } else {
+                    let value = self
+                        .reference_result_value(e)
+                        .unwrap_or_else(|| self.expr_unconverted(e));
+                    (value, None)
+                }
             };
             // The conversion result is the constructed type, not the source
             // expression's checked type; targets are concrete constructors.
@@ -298,13 +236,13 @@ impl Flatten<'_> {
                 instantiated_args: Vec::new(),
                 spread: None,
             });
-            if source_place.is_some() {
+            if let Some(source_place) = source_place {
                 // A view-constructor conversion result borrows its source: bind
                 // the temporary into a hidden retained slot whose loan keeps
                 // the source alive (and conflict-checked) until the consuming
                 // expression's last use of the view — the same persistent
                 // representation an explicit `var sp = Span(xs)` binding gets.
-                let loans = self.aggregate_borrows(e);
+                let loans = self.conversion_source_loans(e, source_place);
                 if !loans.is_empty() {
                     let view_ty = self.f.reg_types.get(&dest.0).cloned();
                     let variable = self.var(&format!("$conv_view_r{}", dest.0));
@@ -336,6 +274,39 @@ impl Flatten<'_> {
                     return read;
                 }
             }
+            return dest;
+        }
+        if let Some(value) = self.reference_result_value(e) {
+            return value;
+        }
+        if let Some(target) = self.index_normalization(e) {
+            // The source Indexer is evaluated exactly once. The checked target
+            // may be concrete or an abstract trait-dispatch symbol; MethodCall
+            // already retargets the latter from the runtime receiver while
+            // preserving the selected signature.
+            let recv = self.expr_unconverted(e);
+            if let Some(source) = self.checked_ty(e) {
+                self.f.reg_types.entry(recv.0).or_insert(source);
+            }
+            let dest = self.fresh_typed(span(e), None, Ty::Int);
+            self.emit(MirInstr::MethodCall {
+                dest,
+                recv,
+                method: "__mlir_index__".to_string(),
+                resolved: Some(target),
+                raises: None,
+                reference_result: None,
+                result_adapter: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                recv_place: None,
+                recv_writes: false,
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                param_decls: Vec::new(),
+            });
             return dest;
         }
         if let Some(target) = self.literal_materialization(e) {
@@ -397,6 +368,116 @@ impl Flatten<'_> {
             .chain(kwargs.iter().map(|keyword| &keyword.value))
             .filter_map(|argument| self.checked_owner(place_root_expression(argument)))
             .any(|owner| roots.contains(&owner))
+    }
+
+    /// The value of a reference-returning expression, read out of its
+    /// referent into independently owned storage; `None` when `e` returns no
+    /// reference.
+    fn reference_result_value(&mut self, e: &Expr) -> Option<Reg> {
+        // A free call's reference result is read out of a hidden handle slot
+        // that loans the storage its origin names, so the arguments it
+        // borrows from stay alive until the referent is copied. A method
+        // call's result takes the same path when its origin names an argument
+        // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
+        if (matches!(e.kind, ExprKind::Call { .. }) || self.reference_result_borrows_argument(e))
+            && self.reference_result(e).is_some()
+            && let Some(place) = self.materialize_reference_result_place(e)
+        {
+            let value_ty = place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(e))
+                .unwrap_or(Ty::Error);
+            let read = self.fresh_typed(span(e), Some(place.root), value_ty.clone());
+            self.emit(MirInstr::LoadPlace { dest: read, place });
+            let dest = self.fresh_typed(span(e), None, value_ty);
+            self.emit(MirInstr::CopyValue { dest, value: read });
+            return Some(dest);
+        }
+        if let Some(reference) = self.reference_result(e) {
+            let handle = self.reference_handle(e);
+            let value_ty = match self.f.reg_types.get(&handle.0) {
+                Some(Ty::Ref(reference)) => (*reference.referent).clone(),
+                _ => (*reference.referent).clone(),
+            };
+            let read = self.fresh_typed(span(e), None, value_ty.clone());
+            self.emit(MirInstr::ReadRef {
+                dest: read,
+                reference: handle,
+            });
+            // A reference-returning expression has two checked uses. `ref x =
+            // expression` is intercepted by the Borrow adjustment above and
+            // retains its handle. Every ordinary value use reads the referent
+            // into independently owned storage, so lifecycle types must run
+            // their copy initializer rather than alias backing storage.
+            let dest = self.fresh_typed(span(e), None, value_ty);
+            self.emit(MirInstr::CopyValue { dest, value: read });
+            return Some(dest);
+        }
+        None
+    }
+
+    /// The source of a view-constructor conversion (`BorrowConversionSource`)
+    /// with the caller place its `ref [origin]` parameter binds: a named place
+    /// as written, or the element place an accessor's reference result or an
+    /// intrinsic subscript (`parts[i]` over a collector) names, evaluated once.
+    fn borrowed_conversion_source(&mut self, e: &Expr) -> (Reg, Option<MirPlace>) {
+        if let Some(place) = self.simple_place(e) {
+            return (self.expr_unconverted(e), Some(place));
+        }
+        let Some(place) = self
+            .materialize_reference_result_place(e)
+            .or_else(|| self.lower_projected_reference_place(e))
+            .or_else(|| self.try_place(e))
+        else {
+            return (self.expr_unconverted(e), None);
+        };
+        let value = self.fresh_typed(
+            span(e),
+            Some(place.root),
+            place
+                .ty
+                .clone()
+                .or_else(|| self.checked_ty(e))
+                .unwrap_or(Ty::Error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: value,
+            place: place.clone(),
+        });
+        (value, Some(place))
+    }
+
+    /// The loans a view-constructor conversion result holds on its borrowed
+    /// source: the checked whole-place loan of a named place, the loans of
+    /// the hidden handle an accessor's reference result lives in, or the
+    /// element place an intrinsic subscript names.
+    fn conversion_source_loans(&mut self, e: &Expr, source: MirPlace) -> Vec<MirLoan> {
+        let loans = self.aggregate_borrows(e);
+        if !loans.is_empty() {
+            return loans;
+        }
+        if let Some(handle) = source.through {
+            return self
+                .aggregate_loans
+                .get(&handle)
+                .cloned()
+                .unwrap_or_default();
+        }
+        let mutable = self.checked_adjustments(e).into_iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BorrowConversionSource {
+                    mutable: true
+                }
+            )
+        });
+        vec![MirLoan {
+            place: source,
+            mutable,
+            interior: None,
+            shared: false,
+        }]
     }
 
     /// A builtin string producer (`String("abc")`, `repr(x)`, `input(...)`)

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R265**.
+Next free ID: **R266**.
 
 ## Ordered Work
 
@@ -616,19 +616,18 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R24 An element of a `String` collector cannot be the operand of `+=`**
+- [ ] **R265 A method's reference result cannot be the source of a view
+  conversion**
 
-  Problem: `out += parts[i]` in `def join(var *parts: String) -> String`
-  prints `xy` at the pin for `join("x", "y")`. Mojito stops with "invalid
-  checked program: fn 'join': register r12 has no checked type".
-  - The index read of the collector element reaches MIR with no checked type
-    when it is the right operand of an augmented assignment.
-  - `parts[i].byte_length()` and `print(parts[i])` over the same collector
-    run.
-  - A read collector (`*parts: String`) and a literal index (`parts[0]`)
-    fail the same way.
-  - Probe:
-    `conformance/probes/variadic_var_collector_element_augmented_operand.mojo`.
+  Problem: `f(p.name_ref())` at a `StringSpan` parameter prints `4` at the
+  pin. Mojito's checker stops with "reference binding to a non-place
+  expression".
+  - `name_ref` returns `ref [self.name] String`; the view's `ref [origin]`
+    source should bind that referent.
+  - The same operand of `+=` (`out += p.name_ref()`) fails the same way.
+  - A subscript element (`f(xs[0])`) and an explicit
+    `StringSpan(p.name_ref())` run.
+  - Probe: `conformance/probes/reference_result_view_conversion.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

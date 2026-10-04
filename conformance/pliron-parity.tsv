@@ -585,6 +585,7 @@ assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
 assets/ok/stored_array_span_iterators.mojo	main	exe-differential	sanitized
 assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_default_construction.mojo	main	exe-differential	sanitized
+assets/ok/string_element_view_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized

@@ -301,6 +301,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A collection element now converts to a borrowing view argument in place
+  (`out += parts[i]` over a `String` collector, `t += xs[0]` or
+  `width(xs[1])` over a `List[String]`), as the pin does: the view's
+  `ref [origin]` source binds the element place and the view keeps the
+  container alive across the call, instead of stopping at MIR verification or
+  trapping on a use after deallocation. An in-place update whose operand
+  overlaps its subscript target (`xs[1] += xs[0]`) is rejected as aliasing,
+  as the pin does
+  (`assets/ok/string_element_view_conversion.mojo`,
+  `assets/type_error/subscript_inplace_operand_aliasing.mojo`).
+
 - An in-place update of a container element through its reference
   (`ys[0] += "tail"`) now stales a live view lent from that element
   (`var v = ys[0].rstrip()`), so a later use of the view is rejected as an

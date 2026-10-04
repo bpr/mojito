@@ -460,7 +460,22 @@ impl Checker {
         if self.next_owner.get() == temporary.0 + 1 {
             self.next_owner.set(temporary.0);
         }
-        selection
+        let contract = selection?;
+        // The temporary hides the element place from the selected call's
+        // within-call exclusivity check, so the real place is the receiver
+        // here: `xs[1] += xs[0]` lends `xs` mutably and immutably at once.
+        let copied = contract.arguments.first().is_some_and(|argument| {
+            self.argument_is_independent_copy(argument.convention, value, &argument.parameter_ty)
+        });
+        crate::checker::places::check_receiver_aliasing(
+            place,
+            contract.receiver_convention,
+            &[ArgSlot::Positional(0)],
+            &[copied],
+            std::slice::from_ref(value),
+            &[],
+        )?;
+        Ok(contract)
     }
 
     /// Record the in-place dunder `call` selected for the place at `span`,
