@@ -301,6 +301,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Forwarding a named accessor's reference result as a method's own
+  (`return self.items.unsafe_get(index)` under
+  `ref[origin_of(self.items)._get_owned_interior["element"]]`) now stays
+  within the declared origin, as the pin runs it: the return check binds the
+  accessor's `self` to its receiver instead of the enclosing method's `self`,
+  instead of reporting "returned reference escapes storage outside its
+  declared origin" (`assets/ok/reference_return_forwarded_accessor.mojo`).
 - A reference result now converts to a borrowing view in place
   (`width(p.name_ref())` or `out += p.name_ref()` over an accessor returning
   `ref [self.name] String`, `width(pick(t))` over a free `ref` function), as

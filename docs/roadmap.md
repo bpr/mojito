@@ -616,20 +616,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R26 Forwarding a named accessor's reference result is rejected**
-
-  Problem: `return self.items.unsafe_get(index)` under
-  `ref[origin_of(self.items)._get_owned_interior["element"]]` reports
-  "returned reference escapes storage outside its declared origin", where the
-  pin runs it.
-  - The subscript `return self.items[index]` under the same origin works.
-  - Only the subscript path records the interior generation the return check
-    compares (`indexing.rs`, `origins/interior.rs:record_interior_reference`).
-    A named call leaves the returned reference's place without it.
-  - Pinned by `conformance/probes/reference_return_forwarded_accessor.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R27 A returned reference may declare a wider origin than its place**
 
   Problem: the pin compares a returned place's origin with the declared one

@@ -515,6 +515,7 @@ assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized
 assets/ok/reference_result_view_conversion.mojo	main	exe-differential	sanitized
+assets/ok/reference_return_forwarded_accessor.mojo	main	exe-differential	sanitized
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
 assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized

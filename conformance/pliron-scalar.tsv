@@ -515,6 +515,7 @@ assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape

@@ -549,6 +549,22 @@ impl Checker {
                     .iter()
                     .find(|signature| signature.ref_return.is_some())?;
                 let declared = signature.ref_return.as_ref()?;
+                // The callee's `self` is the receiver, not the enclosing
+                // method's `self`: a self-rooted contract
+                // (`ref[origin_of(self)._get_owned_interior["element"]]`)
+                // stays within the receiver's own region. Only a receiver that
+                // itself carries an abstract origin resolves abstractly; a
+                // concrete receiver place leaves the call's concrete record
+                // to the caller's `reference_actual`.
+                if sig_origin_self_rooted(&declared.origin) {
+                    let receiver = self.returned_reference_parameter_origin(object)?;
+                    return Some(super::subst::substitute_sig_origin_with_self(
+                        &declared.origin,
+                        &[],
+                        Some(receiver),
+                    ))
+                    .filter(is_abstract);
+                }
                 let mut origin = instantiate_sig_origin(
                     &declared.origin,
                     &info.tail_origin_bindings(&arguments),
@@ -737,6 +753,21 @@ fn mentions_origin_param(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Param(_) => true,
         Origin::Union(members) => members.iter().any(mentions_origin_param),
+        _ => false,
+    }
+}
+
+/// Whether every member of a declared reference contract is rooted at the
+/// callee's own `self` (`ref[self]`, `ref[origin_of(self.xs)]`, a projection
+/// such as `._get_owned_interior["element"]`, or a union of those).
+fn sig_origin_self_rooted(origin: &mojito_types::origin::SigOrigin) -> bool {
+    use mojito_types::origin::SigOrigin;
+    match origin {
+        SigOrigin::Self_ => true,
+        SigOrigin::Projected(base, _) => sig_origin_self_rooted(base),
+        SigOrigin::Union(members) => {
+            !members.is_empty() && members.iter().all(sig_origin_self_rooted)
+        }
         _ => false,
     }
 }
