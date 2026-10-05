@@ -52,6 +52,7 @@ impl Elab<'_> {
                 program,
                 instances: Vec::new(),
                 stub_reaching_structs: HashSet::new(),
+                stub_reaching_methods: Vec::new(),
                 unserved_template_uses: Vec::new(),
                 def_traces: Vec::new(),
                 method_traces: Vec::new(),
@@ -76,6 +77,7 @@ impl Elab<'_> {
         let mut mono = Mono::default();
         let mut program = program;
         self.stamp_per_call_clone_bodies(&mut program);
+        self.per_call_stubs.get_or_init(|| per_call_stubs(&program));
         let mut module_bindings = HashMap::new();
         for statement in &program {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &statement.kind {
@@ -392,6 +394,18 @@ impl Elab<'_> {
                 .filter_map(|body| body.split_once('.'))
                 .map(|(owner, _)| owner.to_string())
                 .collect(),
+            stub_reaching_methods: {
+                let mut methods: Vec<(String, String)> = self
+                    .stub_reaching
+                    .borrow()
+                    .iter()
+                    .filter(|body| owner_method(body).is_some())
+                    .filter_map(|body| body.split_once('.'))
+                    .map(|(owner, method)| (owner.to_string(), method.to_string()))
+                    .collect();
+                methods.sort();
+                methods
+            },
             unserved_template_uses,
             def_traces: Vec::new(),
             method_traces: Vec::new(),
@@ -661,10 +675,12 @@ impl Elab<'_> {
         uses: &'a [AbstractUse],
         edges: &'a [(String, String)],
     ) -> HashSet<&'a str> {
+        let per_call_stubs = self.per_call_stubs.get().into_iter().flatten();
         let mut stubbed: HashSet<&str> = self
             .comptime_generics
             .iter()
             .map(String::as_str)
+            .chain(per_call_stubs.map(String::as_str))
             // A `DType`-keyed template stands as a stub only where a call
             // actually deferred to the checker; the rest specialize outright
             // and are nobody's stub.
@@ -733,6 +749,22 @@ impl Elab<'_> {
             .borrow_mut()
             .insert(name.to_string(), served);
         served
+    }
+
+    /// Whether the template of the non-generic struct `owner`'s method
+    /// serves every call of it, so no call mints a per-call clone: its
+    /// elaborated body is no trap stub, holds no construct only an instance
+    /// lowers, and is not keyed by what its checked body holds or reaches
+    /// (the driver's `keyed_methods`, a compile-time-keyed stub among them).
+    /// The elaborator instantiates its MIR per call, the method's own
+    /// binders bound from the call. A pack-keyed method still clones.
+    pub(super) fn template_serves_method(&self, owner: &str, method: &Method) -> bool {
+        template_serves_calls(method)
+            && !is_unspecialized_method_stub(&method.body)
+            && !holds_instance_construct(&method.body)
+            && !self
+                .keyed_methods
+                .contains(&(owner.to_string(), method.name.clone()))
     }
 
     /// The abstract references that can run a compile-time-keyed stub.
@@ -2692,24 +2724,35 @@ impl Elab<'_> {
             if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
                 continue;
             }
-            clones.extend(self.per_call_method_clones(
-                name,
-                method,
-                per_call_requests,
-                &PerCallBase {
-                    values,
-                    bindings: &bindings,
-                    receiver: Some(&receiver),
-                    owner: Some(PerCallOwner {
-                        name,
-                        module: template.module.as_deref(),
-                        template: name,
-                    }),
-                    origin_binders: Some(&origin_binders),
-                    constructors: !bundled,
-                },
-                &consts,
-            ));
+            // A method the template serves is instantiated per call by the
+            // elaborator from its MIR, its own binders bound with the
+            // struct's.
+            let served = !keyed.contains(&method.name) && template_serves_calls(method);
+            clones.extend(
+                (!served)
+                    .then(|| {
+                        self.per_call_method_clones(
+                            name,
+                            method,
+                            per_call_requests,
+                            &PerCallBase {
+                                values,
+                                bindings: &bindings,
+                                receiver: Some(&receiver),
+                                owner: Some(PerCallOwner {
+                                    name,
+                                    module: template.module.as_deref(),
+                                    template: name,
+                                }),
+                                origin_binders: Some(&origin_binders),
+                                constructors: !bundled,
+                            },
+                            &consts,
+                        )
+                    })
+                    .into_iter()
+                    .flatten(),
+            );
             // A synthesized trait-default body (Copyable's `copy`, Hashable's
             // `__hash__`; no source provenance) has no instance-specific
             // behavior: the template's serves every instance.
@@ -3627,6 +3670,40 @@ fn keyed_methods(
                     || stub_reaching.contains(&super::method_owner(template, &method.name)))
         })
         .map(|method| method.name.clone())
+        .collect()
+}
+
+/// Whether a method's calls can be served by its template at all, whatever
+/// its body holds: a method keyed on a type pack of its own clones per call.
+fn template_serves_calls(method: &Method) -> bool {
+    !method
+        .type_params
+        .iter()
+        .any(|parameter| parameter.name.starts_with('*'))
+}
+
+/// The [`super::method_owner`] keys of the struct methods in `program`
+/// whose template body is the trap stub although they declare compile-time
+/// parameters of their own: only a per-call clone serves a call of one.
+fn per_call_stubs(program: &[Stmt]) -> HashSet<String> {
+    program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct { name, methods, .. } => Some((name, methods)),
+            _ => None,
+        })
+        .flat_map(|(name, methods)| {
+            methods
+                .iter()
+                .filter(|method| {
+                    method.self_ty.is_none()
+                        && is_unspecialized_method_stub(&method.body)
+                        && method.type_params.iter().any(|parameter| {
+                            method_parameter_is_baked(parameter, &method.type_params)
+                        })
+                })
+                .map(|method| super::method_owner(name, &method.name))
+        })
         .collect()
 }
 

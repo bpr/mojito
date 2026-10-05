@@ -992,7 +992,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the ones `holds_instance_construct` finds a nested `def` or a lambda in,
   the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
-  whatever the instance's arguments carry. `template_serves_def` says
+  whatever the instance's arguments carry, and a method with compile-time
+  parameters of its own mints no per-call clone unless it is keyed or
+  `template_serves_calls` refuses it (a type pack of its own);
+  `template_serves_method` says the same for a non-generic struct's method,
+  judged on its elaborated body, whose `comptime if`/`comptime for` over its
+  own binders stays in the template (`Elab::def_body`). `per_call_stubs`
+  seeds `stub_reaching_bodies` with the methods whose template is still the
+  trap stub, so a served body calling one over its own binders is
+  stub-reaching. `template_serves_def` says
   which generic `def` keeps its template at every closed call: a plain
   trait-bound one, with type parameters and scalar or `DType` value
   parameters named at most as lane slots (`template_serves_binders`), and no
@@ -1013,7 +1021,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   closed instances its checked types name once the struct's parameters are
   bound (`instances`, requested like checker-recorded ones), and the methods
   whose checked bodies only an instance's own check can serve
-  (`keyed_methods`; a `def` is listed with an empty method name). `compile_linked` consults it every discovery round, and
+  (`keyed_methods`; a `def` is listed with an empty method name). A
+  method with compile-time parameters of its own is read at each closed
+  call the checker recorded (`closed_method_calls`, `method_call`), its
+  struct's and its own binders bound: the instances its body applies are
+  requested, and one applying a tuple or a struct specialized whole over its
+  own binders is keyed, as is a method the last elaboration found reaching a
+  compile-time-keyed stub (`TemplateDemand::note_stub_reaching`, from
+  `Elaborated::stub_reaching_methods`). `compile_linked` consults it every discovery round, and
   a body that reached a struct whose method becomes keyed is inferred again
   (`ServedRequests::keyed_templates`).
 - `comptime/nested.rs` owns the lexically scoped specialization of generic
@@ -1077,7 +1092,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   from the same field, `static_receiver_binding`), and `infer_call` binds a
   `def`'s own type parameters from the arguments the checker solved, which
   `SemanticAdjustment::InstantiatedArguments` carries into
-  `MirInstr::Call::instantiated_args`); `instance_clone_base` recovers a clone's source method name for the
+  `MirInstr::Call::instantiated_args`, and a method's own from a
+  `checked::MethodInstantiation` into `MirInstr::MethodCall::instantiated_args`,
+  its inferred value parameters (`MethodInstantiation::inferred_values`) passed
+  as named arguments as a `def`'s are); the checker closes a method's own value
+  binders in its result (`Checker::close_method_values`) and types a spelled
+  `DType` argument (`record_dtype_parameter_arguments`); `instance_clone_base` recovers a clone's source method name for the
   exact-name lifecycle gates, `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (a clone's baked
   `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,

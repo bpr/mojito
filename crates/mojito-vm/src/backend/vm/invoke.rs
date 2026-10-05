@@ -380,6 +380,7 @@ impl VmBackend {
             keyword_argument_places: kwarg_places,
             parameter_arguments: param_arg_regs,
             parameter_declarations: param_decls,
+            instantiated_arguments: instantiated,
             argument_types: arg_types,
         } = invocation;
         let CallerFrame {
@@ -447,6 +448,7 @@ impl VmBackend {
                                     keyword_argument_places: kwarg_places,
                                     parameter_arguments: param_arg_regs,
                                     parameter_declarations: param_decls,
+                                    instantiated_arguments: instantiated,
                                     argument_types: Vec::new(),
                                 },
                                 CallerFrame {
@@ -760,7 +762,7 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = self.runtime_parameter_arguments(
+                        let supplied = self.supplied_parameter_arguments(
                             prog,
                             CallerBindings {
                                 function: caller_function,
@@ -770,6 +772,7 @@ impl VmBackend {
                             },
                             contract,
                             param_arg_regs,
+                            instantiated,
                         );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
                         reify_value_parameters(&signature.param_decls, &supplied)

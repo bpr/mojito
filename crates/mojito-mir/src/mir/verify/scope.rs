@@ -141,8 +141,20 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             );
         }
         MirInstr::MethodCall {
-            raises: Some(ty), ..
-        } => types.push(("error contract", ty)),
+            raises,
+            instantiated_args,
+            ..
+        } => {
+            types.extend(raises.iter().map(|ty| ("error contract", ty)));
+            types.extend(
+                instantiated_args
+                    .iter()
+                    .filter_map(|argument| match argument {
+                        TyArg::Ty(ty) => Some(("instantiated argument", ty)),
+                        _ => None,
+                    }),
+            );
+        }
         MirInstr::Index {
             call: Some(call), ..
         }
@@ -827,6 +839,46 @@ mod tests {
                 .iter()
                 .any(|finding| finding.contains("no enclosing declaration binds")
                     || finding.contains("declared `Bool`")),
+        );
+    }
+
+    /// A method call's solved argument is scope-checked like any type the
+    /// body spells: one naming a binder no enclosing declaration declares is
+    /// a finding.
+    #[test]
+    fn scope_rejects_a_method_argument_over_an_unbound_binder() {
+        let declarations = declarations("f", Vec::new());
+        let mut function = function_with(vec![Ty::None, Ty::None]);
+        function.blocks[0].instrs.push(MirInstr::MethodCall {
+            dest: Reg(1),
+            recv: Reg(0),
+            method: "show".into(),
+            resolved: Some("S.show".into()),
+            raises: None,
+            reference_result: None,
+            result_adapter: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: None,
+            recv_writes: false,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: vec![TyArg::Ty(Ty::Param {
+                binder: binder("g", 0, "T"),
+                bounds: Vec::new(),
+                callable_bound: None,
+            })],
+        });
+        assert!(
+            findings(&function, &declarations)
+                .iter()
+                .any(|finding| finding.contains("instantiated argument")
+                    && finding.contains("no enclosing declaration binds")),
+            "{:?}",
+            findings(&function, &declarations)
         );
     }
 

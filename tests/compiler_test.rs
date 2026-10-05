@@ -2458,30 +2458,23 @@ fn template_value_keyed_lane_def_is_template_served() {
 }
 
 #[test]
-fn template_per_call_method_clones_derive() {
-    // A per-call clone bakes the method's own bounded binder beside the
-    // struct's; its trace names both, so it derives from the checked
-    // template, and the derived facts agree with the clone's own check. A
-    // per-instantiation clone keeps the method's binder symbolic.
+fn template_served_method_own_binders_mint_no_clone() {
+    // A method with a bounded binder of its own is a generator: its template
+    // serves every call, beside its struct's binder on a generic struct's
+    // instance, so no call mints a per-call clone to check or derive.
     let source = "struct Box[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\nstruct Plain:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\ndef main():\n    var b = Box[Int](4)\n    print(b.echo[String](\"e\"), b.echo(7))\n    var p = Plain(7)\n    print(p.echo(1.5))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let per_call: std::collections::HashSet<&str> = served
+        let clones: Vec<&String> = stats
+            .derived
             .iter()
-            .map(String::as_str)
-            .filter(|name| {
-                (name.starts_with("Box.echo$") && name.matches('$').count() == 2)
-                    || name.starts_with("Plain.echo$")
-            })
+            .chain(&stats.verified)
+            .chain(&stats.inferred_clones)
+            .filter(|name| name.starts_with("Box.echo$") || name.starts_with("Plain.echo$"))
             .collect();
-        assert_eq!(per_call.len(), 3, "every per-call clone derives: {stats:?}");
+        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "e 7\n1.5\n"
@@ -2490,27 +2483,23 @@ fn template_per_call_method_clones_derive() {
 }
 
 #[test]
-fn template_method_own_lane_derives() {
-    // A method keyed on its own `DType` or width binder derives each
-    // per-call clone: a body constructing at that lane is checked by source
-    // validation, since its elaborated template is a stub, and a `DType`
-    // folds to a constant under the name's identity.
+fn template_method_own_lane_mints_no_clone() {
+    // A method keyed on its own `DType` or width binder, a body constructing
+    // at that lane included, is served by its template: the elaborator closes
+    // the lane per call, so no call mints a per-call clone.
     let source = "struct Box:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def lanes[w: Int](self) -> Int:\n        var v = SIMD[DType.int32, w](self.x)\n        return len(v) + Int(v.reduce_add())\n\n    def kind[dt: DType](self, y: Int) -> Int:\n        var one = Scalar[dt](y + self.x)\n        return Int(one * one)\n\n    def twice[dt: DType](self, a: Scalar[dt]) -> Scalar[dt]:\n        return a + a\n\ndef main():\n    var b = Box(3)\n    print(b.lanes[4](), b.lanes[2]())\n    print(b.kind[DType.int16](2), b.kind[DType.uint8](1), b.twice(Int16(5)))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let per_call: std::collections::HashSet<&str> = served
+        let clones: Vec<&String> = stats
+            .derived
             .iter()
-            .map(String::as_str)
+            .chain(&stats.verified)
+            .chain(&stats.inferred_clones)
             .filter(|name| name.starts_with("Box.") && name.contains('$'))
             .collect();
-        assert_eq!(per_call.len(), 5, "every per-call clone derives: {stats:?}");
+        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "16 8\n25 16 10\n"
@@ -2519,33 +2508,22 @@ fn template_method_own_lane_derives() {
 }
 
 #[test]
-fn template_value_struct_per_call_clones_are_minted_on_the_generator() {
+fn template_value_struct_methods_are_served_on_the_generator() {
     // A struct whose value binder is a lane width (`Width[n: Int]` spelling
     // `SIMD[dt, Self.n]`) is a generator the template serves: no instance is
-    // specialized whole, and each per-call clone of a method keyed on its own
-    // binder is minted on the template with the struct's binder symbolic,
-    // checked as a per-call clone of any generic struct is (R5).
+    // specialized whole, and a method keyed on its own binder is served by
+    // its template too, the struct's binder and its own bound per call.
     let source = "struct Width[n: Int]:\n    def __init__(out self):\n        pass\n\n    def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt, Self.n]:\n        return a + a\n\n    def sized[dt: DType](self, a: SIMD[dt, Self.n]) -> Int:\n        return Self.n + len(a)\n\n    def widen[w: Int](self) -> SIMD[DType.int32, w]:\n        return SIMD[DType.int32, w](Self.n)\n\ndef main():\n    var w = Width[4]()\n    print(w.rep[DType.int16](SIMD[DType.int16, 4](1, 2, 3, 4)))\n    print(w.sized(SIMD[DType.uint8, 4](1)), w.widen[2]())\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let stats = program.template_stats();
-        let per_call: std::collections::HashSet<&str> = stats
+        let clones: Vec<&String> = stats
             .inferred_clones
             .iter()
-            .map(String::as_str)
             .filter(|name| name.starts_with("Width"))
             .collect();
-        assert_eq!(
-            per_call,
-            [
-                "Width.rep$dint16;",
-                "Width.sized$duint8;",
-                "Width.widen$i2;"
-            ]
-            .into(),
-            "every per-call clone is on the generator: {stats:?}"
-        );
+        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "[2, 4, 6, 8]\n8 [4, 4]\n"

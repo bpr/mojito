@@ -1573,19 +1573,23 @@ impl<'a> Specializer<'a> {
                                         args,
                                         kwargs,
                                         param_arg_regs,
-                                        &[],
+                                        instantiated_args,
                                     )?;
                                     if let Some((_, concrete)) = &bindings.self_instance {
                                         function.reg_types.insert(dest.0, concrete.clone());
                                     }
                                     // An instance keyed by the call's element
-                                    // count has a symbol no by-name constructor
-                                    // lookup composes: the call names it.
+                                    // count, or by a generic constructor's own
+                                    // binders, has a symbol no by-name
+                                    // constructor lookup composes: the call
+                                    // names it.
                                     let arity_keyed = bindings.variadic_arity.is_some();
+                                    let own_keyed = !instantiated_args.is_empty();
                                     let instance = self.enqueue(&target, bindings, arguments)?;
-                                    if arity_keyed {
+                                    if arity_keyed || own_keyed {
                                         func.0 = instance;
                                         param_arg_regs.clear();
+                                        instantiated_args.clear();
                                         continue;
                                     }
                                 }
@@ -1659,6 +1663,7 @@ impl<'a> Specializer<'a> {
                         kwargs,
                         param_arg_regs,
                         param_decls,
+                        instantiated_args,
                         ..
                     } => {
                         let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -1801,11 +1806,12 @@ impl<'a> Specializer<'a> {
                             args,
                             kwargs,
                             param_arg_regs,
-                            &[],
+                            instantiated_args,
                         )?;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *resolved = Some(concrete);
                         param_arg_regs.clear();
+                        instantiated_args.clear();
                         // The instance's declaration keeps no compile-time
                         // parameters, so the call to it keeps none either.
                         param_decls.clear();
@@ -1984,6 +1990,7 @@ impl<'a> Specializer<'a> {
                             capture_accesses: Vec::new(),
                             param_arg_regs: Vec::new(),
                             param_decls: Vec::new(),
+                            instantiated_args: Vec::new(),
                         };
                     }
                     // A retained callable names its lifted body on the

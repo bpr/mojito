@@ -1125,6 +1125,12 @@ pub enum MirInstr {
         /// Checker-selected generic method contract. This prevents lowering
         /// from reconstructing a bound-method type from the source member.
         param_decls: Vec<ParamDecl>,
+        /// The method's own compile-time arguments the checker solved, in
+        /// declaration order, as `Call::instantiated_args` carries a `def`'s:
+        /// symbolic only over the caller's own binders. A binder no runtime
+        /// argument spells (`s.name[Int]()`) is bound from here by the
+        /// elaborator; a resolved call keeps none.
+        instantiated_args: Vec<TyArg>,
     },
     /// Move an initialized element from compiler-private `UnsafePointer`
     /// collection storage. The source slot becomes uninitialized, so subsequent

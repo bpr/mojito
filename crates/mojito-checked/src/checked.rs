@@ -311,20 +311,7 @@ impl GenericInstantiation {
     /// when there are none. A slot filled later (`CtValue::Deferred`) is no
     /// argument the call passes and is left out.
     pub fn inferred_value_arguments(&self) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
-        use mojito_types::ct::CtValue;
-        let arguments: Vec<_> = self
-            .inferred_values
-            .iter()
-            .filter_map(|(index, name)| match self.arguments.get(*index) {
-                Some(mojito_types::types::TyArg::Val(
-                    CtValue::Deferred(_) | CtValue::Marker(_),
-                ))
-                | None => None,
-                Some(mojito_types::types::TyArg::Val(value)) => Some((name.clone(), value.clone())),
-                Some(_) => None,
-            })
-            .collect();
-        (!arguments.is_empty()).then_some(arguments)
+        inferred_value_arguments(&self.inferred_values, &self.arguments)
     }
 }
 
@@ -353,6 +340,17 @@ pub struct MethodInstantiation {
     /// parameter names mint only the selected one's clone.
     pub overload: Option<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
+    /// The value parameters the call's brackets leave to inference, as
+    /// [`GenericInstantiation::inferred_values`] records a `def`'s.
+    pub inferred_values: Vec<(usize, String)>,
+}
+
+impl MethodInstantiation {
+    /// The inferred value parameters with their checked arguments, as
+    /// [`GenericInstantiation::inferred_value_arguments`] reads a `def`'s.
+    pub fn inferred_value_arguments(&self) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
+        inferred_value_arguments(&self.inferred_values, &self.arguments)
+    }
 }
 
 /// One closed application of an ordinary generic struct the checker reached as
@@ -1229,6 +1227,7 @@ impl DiscoveryResult {
             &self.implicitly_copied_consuming_receivers,
             &self.truthiness_conditions,
             &self.generic_instantiations,
+            &self.method_instantiations,
             Some(visit),
         );
     }
@@ -1653,6 +1652,7 @@ impl CheckedProgram {
             implicitly_copied_consuming_receivers,
             truthiness_conditions,
             &generic_instantiations,
+            &method_instantiations,
             None,
         );
         drop(expressions_span);
@@ -1843,6 +1843,7 @@ fn build_checked_expressions(
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
     generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
+    method_instantiations: &HashMap<SourceSpan, MethodInstantiation>,
     scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a, 's> {
@@ -1882,6 +1883,7 @@ fn build_checked_expressions(
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
         generic_instantiations: &'a HashMap<SourceSpan, GenericInstantiation>,
+        method_instantiations: &'a HashMap<SourceSpan, MethodInstantiation>,
     }
     impl Builder<'_, '_> {
         #[allow(
@@ -2201,6 +2203,13 @@ fn build_checked_expressions(
                 adjustments.push(SemanticAdjustment::InstantiatedArguments(
                     instantiation.arguments.clone(),
                 ));
+            } else if let Some(instantiation) = self.method_instantiations.get(&span) {
+                if let Some(arguments) = instantiation.inferred_value_arguments() {
+                    adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
+                }
+                adjustments.push(SemanticAdjustment::InstantiatedArguments(
+                    instantiation.arguments.clone(),
+                ));
             }
             if let Some(elements) = self.tuple_unpack_plans.get(&span) {
                 adjustments.push(SemanticAdjustment::TupleUnpack {
@@ -2469,6 +2478,7 @@ fn build_checked_expressions(
         implicitly_copied_consuming_receivers,
         truthiness_conditions,
         generic_instantiations,
+        method_instantiations,
     };
     builder.block(statements);
     (builder.nodes, builder.index)
@@ -2758,6 +2768,25 @@ pub fn materialized_borrow_owner(
     })
 }
 
+/// The inferred value parameters among `arguments` with their checked
+/// values, or `None` when there are none. A slot filled later
+/// (`CtValue::Deferred`) is no argument the call passes and is left out.
+fn inferred_value_arguments(
+    inferred: &[(usize, String)],
+    arguments: &[mojito_types::types::TyArg],
+) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
+    use mojito_types::ct::CtValue;
+    let arguments: Vec<_> = inferred
+        .iter()
+        .filter_map(|(index, name)| match arguments.get(*index) {
+            Some(mojito_types::types::TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_)))
+            | None => None,
+            Some(mojito_types::types::TyArg::Val(value)) => Some((name.clone(), value.clone())),
+            Some(_) => None,
+        })
+        .collect();
+    (!arguments.is_empty()).then_some(arguments)
+}
 #[cfg(test)]
 mod transfer_set_tests {
     use super::*;

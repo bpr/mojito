@@ -57,6 +57,18 @@ impl Flatten<'_> {
                 .unwrap_or_else(|| format!("{type_name}.{method}"));
             self.emit_call_invalidations(e, args, kwargs);
             let receiver = self.static_receiver(object);
+            // A generic static its template serves takes its inferred value
+            // parameters and solved arguments as a generic `def` does; a
+            // per-call clone (`Lanes.widen$y…`) has baked them.
+            let served =
+                mojito_symbol::symbol::split_method_symbol(&target).is_some_and(|(_, method)| {
+                    mojito_symbol::symbol::specialization_template(method).is_none()
+                });
+            let (param_arg_regs, instantiated_args) = if served {
+                (self.inferred_param_arg_regs(e), self.instantiated_args(e))
+            } else {
+                (Vec::new(), Vec::new())
+            };
             self.emit(MirInstr::Call {
                 dest: d,
                 func: FuncRef::named(&target),
@@ -66,9 +78,9 @@ impl Flatten<'_> {
                 arg_places,
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
-                param_arg_regs: Vec::new(),
+                param_arg_regs,
                 receiver,
-                instantiated_args: Vec::new(),
+                instantiated_args,
                 spread: None,
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
@@ -241,6 +253,7 @@ impl Flatten<'_> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
+                instantiated_args: Vec::new(),
             });
             return Some(d);
         }
@@ -292,6 +305,7 @@ impl Flatten<'_> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
+                instantiated_args: Vec::new(),
             });
             return Some(d);
         }
@@ -694,6 +708,14 @@ impl Flatten<'_> {
             .unwrap_or_default();
         let transfer_recv_place = recv_place.clone();
         let transfer_arg_places = arg_places.clone();
+        // A value parameter the call leaves to inference passes as a named
+        // compile-time argument, as a generic `def`'s does; a per-call clone
+        // has baked every parameter and takes none.
+        let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
+            (Vec::new(), Vec::new())
+        } else {
+            (self.inferred_param_arg_regs(e), self.instantiated_args(e))
+        };
         self.emit(MirInstr::MethodCall {
             dest: d,
             recv,
@@ -722,8 +744,9 @@ impl Flatten<'_> {
             arg_places,
             kwarg_places,
             capture_accesses,
-            param_arg_regs: Vec::new(),
+            param_arg_regs,
             param_decls,
+            instantiated_args,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);

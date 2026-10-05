@@ -275,10 +275,16 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             raises,
             param_arg_regs,
             param_decls,
+            instantiated_args,
             ..
         } => {
             if let Some(ty) = raises {
                 require_concrete(head, "error contract", ty, errors);
+            }
+            for argument in instantiated_args {
+                if let TyArg::Ty(ty) = argument {
+                    require_concrete(head, "instantiated argument", ty, errors);
+                }
             }
             require_no_parameters(head, param_decls, errors);
             require_no_parameter_slots(head, param_arg_regs, errors);

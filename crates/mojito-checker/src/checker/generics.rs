@@ -1240,6 +1240,57 @@ impl Checker {
         ))
     }
 
+    /// `ty` with the method's own value binders closed at a call's solved
+    /// arguments (`Scalar[dt]` at `dt = DType.int16` is `Int16`), as a
+    /// generic `def`'s result closes; a binder the call leaves symbolic
+    /// stays as it stands.
+    pub(super) fn close_method_values(
+        &self,
+        ty: Ty,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Ty {
+        let values = Self::value_argument_environment(decls, arguments);
+        if values.is_empty() {
+            return ty;
+        }
+        self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
+    }
+
+    /// Type the `DType` arguments a method call's brackets spell
+    /// (`lanes.double[DType.int32](3)`): a call its template serves passes
+    /// each as a register of that type.
+    pub(super) fn record_dtype_parameter_arguments(
+        &self,
+        param_args: &[mojito_ast::ast::ParamArg],
+        arguments: &[TyArg],
+    ) {
+        if !arguments
+            .iter()
+            .any(|argument| matches!(argument, TyArg::Val(CtValue::Dtype(_))))
+        {
+            return;
+        }
+        for argument in param_args {
+            let expression = match argument {
+                mojito_ast::ast::ParamArg::Value(expression) => expression,
+                mojito_ast::ast::ParamArg::Named { value, .. } => match value.as_ref() {
+                    mojito_ast::ast::ParamArg::Value(expression) => expression,
+                    _ => continue,
+                },
+                mojito_ast::ast::ParamArg::Type(_) => continue,
+            };
+            if matches!(
+                self.eval_associated_ct(expression, &HashMap::new()),
+                Ok(CtValue::Dtype(_))
+            ) {
+                // Its value was solved already; inference only records how
+                // it lowers.
+                let _ = self.infer(expression);
+            }
+        }
+    }
+
     pub(super) fn method_constraints_apply(
         &self,
         signature: &MethodSig,
@@ -1321,12 +1372,8 @@ pub(super) fn method_instantiation_arguments(
     signature: &MethodSig,
     arguments: &[TyArg],
 ) -> Option<Vec<TyArg>> {
-    (!signature.decls.is_empty() && arguments.len() == signature.decls.len()).then(|| {
-        arguments
-            .iter()
-            .map(materialized_instantiation_argument)
-            .collect()
-    })
+    (!signature.decls.is_empty() && arguments.len() == signature.decls.len())
+        .then(|| arguments.to_vec())
 }
 
 /// `callable` with every struct origin tail of its parameter, collector,

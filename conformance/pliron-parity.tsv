@@ -162,6 +162,7 @@ assets/ok/function_type_where_unconstrained_actual.mojo	main	exe-differential	sa
 assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
+assets/ok/generic_constructor_literal_argument.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized
@@ -684,6 +685,7 @@ assets/ok/template_method_operator_operands.mojo	main	exe-differential	sanitized
 assets/ok/template_method_origin_parameter.mojo	main	exe-differential	sanitized
 assets/ok/template_method_overloaded_generic_static_call.mojo	main	exe-differential	sanitized
 assets/ok/template_method_overloaded_parameter_typed_static.mojo	main	exe-differential	sanitized
+assets/ok/template_method_own_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/template_method_own_lane.mojo	main	exe-differential	sanitized
 assets/ok/template_method_pack_accessor.mojo	main	exe-differential	sanitized
 assets/ok/template_method_pack_struct.mojo	main	exe-differential	sanitized

@@ -324,6 +324,7 @@ impl Flatten<'_> {
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs: Vec::new(),
                 param_decls: contract.param_decls,
+                instantiated_args: self.instantiated_args(e),
             });
             return dest;
         }

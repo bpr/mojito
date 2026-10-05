@@ -1201,14 +1201,20 @@ fn comptime_branch_holds(
             Some(CtValue::Tuple(elements)) => i64::try_from(elements.len()).ok().map(CtValue::Int),
             _ => None,
         },
-        ConstraintOperand::Type(_) => None,
+        // A type parameter reifies as its type's spelling, so a type operand
+        // compares by the same spelling.
+        ConstraintOperand::Type(ty) => reified_type_spelling(ty).map(CtValue::Str),
     };
     let compare = |op, left, right| {
         let (left, right) = (
             operand(left).ok_or_else(unsupported)?,
             operand(right).ok_or_else(unsupported)?,
         );
-        mojito_types::param_expr::fold::compare(op, &left, &right).map_err(|_| unsupported())
+        match (op, &left, &right) {
+            (InfixOp::Eq, CtValue::Str(left), CtValue::Str(right)) => Ok(left == right),
+            _ => mojito_types::param_expr::fold::compare(op, &left, &right)
+                .map_err(|_| unsupported()),
+        }
     };
     let holds = |inner| comptime_branch_holds(inner, function, variables, comptime);
     match cond {
@@ -1381,6 +1387,9 @@ struct MethodInvocation<'a> {
     keyword_argument_places: &'a [Option<MirPlace>],
     parameter_arguments: &'a [mojito_mir::mir::MirParamArg],
     parameter_declarations: &'a [mojito_types::types::ParamDecl],
+    /// The method's own compile-time arguments the checker solved
+    /// (`MirInstr::MethodCall::instantiated_args`).
+    instantiated_arguments: &'a [TyArg],
     /// The checked static type of each argument register, when the caller
     /// has them: a `Writer.write` argument whose static type is a closed
     /// generic-struct instance formats through that instance's
@@ -1574,9 +1583,9 @@ impl VmBackend {
         reason = "borrow bundle: `From<&Frame>` builds it at each call site"
     )]
     /// [`Self::runtime_parameter_arguments`] completed by the type arguments
-    /// the checker solved for a generic `def` call: a type parameter the
-    /// brackets spelled no struct name for (`make[Tuple[Int, Bool]]()`)
-    /// reifies as the solved struct's name.
+    /// the checker solved for a generic `def` or method call: a type
+    /// parameter the brackets spelled no struct name for
+    /// (`make[Tuple[Int, Bool]]()`) reifies as the solved struct's name.
     fn supplied_parameter_arguments(
         &self,
         prog: &Prog,
@@ -1593,6 +1602,16 @@ impl VmBackend {
                 TyArg::Ty(ty) if slot.is_none() => {
                     if let Some(spelling) = reified_type_spelling(ty) {
                         *slot = Some(Value::Str(spelling));
+                    } else if let Ty::Param { binder, .. } = ty {
+                        // A binder of the caller's own forwards the type the
+                        // caller's frame reified for it.
+                        *slot = self.bound_type_parameter(
+                            prog,
+                            caller.function,
+                            caller.frame,
+                            caller.variables,
+                            &binder.name,
+                        );
                     }
                 }
                 // A type pack's solution is its element list, which the

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.21
+# Mojito Textual MIR Format, Version 1.22
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.21 is implemented end to end for inspection and loading: canonical
+Version 1.22 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.21
+mojito-mir 1.22
 ```
 
-The writer emits 1.21. The reader accepts 1.0 through 1.21; *Schema 1.0*
+The writer emits 1.22. The reader accepts 1.0 through 1.22; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -175,6 +175,13 @@ The elaborator replaces it with the selected element's default
 construction, so elaborated MIR holds none. A 1.20 consumer rejects the
 field as unknown, which is the intended failure; an older artifact reads as
 constructing the parameter itself.
+
+Minor version 22 carries a method's own solved compile-time arguments: a
+`call.method` gains `instantiated_args`, as a `call` did in version 13, in
+declaration order and in the caller's binder scope (`s.name[Int]()` records
+`[Int]`). The elaborator binds the method's own binders from them, and a
+resolved call in concrete MIR records an empty list. An older artifact reads
+as carrying none.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -670,7 +677,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.21
+mojito-mir 1.22
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

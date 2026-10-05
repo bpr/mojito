@@ -2027,9 +2027,7 @@ impl Checker {
             .decls
             .iter()
             .map(|decl| match decl {
-                ParamDecl::Type { id, .. } => subst
-                    .get(id)
-                    .map(|ty| materialized_instantiation_argument(&TyArg::Ty(ty.clone()))),
+                ParamDecl::Type { id, .. } => subst.get(id).map(|ty| TyArg::Ty(ty.clone())),
                 ParamDecl::Value { .. } => None,
             })
             .collect();
@@ -2069,6 +2067,7 @@ impl Checker {
                 parameter_names: sig.names.clone(),
                 overload: overload.clone(),
                 arguments: arguments.clone(),
+                inferred_values: Vec::new(),
             },
         );
         // On a generic struct the instance's own values precede the call's in
@@ -2357,6 +2356,11 @@ impl Checker {
                                 .and_then(mojito_symbol::symbol::overload_qualifier)
                                 .map(str::to_string),
                             arguments: arguments.clone(),
+                            inferred_values:
+                                crate::checker::call_inference::unsupplied_value_parameters(
+                                    &selected.param_decls,
+                                    &[],
+                                ),
                         },
                     );
                 }

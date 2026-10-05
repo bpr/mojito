@@ -1769,6 +1769,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
+                    instantiated_args: Vec::new(),
                 }],
                 MirTerm::Return(None),
             )],

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R307**.
+Next free ID: **R312**.
 
 ## Ordered Work
 
@@ -299,15 +299,69 @@ correctness fix to existing behavior is allowed.
   - Depends on R5 and R305.
   - Model: Fable, Planned.
 
-- [ ] **R5 (P3e) A method with its own compile-time parameters is cloned per
+- [ ] **R307 (P3e) A method keyed on a type pack of its own is cloned per
   call**
 
-  Problem: `isa[T]` on a specialized struct mints a per-call AST clone, 14 of
-  them in every program the census measured.
-  - The method is a generator whose binders are the struct's and its own, and
-    the elaborator instantiates it per call.
-  - Delete `per_call_method_clones` and the certificate class.
+  Problem: `def take[*Ts: Writable](self, *a: *Ts)` mints a per-call AST
+  clone for each element list, where every other method with compile-time
+  parameters of its own is served by its template.
+  - The elaborator excludes a method with a variadic binder of its own
+    (`template_serves_calls`, `comptime/specialize.rs`), and its template
+    body is still elaborated without its binders open (`comptime/elab.rs`).
+  - The served pack-keyed `def`'s forms carry over: `bind_pack` for the
+    receiver call, the template's `comptime for` over the collector, and
+    the spread `MethodCall` lacks (R256).
+  - `assets/ok/pack_forwarding_method.mojo` and the `pack_method_*` fixtures
+    are the bodies that wait.
   - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R308 (P3e) The hasher's `SIMD[_, _]` leaf is minted for every hasher
+  and cloned per call**
+
+  Problem: `Fnv1a._update_with_simd` and `AHasher`'s are cloned for fourteen
+  eager leaf types in every program (`eager_hash_leaf_types`,
+  `hasher_leaf_requests`), and per demanded vector, where the pin's
+  `_update_with_simd(mut self, value: SIMD[_, _])` is one generator with two
+  implicit parameters.
+  - The desugar binds one `$simd: $SIMD` type parameter whose template body
+    never checks, so the body is a trap stub; upstream's shape is a `DType`
+    and a width binder over `SIMD[dt, w]`, which a template serves once both
+    are inferred from the argument (R309).
+  - The scalar `__hash__` leaf dispatch names the clone
+    (`symbol::simd_update_clone_name`) in `native::mono`, the VM, and
+    Pliron (`lower/print.rs`, `lib.rs`, `lower/methods.rs`); each must name
+    the template's instance instead.
+  - CTFE mints its own leaves (`ctfe.rs`), and `AHasher`'s are members of a
+    struct specialized whole (R4).
+  - Depends on R309 and R4.
+  - Model: Fable, Planned.
+
+- [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
+  clones per call**
+
+  Problem: a method with compile-time parameters of its own keeps its
+  per-call clones where its body reaches a compile-time-keyed stub, holds a
+  nested `def` or a lambda, or applies a tuple or a struct specialized whole
+  over its own binders, so `per_call_method_clones` and the clone-name
+  retargeting it feeds are still live.
+  - The elaborator decides a stub-reaching method after a round's walk and
+    reports it (`Elaborated::stub_reaching_methods`); the driver keys it for
+    the next round, beside what `TemplateReach::method_call`
+    (`src/compiler/template_reach.rs`) reads off the checked body at each
+    closed call.
+  - A member of a struct specialized whole mints its own per-call clones
+    (`generate_struct_spec`, `generate_value_struct_spec`); a bundled
+    variadic member's body uses the checker's `Variant` operations, which
+    need `T` closed, and a user one mixes a folded pack loop with a
+    `comptime if` over its own binder (`assets/ok/variadic_method_type_params.mojo`).
+  - When the last class goes, delete `per_call_method_clones`, `PerCallBase`,
+    the driver's `method_specialization_requests`, the checker's
+    `specialized_method_clone`, `instance_call_method_clone`,
+    `clone_serves_overload`, and `per_call_constructor_target`,
+    `MethodProvenance::PerCallConstructor`, and the per-call clauses of the
+    `MethodFeatures` certificate bits.
+  - Depends on R4, R6, R7, R307, and R308.
   - Model: Fable, Planned.
 
 - [ ] **R6 (P3e) A nested `def` over an enclosing compile-time parameter is
@@ -522,10 +576,10 @@ correctness fix to existing behavior is allowed.
     `simd_nullary_construction.mojo`, and `tuple_array_defaultable.mojo` are
     the `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
   - An erased frame decides a `comptime if` over a value binder from its
-    reified parameters (`comptime_branch_holds`) but carries no type
-    argument to decide one over a type binder with, and runs no thunk for a
-    condition that applies a function: the type-keyed `comptime_if_*`
-    fixtures, `type_predicate_comptime_if.mojo`, and
+    reified parameters (`comptime_branch_holds`), and one comparing a type
+    binder with a type its reified spelling names (`T == Int`), but no other
+    type predicate, and runs no thunk for a condition that applies a
+    function: the remaining type-keyed `comptime_if_*` fixtures and
     `comptime_if_condition_applies_def.mojo` are rows too. A region inside
     a `try` reads only binders its body also holds as locals.
   - Entry R10 deletes the oracle and these rows with it.
@@ -679,6 +733,27 @@ correctness fix to existing behavior is allowed.
     runtime value for the bound.
   - `assets/ok/comptime_for_template_served.mojo` and
     `assets/ok/pack_element_alias_served.mojo` are its
+    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R311 (P5) The erased oracle cannot forward a type binder to a
+  template's own call**
+
+  Problem: a template-served body that calls a generic callee over its own
+  type binder (`return 1 + S.count(x, n - 1)` in `S.count[T]`, or a `def`'s
+  recursive call) runs on concrete MIR and stops under `--erased` with "the
+  erased oracle cannot decide the comptime if condition" in the callee.
+  - The VM reifies a call's solved type argument only when it is closed
+    (`supplied_parameter_arguments`, `backend/vm.rs`); one over the
+    caller's binder reads the caller's frame (`bound_type_parameter`),
+    which holds no slot for a binder its body never reads as a value.
+  - A `comptime if` comparing a method's binder with its struct's
+    (`U == Self.T`) stops the same way: an erased instance carries no type
+    argument.
+  - `assets/ok/comptime_if_inferred_static_method.mojo` and
+    `assets/ok/generic_method_per_call_clones.mojo` are its
     `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and these rows with it.
   - Depends on nothing.
@@ -1570,6 +1645,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R309 A vector argument does not infer both a `DType` and a width
+  binder**
+
+  Problem: `total(SIMD[DType.int32, 4](1, 2, 3, 4))` for `def total[dt:
+  DType, w: SIMDLength](v: SIMD[dt, w])` reports "cannot infer type
+  parameter 'w' of 'total' from the arguments", and a method of that shape
+  finds no matching overload; the pin infers both and runs it, `Float64` as
+  a width-one vector included.
+  - A width binder alone over a fixed dtype (`SIMD[DType.int32, w]`) is
+    inferred, as is a `DType` binder alone over `Scalar[dt]`.
+  - Upstream's `SIMD[_, _]` parameter is this shape with both binders
+    implicit, so the hasher's leaf waits on it (R308).
+  - Found while landing R5 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 

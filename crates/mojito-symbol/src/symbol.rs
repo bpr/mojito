@@ -242,6 +242,7 @@ pub fn simd_update_clone_name(leaf: &Ty) -> String {
 pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Option<Vec<CtValue>> {
     let mut values = Vec::new();
     for (decl, argument) in decls.iter().zip(arguments) {
+        let argument = &materialized_instantiation_argument(argument);
         match (decl, argument) {
             (
                 ParamDecl::Type {

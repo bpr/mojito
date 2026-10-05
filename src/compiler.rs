@@ -441,6 +441,7 @@ impl Compiler {
                 program: discovery,
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
+                stub_reaching_methods,
                 unserved_template_uses: unserved,
                 def_traces,
                 method_traces,
@@ -456,6 +457,7 @@ impl Compiler {
             clones = minted_clones;
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
+            template_demand.note_stub_reaching(stub_reaching_methods);
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
@@ -601,6 +603,7 @@ impl Compiler {
                 program: elaborated,
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
+                stub_reaching_methods,
                 unserved_template_uses: unserved,
                 def_traces,
                 method_traces,
@@ -626,6 +629,7 @@ impl Compiler {
             };
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
+            template_demand.note_stub_reaching(stub_reaching_methods);
             clones = minted_clones;
             // Instances the specializer minted on its own (closed applications
             // reached from user code and from other clones) are already
@@ -1153,7 +1157,11 @@ fn method_specialization_requests(
             owner,
             instantiation.method.clone(),
             instantiation.parameter_names.clone(),
-            instantiation.arguments.clone(),
+            instantiation
+                .arguments
+                .iter()
+                .map(crate::symbol::materialized_instantiation_argument)
+                .collect(),
         )
         .with_overload(instantiation.overload.clone());
         let key = request.occurrence().clone();

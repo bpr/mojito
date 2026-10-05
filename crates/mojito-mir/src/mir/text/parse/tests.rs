@@ -744,6 +744,7 @@ fn instruction_families_reprint_byte_identically() {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
+            instantiated_args: vec![TyArg::Ty(Ty::Int)],
         },
         MirInstr::PointerStorageTake {
             dest: Reg(13),
@@ -1660,10 +1661,64 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
     assert_eq!((read.value, read.expr), (Some(Reg(0)), Some(index)));
 
     let older = write::program(&construct(None))
-        .replacen("mojito-mir 1.21", "mojito-mir 1.20", 1)
+        .replacen("mojito-mir 1.22", "mojito-mir 1.20", 1)
         .replace(", element: absent", "");
     assert!(!older.contains("element:"));
     assert!(recorded(&older).is_none());
+}
+
+/// Schema 1.22 carries a method call's own solved compile-time arguments;
+/// an older artifact carries none.
+#[test]
+fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
+    let call = |instantiated_args: Vec<TyArg>| {
+        program_with(vec![(
+            "main".into(),
+            function_with(
+                vec![Ty::Int, Ty::Int],
+                vec![MirInstr::MethodCall {
+                    dest: Reg(1),
+                    recv: Reg(0),
+                    method: "name".into(),
+                    resolved: Some("S.name".into()),
+                    raises: None,
+                    reference_result: None,
+                    result_adapter: None,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    recv_place: None,
+                    recv_writes: false,
+                    arg_places: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                    instantiated_args,
+                }],
+            ),
+        )])
+    };
+    let recorded = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+            MirInstr::MethodCall {
+                instantiated_args, ..
+            } => instantiated_args.clone(),
+            other => panic!("expected a method call, read {other:?}"),
+        }
+    };
+    let program = call(vec![TyArg::Ty(Ty::Int)]);
+    assert_reprints(&program);
+    assert_eq!(
+        recorded(&write::program(&program)),
+        vec![TyArg::Ty(Ty::Int)]
+    );
+
+    let older = write::program(&call(Vec::new()))
+        .replacen("mojito-mir 1.22", "mojito-mir 1.21", 1)
+        .replace(", instantiated_args: []", "");
+    assert!(!older.contains("instantiated_args"));
+    assert!(recorded(&older).is_empty());
 }
 
 /// Schema 1.7 carries the expression a value argument built from the

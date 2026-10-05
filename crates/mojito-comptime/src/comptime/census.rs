@@ -1,11 +1,12 @@
 //! Classifies the bodies one elaboration minted, for the instantiation
 //! census (`mojito_checked::census`).
 
+use super::specialize::method_parameter_is_baked;
 use super::{
     DefInstanceTrace, GeneratedDeclarations, MethodInstanceTrace, block_has_comptime,
     block_has_statement,
 };
-use mojito_ast::ast::{Stmt, StmtKind};
+use mojito_ast::ast::{Method, Stmt, StmtKind};
 use mojito_checked::census::{CloneCensus, CloneClass};
 use mojito_common::token::Span;
 use mojito_types::ct::CtValue;
@@ -49,7 +50,7 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
         census.add(def_class(trace, template), 1);
         census.name(trace.clone_name.clone());
     }
-    let method_templates: HashMap<(&str, Span), &[Stmt]> = minted
+    let method_templates: HashMap<(&str, Span), &Method> = minted
         .prepared
         .iter()
         .filter_map(|statement| match &statement.kind {
@@ -59,7 +60,7 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
         .flat_map(|(name, methods)| {
             methods.iter().filter_map(|method| {
                 let first = method.body.first()?;
-                Some(((name.as_str(), first.span), method.body.as_slice()))
+                Some(((name.as_str(), first.span), method))
             })
         })
         .collect();
@@ -86,39 +87,49 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
         let StmtKind::Struct { name, methods, .. } = &statement.kind else {
             continue;
         };
+        let template = |method: &Method| {
+            method
+                .body
+                .first()
+                .and_then(|first| clone_traces.get(&(name.as_str(), &*method.name, first.span)))
+                .and_then(|trace| {
+                    method_templates.get(&(trace.template_owner.as_str(), trace.body))
+                })
+                .copied()
+        };
+        // A per-call clone counts as one wherever it was minted: on a
+        // non-generic struct, on a generic struct's instance, or among the
+        // members of a struct specialized whole.
+        let per_call = |method: &Method| {
+            template(method).is_some_and(|template| bakes_own_parameters(template, method))
+                || minted
+                    .generated
+                    .methods
+                    .iter()
+                    .any(|(owner, clone)| owner == name && *clone == method.name)
+        };
         if minted.generated.structs.contains(name) {
             let class = struct_traces
                 .get(name.as_str())
                 .map_or(CloneClass::ValueStruct, |trace| struct_class(trace));
-            census.add(class, methods.len());
+            let per_call_members = methods.iter().filter(|method| per_call(method)).count();
+            census.add(class, methods.len() - per_call_members);
+            census.add(CloneClass::PerCallMethod, per_call_members);
             for method in methods {
                 census.name(method_source_name(name, method));
             }
             continue;
         }
         for method in methods {
-            let class = if method.self_ty.is_some() {
-                let template = method
-                    .body
-                    .first()
-                    .and_then(|first| clone_traces.get(&(name.as_str(), &*method.name, first.span)))
-                    .and_then(|trace| {
-                        method_templates.get(&(trace.template_owner.as_str(), trace.body))
-                    })
-                    .copied()
-                    .unwrap_or_default();
+            let class = if per_call(method) {
+                CloneClass::PerCallMethod
+            } else if method.self_ty.is_some() {
+                let template = template(method).map_or(&[][..], |template| &template.body);
                 if block_has_comptime(template) {
                     CloneClass::InstanceMethodComptime
                 } else {
                     CloneClass::InstanceMethod
                 }
-            } else if minted
-                .generated
-                .methods
-                .iter()
-                .any(|(owner, clone)| owner == name && *clone == method.name)
-            {
-                CloneClass::PerCallMethod
             } else {
                 continue;
             };
@@ -156,6 +167,22 @@ fn def_class(trace: &DefInstanceTrace, template: &[Stmt]) -> CloneClass {
     } else {
         CloneClass::ValueDef
     }
+}
+
+/// Whether `clone` bakes the compile-time parameters `template` declares of
+/// its own: a per-call clone. A per-instantiation clone keeps them.
+fn bakes_own_parameters(template: &Method, clone: &Method) -> bool {
+    let baked: Vec<&str> = template
+        .type_params
+        .iter()
+        .filter(|parameter| method_parameter_is_baked(parameter, &template.type_params))
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    !baked.is_empty()
+        && !clone
+            .type_params
+            .iter()
+            .any(|parameter| baked.contains(&parameter.name.as_str()))
 }
 
 fn struct_class(trace: &MethodInstanceTrace) -> CloneClass {

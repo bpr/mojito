@@ -2212,6 +2212,51 @@ impl Checker {
     }
 }
 
+/// The value parameters of `decls` that `param_args` leaves unsupplied, as
+/// declaration indices with their names. Brackets bind as the MIR generic
+/// ABI does: a named argument selects its declaration, a positional one the
+/// next declaration that is not infer-only.
+pub(super) fn unsupplied_value_parameters(
+    decls: &[ParamDecl],
+    param_args: &[mojito_ast::ast::ParamArg],
+) -> Vec<(usize, String)> {
+    let mut supplied = vec![false; decls.len()];
+    let mut next_positional = 0;
+    for argument in param_args {
+        let index = if let mojito_ast::ast::ParamArg::Named { name, .. } = argument {
+            decls
+                .iter()
+                .position(|decl| decl.name().trim_start_matches('*') == name.as_str())
+        } else {
+            while decls.get(next_positional).is_some_and(|decl| match decl {
+                ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
+                    *infer_only
+                }
+            }) {
+                next_positional += 1;
+            }
+            next_positional += 1;
+            Some(next_positional - 1)
+        };
+        if let Some(slot) = index.and_then(|index| supplied.get_mut(index)) {
+            *slot = true;
+        }
+    }
+    decls
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !supplied[*index])
+        .filter_map(|(index, decl)| match decl {
+            ParamDecl::Value {
+                name,
+                variadic: false,
+                ..
+            } => Some((index, name.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A call's origin-bound parameters, their declared spellings for the
 /// exclusivity rule, its bound `*args` element type, and the bindings, when
 /// any parameter or collected argument names a binder.
@@ -2253,51 +2298,6 @@ fn name_ref_origin_mismatch(error: TypeError, func: &str, names: &[String]) -> T
         },
         other => other,
     }
-}
-
-/// The value parameters of `decls` that `param_args` leaves unsupplied, as
-/// declaration indices with their names. Brackets bind as the MIR generic
-/// ABI does: a named argument selects its declaration, a positional one the
-/// next declaration that is not infer-only.
-fn unsupplied_value_parameters(
-    decls: &[ParamDecl],
-    param_args: &[mojito_ast::ast::ParamArg],
-) -> Vec<(usize, String)> {
-    let mut supplied = vec![false; decls.len()];
-    let mut next_positional = 0;
-    for argument in param_args {
-        let index = if let mojito_ast::ast::ParamArg::Named { name, .. } = argument {
-            decls
-                .iter()
-                .position(|decl| decl.name().trim_start_matches('*') == name.as_str())
-        } else {
-            while decls.get(next_positional).is_some_and(|decl| match decl {
-                ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
-                    *infer_only
-                }
-            }) {
-                next_positional += 1;
-            }
-            next_positional += 1;
-            Some(next_positional - 1)
-        };
-        if let Some(slot) = index.and_then(|index| supplied.get_mut(index)) {
-            *slot = true;
-        }
-    }
-    decls
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !supplied[*index])
-        .filter_map(|(index, decl)| match decl {
-            ParamDecl::Value {
-                name,
-                variadic: false,
-                ..
-            } => Some((index, name.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 /// Current Mojo does not infer a generic function's specialization from the

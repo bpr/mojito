@@ -41,9 +41,10 @@ pub fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
 /// Whether a struct method's template body constructs a vector at a lane its
 /// own parameters spell (`Scalar[dt](x)`, `SIMD[DType.int32, w](v)`).
 ///
-/// Such a construction checks, but lowers only once the lane is bound: every call
-/// retargets to a per-call clone and the template body is a trap stub, as a
-/// free `def`'s template never reaches the program.
+/// Such a construction checks with the lane symbolic. An ordinary struct's
+/// template serves every call, the elaborator closing the lane per call; a
+/// member of a struct specialized whole per value still lowers only in its
+/// per-call clones, its template body a trap stub.
 pub fn method_constructs_at_own_lane(method: &Method) -> bool {
     struct Finder<'a> {
         own: &'a [TypeParam],

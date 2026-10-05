@@ -543,6 +543,7 @@ pub(super) fn substitute_instruction(
             recv_place,
             arg_places,
             kwarg_places,
+            instantiated_args,
             ..
         } => {
             sub_opt_ty(raises, bindings)?;
@@ -550,6 +551,9 @@ pub(super) fn substitute_instruction(
             sub_place_opt(recv_place, bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
+            for arg in instantiated_args {
+                *arg = substitute_arg(arg, bindings)?;
+            }
         }
         Index {
             base_place,

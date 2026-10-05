@@ -635,7 +635,8 @@ branch for the class is deleted, and so is its certificate class.
   per instance. The cloner keeps a `def` whose body shuffles, slices, joins,
   or hashes a lane value, queries a float format over its binder, binds a
   local `comptime`, or holds a nested `def`, and every overloaded one
-  (R257–R261); a method's own lane binder waits on P3e (R5).
+  (R257–R261); a method's own lane binder is served since P3e's first
+  step.
 - **P3d. Struct generators.** Value-keyed and variadic structs, `Tuple` and
   `TString` included, are declared once and instantiated by the elaborator.
   The first step landed 2026-10-05 for a struct keyed on a `DType` or on a
@@ -651,7 +652,21 @@ branch for the class is deleted, and so is its certificate class.
   (R4), behind a method's own compile-time parameters (R5) and a method
   holding compile-time control flow.
 - **P3e.** Three steps: a method's own compile-time parameters, nested
-  definitions and their captures, and clones minted during CTFE.
+  definitions and their captures, and clones minted during CTFE. The first
+  landed 2026-10-05: a method with compile-time parameters of its own is a
+  generator, its call carrying the arguments the checker solved
+  (`MirInstr::MethodCall::instantiated_args`, schema 1.22) and
+  `native::mono` binding them beside the receiver's, a generic constructor,
+  an own lane binder, and a `comptime if` or `comptime for` over its own
+  binders included. The probes' own per-call clones read 0 (`S.show[T]`
+  from 3, `Box[T].pair[U]` from 3 per-instantiation-filed ones). The census
+  now files a per-call clone in its class wherever it was minted, so Hello
+  World's `method_per_call` reads 75 (the 14 `Fnv1a` leaves, `AHasher`'s 14,
+  and 47 unrolled members of the variadic specializations) beside
+  `struct_dtype_vector 8` and `struct_variadic 128`, its total unchanged at
+  211. What still clones per call is R307 (a pack of its own), R308 (the
+  hasher's leaf), and R310 (a body only a clone serves, a member of a
+  struct specialized whole).
 
 One mixed-feature probe is carried through every P3 step, so migrations that
 pass alone also compose.

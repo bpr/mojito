@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method with compile-time parameters of its own is a generator, as in the
+  pin: its call carries the arguments the checker solved (textual MIR 1.22)
+  and the elaborator instantiates the method's template per call, where the
+  cloner used to mint a per-call AST clone. This covers generic
+  constructors, statics, a method's own `DType` or lane binder, and a
+  `comptime if` or `comptime for` over its own binders. `C("hi")` against
+  `__init__[T: Writable]` now binds `T` at `StringLiteral` and runs, where it
+  failed MIR verification with "argument 0 of 'C.__init__$y6:String' has
+  type StringLiteral, declared String"
+  (`assets/ok/generic_constructor_literal_argument.mojo`,
+  `assets/ok/template_method_own_comptime_if.mojo`).
+
 - A struct keyed on a `DType`, or on a value parameter it uses as a lane
   width, is a generator, as in the pin: its members are checked once and
   instantiated by the elaborator from the template's MIR, where the cloner

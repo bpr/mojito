@@ -345,9 +345,10 @@ impl Checker {
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
-                    return_type: clone_origins.substitute(&substitute(
-                        &substitute_at(&sig.ret, info, &tyargs),
-                        &method_subst,
+                    return_type: clone_origins.substitute(&self.close_method_values(
+                        substitute(&substitute_at(&sig.ret, info, &tyargs), &method_subst),
+                        &sig.decls,
+                        &method_arguments,
                     )),
                     result_adapter: None,
                     raises: sig.raises,
@@ -430,6 +431,7 @@ impl Checker {
                 .as_deref()
                 .and_then(mojito_symbol::symbol::overload_qualifier)
                 .map(str::to_string);
+            self.record_dtype_parameter_arguments(param_args, arguments);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
@@ -439,6 +441,10 @@ impl Checker {
                     parameter_names: selected.parameter_names.clone(),
                     overload: overload.clone(),
                     arguments: arguments.clone(),
+                    inferred_values: crate::checker::call_inference::unsupplied_value_parameters(
+                        &selected.param_decls,
+                        param_args,
+                    ),
                 },
             );
             let clone = if owner_arguments.is_empty() {

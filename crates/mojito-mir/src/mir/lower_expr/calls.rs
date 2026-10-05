@@ -23,10 +23,12 @@ impl Flatten<'_> {
             return None;
         }
         let _ = self.lower_call_receiver(object);
-        let param_arg_regs = if contract.param_decls.is_empty() {
-            Vec::new()
+        let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
+            (Vec::new(), Vec::new())
         } else {
-            self.param_arg_regs(param_args, &span(e))
+            let mut param_arg_regs = self.param_arg_regs(param_args, &span(e));
+            param_arg_regs.extend(self.inferred_param_arg_regs(e));
+            (param_arg_regs, self.instantiated_args(e))
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = self.call_anchors_arguments(e);
@@ -46,7 +48,7 @@ impl Flatten<'_> {
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
             receiver: None,
-            instantiated_args: Vec::new(),
+            instantiated_args,
             spread: None,
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);

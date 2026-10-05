@@ -162,6 +162,7 @@ assets/ok/function_type_where_unconstrained_actual.mojo	-	ineligible	no-scalar-e
 assets/ok/function_typed_kwargs.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_constructor_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -684,6 +685,7 @@ assets/ok/template_method_operator_operands.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/template_method_origin_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_overloaded_generic_static_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_overloaded_parameter_typed_static.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_method_own_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_own_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_pack_accessor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_pack_struct.mojo	-	ineligible	no-scalar-entry-shape

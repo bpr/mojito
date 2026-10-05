@@ -604,6 +604,7 @@ impl Checker {
                     .filter_map(|decl| binders.get(decl.id()).cloned())
                     .map(TyArg::Ty)
                     .collect(),
+                inferred_values: Vec::new(),
             })
         });
         // A binder the instance bakes selects the per-call clone once the

@@ -823,6 +823,7 @@ impl VmBackend {
                 kwarg_places,
                 param_arg_regs,
                 param_decls,
+                instantiated_args,
                 ..
             } => {
                 let recv_val = regs[recv.0 as usize].clone();
@@ -859,6 +860,7 @@ impl VmBackend {
                             keyword_argument_places: kwarg_places,
                             parameter_arguments: param_arg_regs,
                             parameter_declarations: param_decls,
+                            instantiated_arguments: instantiated_args,
                             argument_types: args
                                 .iter()
                                 .map(|reg| {
@@ -1041,6 +1043,7 @@ impl VmBackend {
                             keyword_argument_places: &[],
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
+                            instantiated_arguments: &[],
                             argument_types: Vec::new(),
                         },
                         CallerFrame {
@@ -1159,6 +1162,7 @@ impl VmBackend {
                             keyword_argument_places: &[],
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
+                            instantiated_arguments: &[],
                             argument_types: Vec::new(),
                         },
                         CallerFrame {
@@ -1243,6 +1247,7 @@ impl VmBackend {
                         keyword_argument_places: kwarg_places,
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
+                        instantiated_arguments: &[],
                         argument_types: Vec::new(),
                     },
                     CallerFrame {
@@ -1314,6 +1319,7 @@ impl VmBackend {
                         keyword_argument_places: &keyword_argument_places,
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
+                        instantiated_arguments: &[],
                         argument_types: Vec::new(),
                     },
                     CallerFrame {

@@ -667,10 +667,14 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// with such a method: an instance of one that the fixpoint discovers too
 /// late to mint clones for would run that method erased, so the driver
 /// reports divergence rather than converging on the erased path.
+/// `stub_reaching_methods` are those methods, as (struct, method): one with
+/// compile-time parameters of its own keeps its per-call clones, which the
+/// driver keys for the next round, since its template cannot serve a call.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
     pub instances: Vec<StructInstanceRequest>,
     pub stub_reaching_structs: HashSet<String>,
+    pub stub_reaching_methods: Vec<(String, String)>,
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
     /// How each generated `def` clone came from its template.
     pub def_traces: Vec<DefInstanceTrace>,
@@ -1177,6 +1181,7 @@ pub fn elaborate_prepared(
             })
             .collect(),
         stub_reaching: RefCell::new(HashSet::new()),
+        per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
         tuple_universe,
@@ -1209,6 +1214,7 @@ pub fn elaborate_prepared(
         program: mut result,
         instances,
         stub_reaching_structs,
+        stub_reaching_methods,
         unserved_template_uses,
         def_traces: _,
         method_traces: _,
@@ -1262,6 +1268,7 @@ pub fn elaborate_prepared(
         program: result,
         instances,
         stub_reaching_structs,
+        stub_reaching_methods,
         unserved_template_uses,
         def_traces,
         method_traces,
@@ -2664,6 +2671,11 @@ struct Elab<'a> {
     /// nested `def`s. The nested pass registers a nested `def` named here,
     /// so that its instances reach the callee's clone.
     stub_reaching: RefCell<HashSet<String>>,
+    /// The struct methods whose template is a trap stub that only a per-call
+    /// clone serves (a `comptime if` over the method's own binders), as
+    /// [`method_owner`] keys: a body calling one over its own binders reaches
+    /// a stub.
+    per_call_stubs: std::cell::OnceCell<HashSet<String>>,
     /// Whether a bound-generic `def`'s template serves its closed calls, by
     /// name, as first decided ([`Elab::template_serves_def`]).
     template_served_defs: RefCell<HashMap<String, bool>>,

@@ -765,6 +765,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             capture_accesses,
             param_arg_regs,
             param_decls,
+            instantiated_args,
         } => record(
             tag,
             &[
@@ -793,6 +794,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ),
                 ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
                 ("param_decls", list(param_decls.iter().map(param_decl))),
+                (
+                    "instantiated_args",
+                    list(instantiated_args.iter().map(ty_arg)),
+                ),
             ],
         ),
         MirInstr::PointerStorageTake {

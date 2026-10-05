@@ -133,12 +133,17 @@ impl Specializer<'_> {
                 .cloned()
         });
         let mut owner_covered = 0;
+        // A constructor's declaration restates its struct's parameters
+        // first; the call's solved arguments are the method's own.
+        let mut own_start = 0;
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
             if let Ty::Struct(receiver_name, arguments) = actual_receiver
                 && let Some(struct_decl) =
                     self.structs.get(nominal_template(receiver_name)).copied()
             {
+                own_start =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
                 bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
                     self.error(
                         Some(owner),
@@ -174,7 +179,10 @@ impl Specializer<'_> {
         // callee's own binders first: a parameter no runtime parameter or
         // result spells has no other source. One still symbolic here belongs
         // to a parametric caller, which unification leaves as it stands.
-        for (decl, argument) in declaration.param_decls.iter().zip(instantiated) {
+        for (decl, argument) in declaration.param_decls[own_start..]
+            .iter()
+            .zip(instantiated)
+        {
             match (decl, argument) {
                 // A pack the caller forwarded whole (`show(*args)`) was
                 // recorded as the caller's own pack, which substitution has

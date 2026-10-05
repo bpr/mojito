@@ -395,6 +395,13 @@ impl Decoder {
                 })?,
                 param_decls: self
                     .req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?,
+                // Schema 1.22 records a method's own solved arguments; an
+                // older artifact carries none.
+                instantiated_args: self
+                    .field(fields, "instantiated_args")
+                    .ok()
+                    .map(|found| self.ty_args(found))
+                    .unwrap_or_default(),
             }),
             "pointer.take" | "pointer.destroy" => {
                 let dest = self.req(value, fields, "dest", Self::reg)?;

@@ -203,9 +203,17 @@ pub(super) fn apply_defaults(
             }
             ParamDecl::Value {
                 default: Some(default),
+                ty,
                 ..
             } if !bindings.values.contains_key(&decl.binder()) => {
-                let value = eval_ct(default, bindings)?;
+                // A literal default binds at its declared type, as a supplied
+                // argument's constant register reads.
+                let value = match eval_ct(default, bindings)? {
+                    CtValue::IntLiteral(literal) if **ty != Ty::IntLiteral => literal
+                        .to_i64()
+                        .map_or(CtValue::IntLiteral(literal), CtValue::Int),
+                    value => value,
+                };
                 bindings.values.insert(decl.binder(), value);
             }
             ParamDecl::Value {

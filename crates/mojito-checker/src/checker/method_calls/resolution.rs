@@ -115,6 +115,7 @@ impl Checker {
                 .as_deref()
                 .and_then(mojito_symbol::symbol::overload_qualifier)
                 .map(str::to_string);
+            self.record_dtype_parameter_arguments(param_args, arguments);
             self.method_instantiations.borrow_mut().insert(
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
@@ -124,6 +125,10 @@ impl Checker {
                     parameter_names: resolved.parameter_names.clone(),
                     overload: overload.clone(),
                     arguments: arguments.clone(),
+                    inferred_values: crate::checker::call_inference::unsupplied_value_parameters(
+                        &resolved.param_decls,
+                        param_args,
+                    ),
                 },
             );
             let clone = if owner_arguments.is_empty() {
@@ -304,7 +309,11 @@ impl Checker {
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
                     return_type: clone_origins.substitute(&self.close_pack_elements(
-                        substitute(&substitute_at(&sig.ret, info, targs), &method_subst),
+                        self.close_method_values(
+                            substitute(&substitute_at(&sig.ret, info, targs), &method_subst),
+                            &sig.decls,
+                            &method_arguments,
+                        ),
                         &[
                             (&sig.decls, &method_arguments),
                             (&info.decls, &positional_pack_arguments(&info.decls, targs)),

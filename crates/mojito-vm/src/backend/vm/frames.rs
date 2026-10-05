@@ -541,6 +541,7 @@ impl VmBackend {
             kwarg_places,
             param_arg_regs,
             param_decls,
+            instantiated_args,
             ..
         } = instruction
             && let Value::Struct { name, .. } = &caller.registers[recv.0 as usize]
@@ -630,11 +631,12 @@ impl VmBackend {
                     } else {
                         param_decls
                     };
-                    let supplied = self.runtime_parameter_arguments(
+                    let supplied = self.supplied_parameter_arguments(
                         prog,
                         caller.into(),
                         contract,
                         param_arg_regs,
+                        instantiated_args,
                     );
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
                     reify_value_parameters(&signature.param_decls, &supplied)

@@ -1218,8 +1218,9 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
         .find(|(name, _)| name == "main")
         .expect("main lowered")
         .1;
-    // The call selects the per-call generic-method clone (`Counter.size$…`),
-    // whose declaration the call's retained parameter declarations mirror.
+    // The call selects the generic method its template serves
+    // (`Counter.size`), whose declaration the call's retained parameter
+    // declarations mirror.
     let (target, call_decls) = main
         .blocks
         .iter()

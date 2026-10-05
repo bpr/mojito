@@ -659,7 +659,7 @@ is a bound generic served by its template (`served_lane_defs`). A struct
 keyed on a `DType` or on a lane width is an ordinary generic struct, a
 generator: the executable check types its members with the binder symbolic,
 its template crosses MIR, and `native::mono` mints each instance. A method
-with a lane binder of its own is still cloned per call (roadmap R5).
+with a lane binder of its own is a generator too, instantiated per call.
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
 parameter — a `def`'s type parameter, or `Self` in a generic struct's method —
@@ -920,29 +920,43 @@ signature. A specialization is walked whole — signature and body — for furth
 template uses, so a clone's expanded `-> Variant[Int, String]` requests that
 concrete struct exactly as its body's calls do.
 
-Per-call clones of a method with its own compile-time parameters share one
-minting path (`per_call_method_clones`): the elaborator's struct walk mints
-them for a named owner — a generic constructor's included
-(`C.__init__$y6:String`, `PerCallBase::constructors`), which the checker's
-`per_call_constructor_target` retargets a construction to after ranking the
-whole constructor set — `generate_instance_clones` for an instance
-(instance values first, then the call's; a user template's generic
-constructor included, `C.__init__$y3:Int$y6:String`, which
-`record_constructor_instantiation` requests against the instance and
-retargets to, and `native::mono` emits under its own symbol rather than the
-instance's plain `__init__`), and `generate_value_struct_spec`
-for a struct specialized whole per value (the requests keyed by the
-specialization's mangled name, no base values, untraced, each clone body
-under its own source tag), a pack binding expands `*args:
-*Ts` to the `$pack[...]` element list inside `specialize_method_clone`
-exactly as a def specialization does, and the template's method body
-becomes the `unspecialized_method_stub` trap when it only elaborates with
-the struct's or its own parameters bound, or constructs a vector at a lane
-its own parameters spell (`Scalar[dt](x)`,
-`mojito_ast::simd_width::method_constructs_at_own_lane`): that construction
-checks symbolically but lowers only with the lane bound, so source
-validation checks such a body as the template its per-call clones derive
-from.
+A method with compile-time parameters of its own is a generator, as in the
+pin: its binders are its struct's followed by its own, its template crosses
+MIR, and `native::mono` instantiates it per call. The checker records each
+call's solved arguments (`checked::MethodInstantiation`, a literal argument
+at its own type, as a `def`'s), MIR carries them on the call
+(`MirInstr::MethodCall::instantiated_args`, text schema 1.22, beside the
+inferred value parameters passed as named arguments), and the elaborator
+binds the method's own binders from them and its struct's from the
+receiver. That covers a non-generic struct's method, a generic struct's
+instance, a static, a generic constructor (a construction the elaborator
+respells to the constructor's instance), a method keyed on its own `DType`
+or lane binder (the checker closes the binder in the call's result type),
+and a body whose `comptime if` or `comptime for` reads only its own binders,
+which the elaborator keeps in the template (`Elab::def_body`) and decides per
+call. The driver reads what such a body reaches at each closed call
+(`TemplateReach::method_call`).
+
+A method keeps per-call AST clones only where its template cannot serve:
+it is keyed on a type pack of its own, its body reaches a compile-time-keyed
+stub (`per_call_stubs` and the elaborator's stub-reaching walk, reported to
+the driver as `Elaborated::stub_reaching_methods` and keyed the next round),
+holds a nested `def` or a lambda, or applies a tuple or a struct specialized
+whole over its own binders, or it is a member of a struct specialized whole.
+Those clones share one minting path (`per_call_method_clones`): the
+elaborator's struct walk mints them for a named owner (`PerCallBase`), and
+`generate_instance_clones` for an instance (instance values first, then the
+call's), each gated by the method's template servability
+(`template_serves_method`, the instance's keyed set); `generate_struct_spec`
+and `generate_value_struct_spec` mint a specialized struct's own. The checker
+retargets a call to such a clone by exact name
+(`specialized_method_clone`, `instance_call_method_clone`), a construction
+through `per_call_constructor_target`. A pack binding expands `*args: *Ts`
+to the `$pack[...]` element list inside `specialize_method_clone` exactly as
+a def specialization does, and the template's method body becomes the
+`unspecialized_method_stub` trap when it only elaborates with the struct's
+parameters or its own pack bound, or carries the hasher's desugared
+`SIMD[_, _]` binder.
 `specialize_method_clone` bakes
 the clone's *value* bindings into its signature types before its type
 bindings, as a def specialization does, so a value parameter standing in a
@@ -950,12 +964,10 @@ type position (`a: Scalar[dt]`, `-> SIMD[DType.int32, w]`) spells its bound
 value on a clone that no longer declares the binder. In the checker,
 `instantiate_method_generics` resolves an inferred pack's variadic element to
 the heterogeneous `RuntimePack` so each overflow argument scores and converts
-against its own element, and the call retargets through
-`instance_call_method_clone` / `specialized_method_clone` by the composed
-name. An instance call records that name as its target; a static call,
-whose syntax still names the template, records it through
-`record_static_clone_target`. Every clone's body gets its own source tag
-after the uniform module stamp, so span-keyed facts (including the
+against its own element. An instance call records the clone's name as its
+target; a static call, whose syntax still names the template, records it
+through `record_static_clone_target`. Every clone's body gets its own source
+tag after the uniform module stamp, so span-keyed facts (including the
 requests of calls inside it) stay separate across a template's clones: an
 instance clone is found by its `self_ty`, a clone on a named owner through
 `Elab::per_call_clones`.

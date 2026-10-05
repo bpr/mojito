@@ -379,11 +379,7 @@ impl Elab<'_> {
                         // A SIMD-keyed method (`value: SIMD[_, _]`) checks
                         // only as a per-call clone with its vector type
                         // bound; the template body is a trap stub.
-                        // A vector constructed at the method's own lane
-                        // (`Scalar[dt](x)`) is stubbed the same way.
-                        if super::synth::is_simd_keyed_method(&m)
-                            || super::synth::constructs_at_own_lane(&m)
-                        {
+                        if super::synth::is_simd_keyed_method(&m) {
                             m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
                             return Ok(m);
                         }
@@ -395,15 +391,30 @@ impl Elab<'_> {
                             m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
                             return Ok(m);
                         }
-                        m.body = match self.block(&m.body, env, true) {
+                        // A `comptime if` or `comptime for` over the
+                        // method's own binders stays in its template, as a
+                        // generic `def`'s does: the elaborator below MIR
+                        // decides it per call. A method keyed on a pack of
+                        // its own still clones per call.
+                        let own_binders = !m.type_params.is_empty()
+                            && !m
+                                .type_params
+                                .iter()
+                                .any(|parameter| parameter.name.starts_with('*'));
+                        let body = if own_binders {
+                            self.def_body(&m.type_params, &m.params, &m.body, env)
+                        } else {
+                            self.block(&m.body, env, true)
+                        };
+                        m.body = match body {
                             Ok(body) => body,
                             // A method whose body only elaborates with the
                             // struct's parameters (a `comptime if` on
-                            // `Self.T`) or its own (`comptime if U == Int`,
-                            // a `comptime for` over a method pack) bound
-                            // becomes a trap stub on the template; every
-                            // concrete call retargets to a per-instantiation
-                            // or per-call clone, which folds it bound.
+                            // `Self.T`) or its pack (a `comptime for` over a
+                            // method pack) bound becomes a trap stub on the
+                            // template; every concrete call retargets to a
+                            // per-instantiation or per-call clone, which
+                            // folds it bound.
                             Err(error)
                                 if names_struct_parameter(&error, type_params)
                                     || names_method_parameter(&error, &m) =>
@@ -421,7 +432,8 @@ impl Elab<'_> {
                 // parameters baked; a closed instance of a generic struct
                 // mints its clones in `generate_instance_clones` instead.
                 if !self.is_specializable(stmt) {
-                    methods.extend(self.plain_struct_per_call_clones(stmt, name, env));
+                    let clones = self.plain_struct_per_call_clones(stmt, name, &methods, env);
+                    methods.extend(clones);
                 }
                 out.push(rebuilt(
                     stmt,
@@ -920,11 +932,14 @@ pub(super) fn pack_binding_marker(binding: &str) -> String {
 impl Elab<'_> {
     /// The per-call clones a non-generic struct's own generic methods mint
     /// for the checker-discovered requests against it, each recorded as
-    /// generated and traced to its template.
+    /// generated and traced to its template. A method its template serves
+    /// (`template_serves_method`, judged on its `elaborated` body) mints
+    /// none.
     fn plain_struct_per_call_clones(
         &self,
         stmt: &Stmt,
         name: &str,
+        elaborated: &[mojito_ast::ast::Method],
         env: &HashMap<String, CtValue>,
     ) -> Vec<mojito_ast::ast::Method> {
         let requests = self.method_requests.get(name);
@@ -938,7 +953,10 @@ impl Elab<'_> {
             ..super::specialize::PerCallBase::default()
         };
         let mut clones = Vec::new();
-        for method in &stmt_methods(stmt) {
+        for (method, template) in stmt_methods(stmt).iter().zip(elaborated) {
+            if self.template_serves_method(name, template) {
+                continue;
+            }
             clones.extend(self.per_call_method_clones(
                 name,
                 method,

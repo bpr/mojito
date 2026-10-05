@@ -30,6 +30,10 @@ pub(super) struct TemplateDemand {
     /// checked bodies hold, as (struct, method). A `def` that still clones
     /// for the same reason is (`def`, "").
     keyed_methods: Vec<(String, String)>,
+    /// Methods the last elaboration found reaching a compile-time-keyed
+    /// stub, as (struct, method): a call of one with binders of its own
+    /// keeps its per-call clone.
+    stub_reaching: Vec<(String, String)>,
 }
 
 impl TemplateDemand {
@@ -37,7 +41,14 @@ impl TemplateDemand {
         Self {
             specialized: specialized_struct_template_names(linked),
             keyed_methods: Vec::new(),
+            stub_reaching: Vec::new(),
         }
+    }
+
+    /// Record the methods an elaboration found reaching a compile-time-keyed
+    /// stub; the next round keys them.
+    pub(super) fn note_stub_reaching(&mut self, methods: Vec<(String, String)>) {
+        self.stub_reaching = methods;
     }
 
     pub(super) fn keyed_methods(&self) -> &[(String, String)] {
@@ -61,12 +72,38 @@ impl TemplateDemand {
         let owners = |struct_requests: &[StructInstanceRequest]| {
             [struct_requests, calls.as_slice()].concat()
         };
+        // A method with compile-time parameters of its own is served per
+        // call: what its body reaches over its own binders is read at each
+        // closed call's arguments.
+        let mut keyed = Vec::new();
+        for call in closed_method_calls(checked) {
+            let (instances, keys) = reach.method_call(&call);
+            for request in instances {
+                if !struct_requests.contains(&request) {
+                    last = Some(request.template().to_string());
+                    served.instances.push(request.clone());
+                    struct_requests.push(request);
+                }
+            }
+            if keys && !keyed.contains(&(call.owner.clone(), call.method.clone())) {
+                keyed.push((call.owner.clone(), call.method.clone()));
+            }
+        }
         for request in reach.instances(&owners(struct_requests)) {
             last = Some(request.template().to_string());
             served.instances.push(request.clone());
             struct_requests.push(request);
         }
-        for method in reach.keyed_methods(&owners(struct_requests)) {
+        for method in reach
+            .keyed_methods(&owners(struct_requests))
+            .into_iter()
+            .chain(self.stub_reaching.iter().cloned())
+        {
+            if !keyed.contains(&method) {
+                keyed.push(method);
+            }
+        }
+        for method in keyed {
             if !self.keyed_methods.contains(&method) {
                 last = Some(format!("{}.{}", method.0, method.1));
                 served.keyed_templates.push(method.0.clone());
@@ -98,6 +135,12 @@ impl<'a> TemplateReach<'a> {
                 | StmtKind::Def {
                     name, type_params, ..
                 } if !type_params.is_empty() => Some((name.as_str(), statement)),
+                // A non-generic struct's method may declare binders of its own.
+                StmtKind::Struct { name, methods, .. }
+                    if methods.iter().any(|method| !method.type_params.is_empty()) =>
+                {
+                    Some((name.as_str(), statement))
+                }
                 _ => None,
             })
             .collect();
@@ -117,8 +160,7 @@ impl<'a> TemplateReach<'a> {
         while let Some(request) = pending.pop() {
             let template = request.template().to_string();
             let mut bind = BindOwner {
-                owner: &template,
-                arguments: request.arguments(),
+                owners: vec![(&template, request.arguments())],
             };
             let specialized = self.specialized;
             let reached: Vec<StructInstanceRequest> = self
@@ -173,7 +215,8 @@ impl<'a> TemplateReach<'a> {
             let specialized = self.specialized;
             for application in self.applications(template) {
                 let key = (template.to_string(), application.method.clone());
-                if (application.keyed || specialized.contains(&application.name))
+                if application.names(template)
+                    && (application.keyed || specialized.contains(&application.name))
                     && !keyed.contains(&key)
                 {
                     keyed.push(key);
@@ -181,6 +224,52 @@ impl<'a> TemplateReach<'a> {
             }
         }
         keyed
+    }
+
+    /// What one closed call of a method with binders of its own reaches
+    /// over them: the closed instances its body applies, and whether the
+    /// body only a per-call clone can serve (a tuple, or a struct
+    /// specialized whole, over the method's own binders).
+    fn method_call(&mut self, call: &MethodCall) -> (Vec<StructInstanceRequest>, bool) {
+        let binder_owner = call.binder_owner();
+        let mut bind = BindOwner {
+            owners: vec![
+                (call.owner.as_str(), call.owner_arguments.as_slice()),
+                (binder_owner.as_str(), call.arguments.as_slice()),
+            ],
+        };
+        let specialized = self.specialized;
+        let mut instances = Vec::new();
+        let mut keyed = false;
+        for application in self.applications(&call.owner).iter().filter(|application| {
+            application.method == call.method && application.names(&binder_owner)
+        }) {
+            if application.keyed || specialized.contains(&application.name) {
+                keyed = true;
+                continue;
+            }
+            let Some(arguments) = application
+                .arguments
+                .iter()
+                .map(|argument| bind.argument(argument))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if arguments.iter().all(|argument| {
+                closed_generic_argument(argument)
+                    && !matches!(
+                        argument,
+                        TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_))
+                    )
+            }) {
+                let request = StructInstanceRequest::new(application.name.clone(), arguments);
+                if !instances.contains(&request) {
+                    instances.push(request);
+                }
+            }
+        }
+        (instances, keyed)
     }
 
     fn applications(&mut self, template: &str) -> &[Application] {
@@ -196,20 +285,54 @@ impl<'a> TemplateReach<'a> {
     }
 }
 
-/// What one template method's body holds over its struct's parameters: a
-/// struct application, or (`keyed`, naming no struct) a construct that keeps
-/// the method's per-instance clone.
+/// What one template method's body holds over its struct's parameters or
+/// its own: a struct application, or (`keyed`, naming no struct) a construct
+/// that keeps the method's per-instance or per-call clone.
 struct Application {
     method: String,
     name: String,
     arguments: Vec<TyArg>,
     keyed: bool,
+    /// The binder owners the application names: the template's, a method's
+    /// own, or (`None`) every owner, for a construct keyed by its call.
+    owners: Option<Vec<String>>,
 }
 
-/// The owner's parameters replaced by one instance's arguments.
+impl Application {
+    fn names(&self, owner: &str) -> bool {
+        self.owners
+            .as_ref()
+            .is_none_or(|owners| owners.iter().any(|named| named == owner))
+    }
+}
+
+/// One closed call of a struct method that declares compile-time parameters
+/// of its own, as the checker recorded it.
+struct MethodCall {
+    owner: String,
+    owner_arguments: Vec<TyArg>,
+    method: String,
+    overload: Option<String>,
+    arguments: Vec<TyArg>,
+}
+
+impl MethodCall {
+    /// The owner the method's own binders carry: the template struct's
+    /// method, qualified by its signature when it is overloaded.
+    fn binder_owner(&self) -> String {
+        let template = crate::symbol::specialization_template(&self.owner).unwrap_or(&self.owner);
+        format!(
+            "{template}.{}{}",
+            self.method,
+            self.overload.as_deref().unwrap_or("")
+        )
+    }
+}
+
+/// The owners' parameters replaced by one instance's arguments: a struct's,
+/// a `def`'s, or a method's own beside its struct's.
 struct BindOwner<'a> {
-    owner: &'a str,
-    arguments: &'a [TyArg],
+    owners: Vec<(&'a str, &'a [TyArg])>,
 }
 
 impl BindOwner<'_> {
@@ -223,10 +346,11 @@ impl BindOwner<'_> {
 
 impl TyRewrite for BindOwner<'_> {
     fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
-        if &*binder.id.owner != self.owner {
-            return None;
-        }
-        match self.arguments.get(binder.id.slot)? {
+        let (_, arguments) = self
+            .owners
+            .iter()
+            .find(|(owner, _)| *owner == &*binder.id.owner)?;
+        match arguments.get(binder.id.slot)? {
             TyArg::Ty(ty) => Some(ty.clone()),
             TyArg::Val(_) | TyArg::Origin(_) => None,
         }
@@ -250,41 +374,79 @@ fn template_applications(
     }
 
     impl Bodies<'_> {
+        /// Whether `owner` is the template's own, or the owner of one of its
+        /// methods' own binders (`S.show`, `Variant.isa` on a
+        /// specialization of `Variant`).
+        fn owns(&self, owner: &str) -> bool {
+            let template =
+                crate::symbol::specialization_template(self.template).unwrap_or(self.template);
+            owner == self.template
+                || owner
+                    .strip_prefix(template)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        }
+
         fn collect(&mut self, ty: &Ty) {
-            let names_owner = |ty: &Ty| {
-                mentions(
-                    ty,
-                    &|inner| matches!(inner, Ty::Param { binder, .. } if &*binder.id.owner == self.template),
-                )
+            let named_owners = |ty: &Ty| {
+                let owners = RefCell::new(Vec::new());
+                mentions(ty, &|inner| {
+                    if let Ty::Param { binder, .. } = inner
+                        && self.owns(&binder.id.owner)
+                        && !owners.borrow().contains(&binder.id.owner.to_string())
+                    {
+                        owners.borrow_mut().push(binder.id.owner.to_string());
+                    }
+                    false
+                });
+                owners.into_inner()
             };
             let found = RefCell::new(Vec::new());
             mentions(ty, &|inner| {
                 match inner {
-                    Ty::Struct(name, arguments) if names_owner(inner) => {
-                        found
-                            .borrow_mut()
-                            .push((name.clone(), arguments.clone(), false));
+                    Ty::Struct(name, arguments) => {
+                        let owners = named_owners(inner);
+                        if !owners.is_empty() {
+                            found.borrow_mut().push((
+                                name.clone(),
+                                arguments.clone(),
+                                false,
+                                owners,
+                            ));
+                        }
                     }
-                    Ty::Tuple(_) if names_owner(inner) => {
-                        found
-                            .borrow_mut()
-                            .push((String::new(), Vec::new().into(), true));
+                    Ty::Tuple(_) => {
+                        let owners = named_owners(inner);
+                        if !owners.is_empty() {
+                            found.borrow_mut().push((
+                                String::new(),
+                                Vec::new().into(),
+                                true,
+                                owners,
+                            ));
+                        }
                     }
                     _ => {}
                 }
                 false
             });
-            for (name, arguments, keyed) in found.into_inner() {
-                self.record(name, arguments.into(), keyed);
+            for (name, arguments, keyed, owners) in found.into_inner() {
+                self.record(name, arguments.into(), keyed, Some(owners));
             }
         }
 
-        fn record(&mut self, name: String, arguments: Vec<TyArg>, keyed: bool) {
+        fn record(
+            &mut self,
+            name: String,
+            arguments: Vec<TyArg>,
+            keyed: bool,
+            owners: Option<Vec<String>>,
+        ) {
             let seen = self.found.iter().any(|application| {
                 application.method == self.method
                     && application.name == name
                     && application.arguments == arguments
                     && application.keyed == keyed
+                    && application.owners == owners
             });
             if !seen {
                 self.found.push(Application {
@@ -292,6 +454,7 @@ fn template_applications(
                     name,
                     arguments,
                     keyed,
+                    owners,
                 });
             }
         }
@@ -305,7 +468,7 @@ fn template_applications(
                 .get(&expression.source_span())
                 .is_some_and(|instantiation| instantiation.overload.is_some())
             {
-                self.record(String::new(), Vec::new(), true);
+                self.record(String::new(), Vec::new(), true, None);
             }
             for ty in [
                 checked.expression_type(expression),
@@ -357,5 +520,43 @@ fn closed_def_calls(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
         }
     }
     calls.sort_by_cached_key(|call| format!("{}{:?}", call.template(), call.arguments()));
+    calls
+}
+
+/// The closed calls of struct methods with compile-time parameters of their
+/// own in `checked`, each with the receiver instance's arguments and the
+/// method's own. Such a call may be served by the template.
+fn closed_method_calls(checked: &DiscoveryResult) -> Vec<MethodCall> {
+    let mut calls: Vec<MethodCall> = checked
+        .method_instantiations
+        .values()
+        .filter(|instantiation| {
+            instantiation
+                .arguments
+                .iter()
+                .chain(&instantiation.owner_arguments)
+                .all(closed_generic_argument)
+        })
+        .map(|instantiation| MethodCall {
+            owner: instantiation.owner.clone(),
+            owner_arguments: instantiation.owner_arguments.clone(),
+            method: instantiation.method.clone(),
+            overload: instantiation.overload.clone(),
+            arguments: instantiation.arguments.clone(),
+        })
+        .collect();
+    calls.sort_by_cached_key(|call| {
+        format!(
+            "{}.{}{:?}{:?}",
+            call.owner, call.method, call.owner_arguments, call.arguments
+        )
+    });
+    calls.dedup_by(|a, b| {
+        a.owner == b.owner
+            && a.method == b.method
+            && a.overload == b.overload
+            && a.owner_arguments == b.owner_arguments
+            && a.arguments == b.arguments
+    });
     calls
 }
