@@ -2316,16 +2316,17 @@ impl Checker {
     }
 
     /// The `DType.<method>[dtype]()` floating-point format query `callee`
-    /// names with `param_args`, folded to its answer — `None` inside for a
-    /// symbolic dtype, whose constraint and answer are the instantiation's.
-    /// `None` outside for any other callee.
+    /// names with `param_args`, as the parameter value a runtime read
+    /// records: its answer at a known dtype, and the application of the
+    /// static method over a symbolic one, whose constraint and answer are the
+    /// instantiation's. `None` for any other callee.
     pub(super) fn dtype_float_query(
         &self,
         callee: &Expr,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Option<i64>, TypeError>> {
+    ) -> Option<Result<ParamExpr, TypeError>> {
         let ExprKind::Member { object, field } = &callee.kind else {
             return None;
         };
@@ -2352,15 +2353,18 @@ impl Checker {
             }));
         }
         Some(self.dtype_from_arg(argument).and_then(|dtype| {
-            let Some(dtype) = dtype.known() else {
-                return Ok(None);
+            let dtype = match dtype {
+                SimdDtype::Known(dtype) => self
+                    .param_context
+                    .constant(mojito_types::ct::CtValue::Dtype(dtype))
+                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
+                SimdDtype::Expr(dtype) => dtype,
             };
-            dtype
-                .float_query(field)
-                .map(Some)
-                .ok_or_else(|| TypeError::BadCall {
+            self.param_context
+                .answer_builtin_applications(&self.param_context.dtype_float_query(field, &dtype))
+                .map_err(|error| TypeError::BadCall {
                     func,
-                    reason: "constraint failed: dtype must be floating point".to_string(),
+                    reason: error.to_string(),
                 })
         }))
     }

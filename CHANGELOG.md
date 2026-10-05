@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `DType` float-format query over a binder (`DType.mantissa_width[dt]()`
+  and `max_exponent`, `exponent_width`, `exponent_bias`) is served by its
+  `def`'s template, as in the pin, where the `def` was cloned per dtype:
+  the checker records the static method's application, which each instance
+  answers, failing the instantiation at a non-float dtype with the pin's
+  `dtype must be floating point`. The query over a generic struct's
+  `Self.dt` in a method, which failed MIR verification, now runs
+  (`assets/ok/dtype_float_query_template_served.mojo`).
+
 - A lane gather in a `DType`- or width-keyed `def` (`v.shuffle[1, 0]()`,
   `v.slice[w // 2, offset = w // 2]()`, `v.shuffle[n, 0]()`, `v.join(w)`)
   is served by its template, as in the pin, where the `def` was cloned per

@@ -340,6 +340,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_layout_query",
     "comptime_if_nested_def_call",
     "dtype_compile_time_values",
+    "dtype_float_query_template_served",
     "lane_template_served",
     "pack_beside_value_binder",
     "simd_symbolic_surface",

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	507
+# swept-count	508
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -227,6 +227,7 @@ assets/type_error/dtype_compare_int_rejected.mojo	compile-reject	agree	error: in
 assets/type_error/dtype_dynamic_comptime_if_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime if' condition
 assets/type_error/dtype_dynamic_parameter_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in a parameter list
 assets/type_error/dtype_float_query_non_float_rejected.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/dtype_float_query_template_non_float.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/dtype_identity_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__is__' method
 assets/type_error/dtype_implicit_bool_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'DType' value to 'Bool'
 assets/type_error/dtype_keyed_def_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'Scalar[dt]' value to 'String'

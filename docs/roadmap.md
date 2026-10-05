@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R332**.
+Next free ID: **R335**.
 
 ## Ordered Work
 
@@ -162,19 +162,6 @@ correctness fix to existing behavior is allowed.
   - The header already iterates a sequence (`ComptimeSequence::Elements`,
     schema 1.25), so each shape needs only its sequence compiled.
   - Depends on R290, R267, and R318.
-  - Model: Fable, Planned.
-
-- [ ] **R258 (P3c) A `DType` float query over a binder keys a clone**
-
-  Problem: `DType.mantissa_width[dt]()` and the other float-format queries
-  over a `DType` binder keep a `def` on the cloner, where the checker folds
-  them only at a known dtype (`DtypeFloatQuery`).
-  - The answer is a function of the dtype, so it is a parameter expression
-    the elaborator can evaluate once `dt` is bound, as the defaulted
-    `to_bits` target already is (`symbolic_unsigned_dtype_of`).
-  - `assets/ok/dtype_float_queries.mojo`'s `mantissa_of` is the body that
-    waits.
-  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R259 (P3c) A hash of a lane value in a lane-keyed `def` keys a
@@ -720,6 +707,24 @@ correctness fix to existing behavior is allowed.
   - `assets/ok/reflection_template_served.mojo` is the `ERASED_VM_RESIDUE`
     row (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R334 (P5) The erased oracle cannot read a struct's value binder in
+  a method's parameter constant**
+
+  Problem: `return DType.exponent_bias[Self.dt]()` in a method of `struct
+  Format[dt: DType]` prints on concrete MIR and stops under `--erased` with
+  "the erased oracle cannot evaluate the parameter constant".
+  - The query reaches MIR as a parameter constant over `dt`, which the
+    elaborator answers per instance.
+  - An erased frame binds only the method's own slots and compile-time
+    locals (`erased_parameter_values`, `backend/vm.rs`), so the struct's
+    binder has no value there.
+  - `assets/ok/dtype_float_query_template_served.mojo` is an
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`), listed under R15
+    since its `comptime if` stops first.
+  - Entry R10 deletes the oracle and this gap with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2253,6 +2258,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     lands first or folds into it.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R332 A `DType` float query as a type argument is rejected**
+
+  Problem: `SIMD[DType.int32, DType.exponent_width[DType.float32]()](2)`
+  prints its vector at the pin, while Mojito reports "not a compile-time Int
+  constant: not an associated comptime expression".
+  - The same query over a `DType` binder (`SIMD[DType.int32,
+    DType.exponent_width[dt]()]` in `def lanes[dt: DType]()`) rejects the
+    same way.
+  - `eval_associated_ct` and `compile_dependent_ct_expr`
+    (`checker/constraints.rs`) have no arm for the query. A closed one is
+    its answer, and one over a binder is the application
+    `ParamContext::dtype_float_query` builds, which the elaborator answers
+    per instance.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R333 A value's `dtype` as a `DType` query argument is rejected**
+
+  Problem: `DType.exponent_width[x.dtype]()` for `x: Scalar[dt]` prints `8`
+  at `Float32` at the pin, while Mojito reports "not a valid SIMD element
+  type: DType.dtype".
+  - `dtype_from_arg` (`checker/annotations.rs`) reads only a
+    `DType.<name>` spelling, a binder, or a type's `dtype`, not a value's.
+  - A value's `dtype` is its type's lane slot, which the checker already
+    records for a runtime read (`SemanticAdjustment::DtypeConstant`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R66 Small SIMD surface gaps the symbolic-lane probes found on concrete
   types**

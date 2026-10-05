@@ -2096,7 +2096,8 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
 }
 
 /// The three forms only a generator carries — a pack element, a reflection
-/// query, and an application — round trip through the reader.
+/// query, and an application (a static method's dotted name included) —
+/// round trip through the reader.
 #[test]
 fn param_apply_list_get_and_reflect_round_trip() {
     use mojito_types::param_expr::ReflectQuery;
@@ -2116,12 +2117,18 @@ fn param_apply_list_get_and_reflect_round_trip() {
         ReflectQuery::FieldNamed("x".into()),
     );
     let applied = context.apply("f", std::slice::from_ref(&i), MetaTy::int());
+    let dt = context.decl_ref(ParamId::new("Bag.first", 1), "dt", MetaTy::value(Ty::Dtype));
+    let static_method = context.dtype_float_query("mantissa_width", &dt);
     let types = vec![
         Ty::Dependent(DependentType::Parameter(element)),
         Ty::Dependent(DependentType::Parameter(reflected)),
         Ty::Simd {
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
             width: mojito_types::types::SimdWidth::Expr(applied),
+        },
+        Ty::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
+            width: mojito_types::types::SimdWidth::Expr(static_method),
         },
     ];
     let program = program_with(vec![(

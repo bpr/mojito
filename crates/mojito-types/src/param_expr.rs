@@ -478,6 +478,18 @@ impl ParamContext {
         self.apply(SIZE_OF_FUNCTION, &[self.type_shape(ty)], MetaTy::int())
     }
 
+    /// The float-format query `DType.<query>[dtype]()` (one of
+    /// [`mojito_ast::ast::DTYPE_FLOAT_QUERIES`]): the application of `DType`'s
+    /// static method, answered by [`builtin_application_value`] once `dtype`
+    /// is constant.
+    pub fn dtype_float_query(&self, query: &str, dtype: &ParamExpr) -> ParamExpr {
+        self.apply(
+            &format!("DType.{query}"),
+            std::slice::from_ref(dtype),
+            MetaTy::int(),
+        )
+    }
+
     /// A typed hole. Reserved: no source construct produces one, a known
     /// parameter without a binding is its reference, and a hole is a boundary
     /// error at executable facts, MIR, mangling, and the VM.
@@ -511,7 +523,7 @@ impl ParamContext {
     }
 
     /// Replacement for a use that needs the value: [`Self::replace`], then
-    /// [`Self::fold`], classified. A default, a dependent index, and native
+    /// [`Self::fold`] and [`Self::answer_builtin_applications`], classified. A default, a dependent index, and native
     /// monomorphization evaluate; a type argument and a `where` clause
     /// replace, because the pin proves neither from an unfolded atom.
     pub fn evaluate(
@@ -521,6 +533,7 @@ impl ParamContext {
     ) -> Result<ParamEval, ParamError> {
         self.replace(expr, bindings)
             .and_then(|replaced| self.fold(&replaced))
+            .and_then(|folded| self.answer_builtin_applications(&folded))
             .map(ParamEval::from)
     }
 
@@ -573,44 +586,25 @@ impl ParamContext {
         expr: &ParamExpr,
         oracle: &mut ReflectOracle<'_>,
     ) -> Result<ParamExpr, ParamError> {
-        Ok(match expr.kind() {
-            ParamKind::Reflect { subject, query } => {
-                let subject = self.answer_reflections(subject, oracle)?;
-                match oracle(&subject, query)? {
-                    Some(answer) => self.constant(answer)?,
-                    None => self.reflect_query(&subject, query.clone()),
-                }
-            }
-            ParamKind::Op { op, operands } => {
-                let operands: Vec<ParamExpr> = operands
-                    .iter()
-                    .map(|operand| self.answer_reflections(operand, oracle))
-                    .collect::<Result<_, _>>()?;
-                self.op(*op, &operands)?
-            }
-            ParamKind::Identical(left, right) => self.identical(
-                &self.answer_reflections(left, oracle)?,
-                &self.answer_reflections(right, oracle)?,
-            ),
-            ParamKind::Select { elements, index } => {
-                self.select(elements.clone(), &self.answer_reflections(index, oracle)?)?
-            }
-            ParamKind::ListGet { list, index } => self.list_get(
-                &self.answer_reflections(list, oracle)?,
-                &self.answer_reflections(index, oracle)?,
-            )?,
+        self.answer_queries(expr, &mut |node| match node.kind() {
+            ParamKind::Reflect { subject, query } => oracle(subject, query),
+            _ => Ok(None),
+        })
+    }
+
+    /// Rebuild `expr` with every builtin application whose arguments are
+    /// constant replaced by its answer ([`builtin_application_value`]),
+    /// through the folding constructors. A required value answers one;
+    /// [`Self::replace`] does not, since an application stays symbolic in a
+    /// type, as at the pin.
+    pub fn answer_builtin_applications(&self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| match node.kind() {
             ParamKind::Apply {
                 function,
                 args,
-                evaluated,
-            } => {
-                let args: Vec<ParamExpr> = args
-                    .iter()
-                    .map(|arg| self.answer_reflections(arg, oracle))
-                    .collect::<Result<_, _>>()?;
-                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
-            }
-            _ => expr.clone(),
+                evaluated: None,
+            } => builtin_application_value(function, args).transpose(),
+            _ => Ok(None),
         })
     }
 
@@ -648,6 +642,59 @@ impl ParamContext {
                 replacements: load(&shared.replacements),
                 contexts: load(&CONTEXTS_CREATED),
             })
+    }
+
+    /// Rebuild `expr` bottom-up, replacing each reflection query or
+    /// application `answer` answers (after its operands are rebuilt) by its
+    /// constant; everything above re-enters the folding constructors.
+    fn answer_queries(
+        &self,
+        expr: &ParamExpr,
+        answer: &mut dyn FnMut(&ParamExpr) -> Result<Option<CtValue>, ParamError>,
+    ) -> Result<ParamExpr, ParamError> {
+        let rebuilt = match expr.kind() {
+            ParamKind::Reflect { subject, query } => {
+                self.reflect_query(&self.answer_queries(subject, answer)?, query.clone())
+            }
+            ParamKind::Op { op, operands } => {
+                let operands: Vec<ParamExpr> = operands
+                    .iter()
+                    .map(|operand| self.answer_queries(operand, answer))
+                    .collect::<Result<_, _>>()?;
+                return self.op(*op, &operands);
+            }
+            ParamKind::Identical(left, right) => {
+                return Ok(self.identical(
+                    &self.answer_queries(left, answer)?,
+                    &self.answer_queries(right, answer)?,
+                ));
+            }
+            ParamKind::Select { elements, index } => {
+                return self.select(elements.clone(), &self.answer_queries(index, answer)?);
+            }
+            ParamKind::ListGet { list, index } => {
+                return self.list_get(
+                    &self.answer_queries(list, answer)?,
+                    &self.answer_queries(index, answer)?,
+                );
+            }
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.answer_queries(arg, answer))
+                    .collect::<Result<_, _>>()?;
+                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+            }
+            _ => return Ok(expr.clone()),
+        };
+        match answer(&rebuilt)? {
+            Some(value) => self.constant(value),
+            None => Ok(rebuilt),
+        }
     }
 
     fn make(&self, meta: MetaTy, kind: ParamKind) -> ParamExpr {
@@ -1164,6 +1211,33 @@ impl ParamContext {
 
 /// The callable symbol of a layout query ([`ParamContext::size_of`]).
 pub const SIZE_OF_FUNCTION: &str = "size_of";
+
+/// The answer to an application of a builtin compile-time function.
+///
+/// `None` for an application this policy does not own or whose arguments are
+/// not yet constant. A `DType` float-format query
+/// ([`ParamContext::dtype_float_query`]) at a non-float dtype fails as the
+/// pin's `comptime assert dtype.is_floating_point()` does.
+pub fn builtin_application_value(
+    function: &str,
+    args: &[ParamExpr],
+) -> Option<Result<CtValue, ParamError>> {
+    let query = function
+        .strip_prefix("DType.")
+        .filter(|query| mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(query))?;
+    let [argument] = args else {
+        return None;
+    };
+    let CtValue::Dtype(dtype) = argument.as_constant()? else {
+        return None;
+    };
+    Some(
+        dtype
+            .float_query(query)
+            .map(CtValue::Int)
+            .ok_or_else(|| ParamError::Constraint("dtype must be floating point".to_string())),
+    )
+}
 
 /// A cheap handle to an immutable, canonical expression node.
 ///
@@ -2269,6 +2343,9 @@ pub enum ParamError {
     },
     /// A reflection query over a closed subject that has no answer.
     Reflect(ReflectError),
+    /// A builtin application whose callee's `comptime assert` fails at its
+    /// arguments ([`builtin_application_value`]).
+    Constraint(String),
 }
 
 impl fmt::Display for ParamError {
@@ -2295,6 +2372,7 @@ impl fmt::Display for ParamError {
                 "parameter expression exceeds the canonicalization budget of {limit} terms"
             ),
             Self::Reflect(error) => write!(f, "{error}"),
+            Self::Constraint(text) => write!(f, "constraint failed: {text}"),
         }
     }
 }

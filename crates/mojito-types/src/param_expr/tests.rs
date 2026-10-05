@@ -625,6 +625,56 @@ fn param_apply_is_structural_and_unfolded() {
     assert_eq!(*context.size_of(Ty::Int).meta(), MetaTy::int());
 }
 
+/// A `DType` float query over a binder is an application `replace` keeps
+/// and a required value answers: the format's width at a float dtype, and
+/// the pin's failed constraint at any other.
+#[test]
+fn dtype_float_query_answers_only_a_required_value() {
+    let context = ParamContext::new();
+    let dt = context.register(ParamId::new("f", 0), "dt", MetaTy::value(Ty::Dtype));
+    let query = context.dtype_float_query("mantissa_width", &dt);
+    assert_eq!(query.to_string(), "DType.mantissa_width(dt)");
+    let bound = |dtype| {
+        let mut bindings = ParamBindings::new();
+        bindings.bind_name(
+            "dt",
+            context
+                .constant(CtValue::Dtype(dtype))
+                .expect("a dtype is a constant"),
+        );
+        bindings
+    };
+    let float32 = bound(mojito_ast::ast::Dtype::Float32);
+    assert!(
+        context
+            .replace(&query, &float32)
+            .expect("replacement")
+            .as_constant()
+            .is_none()
+    );
+    assert_eq!(
+        context
+            .evaluate(&query, &float32)
+            .and_then(ParamEval::require_constant),
+        Ok(CtValue::Int(23))
+    );
+    let doubled = infix(&context, InfixOp::Mul, &query, &literal(&context, 2));
+    assert_eq!(
+        context
+            .evaluate(&doubled, &float32)
+            .and_then(ParamEval::require_constant),
+        Ok(CtValue::Int(46))
+    );
+    assert_eq!(
+        context
+            .evaluate(&query, &bound(mojito_ast::ast::Dtype::Int32))
+            .map(|_| ()),
+        Err(ParamError::Constraint(
+            "dtype must be floating point".to_string()
+        ))
+    );
+}
+
 /// A reflection query the elaborator's oracle answers closes what sits
 /// above it; one the oracle leaves stays a node, and an answer the closed
 /// subject lacks is the instantiation's error.

@@ -319,18 +319,6 @@ impl Flatten<'_> {
         if let Some(dest) = self.pack_element_construction(e, param_args) {
             return dest;
         }
-        if let Some(value) = self
-            .checked_adjustments(e)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery { value } => {
-                    Some(value)
-                }
-                _ => None,
-            })
-        {
-            return self.constant(e, Const::Int(value));
-        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

@@ -375,7 +375,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)
         | SemanticAdjustment::SizeOf { .. }
-        | SemanticAdjustment::DtypeFloatQuery { .. }
         | SemanticAdjustment::ConstructVariant { .. }
         | SemanticAdjustment::ConstructVariantInitWith { .. }
         | SemanticAdjustment::ConstructArrayLiteral { .. }

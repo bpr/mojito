@@ -6,10 +6,11 @@ use mojito_types::param_expr::{ParamError, ReflectQuery};
 
 /// The constant a parameter expression denotes under the mono environment:
 /// the shared replacement, every reflection query the instance's types
-/// answer, then explicit concrete extraction. Monomorphization holds no
+/// answer and every builtin application its constants answer, then explicit
+/// concrete extraction. Monomorphization holds no
 /// arithmetic of its own. A query with no answer at the instance
 /// (`field_index["z"]()` of a struct lacking `z`) fails the instantiation,
-/// as at the pin.
+/// as at the pin, as does a `DType` float query at a non-float dtype.
 pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
     let replaced = context
@@ -19,8 +20,9 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
                 reflection_answer(subject, query, bindings)
             })
         })
+        .and_then(|answered| context.answer_builtin_applications(&answered))
         .map_err(|error| MonoError {
-            kind: if matches!(error, ParamError::Reflect(_)) {
+            kind: if matches!(error, ParamError::Reflect(_) | ParamError::Constraint(_)) {
                 MonoErrorKind::Instantiation
             } else {
                 MonoErrorKind::Unsupported

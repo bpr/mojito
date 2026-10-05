@@ -870,12 +870,10 @@ impl Checker {
                     return element;
                 }
                 if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
-                    if let Some(value) = value? {
-                        self.operation_adjustments.borrow_mut().insert(
-                            expr.source_span(),
-                            mojito_checked::checked::SemanticAdjustment::DtypeFloatQuery { value },
-                        );
-                    }
+                    self.operation_adjustments.borrow_mut().insert(
+                        expr.source_span(),
+                        mojito_checked::checked::SemanticAdjustment::ParamValue { value: value? },
+                    );
                     return Ok(Ty::Int);
                 }
                 // Parameterized method syntax is parsed as `Invoke(Member)` so

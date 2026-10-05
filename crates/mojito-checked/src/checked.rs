@@ -802,13 +802,9 @@ pub enum SemanticAdjustment {
     DtypeConstant {
         dtype: SimdDtype,
     },
-    /// `DType.mantissa_width[dtype]()` and the other floating-point format
-    /// queries — the checker-resolved answer, lowered as an `Int` constant.
-    DtypeFloatQuery {
-        value: i64,
-    },
     /// A compile-time query read as a runtime value — `Ts.length`,
-    /// `len(Ts)`, or `Ts.contains[X]()` of a `def`'s own pack — lowered as a
+    /// `len(Ts)`, `Ts.contains[X]()` of a `def`'s own pack, or a `DType`
+    /// float-format query (`DType.mantissa_width[dt]()`) — lowered as a
     /// constant of the parameter expression, which the elaborator folds per
     /// instance.
     ParamValue {
