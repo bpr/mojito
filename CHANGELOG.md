@@ -342,6 +342,52 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Programs the VM used to run only through its erased path now run on
+  concrete MIR, as the first full gate since the VM switched found: a
+  callable parameter's default (`callback: def(Int) thin -> Int =
+  increment`), a `**kwargs` collector filled by keywords or a forwarded
+  `**options^`, a `String` value parameter read at run time, a subscript
+  whose callback parameter is inferred, a nominal callable returning a
+  reference, an origin-specialized nested function value, a runtime
+  parameter typed by a generic `def`, and a nested `def` given a capturing
+  callable parameter through an indirect call.
+
+- A call through a callable contract takes the contract's own defaults
+  (`def[primary: … = increment]`), as the pin does, over the
+  implementation's; a contract scalar default binds at its declared type.
+
+- `print(opt.value())` of a view no longer destroys the viewed string before
+  the print reads it ("use after Pointer deallocation").
+
+- `var s = id("hi")` over a template-served generic `def` compiles; its
+  result register named the unsolved `T`.
+
+- Three fixtures compile natively again: a `DType` value parameter folded
+  into an instance keeps its slot typed, and a pack-keyed `def`'s instance
+  names a generic struct element (`show(xs)` over a `List[Int]`) by its
+  instance symbol ("struct 'List' has no MIR declaration to lay out").
+
+- `comptime if conforms_to(T, Hashable)` in a template-served `def` decides
+  the condition per instance again; it failed with "register r0 has no
+  checked type".
+
+- `SIMD.to_bits` to a narrower lane in a template-served `def` is rejected
+  when the elaborator closes the lane, as the pin rejects it; it used to run.
+
+- A method holding a `comptime for` or `comptime if` derives its instances
+  from the checked template again (the bundled `Tuple` methods among them),
+  instead of being checked once per instance.
+
+- `comptime N = pow2(3)` applied to a `def`'s value parameter (`scale[N]`)
+  runs, as the pin does; it was rejected as a struct argument.
+
+- A dead `comptime if` arm whose closed arithmetic fails (`1 // 0`) no
+  longer rejects a template-served `def`; an instance that takes the arm
+  still fails.
+
+- The `comptime for` over a tuple diagnostic spells element types as the
+  user wrote them (`Tuple[String, String, String]`).
+
 - `comptime T = Ts[i]` then `var first: T = args[i]` in a pack-keyed `def`
   types a `StringLiteral` element's local as that literal's closed type, as
   the pin does, instead of failing with "'StringLiteral[_]' is not
@@ -908,6 +954,13 @@ to evolve under the `0.x` compatibility rules.
   roadmap 2.1.
 
 ### Changed
+
+- A generic `def` passed where a non-generic `def(...)` value is expected
+  is rejected at the argument, as the pin rejects it: only an explicit
+  specialization (`f[...]`) is a non-generic function value. It used to
+  infer the specialization and then fail in the elaborator. A generic `def`
+  named as a tuple display element is rejected for the same reason
+  ("cannot use parametric function as a runtime closure").
 
 - A runtime scalar now builds a multi-lane vector of its own dtype wherever
   one is expected, as upstream's implicit `SIMD.__init__(Scalar[dtype])`

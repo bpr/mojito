@@ -1470,6 +1470,7 @@ mod tests {
             param_arg_regs: Vec::new(),
             receiver: None,
             instantiated_args: Vec::new(),
+            spread: None,
         };
         let program = MirProgram {
             functions: vec![

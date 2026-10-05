@@ -1705,7 +1705,7 @@ fn nested_call_transfer_installs_loans_on_the_carrier() {
     // its direct call through `CallIndirect`; the call site still installs
     // the transferred loan on the carrier's root after the call, exactly
     // like the direct free-call path.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        s.append(box^)\n    stash(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -1838,7 +1838,7 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
     // A transfer destination rooted at the enclosing function's own parameter
     // is not installed locally — the derived transitive effect installs it at
     // the caller, where the storage actually lives.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef outer(mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], b: RefBox[MutUnsafeAnyOrigin]):\n        s.append(b^)\n    stash(sink, box)\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    outer(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\ndef outer(mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n    def stash(mut s: List[RefBox[MutUnsafeAnyOrigin]], var b: RefBox[MutUnsafeAnyOrigin]):\n        s.append(b^)\n    stash(sink, box^)\n\ndef main():\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    outer(sink, RefBox(alias))\n    print(sink[0].value[0])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -3332,45 +3332,32 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
 }
 
 #[test]
-fn specialized_runtime_pack_is_abi_only_and_binds_as_a_tuple() {
+fn pack_keyed_def_is_template_served_without_the_runtime_pack_marker() {
     use mojito::{Ty, check_program, elaborate};
 
+    // A pack-keyed `def` that reads its collector is served by its template:
+    // its declaration keeps the symbolic pack, and the ABI-only
+    // `RuntimePack` marker a per-call clone used to carry never appears.
     let src = "def count[*Types: Copyable](*args: *Types) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\"))\n";
     let program = parse(src).expect("parse");
-    let program = elaborate(program).expect("specialize heterogeneous pack");
-    let checked = check_program(&program).expect("check specialization");
+    let program = elaborate(program).expect("elaborate heterogeneous pack");
+    let checked = check_program(&program).expect("check template");
     let mir = mojito::mir::lower_checked_program(&checked);
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
         mir.invariant_errors
     );
-
-    let declaration = mir
-        .declarations
-        .functions
-        .iter()
-        .find(|declaration| matches!(declaration.variadic, Some(Ty::RuntimePack(_))))
-        .expect("specialized declaration retains the heterogeneous ABI marker");
-    assert!(matches!(
-        declaration.variadic,
-        Some(Ty::RuntimePack(ref elements)) if elements == &[Ty::Int, Ty::StringLiteral]
-    ));
-
-    let function = mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == &declaration.lowered_name)
-        .map(|(_, function)| function)
-        .expect("specialized body lowered");
-    assert_eq!(
-        function.param_types,
-        [Ty::Tuple(vec![Ty::Int, Ty::StringLiteral])],
-        "the runtime frame exposes an ordinary Tuple collector to the body"
+    assert!(
+        !mir.declarations
+            .functions
+            .iter()
+            .any(|declaration| matches!(declaration.variadic, Some(Ty::RuntimePack(_)))),
+        "no clone carries the heterogeneous ABI marker"
     );
-    assert_eq!(
-        function.var_tys.get(&0),
-        Some(&Ty::Tuple(vec![Ty::Int, Ty::StringLiteral]))
+    assert!(
+        mir.functions.iter().any(|(name, _)| name == "count"),
+        "the template body is lowered"
     );
     assert!(
         mojito::mir::verify::verify(&mir).is_empty(),
@@ -3397,80 +3384,49 @@ fn function_names(mir: &mojito::mir::MirProgram) -> Vec<&str> {
 }
 
 #[test]
-fn inferred_bound_generic_call_monomorphizes_beside_the_template() {
+fn inferred_bound_generic_call_is_served_by_its_template() {
     let mir = compiled_mir(
         "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef main():\n    print(ident(2))\n",
     );
     let names = function_names(&mir);
+    assert!(names.contains(&"ident"), "{names:?}");
     assert!(
-        names.iter().any(|name| name.starts_with("ident$")),
+        !names.iter().any(|name| name.starts_with("ident$")),
         "{names:?}"
     );
-    // The abstract template stays beside its clone: its body keeps the
-    // pre-check its own parameter bounds demand.
-    assert!(names.contains(&"ident"), "{names:?}");
-    let main = &mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main MIR")
-        .1;
-    let rendered = format!("{main:?}");
-    assert!(rendered.contains("ident$"), "{rendered}");
 }
 
 #[test]
-fn inferred_iteration_clone_uses_no_erased_iterator_dispatch() {
-    // The monomorphized clone of an inferred `first(xs, -1)` iterates
-    // `List[Int]` through the ordinary concrete borrowed protocol; no
-    // `__iterator_dispatch` shim remains at that call site. (The template body
-    // must also be abstractly valid — round one checks the retained template —
-    // so this uses the stdlib `first_or` shape.) This is the Stage-E
-    // retirement baseline for inferred applications.
+fn inferred_iteration_def_is_served_by_its_template() {
+    // An inferred `first(xs, -1)` over a trait-bound iterable is served by
+    // the template; the elaborator instantiates it below MIR.
     let mir = compiled_mir(
         "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    var xs: List[Int] = [3, 4, 5]\n    print(first(xs, -1))\n",
     );
     let names = function_names(&mir);
-    let clone = mir
-        .functions
-        .iter()
-        .find(|(name, _)| name.starts_with("first$"))
-        .unwrap_or_else(|| panic!("first clone exists: {names:?}"));
-    let rendered = format!("{:?}", clone.1);
-    assert!(
-        !rendered.contains("__iterator_dispatch"),
-        "clone still dispatches abstractly: {rendered}"
-    );
     assert!(names.contains(&"first"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("first$")),
+        "{names:?}"
+    );
 }
 
 #[test]
-fn clone_interior_inferred_calls_reach_a_second_discovery_round() {
-    // `outer`'s request is discovered in round one; `inner`'s instantiation is
-    // recorded only inside the generated `outer$…` clone (a stamped source),
-    // so its request is discovered in round two — pinning clone-span
-    // stability across re-elaborations.
+fn chained_inferred_calls_are_served_by_their_templates() {
+    // `outer` calls `inner` with its own binder; both templates serve every
+    // call, so discovery mints no clone of either.
     let mir = compiled_mir(
         "def inner[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef outer[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return inner(x)\n\ndef main():\n    print(outer(7))\n",
     );
     let names = function_names(&mir);
-    assert!(
-        names.iter().any(|name| name.starts_with("outer$")),
-        "{names:?}"
-    );
-    assert!(
-        names.iter().any(|name| name.starts_with("inner$")),
-        "{names:?}"
-    );
     assert!(names.contains(&"outer"), "{names:?}");
-    let outer_clone = &mir
-        .functions
-        .iter()
-        .find(|(name, _)| name.starts_with("outer$"))
-        .expect("outer clone")
-        .1;
-    let rendered = format!("{outer_clone:?}");
-    assert!(rendered.contains("inner$"), "{rendered}");
+    assert!(names.contains(&"inner"), "{names:?}");
+    assert!(
+        !names
+            .iter()
+            .any(|name| name.starts_with("outer$") || name.starts_with("inner$")),
+        "{names:?}"
+    );
 }
 
 #[test]

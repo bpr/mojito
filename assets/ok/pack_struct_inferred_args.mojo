@@ -3,6 +3,7 @@
 # tuple display it stores, and a pack constructor `var *args: *Self.Ts` solves
 # it from the collected arguments. The inferred instance is the same concrete
 # struct an explicit `Pair[Int, Bool]` names, inside a generic body too.
+# requires: discovery
 @fieldwise_init
 struct Pair[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
     var storage: Tuple[*Self.Ts]

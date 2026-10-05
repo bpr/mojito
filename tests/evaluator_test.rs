@@ -749,18 +749,14 @@ fn generic_target_implicit_conversion_runs_selected_constructor() {
 }
 
 #[test]
-fn generic_function_identity_runs_type_erased() {
-    let e = run(
-        "def id[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\nvar n: Int = id(5)\nvar s: String = id(\"hi\")\n",
+fn generic_function_identity_runs_from_its_template() {
+    // `id` is served by its template, which the production pipeline's
+    // elaborator instantiates per call.
+    let e = run_compiled(
+        "def id[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\nvar n: Int = id(5)\nvar s: String = id(\"hi\")\nprint(s)\n",
     );
     assert_eq!(binding(&e, "n"), Value::Int(5));
     assert_nominal(&binding(&e, "s"), "String");
-    assert_eq!(
-        output(
-            "def id[T: Copyable & Movable](x: T) -> T:\n    return x.copy()\n\nvar s: String = id(\"hi\")\nprint(s)\n"
-        ),
-        "hi\n"
-    );
 }
 
 #[test]

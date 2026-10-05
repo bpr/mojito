@@ -108,8 +108,11 @@ pub(super) fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty
 }
 
 /// Dependent callable values are compile-time carriers once every indirect use
-/// has become a direct specialized call. Remove their now-dead MIR plumbing so
-/// neither verification nor backend lowering sees a fictitious runtime ABI.
+/// has become a direct specialized call. Their storage and the parameters
+/// that receive them become an `Int` placeholder: a value is the constant `0`,
+/// which a call still passes to an instance that folded the callable into its
+/// identity, so neither verification nor backend lowering sees a fictitious
+/// runtime ABI.
 pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
     pub(super) fn erase(
         blocks: &mut [MirBlock],
@@ -142,7 +145,15 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
                     MirInstr::MakeClosure { dest, .. }
                     | MirInstr::Const { dest, .. }
                     | MirInstr::CopyValue { dest, .. }
-                    | MirInstr::UseVar { dest, .. } => !generic_regs.contains(&dest.0),
+                    | MirInstr::UseVar { dest, .. }
+                        if generic_regs.contains(&dest.0) =>
+                    {
+                        *instruction = MirInstr::Const {
+                            dest: *dest,
+                            k: Const::Int(0),
+                        };
+                        true
+                    }
                     MirInstr::DefVar { var, .. } => !generic_vars.contains(var),
                     _ => true,
                 }
@@ -166,6 +177,18 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
     }
     for var in generic_vars {
         function.var_tys.insert(var, Ty::Int);
+    }
+    erase_generic_callable_parameters(&mut function.param_types);
+}
+
+/// A parameter typed by a generic callable receives the `Int` placeholder its
+/// caller's erased storage passes
+/// ([`erase_specialized_generic_callable_storage`]).
+pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
+    for ty in types {
+        if matches!(ty, Ty::GenericFunc { .. }) {
+            *ty = Ty::Int;
+        }
     }
 }
 

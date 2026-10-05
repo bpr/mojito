@@ -209,6 +209,9 @@ fn classify(path: &Path) -> (Outcome, String) {
     };
     match compiler.execute(&compiled) {
         Ok(_) => (Outcome::Ok, String::new()),
+        // Elaboration is instantiation, which the pin performs at compile
+        // time: a program it rejects is rejected before anything runs.
+        Err(error @ CompilerError::Elaborate(_)) => (Outcome::TypeError, error.to_string()),
         Err(error) => (Outcome::RuntimeError, error.to_string()),
     }
 }
@@ -310,7 +313,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "overloaded_method_own_binder_symbols",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to tell a place pointer bound to `T` from a reference.
+    "extensions::subtree_pointer_generic_return_deref",
     "extensions::template_served_iterable_def",
+    "generic_field_pointer_deref_in_place",
     "template_served_def_loan_carrying_argument",
     "template_served_loan_carrying_instance",
     // Section 1, the erased oracle: an erased value carries no type
@@ -337,12 +342,23 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_generic_struct_lifecycle",
     "comptime_if_generic_struct_method_call",
     "comptime_if_inferred_def",
+    "comptime_if_layout_query",
     "comptime_if_nested_def_call",
+    "comptime_if_overload_beside_pack",
     "comptime_if_overload_beside_plain",
+    "comptime_if_overload_pack_first",
+    "comptime_if_overload_pack_plain_triple",
+    "comptime_if_overload_pack_zero_arity",
     "comptime_if_overloaded_def",
     "comptime_if_overloaded_def_explicit",
     "comptime_if_template_served",
+    "dtype_compile_time_values",
+    "extensions::self_hosted_algorithms",
+    "pack_overload_beside_keyed",
+    "simd_symbolic_surface",
+    "template_def_converting_argument",
     "template_folded_value",
+    "template_two_arms",
     "type_predicate_comptime_if",
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
@@ -355,6 +371,25 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R292, the erased oracle: a kept `comptime for` runs its index as a
     // runtime value, so a vector at the index's width has no known width.
     "comptime_for_index_typed_local",
+    // R300, the erased oracle: a vector whose lane dtype or width is a
+    // binder reaches the VM with its slots symbolic.
+    "comptime_layout_constant",
+    "dtype_keyed_method_forward",
+    "dtype_value_param",
+    "lane_template_served",
+    "simd_generic_width",
+    "simd_scalar_splat",
+    "simd_to_bits_default_symbolic",
+    "template_value_keyed_lane_def",
+    "template_value_shaped_construction",
+    "template_value_shaped_operations",
+    // R301, the erased oracle: a kept `comptime for` bounded by a value
+    // parameter or a pack's length has no runtime value to stop at.
+    "comptime_for_template_served",
+    "pack_element_alias_served",
+    // R302: concrete MIR never frees the empty entries list a linear
+    // `Dict.deinit_with` leaves, where the erased run destroys it.
+    "dict_insert_linear_capable",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one
@@ -402,7 +437,7 @@ fn vm_run(
                 {
                     template.to_string()
                 }
-                _ => event.clone(),
+                _ => without_temp_paths(event),
             })
             .collect();
         VmRun { outcome, lifecycle }
@@ -411,6 +446,28 @@ fn vm_run(
         outcome: Err("the VM panicked".to_string()),
         lifecycle: Vec::new(),
     })
+}
+
+/// `event` with each path under the temporary directory spelled `<tmp>`: a
+/// fixture's temporary files are named at random per run, and a raised
+/// error's message may name one.
+fn without_temp_paths(event: &str) -> String {
+    let temp = std::env::temp_dir();
+    let temp = temp.to_string_lossy();
+    let temp = temp.trim_end_matches('/');
+    let mut out = String::new();
+    let mut rest = event;
+    while let Some(start) = rest.find(temp) {
+        out.push_str(&rest[..start]);
+        out.push_str("<tmp>");
+        let after = &rest[start + temp.len()..];
+        let end = after
+            .find(|c: char| c == '\'' || c == '"' || c.is_whitespace())
+            .unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Run the fixture as production does, on concrete MIR, and require the

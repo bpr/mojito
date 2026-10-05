@@ -1,6 +1,7 @@
 # A value consumed and refilled in every iteration of a `comptime for` is
 # live after the loop, for zero and for several iterations. Output matches
 # the pin (docs/notes/comptime-region-ownership.md, l5).
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

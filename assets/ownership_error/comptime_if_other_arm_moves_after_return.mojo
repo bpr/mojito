@@ -1,6 +1,8 @@
 # The taken arm returns, the other arm consumes `b`, and `b` is used after
 # the join: the join reads the arm that falls through, so `b` is
 # uninitialized there, as the pin says (docs/notes/comptime-region-ownership.md, c6).
+# requires: stdlib
+# expect: use of uninitialized value 'b'
 struct Thing(Movable):
     var s: String
 

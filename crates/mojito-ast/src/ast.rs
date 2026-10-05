@@ -439,6 +439,17 @@ impl Dtype {
         .find(|d| d.scalar_alias() == Some(name))
     }
 
+    /// The bit width of one lane (`bool` is one bit).
+    pub const fn bit_width(self) -> u32 {
+        match self {
+            Self::Bool => 1,
+            Self::Int8 | Self::UInt8 => 8,
+            Self::Int16 | Self::UInt16 | Self::Float16 => 16,
+            Self::Int32 | Self::UInt32 | Self::Float32 => 32,
+            Self::Int | Self::Int64 | Self::UInt64 | Self::Float64 => 64,
+        }
+    }
+
     /// Whether this dtype's lanes are floating-point.
     pub const fn is_float(self) -> bool {
         matches!(self, Self::Float16 | Self::Float32 | Self::Float64)

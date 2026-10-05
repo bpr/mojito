@@ -21,7 +21,7 @@ impl Checker {
         let target = match (param_args.first(), source) {
             (Some(argument), _) => self.dtype_from_arg(argument)?,
             (None, SimdDtype::Known(source)) => {
-                SimdDtype::Known(unsigned_dtype_of_width(dtype_bit_width(*source)))
+                SimdDtype::Known(unsigned_dtype_of_width(source.bit_width()))
             }
             (None, SimdDtype::Expr(source)) => SimdDtype::Expr(
                 symbolic_unsigned_dtype_of(&self.param_context, source).map_err(param_error)?,
@@ -34,7 +34,7 @@ impl Checker {
             );
             let narrower = source
                 .known()
-                .is_some_and(|source| dtype_bit_width(target_dtype) < dtype_bit_width(source));
+                .is_some_and(|source| target_dtype.bit_width() < source.bit_width());
             if !unsigned || narrower {
                 return Err(TypeError::TypeMismatch {
                     expected: "an unsigned dtype at least as wide as the source lane".to_string(),

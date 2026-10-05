@@ -527,7 +527,7 @@ fn dependent_generic_callable(index: &str) -> Ty {
                 .select(
                     vec![Ty::Int, Ty::StringLiteral],
                     &ParamContext::detached().decl_ref(
-                        ParamId::new("handler", 0),
+                        ParamId::new(&format!("$test:{index}"), 0),
                         index,
                         MetaTy::int(),
                     ),
@@ -1848,7 +1848,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
 fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
     // The destination domain of a transferred-loan generation must root at
     // the generation's own reference slot.
-    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: Carrier[Self.origin]\n    var b: List[Int]\n\ndef stash_into_a(mut t: Two, box: RefBox):\n    t.a.slot = box^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var t = Two(Carrier(RefBox(whole)), List[Int](1))\n    var local: List[Int] = [9]\n    ref alias = local\n    stash_into_a(t, RefBox(alias))\n    print(1)\n";
+    let source = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Carrier[origin: Origin[mut=True]]:\n    var slot: RefBox[Self.origin]\n\n@fieldwise_init\nstruct Two[origin: Origin[mut=True]]:\n    var a: Carrier[Self.origin]\n    var b: List[Int]\n\ndef stash_into_a(mut t: Two, var box: RefBox):\n    t.a.slot = box^\n\ndef main():\n    var keep: List[Int] = [1]\n    ref whole = keep\n    var t = Two(Carrier(RefBox(whole)), List[Int](1))\n    var local: List[Int] = [9]\n    ref alias = local\n    stash_into_a(t, RefBox(alias))\n    print(1)\n";
     let mut prog = lower_source(source);
     let domain = prog
         .functions

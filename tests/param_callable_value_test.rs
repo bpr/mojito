@@ -282,57 +282,26 @@ def main():
 }
 
 #[test]
-fn generic_callable_expression_capture_effect_conflicts_with_a_live_owner_loan() {
-    let source = r"
-def invoke[
-    origins: OriginSet, //, callback: def() capturing[origins] -> None
-]():
-    callback()
-
-def main():
-    var value = 1
-
-    @parameter
-    def replace():
-        value = 2
-
-    ref alias = value
-    var functions = (invoke,)
-    functions[0][replace]()
-    print(alias)
-";
-    let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
-    let result = compiler.compile_unlinked(source);
-    assert!(
-        matches!(
-            &result,
-            Err(CompilerError::Ownership(OwnershipError::LoanConflict { place, loan, .. }))
-                if place == "value" && loan == "alias"
-        ),
-        "got {result:?}"
-    );
-}
-
-#[test]
-fn generic_callable_tuple_preserves_its_checked_parameter_contract() {
+fn generic_callable_tuple_element_is_rejected() {
+    // A generic `def` is no runtime value until specialized: the pin rejects
+    // it as a display element ("cannot use parametric function as a runtime
+    // closure").
     let source = r"
 def identity[T: ImplicitlyCopyable & Deinitable](value: T) -> T:
     return value
 
-def offset[n: Int = 1](value: Int) -> Int:
-    return value + n
-
 def main():
-    var functions = (identity, offset)
-    print(functions[0][Int](42))
-    print(functions[1][2](40))
+    var functions = (identity, 1)
+    print(functions[1])
 ";
     let compiler = Compiler::new(LinkOptions::default(), BackendKind::Vm);
-    let compiled = compiler
+    let error = compiler
         .compile_unlinked(source)
-        .expect("compile generic callable Tuple elements");
-    let execution = compiler
-        .execute(&compiled)
-        .expect("execute generic callable Tuple elements");
-    assert_eq!(execution.output, "42\n42\n");
+        .expect_err("a generic def is no runtime Tuple element");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot use parametric function 'identity' as a runtime closure"),
+        "{error}"
+    );
 }

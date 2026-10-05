@@ -3,6 +3,7 @@
 # the read is rejected whichever arm an instance takes.
 # Rule and probes: docs/notes/comptime-region-ownership.md.
 # expect: use of uninitialized value 'a'
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

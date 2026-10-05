@@ -1103,14 +1103,17 @@ impl Elab<'_> {
         if !symbolic {
             return Ok(false);
         }
+        // An arm whose closed arithmetic fails to evaluate keeps its source:
+        // the pin reports the failure only for an instance that takes it.
+        let arm = |body: &[Stmt]| match self.block(body, &mut env.clone(), true) {
+            Err(ComptimeError::BadArithmetic(_) | ComptimeError::BadRange(_)) => Ok(body.to_vec()),
+            elaborated => elaborated,
+        };
         let branches = branches
             .iter()
-            .map(|(cond, body)| Ok((cond.clone(), self.block(body, &mut env.clone(), true)?)))
+            .map(|(cond, body)| Ok((cond.clone(), arm(body)?)))
             .collect::<Result<Vec<_>, ComptimeError>>()?;
-        let orelse = orelse
-            .as_deref()
-            .map(|body| self.block(body, &mut env.clone(), true))
-            .transpose()?;
+        let orelse = orelse.as_deref().map(arm).transpose()?;
         out.push(rebuilt(stmt, StmtKind::ComptimeIf { branches, orelse }));
         Ok(true)
     }

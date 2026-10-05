@@ -1496,10 +1496,14 @@ fn note_realized_callee(facts: &mut CheckedBodyFacts, selected: &str, target: &s
 /// adjustment naming a type still names a parameter: a type name is the one
 /// recipe that re-renders such a type, so only an instance's substitution
 /// decides it, and the derivation refuses there if the type stays symbolic.
+/// A compile-time branch or loop header has no instance counterpart: the
+/// instance decided or unrolled it, and realization drops the fact.
 fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) -> bool {
     matches!(
         adjustment,
         mojito_checked::checked::SemanticAdjustment::TypeName { .. }
+            | mojito_checked::checked::SemanticAdjustment::ComptimeCondition(..)
+            | mojito_checked::checked::SemanticAdjustment::ComptimeIteration(..)
     ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
 }
 

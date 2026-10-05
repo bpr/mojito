@@ -1,6 +1,8 @@
 # A `comptime for` body consumes `a`, and `a` is used after the loop: a
 # use of an uninitialized value, as the pin says
 # (docs/notes/comptime-region-ownership.md, l2).
+# requires: stdlib
+# expect: use of uninitialized value 'a'
 struct Thing(Movable):
     var s: String
 

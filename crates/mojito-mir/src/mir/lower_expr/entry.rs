@@ -187,6 +187,11 @@ impl Flatten<'_> {
                     let value = self
                         .reference_result_value(e)
                         .unwrap_or_else(|| self.expr_unconverted(e));
+                    // The source keeps its own checked type: a generic call's
+                    // register is otherwise typed by its declared result.
+                    if let Some(ty) = self.checked_ty(e) {
+                        self.f.reg_types.entry(value.0).or_insert(ty);
+                    }
                     (value, None)
                 }
             };

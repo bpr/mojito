@@ -1096,12 +1096,16 @@ impl Flatten<'_> {
         {
             return value;
         }
+        // A view over other storage (`opt.value()` of a span) names an
+        // origin: it owns nothing to destroy, and its register's provenance
+        // keeps the viewed storage alive through the call.
         let Some(ty) = self
             .f
             .reg_types
             .get(&value.0)
             .cloned()
             .filter(owns_droppable_storage)
+            .filter(|ty| mojito_types::types::erase_origin_arguments(ty) == *ty)
         else {
             return value;
         };

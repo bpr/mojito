@@ -257,17 +257,6 @@ pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static
     }
 }
 
-/// The bit width of one lane of `dtype` (`bool` is one bit).
-pub(super) const fn dtype_bit_width(dtype: Dtype) -> u32 {
-    match dtype {
-        Dtype::Bool => 1,
-        Dtype::Int8 | Dtype::UInt8 => 8,
-        Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 => 16,
-        Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => 32,
-        Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => 64,
-    }
-}
-
 /// `SIMD.to_bits`'s default target: the unsigned dtype of the source lane's
 /// width (a `bool` lane reads through `uint8`, as upstream casts it first).
 pub(super) const fn unsigned_dtype_of_width(bits: u32) -> Dtype {
@@ -292,7 +281,7 @@ pub(super) fn symbolic_unsigned_dtype_of(
     for unsigned in [Dtype::UInt32, Dtype::UInt16, Dtype::UInt8] {
         let tests = Dtype::ALL
             .into_iter()
-            .filter(|lane| unsigned_dtype_of_width(dtype_bit_width(*lane)) == unsigned)
+            .filter(|lane| unsigned_dtype_of_width(lane.bit_width()) == unsigned)
             .map(|lane| Ok(context.identical(source, &dtype(lane)?)))
             .collect::<Result<Vec<_>, ParamError>>()?;
         let same_width = context.op(ParamOp::BoolOr, &tests)?;

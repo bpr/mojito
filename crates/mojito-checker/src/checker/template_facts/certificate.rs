@@ -1042,9 +1042,11 @@ impl Checker {
             .all(|(_, effects)| effect_derives(effects));
         let binder_constructions = shape.binder_constructions.borrow();
         let type_arguments = shape.type_arguments.borrow();
+        let element_constructions = shape.element_constructions.borrow();
         let adjustments_derive = facts.operation_adjustments.iter().all(|(id, adjustment)| {
             binder_constructions.contains(id)
                 || type_arguments.contains(id)
+                || element_constructions.contains(id)
                 || adjustment_derives(adjustment)
                 || matches!(adjustment,
                     mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target)

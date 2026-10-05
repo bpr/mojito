@@ -90,6 +90,14 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return types_compatible(found_element, expected_element);
     }
+    // So do a callable's signature origins: a function value specialized at
+    // a caller's origin (`borrow[origin_of(x)]`) and one relative to its
+    // argument slots are one runtime value.
+    if let (Ty::Func { .. }, Ty::Func { .. }) = (found, expected)
+        && signature_origins_erased(found) == signature_origins_erased(expected)
+    {
+        return true;
+    }
     // So does a reference's: a specialized instance erases the origins of
     // its type arguments, so a `ref T` element slot holds a reference of any
     // origin with the same mutability.
@@ -587,6 +595,27 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         }
         _ => false,
     }
+}
+
+/// `ty` with every reference origin in its callable signature spelled alike,
+/// keeping each reference's mutability.
+fn signature_origins_erased(ty: &Ty) -> Ty {
+    let mut erased = ty.clone();
+    if let Ty::Func {
+        ref_params,
+        ref_return,
+        ..
+    } = &mut erased
+    {
+        for signature in ref_params
+            .iter_mut()
+            .flatten()
+            .chain(ref_return.iter_mut().map(AsMut::as_mut))
+        {
+            signature.origin = mojito_types::origin::SigOrigin::Static;
+        }
+    }
+    erased
 }
 
 #[cfg(test)]

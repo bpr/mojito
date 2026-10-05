@@ -355,6 +355,48 @@ impl<'a> Specializer<'a> {
             .collect()
     }
 
+    /// The values a call through a callable contract gives each of the
+    /// contract's compile-time parameters, in order: a supplied argument, or
+    /// the contract's default, which overrides the implementation's own. A
+    /// parameter neither fills stays deferred, for the implementation's
+    /// default.
+    pub(super) fn contract_values(
+        &self,
+        target: &str,
+        contract: &[ParamDecl],
+        param_args: &[mojito_mir::mir::MirParamArg],
+    ) -> Result<Vec<TyArg>, MonoError> {
+        if contract.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut bindings = self.base_bindings();
+        bind_explicit_value_arguments(
+            contract,
+            param_args,
+            &self.constant_values,
+            &mut bindings,
+            target,
+            &|name| self.structs.contains_key(name),
+            &self.enclosing,
+        )?;
+        apply_defaults(contract, &mut bindings)?;
+        // A default is evaluated as a literal; it binds at the parameter's
+        // declared type, as the VM materializes it.
+        Ok(contract
+            .iter()
+            .map(|decl| {
+                let value = bindings.values.get(&decl.binder()).cloned();
+                match (decl, value) {
+                    (ParamDecl::Value { ty, .. }, Some(value)) => {
+                        TyArg::Val(value.clone().materialize_as(ty).unwrap_or(value))
+                    }
+                    (_, Some(value)) => TyArg::Val(value),
+                    (_, None) => TyArg::Val(CtValue::Deferred(decl.binder())),
+                }
+            })
+            .collect())
+    }
+
     pub(super) fn materialize(
         &mut self,
         key: &InstanceKey,
@@ -470,6 +512,7 @@ impl<'a> Specializer<'a> {
         if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
             let mut declaration = declaration.clone();
             substitute_declaration(&mut declaration, bindings)?;
+            erase_generic_callable_parameters(&mut declaration.param_types);
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
             declaration.availability.clear();
@@ -1785,6 +1828,7 @@ impl<'a> Specializer<'a> {
                         kwarg_places,
                         capture_accesses,
                         param_arg_regs,
+                        param_decls: contract,
                         resolved,
                         ..
                     } => {
@@ -1823,7 +1867,12 @@ impl<'a> Specializer<'a> {
                             // A closure over folded value parameters already
                             // names its lifted body's instance.
                             let concrete = if self.functions.contains_key(target.as_str()) {
-                                let (target, bindings, arguments) = self.infer_call(
+                                // The call names the contract's parameters:
+                                // its supplied and defaulted values bind the
+                                // implementation's binders by position.
+                                let contract_values =
+                                    self.contract_values(&target, contract, param_arg_regs)?;
+                                let (target, mut bindings, arguments) = self.infer_call(
                                     owner,
                                     function,
                                     &target,
@@ -1832,9 +1881,22 @@ impl<'a> Specializer<'a> {
                                     args,
                                     kwargs,
                                     param_arg_regs,
-                                    &[],
+                                    &contract_values,
                                 )?;
-                                self.enqueue(&target, bindings, arguments)?
+                                // As at a direct call, a callable parameter
+                                // bound to a capturing closure becomes the
+                                // instance's trailing runtime parameter.
+                                let capturing =
+                                    self.capturing_callable_arguments(&target, param_arg_regs);
+                                bindings.runtime_callables =
+                                    capturing.iter().map(|(binder, _)| binder.clone()).collect();
+                                let concrete = self.enqueue(&target, bindings, arguments)?;
+                                arg_places.resize(args.len(), None);
+                                for (_, closure) in capturing {
+                                    args.push(closure);
+                                    arg_places.push(None);
+                                }
+                                concrete
                             } else {
                                 target
                             };
@@ -1894,6 +1956,16 @@ impl<'a> Specializer<'a> {
                             param_arg_regs,
                             &[],
                         )?;
+                        // A `__call__` returning a reference hands the call
+                        // the reference its destination register holds.
+                        let reference_result = self
+                            .declarations
+                            .get(target.as_str())
+                            .filter(|declaration| declaration.returns_reference)
+                            .and_then(|_| match function.reg_types.get(&dest.0) {
+                                Some(Ty::Ref(reference)) => Some(reference.clone()),
+                                _ => None,
+                            });
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *instruction = MirInstr::MethodCall {
                             dest: *dest,
@@ -1901,7 +1973,7 @@ impl<'a> Specializer<'a> {
                             method: "__call__".to_string(),
                             resolved: Some(concrete),
                             raises: raises.clone(),
-                            reference_result: None,
+                            reference_result,
                             result_adapter: None,
                             args: std::mem::take(args),
                             kwargs: std::mem::take(kwargs),

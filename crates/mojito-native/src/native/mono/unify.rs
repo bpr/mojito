@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::CallableDefault;
 
 /// A `Some[Trait]` sugar parameter is infer-only and absent from the
 /// declaration's `param_decls`, yet each binding selects a different body
@@ -206,6 +207,14 @@ pub(super) fn apply_defaults(
             } if !bindings.values.contains_key(&decl.binder()) => {
                 let value = eval_ct(default, bindings)?;
                 bindings.values.insert(decl.binder(), value);
+            }
+            ParamDecl::Value {
+                callable_default: Some(default),
+                ..
+            } if !bindings.values.contains_key(&decl.binder()) => {
+                if let Some(callable) = resolve_callable_default(default, bindings)? {
+                    bindings.values.insert(decl.binder(), callable);
+                }
             }
             _ => {}
         }
@@ -561,5 +570,27 @@ fn uniquely_spelled(enclosing_types: &HashMap<ParamRef, Ty>, spelling: &str) -> 
     match (spelled.next(), spelled.next()) {
         (Some((_, bound)), None) => Some(bound.clone()),
         _ => None,
+    }
+}
+
+/// The callable a callable parameter's default names under `bindings`: a
+/// function symbol, an earlier callable parameter's binding, or the arm a
+/// compile-time condition selects. `None` leaves the slot unresolved.
+fn resolve_callable_default(
+    default: &CallableDefault,
+    bindings: &Bindings,
+) -> Result<Option<CtValue>, MonoError> {
+    match default {
+        CallableDefault::Symbol(symbol) => Ok(Some(CtValue::Str(symbol.clone()))),
+        CallableDefault::Parameter(parameter) => Ok(bindings.values.get(parameter).cloned()),
+        CallableDefault::If {
+            condition,
+            then_value,
+            else_value,
+        } => match eval_ct(condition, bindings)? {
+            CtValue::Bool(true) => resolve_callable_default(then_value, bindings),
+            CtValue::Bool(false) => resolve_callable_default(else_value, bindings),
+            _ => Ok(None),
+        },
     }
 }

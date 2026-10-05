@@ -3,6 +3,7 @@
 # so the use after the join is rejected, as the pin rejects it.
 # Rule and probes: docs/notes/comptime-region-ownership.md.
 # expect: use of uninitialized value 'a'
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

@@ -2,6 +2,7 @@
 # to the later read; the value the other arm alone reads dies at that arm's
 # entry when the first is taken. Output matches the pin
 # (docs/notes/comptime-region-ownership.md, c9).
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

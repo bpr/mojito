@@ -480,9 +480,10 @@ mod tests {
         assert_eq!(small.layout, Layout::new(8, 4));
     }
 
-    /// Layout is asked only of a concrete type: a type parameter, a vector
-    /// over a symbolic width, and a struct over a symbolic argument are each
-    /// the one symbolic refusal, before any per-form rule.
+    /// Layout is asked only of a concrete type: a type parameter, an
+    /// inference hole, `Self`, a vector over a symbolic width, and a struct
+    /// over a symbolic argument are each the one symbolic refusal, before any
+    /// per-form rule.
     #[test]
     fn layout_symbolic_types_are_refused() {
         use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
@@ -498,6 +499,8 @@ mod tests {
                 bounds: Vec::new(),
                 callable_bound: None,
             },
+            Ty::Infer,
+            Ty::SelfType,
             Ty::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
                 width: mojito_types::types::SimdWidth::Expr(width.clone()),
@@ -521,8 +524,6 @@ mod tests {
     fn unrepresentable_types_reject_loudly() {
         for ty in [
             Ty::Never,
-            Ty::Infer,
-            Ty::SelfType,
             Ty::VariadicPack(Box::new(Ty::Int)),
             Ty::ComptimeList(Box::new(Ty::Int)),
         ] {

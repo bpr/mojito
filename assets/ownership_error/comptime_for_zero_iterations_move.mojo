@@ -4,6 +4,7 @@
 # move analysis, and the use after it is rejected whatever the trip count
 # (docs/notes/comptime-region-ownership.md, l1).
 # expect: use of uninitialized value 'a'
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

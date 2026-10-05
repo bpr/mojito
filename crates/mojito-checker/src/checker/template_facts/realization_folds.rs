@@ -390,9 +390,7 @@ pub(super) fn realize_simd_intrinsics(
             .ok_or("a reinterpretation's lane dtype or width stays open in the instance")?;
         let (source, _) = shape(*receiver)
             .ok_or("a reinterpretation's source lane stays open in the instance")?;
-        if crate::checker::builtins::dtype_bit_width(dtype)
-            < crate::checker::builtins::dtype_bit_width(source)
-        {
+        if dtype.bit_width() < source.bit_width() {
             return Err("a reinterpretation's target is narrower than the instance's lane");
         }
         realized.push((

@@ -79,6 +79,7 @@ pub(super) fn substitute_function(
             let ty = match value {
                 CtValue::Int(_) => Ty::Int,
                 CtValue::Bool(_) => Ty::Bool,
+                CtValue::Dtype(_) => Ty::Dtype,
                 _ => continue,
             };
             function.var_tys.insert(var as u32, ty);
@@ -101,6 +102,7 @@ pub(super) fn substitute_function(
         *ty = substitute_ty(ty, bindings)?;
     }
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
+    check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
     repair_storage_result_types(function);
     Ok(())
 }
@@ -916,8 +918,8 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
 }
 
-/// The constant a value parameter's slot holds: a scalar, or a function
-/// named by a callable-typed slot.
+/// The constant a value parameter's slot holds: a scalar, a function named
+/// by a callable-typed slot, or a string, read as its literal.
 pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
@@ -928,6 +930,7 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
         {
             Some(Const::Function(value.clone()))
         }
+        CtValue::Str(value) => Some(Const::Str(value.clone())),
         _ => None,
     }
 }
@@ -1214,4 +1217,57 @@ fn default_construction(
             construct: format!("default-constructing `{ty}`, which is no struct"),
         }),
     }
+}
+
+/// `SIMD.to_bits`' constraint, decided once an instance closes its source
+/// lane: the target must be at least as wide, as the pin's instantiation
+/// requires.
+fn check_reinterpretation_widths(
+    blocks: &[MirBlock],
+    reg_types: &HashMap<u32, Ty>,
+) -> Result<(), MonoError> {
+    for block in blocks {
+        for instruction in &block.instrs {
+            match instruction {
+                MirInstr::SimdBitcast {
+                    value,
+                    dtype: SimdDtype::Known(target),
+                    ..
+                } => {
+                    if let Some(Ty::Simd {
+                        dtype: SimdDtype::Known(source),
+                        ..
+                    }) = reg_types.get(&value.0)
+                        && target.bit_width() < source.bit_width()
+                    {
+                        return Err(MonoError {
+                            function: None,
+                            construct: format!(
+                                "constraint failed: the target type `{}` of `to_bits` must be at least as wide as the source lane `{}`",
+                                target.name(),
+                                source.name()
+                            ),
+                        });
+                    }
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    let regions = std::iter::once(body)
+                        .chain(handler.iter().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter())
+                        .chain(finalbody.iter());
+                    for region in regions {
+                        check_reinterpretation_widths(region, reg_types)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }

@@ -1921,6 +1921,7 @@ impl Checker {
                     // type at the pin (`Buf[f(7)]` is not `Buf[8]`), which no
                     // instance below the waist can be named by yet.
                     if !self.source_validation
+                        && self.structs.contains_key(decl.id().owner.as_ref())
                         && let CtValue::Expr(applied) = &value
                         && applied.as_constant().is_none()
                         && applied.require_constant().is_ok()

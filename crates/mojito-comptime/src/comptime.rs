@@ -4224,7 +4224,7 @@ mod def_request_tests {
     }
 
     #[test]
-    fn closed_request_rewrites_the_inferred_call_beside_the_template() {
+    fn closed_request_on_a_template_served_def_mints_no_clone() {
         let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
         let parsed = parse(&source).expect("parse");
         let occurrence = inferred_call_span(&parsed, "ident");
@@ -4237,26 +4237,22 @@ mod def_request_tests {
         );
 
         let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
-            .expect("materialize the requested specialization")
+            .expect("a request on a template-served def must not fail elaboration")
             .program;
 
+        // A plain trait-bound `def` is served by its template, so the
+        // request is skipped and the call keeps naming the template.
         let defs = def_names(&elaborated);
+        assert!(defs.contains(&"ident"), "{defs:?}");
         assert!(
-            defs.iter().any(|name| name.starts_with("ident$")),
+            !defs.iter().any(|name| name.starts_with("ident$")),
             "{defs:?}"
         );
-        // The abstract template stays beside its clone: its body keeps the
-        // pre-check the parameter bounds demand.
-        assert!(defs.contains(&"ident"), "{defs:?}");
-        let calls = main_call_names(&elaborated);
-        assert!(
-            calls.iter().any(|name| name.starts_with("ident$")),
-            "{calls:?}"
-        );
+        assert!(main_call_names(&elaborated).contains(&"ident".to_string()));
     }
 
     #[test]
-    fn a_request_names_a_type_pack_overload_by_its_collector() {
+    fn a_request_on_a_template_served_pack_overload_mints_no_clone() {
         let source = "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
                       def pos[*Ts: Writable](*rest: *Ts, a: Int) -> Int:\n    return 2\n\n\
                       def main():\n    print(pos(7, a=1))\n";
@@ -4288,20 +4284,12 @@ mod def_request_tests {
             .expect("materialize the requested specialization")
             .program;
 
-        let clones: Vec<_> = elaborated
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, params, .. } if name.starts_with("pos$") => Some(params),
-                _ => None,
-            })
-            .collect();
-        let [clone] = clones.as_slice() else {
-            panic!("exactly one clone, got {}", clones.len());
-        };
-        assert_eq!(
-            clone[0].kind,
-            mojito_ast::ast::ParamKind::Variadic,
-            "the clone comes from the collector-first declaration"
+        // Both pack-keyed overloads are served by their templates, so the
+        // request selects a declaration but mints no clone of it.
+        let defs = def_names(&elaborated);
+        assert!(
+            !defs.iter().any(|name| name.starts_with("pos$")),
+            "{defs:?}"
         );
     }
 
@@ -4333,7 +4321,7 @@ mod def_request_tests {
     }
 
     #[test]
-    fn requested_and_explicit_applications_share_one_clone() {
+    fn requested_and_explicit_applications_of_a_template_served_def_mint_no_clone() {
         let source =
             format!("{TEMPLATE}def main():\n    print(ident[Int](1))\n    print(ident(2))\n");
         let parsed = parse(&source).expect("parse");
@@ -4350,25 +4338,13 @@ mod def_request_tests {
             .expect("materialize the requested specialization")
             .program;
 
+        // The template serves the explicit and the inferred application
+        // alike, so neither mints a clone.
         let defs = def_names(&elaborated);
-        assert_eq!(
-            defs.iter()
-                .filter(|name| name.starts_with("ident$"))
-                .count(),
-            1,
-            "{defs:?}"
-        );
-        // The abstract template stays beside its clone: its body keeps the
-        // pre-check the parameter bounds demand.
         assert!(defs.contains(&"ident"), "{defs:?}");
-        let calls = main_call_names(&elaborated);
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|name| name.starts_with("ident$"))
-                .count(),
-            2,
-            "{calls:?}"
+        assert!(
+            !defs.iter().any(|name| name.starts_with("ident$")),
+            "{defs:?}"
         );
     }
 }

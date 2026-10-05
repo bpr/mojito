@@ -980,10 +980,13 @@ impl Checker {
     /// argument must still be printable at the instance's type, the demand
     /// the builtin makes of it. The call selects no callee and records at an
     /// argument what its syntax decides, beside the in-place read of a named
-    /// place the instance's type makes nominal, as `len`'s operand is. Each
-    /// keyword must still have the type `print` takes for it.
+    /// place the instance's type makes nominal, as `len`'s operand is. A
+    /// named parameter-typed argument the template read in place is read
+    /// that way only while the instance keeps it a parameter. Each keyword
+    /// must still have the type `print` takes for it.
     pub(super) fn realize_print_call(
         &self,
+        template: &CheckedBodyFacts,
         facts: &mut CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
@@ -1016,6 +1019,16 @@ impl Checker {
                 .clone();
             if !self.printable_argument(&ty) {
                 return Err("a print call's argument is not Writable for the instance");
+            }
+            if !matches!(ty, Ty::Param { .. })
+                && matches!(
+                    fact_at(&template.expression_types, argument),
+                    Some(Ty::Param { .. })
+                )
+            {
+                facts
+                    .borrowed_read_call_places
+                    .retain(|borrowed| *borrowed != argument);
             }
             self.borrow_nominal_place_operand(facts, argument, &ty, occurrences);
             Ok(())

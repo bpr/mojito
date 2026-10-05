@@ -213,8 +213,18 @@ fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
         })
         .expect("struct");
     let named: Vec<_> = methods.iter().map(|m| owners.owner("Box", m)).collect();
-    assert_eq!(named, ["Box.pick$ov$T", "Box.pick$ov$T$Int", "Box.view"]);
-    assert_eq!(owners.owner("Box$y3:Int", &methods[1]), "Box.pick$ov$T$Int");
+    assert_eq!(
+        named,
+        [
+            "Box.pick$ov$T$Copyable",
+            "Box.pick$ov$T$Copyable$Int",
+            "Box.view"
+        ]
+    );
+    assert_eq!(
+        owners.owner("Box$y3:Int", &methods[1]),
+        "Box.pick$ov$T$Copyable$Int"
+    );
     let view = &methods[2].type_params;
     assert_eq!(view[1].binder_slot(view), 0);
 }

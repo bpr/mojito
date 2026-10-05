@@ -170,12 +170,14 @@ impl Checker {
                 }));
             }
             // `conforms_to(MaybeUninit[Int], RegisterPassable)`: a fact about
-            // a concrete type, which the constraint compiler reserves for
-            // parameters.
+            // a type that is not a parameter, which the constraint compiler
+            // reserves for parameters.
             ExprKind::Call { name, args, .. }
                 if name == "conforms_to"
                     && args.len() == 2
-                    && self.comptime_type_operand(&args[0])?.is_some() =>
+                    && self
+                        .comptime_type_operand(&args[0])?
+                        .is_some_and(|operand| !matches!(operand, Ty::Param { .. })) =>
             {
                 let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(TypeError::Unsupported(
@@ -1665,8 +1667,7 @@ fn materialized_element_spelling(ty: &Ty) -> String {
         Ty::IntLiteral => "Int".to_string(),
         Ty::StringLiteral => "String".to_string(),
         Ty::FloatLiteral => "Float64".to_string(),
-        Ty::Struct(name, args) if args.is_empty() => name.clone(),
-        other => other.to_string(),
+        other => mojito_types::types::unqualified_type_name(other),
     }
 }
 

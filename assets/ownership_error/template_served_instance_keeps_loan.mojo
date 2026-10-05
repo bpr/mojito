@@ -3,6 +3,7 @@
 # stored type, and the call closes it with the receiver's arguments: the bag
 # borrows `xs`, which the pointer type names, so `xs` is not written while
 # the bag is still read.
+# requires: stdlib
 struct Bag[T: Copyable & Deinitable](Movable):
     var items: List[Self.T]
 

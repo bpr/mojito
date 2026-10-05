@@ -3,6 +3,7 @@
 # `self.name["bytes"]`, so a store over the field in the same `mut self`
 # method invalidates it and the view's next use is rejected, as it is through
 # a local or a `mut` parameter.
+# requires: stdlib
 struct Named(Movable):
     var name: String
 

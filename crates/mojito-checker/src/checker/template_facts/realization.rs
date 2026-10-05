@@ -585,6 +585,15 @@ impl Checker {
         };
         let indices = transferred_element_indices(indices, &occurrences);
         let mut selected = checked.facts.selected(&ids, &folded);
+        // Each unrolled copy of a `comptime for` is a scope at the loop's
+        // syntax, which binds nothing; the template's loop variable is gone.
+        let scopes: Vec<SyntaxId> = scope_statements(body)
+            .into_iter()
+            .map(|syntax| self.syntax_origins.origin(syntax))
+            .collect();
+        selected
+            .statement_bindings
+            .retain(|(id, _)| !scopes.contains(&id.syntax));
         if !relocate_packs(&mut selected, &ids) {
             return refuse("a relocated pack is not the instance's transfer");
         }
@@ -1272,7 +1281,7 @@ impl Checker {
         }
         facts.repr_calls.clear();
         for call in &template.print_calls {
-            self.realize_print_call(&mut facts, *call, occurrences)?;
+            self.realize_print_call(template, &mut facts, *call, occurrences)?;
         }
         facts.print_calls.clear();
         self.realize_stringify_calls(&mut facts, occurrences)?;
@@ -1950,19 +1959,12 @@ fn substituted_facts(
         )
     };
     Ok(CheckedBodyFacts {
-        // A pack query the instance folded to its literal carries none, nor
-        // does a pack element's construction the elaborator wrote closed,
-        // whose own check the instance merges (`merge_element_constructions`).
+        // A pack element's construction written closed is merged from the
+        // instance's own check (`merge_element_constructions`).
         operation_adjustments: template
             .operation_adjustments
             .iter()
-            .filter(|(_, adjustment)| {
-                !matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
-                        | mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
-                )
-            })
+            .filter(|(_, adjustment)| !dropped_at_instance(adjustment))
             .map(|(id, adjustment)| {
                 kept_binder_construction(template, *id, adjustment, &substitute)
                     .or_else(|| {
@@ -2115,6 +2117,22 @@ fn returned_values(body: &[Stmt]) -> Vec<SyntaxId> {
     returns.0
 }
 
+/// The syntax of every scope statement in `body`.
+fn scope_statements(body: &[Stmt]) -> Vec<SyntaxId> {
+    struct Scopes(Vec<SyntaxId>);
+
+    impl mojito_ast::visit::Visitor for Scopes {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if matches!(statement.kind, StmtKind::Scope(_)) {
+                self.0.push(statement.syntax_id);
+            }
+        }
+    }
+    let mut scopes = Scopes(Vec::new());
+    mojito_ast::visit::walk_block(&mut scopes, body);
+    scopes.0
+}
+
 /// Read each returned place the template handed out as a reference by
 /// value instead: the place is copied where it lies, which the instance
 /// owes at its own type (`realize_instance_facts`' copy check).
@@ -2126,4 +2144,18 @@ fn read_returns_by_value(facts: &mut CheckedBodyFacts, returned: &[SyntaxId]) {
     for (id, _) in copied {
         push_unique(&mut facts.copy_place_value_uses, id);
     }
+}
+
+/// Whether a template adjustment has no counterpart in an instance: a pack
+/// query folded to its literal, a pack element's construction written
+/// closed, or a compile-time branch or loop header the instance decided or
+/// unrolled.
+const fn dropped_at_instance(adjustment: &mojito_checked::checked::SemanticAdjustment) -> bool {
+    matches!(
+        adjustment,
+        mojito_checked::checked::SemanticAdjustment::ParamValue { .. }
+            | mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
+            | mojito_checked::checked::SemanticAdjustment::ComptimeCondition(..)
+            | mojito_checked::checked::SemanticAdjustment::ComptimeIteration(..)
+    )
 }

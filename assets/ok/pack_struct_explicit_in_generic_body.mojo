@@ -4,6 +4,7 @@
 # element, whatever their types, and a valid construction inside a
 # `comptime if` arm is accepted from the template as the pinned Mojo accepts
 # it.
+# requires: discovery
 struct Bag[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
     var storage: Tuple[*Self.Ts]
 

@@ -325,23 +325,25 @@ fn inferred_comptime_keyed_def_call_in_an_abstract_body_is_accepted() {
 }
 
 #[test]
-fn inferred_comptime_keyed_def_reached_from_a_function_value_is_rejected() {
-    // Passing `forward` as a function value leaves it on its abstract path,
-    // so its body's call to `show`'s stub could run: the fixpoint rejects
-    // the function-value use rather than trap at run time.
+fn generic_def_passed_as_a_function_value_is_rejected() {
+    // A generic `def` is not a non-generic function value: the pin infers no
+    // specialization from the parameter it is passed to, so the call is
+    // rejected at the argument.
     let compiler = Compiler::default();
     let error = compiler
         .compile_source(
             "def show[T: Copyable](x: T):\n    comptime if T == Int:\n        print(\"int\")\n\ndef forward[T: Copyable](x: T):\n    show(x)\n\ndef apply(f: def (Int) -> None, x: Int):\n    f(x)\n\ndef main():\n    apply(forward, 3)\n",
             std::path::Path::new("/tmp/mojito_unserved_comptime_keyed_call.mojo"),
         )
-        .expect_err("a function-value use reaching a compile-time-keyed stub");
-    let CompilerError::Comptime(error) = error else {
-        panic!("expected a compile-time rejection, got {error}");
-    };
-    assert_eq!(
-        error.to_string(),
-        "compile-time call arity: generic 'forward' requires compile-time parameter 'T'"
+        .expect_err("a generic def passed as a function value");
+    assert!(
+        matches!(
+            error,
+            CompilerError::Type(mojito::TypeError::BadCall { .. })
+        ) && error
+            .to_string()
+            .contains("cannot be converted from the generic function"),
+        "{error}"
     );
 }
 
@@ -693,22 +695,21 @@ fn pipeline_verifies_typed_mir_before_execution() {
 
 #[test]
 fn inferred_polymorphic_recursion_reports_specialization_divergence() {
-    // Each discovery round's clone records one deeper `List[…]` instantiation,
-    // so the request set never stops growing; the round cap converts that into
-    // a dedicated diagnostic instead of an endless compile.
+    // `wrap` is served by its template, so checking converges; each instance
+    // the elaborator demands names one deeper `List[…]`, and the instance
+    // budget stops the expansion with a diagnostic instead of an endless run.
     let compiler = Compiler::default();
-    let error = compiler
+    let program = compiler
         .compile_unlinked(
             "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
         )
-        .expect_err("inferred polymorphic recursion cannot converge");
-    assert!(
-        matches!(error, CompilerError::SpecializationDivergence { .. }),
-        "{error}"
-    );
-    let message = error.to_string();
-    assert!(message.contains("'wrap'"), "{message}");
-    assert!(message.contains("did not converge"), "{message}");
+        .expect("the template-served recursion checks");
+    let message = compiler
+        .execute(&program)
+        .expect_err("inferred polymorphic recursion cannot converge")
+        .to_string();
+    assert!(message.contains("`wrap`"), "{message}");
+    assert!(message.contains("instance budget"), "{message}");
 }
 
 #[test]
@@ -762,7 +763,7 @@ fn callable_struct_call_replays_transfer_effects() {
     // so mutating the loan source while the sink lives conflicts. Runs
     // through the compiler so the seeded stdlib effect participates.
     let compiler = Compiler::default();
-    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
+    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], var RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
     let error = compiler
         .compile_unlinked(conflict)
         .expect_err("mutating the transferred loan's source must conflict");
@@ -776,7 +777,7 @@ fn callable_struct_call_replays_transfer_effects() {
 
     // The same program with the sink's last use before the mutation stays
     // accepted — no spurious rejection from the indirect replay.
-    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
+    let after_last_use = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher(def(mut List[RefBox[MutUnsafeAnyOrigin]], var RefBox[MutUnsafeAnyOrigin])):\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    print(sink[0].value[0])\n    local.append(1)\n    print(local[1])\n";
     compiler
         .compile_unlinked(after_last_use)
         .expect("carrier released before the mutation compiles");
@@ -1074,7 +1075,7 @@ def pick[n: Int](x: Int) -> Int:
 
 def total[*Ts: Intable](*args: *Ts) -> Int:
     var s = 0
-    comptime for i in range(len(args)):
+    comptime for i in range(args.__len__()):
         s += Int(args[i])
     return s
 
@@ -1116,8 +1117,16 @@ fn instantiation_census_counts_each_cloned_class() {
         0,
         "the template serves show(5) and show[Int](6)"
     );
-    assert_eq!(minted(CloneClass::ComptimeIfDef), 1, "pick[3]");
-    assert_eq!(minted(CloneClass::PackDef), 1, "total(1, 2, 3)");
+    assert_eq!(
+        minted(CloneClass::ComptimeIfDef),
+        0,
+        "the template serves pick[3]"
+    );
+    assert_eq!(
+        minted(CloneClass::PackDef),
+        0,
+        "the template serves total(1, 2, 3)"
+    );
     assert_eq!(
         minted(CloneClass::InstanceMethod),
         0,
@@ -1304,10 +1313,9 @@ fn template_bounded_len_realizes_per_instance() {
 }
 
 #[test]
-fn template_two_arms_select_checked_facts() {
-    // Source validation checks both arms once. Each instance keeps the
-    // occurrences of the arm the elaborator selected and inherits their
-    // facts; the untaken arm contributes nothing executable.
+fn template_two_arms_are_template_served() {
+    // Source validation checks both arms once; the template serves both
+    // calls, and the elaborator selects each instance's arm.
     let source = "def choose[flag: Bool]() -> Int:\n    comptime if flag:\n        return 11\n    else:\n        return 22\n\ndef main():\n    print(choose[True]())\n    print(choose[False]())\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
@@ -1320,12 +1328,8 @@ fn template_two_arms_select_checked_facts() {
             .all(|name| !name.starts_with("choose$")),
         "{stats:?}"
     );
-    let returned: Vec<String> = clone_return_values(&program, "choose")
-        .iter()
-        .map(|value| format!("{:?}", value.kind))
-        .collect();
-    assert_eq!(returned.len(), 2, "one selected arm per instance");
-    assert_ne!(returned[0], returned[1], "distinct selected-arm syntax");
+    let census = program.instantiation_census();
+    assert!(!census.cloned.minted("choose"), "{census:?}");
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "11\n22\n"
@@ -1373,79 +1377,38 @@ fn template_rebind_and_where_are_instance_obligations() {
     let (output, stats) = run_source(&constrained("3"));
     assert_eq!(output, "200\n");
     assert!(
-        stats.derived.iter().any(|name| name.starts_with("small$")),
-        "{stats:?}"
+        stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .all(|name| !name.starts_with("small$")),
+        "the template serves small: {stats:?}"
     );
     let error = Compiler::default()
         .compile_unlinked(&constrained("7"))
         .expect_err("a violated where clause rejects");
     assert!(
-        matches!(error, CompilerError::Comptime(_))
-            && error.to_string().contains("n must stay below four"),
-        "a sourced constraint failure, not a clone body type error: {error}"
+        matches!(
+            error,
+            CompilerError::Type(mojito::TypeError::BadCall { .. })
+        ) && error.to_string().contains("n must stay below four"),
+        "a sourced constraint failure at the call, not a clone body type error: {error}"
     );
 }
 
 #[test]
-fn template_loop_instances_remap_owners() {
-    // One template occurrence becomes several instance occurrences when a
-    // `comptime for` unrolls. Every copy must name the instance's own `sum`,
-    // and two instances must not share a binding identity.
+fn template_loop_is_template_served() {
+    // A `comptime for` over a value parameter, with a `comptime if` on its
+    // index, is served by its template: the elaborator unrolls it per trip
+    // count, and every copy updates that instance's own `sum`.
     let source = "def total[n: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime if i == 1:\n            sum += 10\n        else:\n            sum += 1\n    return sum\n\ndef main():\n    print(total[0]())\n    print(total[1]())\n    print(total[3]())\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
-    let stats = program.template_stats();
+    let census = program.instantiation_census();
     assert!(
-        stats
-            .inferred_clones
-            .iter()
-            .all(|name| !name.starts_with("total$")),
-        "every trip count derives: {stats:?}"
+        !census.cloned.minted("total"),
+        "served by its template: {census:?}"
     );
-    let checked = program.checked();
-    let mut declared = Vec::new();
-    let mut updates_per_instance = Vec::new();
-    for statement in checked.statements() {
-        let mojito::ast::StmtKind::Def { name, body, .. } = &statement.kind else {
-            continue;
-        };
-        if !name.starts_with("total$") {
-            continue;
-        }
-        let owner = body
-            .iter()
-            .find(|statement| matches!(statement.kind, mojito::ast::StmtKind::VarDecl { .. }))
-            .and_then(|statement| checked.tables().declaration_at(&statement.source_span()))
-            .and_then(|declaration| declaration.binding)
-            .expect("the instance declares its own 'sum'");
-        let updates: Vec<_> = body
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                mojito::ast::StmtKind::AugAssign { place, .. } => Some(place),
-                _ => None,
-            })
-            .map(|place| {
-                let ids = checked.expression_ids_at(&place.source_span());
-                assert_eq!(ids.len(), 1, "each unrolled copy is its own occurrence");
-                checked.expression(ids[0]).expect("checked place").binding
-            })
-            .collect();
-        assert!(
-            updates.iter().all(|binding| *binding == Some(owner)),
-            "every copy of '{name}' updates that instance's 'sum'"
-        );
-        updates_per_instance.push(updates.len());
-        declared.push(owner);
-    }
-    updates_per_instance.sort_unstable();
-    assert_eq!(
-        updates_per_instance,
-        [0, 1, 3],
-        "zero, one, and three trips"
-    );
-    declared.sort_unstable();
-    declared.dedup();
-    assert_eq!(declared.len(), 3, "instances share no binding identity");
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "0\n1\n12\n"
@@ -1453,38 +1416,16 @@ fn template_loop_instances_remap_owners() {
 }
 
 #[test]
-fn template_pack_instances_derive() {
-    // A pack-keyed template is checked once at the dependent element `Ts[i]`;
-    // each instance takes every unrolled copy at the element the folded index
-    // fixed, and the derived facts agree with the clone's own check.
+fn template_pack_instances_are_template_served() {
+    // A pack-keyed template is checked once at the dependent element `Ts[i]`
+    // and serves every call; the elaborator unrolls each instance's loop.
     let source = "def show[*Ts: Writable](*values: *Ts):\n    comptime for i in range(values.__len__()):\n        print(values[i])\n\ndef main():\n    show(1, \"two\", 3.5)\n    show(True)\n    show()\n";
     let expected = "1\ntwo\n3.5\nTrue\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        assert_eq!(certified_count(stats, "show"), 1, "one template inference");
-        // A verifying run infers each derived body as well and files it
-        // under `verified` once the two bundles agree.
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("show$"))
-            .collect();
-        assert_eq!(derived.len(), 3, "every instance derives: {stats:?}");
-        assert!(
-            verify
-                || stats
-                    .inferred_clones
-                    .iter()
-                    .all(|name| !name.starts_with("show$")),
-            "no clone of the certified template is inferred: {stats:?}"
-        );
+        let census = program.instantiation_census();
+        assert!(!census.cloned.minted("show"), "{census:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             expected
@@ -1493,29 +1434,18 @@ fn template_pack_instances_derive() {
 }
 
 #[test]
-fn template_folded_values_derive() {
+fn template_folded_values_are_template_served() {
     // A loop variable and a value parameter read as runtime values fold to
-    // each instance's literal. The literal keeps the name's identity and
-    // takes its own type, its materialization to the template's `Int`, and
-    // the temporary a read argument makes of it; the derived facts agree
-    // with the clone's own check.
+    // each instance's literal; the template serves every call.
     let source = "def bump(x: Int) -> Int:\n    return x + 1\n\ndef mixed[n: Int]() -> Int:\n    var acc = n\n    comptime for i in range(n):\n        acc = acc * 2 + i\n        acc += bump(i)\n    comptime if n > 2:\n        return acc\n    return n\n\ndef main():\n    print(mixed[0]())\n    print(mixed[3]())\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        assert_eq!(certified_count(stats, "mixed"), 1, "one template inference");
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("mixed$"))
-            .collect();
-        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        assert!(
+            !census.cloned.minted("mixed"),
+            "served by its template: {census:?}"
+        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "0\n39\n"
@@ -1524,7 +1454,7 @@ fn template_folded_values_derive() {
 }
 
 #[test]
-fn template_folded_arithmetic_derives() {
+fn template_folded_arithmetic_is_template_served() {
     // Over folded values and literals alone an operator folds too: the
     // outermost one is an `IntLiteral` materialized to the template's `Int`,
     // and each operand below it a literal typed as one and nothing else.
@@ -1532,15 +1462,10 @@ fn template_folded_arithmetic_derives() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
+        let census = program.instantiation_census();
         assert!(
-            served.iter().any(|name| name.starts_with("nested$")),
-            "the instance derives: {stats:?}"
+            !census.cloned.minted("nested"),
+            "served by its template: {census:?}"
         );
         assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
     }
@@ -1551,15 +1476,10 @@ fn template_folded_arithmetic_derives() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(folding).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
+        let census = program.instantiation_census();
         assert!(
-            served.iter().any(|name| name.starts_with("halves$")),
-            "the instance derives: {stats:?}"
+            !census.cloned.minted("halves"),
+            "served by its template: {census:?}"
         );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
@@ -1569,27 +1489,23 @@ fn template_folded_arithmetic_derives() {
 }
 
 #[test]
-fn template_keyed_runtime_while_derives() {
+fn template_keyed_runtime_while_is_template_served() {
     // A runtime `while` in a keyed body, over an `Int` local after a
     // `comptime for`, inside a
     // `comptime for` with `break` and `continue`, and under a `comptime if`
-    // arm: each unrolled copy keeps its own loop, and every instance derives.
+    // arm: each unrolled copy keeps its own loop, and the template serves
+    // every instance.
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compile_entry(
             &compiler,
             include_str!("../assets/ok/template_keyed_runtime_while.mojo"),
         );
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        for template in ["count$", "steps$", "gated$"] {
+        let census = program.instantiation_census();
+        for template in ["count", "steps", "gated"] {
             assert!(
-                served.iter().any(|name| name.starts_with(template)),
-                "{template} derives: {stats:?}"
+                !census.cloned.minted(template),
+                "{template} is served by its template: {census:?}"
             );
         }
         assert_eq!(
@@ -1600,26 +1516,21 @@ fn template_keyed_runtime_while_derives() {
 }
 
 #[test]
-fn template_keyed_runtime_if_derives() {
+fn template_keyed_runtime_if_is_template_served() {
     // A runtime `if` in a keyed body, inside a `comptime for`, under a
     // `comptime if` arm, and after the loop: each unrolled copy keeps its own
-    // `if`, and every instance derives.
+    // `if`, and the template serves every instance.
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compile_entry(
             &compiler,
             include_str!("../assets/ok/template_keyed_runtime_if.mojo"),
         );
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        for template in ["count$", "pick$", "nested$"] {
+        let census = program.instantiation_census();
+        for template in ["count", "pick", "nested"] {
             assert!(
-                served.iter().any(|name| name.starts_with(template)),
-                "{template} derives: {stats:?}"
+                !census.cloned.minted(template),
+                "{template} is served by its template: {census:?}"
             );
         }
         assert_eq!(
@@ -1696,7 +1607,7 @@ fn template_def_builds_hasher_is_served_by_its_template() {
 }
 
 #[test]
-fn template_value_keyed_def_derives() {
+fn template_value_keyed_def_is_template_served() {
     // A `def` keyed on a type and a value, with no compile-time control
     // flow, is certified by the abstract check; each clone reads the value
     // as the literal it folded to.
@@ -1704,18 +1615,11 @@ fn template_value_keyed_def_derives() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("scaled$"))
-            .collect();
-        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        assert!(
+            !census.cloned.minted("scaled"),
+            "served by its template: {census:?}"
+        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "41 18\n"
@@ -1724,9 +1628,9 @@ fn template_value_keyed_def_derives() {
 }
 
 #[test]
-fn template_print_statement_derives() {
-    // A `print` statement in a runtime `def` or a method selects no callee;
-    // each instance proves its arguments `Writable` again.
+fn template_print_statement_is_template_served() {
+    // A `print` statement in a runtime `def` or a method selects no callee,
+    // so the value-keyed `shown`, `plain`, and `Box.report` mint no clone.
     let source = "def shown[T: ImplicitlyCopyable & Deinitable, n: Int](x: T, base: Int) -> Int:\n    var kept = x\n    print(n, base)\n    return base * n\n\ndef plain[T: ImplicitlyCopyable & Deinitable](x: T, v: Int) -> Int:\n    var kept = x\n    if v > 2:\n        print(\"big\", v)\n    return v\n\nstruct Box[T: ImplicitlyCopyable & Deinitable](Movable):\n    var item: Self.T\n    var count: Int\n\n    def __init__(out self, var item: Self.T, count: Int):\n        self.item = item\n        self.count = count\n\n    def report(self, extra: Int) -> Int:\n        print(\"count\", self.count, extra)\n        return self.count + extra\n\ndef main():\n    print(shown[Int, 3](7, 2), shown[String, 1](\"s\", 5))\n    print(plain[Int](1, 3), plain[String](\"s\", 1))\n    var a = Box[Int](1, 4)\n    var b = Box[String](\"x\", 9)\n    print(a.report(2), b.report(3))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
@@ -1736,32 +1640,13 @@ fn template_print_statement_derives() {
                 std::path::Path::new("/tmp/mojito_template_print_statement.mojo"),
             )
             .expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| {
-                ["shown$", "plain$", "Box.report$"]
-                    .iter()
-                    .any(|p| name.starts_with(p))
-            })
-            .collect();
-        // The templates of `plain` and `Box.report` serve every call, so
-        // only the value-keyed `shown` instances are cloned.
-        assert_eq!(
-            derived.len(),
-            2,
-            "every `shown` instance derives: {stats:?}"
-        );
-        assert!(
-            derived.iter().all(|name| name.starts_with("shown$")),
-            "`plain` mints no clone: {stats:?}"
-        );
+        let census = program.instantiation_census();
+        for template in ["shown", "plain", "Box.report"] {
+            assert!(
+                !census.cloned.minted(template),
+                "{template} is served by its template: {census:?}"
+            );
+        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
@@ -1803,10 +1688,11 @@ fn template_print_whole_value_is_served_by_its_template() {
 #[test]
 fn template_pack_element_construction_derives() {
     // A pack element's default construction handed to `print` or bound to a
-    // local is checked once with the pack symbolic; each instance checks
-    // the elaborated construction alone and fixes its copy's loop index at
-    // the element that construction built, or at the first of several
-    // elements sharing its type, which the copy cannot tell apart.
+    // local is checked once with the pack symbolic. Each method instance
+    // checks the elaborated construction alone and fixes its copy's loop
+    // index at the element that construction built, or at the first of
+    // several elements sharing its type; the pack-keyed `build` is served by
+    // its template.
     let source = "struct Row[*Ts: Movable & Writable & Deinitable](Movable):\n    var width: Int\n\n    def __init__(out self):\n        self.width = 3\n\n    def defaults(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            print(Self.Ts[i]())\n\n    def locals(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            var value = Self.Ts[i]()\n            print(value, self.width)\n\n\ndef build[*Ts: Movable & Defaultable & Writable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        var value = Ts[i]()\n        print(value)\n\n\ndef main():\n    var row = Row[Int, Float64, Bool]()\n    row.defaults()\n    row.locals()\n    build[Int, Optional[Int], Tuple[Int, Bool]]()\n    var shared = Row[Int, Int, Bool]()\n    shared.defaults()\n    shared.locals()\n    build[Bool, Int, Bool]()\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
@@ -1825,13 +1711,14 @@ fn template_pack_element_construction_derives() {
         let derived: std::collections::HashSet<&str> = served
             .iter()
             .map(String::as_str)
-            .filter(|name| {
-                name.starts_with("build$")
-                    || name.ends_with(".defaults")
-                    || name.ends_with(".locals")
-            })
+            .filter(|name| name.ends_with(".defaults") || name.ends_with(".locals"))
             .collect();
-        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
+        assert_eq!(derived.len(), 4, "every method instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        assert!(
+            !census.cloned.minted("build"),
+            "the template serves build: {census:?}"
+        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n0\n0\nFalse\n0 3\n0 3\nFalse 3\nFalse\n0\nFalse\n"
@@ -1871,7 +1758,7 @@ fn template_def_string_builtins_are_served_by_its_template() {
 }
 
 #[test]
-fn template_value_shaped_construction_derives() {
+fn template_value_shaped_construction_is_template_served() {
     // A keyed `def` constructing a `SIMD` whose dtype or width names its own
     // value binder records no dimensions in its template; each instance's
     // are its substituted construction type's.
@@ -1879,18 +1766,11 @@ fn template_value_shaped_construction_derives() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("both$"))
-            .collect();
-        assert_eq!(derived.len(), 2, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        assert!(
+            !census.cloned.minted("both"),
+            "served by its template: {census:?}"
+        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "42 10\n"
@@ -1899,35 +1779,36 @@ fn template_value_shaped_construction_derives() {
 }
 
 #[test]
-fn template_value_shaped_operations_derive() {
+fn template_value_shaped_operations_are_template_served() {
     // A keyed `def` applying operators, reductions, casts, and conversions
-    // to a value-shaped construction's value derives every instance; a
-    // reinterpretation narrower than an instance's lane keeps that
-    // instance's clone check, which reports it.
+    // to a value-shaped construction's value is served by its template; a
+    // reinterpretation narrower than an instance's lane is rejected when the
+    // elaborator closes that lane.
     let source = "def sum_lanes[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int64, w](v)\n    var twice = lanes + lanes * 3\n    var wide = twice.cast[DType.int32]()\n    return Int(twice.reduce_add()) + Int(wide.reduce_max()) + wide.length\n\ndef scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    var two = one * one - one\n    return Int(two) + Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(sum_lanes[4](2), sum_lanes[2](9), scale[DType.int16](3), scale[DType.uint8](4))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("sum_lanes$") || name.starts_with("scale$"))
-            .collect();
-        assert_eq!(derived.len(), 4, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        for template in ["sum_lanes", "scale"] {
+            assert!(
+                !census.cloned.minted(template),
+                "{template} is served by its template: {census:?}"
+            );
+        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "44 110 9 16\n"
         );
     }
     let narrower = "def scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(scale[DType.int64](4))\n";
-    let error = Compiler::default()
+    // The template serves `scale`, so the elaborator decides the constraint
+    // once the instance closes its source lane.
+    let compiler = Compiler::default();
+    let program = compiler
         .compile_unlinked(narrower)
+        .expect("the template checks");
+    let error = compiler
+        .execute(&program)
         .expect_err("a narrower reinterpretation is rejected");
     assert!(
         error
@@ -1938,25 +1819,20 @@ fn template_value_shaped_operations_derive() {
 }
 
 #[test]
-fn template_value_shaped_lane_copy_derives() {
+fn template_value_shaped_lane_copy_is_template_served() {
     // A lane of a value-shaped vector bound to a local copies a place; each
     // instance re-proves the copy at its own lane type.
     let source = "def first_lanes[dt: DType](v: Int) -> Int:\n    var lanes = SIMD[dt, 4](v)\n    var first = lanes[0]\n    var last = lanes[3]\n    first += last\n    return Int(first) + Int(lanes[1])\n\ndef widest[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    var first = lanes[0]\n    return Int(first) * w\n\ndef main():\n    print(first_lanes[DType.int16](3), first_lanes[DType.float32](2), first_lanes[DType.int64](4), first_lanes[DType.float64](1), widest[4](5), widest[2](7))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("first_lanes$") || name.starts_with("widest$"))
-            .collect();
-        assert_eq!(derived.len(), 6, "every instance derives: {stats:?}");
+        let census = program.instantiation_census();
+        for template in ["first_lanes", "widest"] {
+            assert!(
+                !census.cloned.minted(template),
+                "{template} is served by its template: {census:?}"
+            );
+        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "9 6 12 3 20 14\n"
@@ -2053,15 +1929,15 @@ fn lane_comparisons_derive() {
     }
     let stats = derived.template_stats();
     let lanes = ["dint", "dfloat64", "dint32"];
-    let members = lanes
-        .iter()
-        .flat_map(|lane| {
-            ["below", "clamp", "same", "positive"].map(|member| format!("W${lane};.{member}"))
-        })
-        .chain(["dint", "dfloat32", "duint16"].map(|lane| format!("sign${lane};")));
+    let members = lanes.iter().flat_map(|lane| {
+        ["below", "clamp", "same", "positive"].map(|member| format!("W${lane};.{member}"))
+    });
     for name in members {
         assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
     }
+    // The lane-keyed `sign` is served by its template at every lane.
+    let census = derived.instantiation_census();
+    assert!(!census.cloned.minted("sign"), "{census:?}");
 }
 
 #[test]
@@ -4549,12 +4425,11 @@ fn template_def_with_a_value_local_is_served_by_its_template() {
 }
 
 #[test]
-fn template_def_converting_argument_derives() {
+fn template_def_converting_argument_is_template_served() {
     // A direct call whose argument converts through an `@implicit`
     // constructor: the template's selection of the callee stands for every
-    // call. The trait-bound `counted` is served by its template with no
-    // clone, while each `keyed` instance derives and chooses the conversion
-    // again in the `comptime if` arm it kept.
+    // call. The trait-bound `counted` and the `comptime if`-keyed `keyed` are
+    // both served by their templates with no clone.
     let (output, stats) = run_source(include_str!(
         "../assets/ok/template_def_converting_argument.mojo"
     ));
@@ -4564,19 +4439,8 @@ fn template_def_converting_argument_derives() {
             .derived
             .iter()
             .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("counted$")),
-        "counted mints no clone: {stats:?}"
-    );
-    assert_eq!(
-        stats
-            .derived
-            .iter()
-            .filter(|name| name.starts_with("keyed$"))
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        2,
-        "both keyed instances derive; refused: {:?}",
-        stats.refused
+            .all(|name| !name.starts_with("counted$") && !name.starts_with("keyed$")),
+        "neither template mints a clone: {stats:?}"
     );
 }
 
@@ -4778,10 +4642,10 @@ fn closed_def_call_is_served_by_its_template() {
 }
 
 #[test]
-fn keyed_def_over_loan_carrying_argument_still_clones() {
-    // A `def` whose body reaches a compile-time-keyed `def` has no template
-    // body to instantiate, so its call at a loan-carrying argument keeps
-    // its clone and the clone's origin binder.
+fn keyed_def_over_loan_carrying_argument_is_template_served() {
+    // A `def` whose body reaches a `comptime if`-keyed `def` is served by its
+    // template at a loan-carrying argument, as the keyed `def` is: the
+    // elaborator decides the condition per instance.
     let source = "def inner[T: Copyable & Deinitable](value: T) -> Int:\n    comptime if conforms_to(T, Hashable):\n        return 1\n    else:\n        return 2\n\n\ndef outer[T: Copyable & Deinitable](value: T) -> Int:\n    return inner(value)\n\n\ndef main():\n    var xs: List[Int] = [7, 8, 9]\n    var p: Pointer[List[Int], ImmOrigin(origin_of(xs))] = Pointer(to=xs)\n    print(outer(p), outer(3))\n";
     let compiler = Compiler::default();
     let compiled = compile_entry(&compiler, source);
@@ -4789,16 +4653,13 @@ fn keyed_def_over_loan_carrying_argument_still_clones() {
         compiler.execute(&compiled).expect("execute").output,
         "2 1\n"
     );
-    let clone = "outer$y48:Pointer[List[Int], ImmOrigin(origin#4294967295)]";
-    assert!(
-        compiled
-            .checked()
-            .statements()
-            .iter()
-            .any(|statement| matches!(&statement.kind,
-                mojito::ast::StmtKind::Def { name, .. } if name == clone)),
-        "{clone} is minted"
-    );
+    let census = compiled.instantiation_census();
+    for template in ["inner", "outer"] {
+        assert!(
+            !census.cloned.minted(template),
+            "{template} is served by its template: {census:?}"
+        );
+    }
 }
 
 #[test]

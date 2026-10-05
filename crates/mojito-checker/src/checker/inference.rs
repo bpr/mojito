@@ -1253,6 +1253,15 @@ impl Checker {
                     .map(|e| self.tuple_element_ty(e))
                     .collect::<Result<Vec<_>, _>>()?;
                 for (value, ty) in elems.iter().zip(&tys) {
+                    // A generic `def` is no runtime value until specialized,
+                    // as the pin reports for a display element.
+                    if let (ExprKind::Identifier(name), Ty::GenericFunc { .. }) = (&value.kind, ty)
+                    {
+                        return Err(TypeError::Unsupported(format!(
+                            "cannot use parametric function '{name}' as a runtime closure; \
+                             specialize it explicitly"
+                        )));
+                    }
                     self.check_consuming(value, ty, "Tuple display element")?;
                 }
                 let result = self.public_tuple_type(tys.clone());

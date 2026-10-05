@@ -3,6 +3,7 @@
 # and `a`, consumed only in that arm, at the loop's exit when no iteration
 # takes it. Output matches the pin (docs/notes/comptime-region-ownership.md,
 # l6).
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

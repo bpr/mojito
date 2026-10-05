@@ -2,6 +2,7 @@
 # destroyed after its read in that iteration; a value read in the body lives
 # to its last read, in the last iteration. Output matches the pin for zero,
 # one, and three trips (docs/notes/comptime-region-ownership.md, l4).
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

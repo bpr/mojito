@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R300**.
+Next free ID: **R305**.
 
 ## Ordered Work
 
@@ -625,6 +625,36 @@ correctness fix to existing behavior is allowed.
     (R286).
   - `assets/ok/pack_element_default_construction.mojo` and
     `assets/ok/pack_element_binding_served.mojo` are its
+    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R300 (P5) The erased oracle cannot run a vector whose lane is a
+  binder**
+
+  Problem: a template-served `def` keyed on a `DType` or a width
+  (`SIMD[dt, w](v)`) runs on concrete MIR and stops under `--erased` with
+  "a SIMD instruction over the symbolic slots `SIMD[dt, w]` reached the VM".
+  - The elaborator closes the slots per instance; the erased frame keeps
+    them symbolic, and the VM's SIMD instructions need known slots.
+  - Ten `assets/ok` fixtures (`lane_template_served.mojo` and the
+    `template_value_*` lane fixtures among them) are its
+    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R301 (P5) The erased oracle cannot stop a kept `comptime for`
+  bounded by a binder**
+
+  Problem: `comptime for i in range(n)` in a template-served `def` keyed on
+  `n`, or over `range(len(Ts))`, runs on concrete MIR and stops under
+  `--erased` with "the erased oracle cannot decide the comptime for stop".
+  - The elaborator unrolls the loop per instance; the erased frame has no
+    runtime value for the bound.
+  - `assets/ok/comptime_for_template_served.mojo` and
+    `assets/ok/pack_element_alias_served.mojo` are its
     `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and these rows with it.
   - Depends on nothing.
@@ -1296,6 +1326,40 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while closing the `self` field store under a live view (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R302 A linear `Dict.deinit_with` leaves its emptied entries list to
+  an implicit destruction its element type does not allow**
+
+  Problem: `Dict[Int, Conn].deinit_with` over a linear `Conn` pops every
+  entry and leaves `entries`, an empty `List[DictEntry[Int, Conn]]`, to the
+  `deinit self` residual teardown.
+  - That list's `__deinit__` is conditional on a `Deinitable` element, so the
+    elaborator rightly mints none, and concrete MIR never frees the buffer.
+  - The erased run calls the template's destructor and logs a `drop List`
+    the concrete run lacks.
+  - The checker accepts the implicit residual destruction of a field whose
+    conditional `Deinitable` conformance the instance disproves.
+  - Consuming `entries` through `List.deinit_with` is the stdlib lever, but
+    the nested handler must forward the captured `elt_handler` and move both
+    fields out of a `var` entry, which Mojito does not accept yet.
+  - `assets/ok/dict_insert_linear_capable.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R304 A view copied out of a reference result carries no loan on the
+  storage it views**
+
+  Problem: `var v = first.value()` over `first = it.peek_next()` of a
+  `String`'s codepoint iterator binds a `StringSpan` whose loan on the string
+  is lost, so drop elaboration destroys the string first and `String(v)`
+  stops with "use after Pointer deallocation"; the pin prints `h`.
+  - The binding's loans come from `aggregate_borrows`, which sees no borrow
+    for a value copied out of `Optional.value()`'s reference result.
+  - Passing the same value straight to `print` works only because a view
+    argument stays in its register (`bind_temporary_argument`).
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -2589,6 +2653,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the pin runs it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R303 A capturing generic callable parameter cannot be applied at
+  its own compile-time arguments**
+
+  Problem: `callback[2](40)` in `def invoke_captured[origins: OriginSet, //,
+  callback: def[n: Int](Int) capturing[origins] -> Int]()`, bound to an
+  `@parameter` closure that captures a local, runs erased and stops in the
+  elaborator with "place keeps symbolic type `def[n: Int](Int)
+  capturing[...] -> Int`".
+  - The elaborator resolves an indirect call through a capture-free generic
+    callable, or a capturing non-generic one passed as a trailing runtime
+    argument, but never specializes a capturing generic closure at the
+    call's compile-time arguments while passing its environment.
+  - `conformance/fixtures/generic_anonymous_callables.mojo` (artifact
+    conformance case `generic-anonymous-callables`) and
+    `generic_callable_contract_defaults_override_implementation_defaults`
+    (`tests/param_callable_value_test.rs`) pin it.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 

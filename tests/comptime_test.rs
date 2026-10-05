@@ -479,9 +479,15 @@ fn nested_pack_can_forward_to_an_earlier_pack_sibling() {
 }
 
 #[test]
-fn captured_outer_pack_forwarding_infers_only_the_variadic_overflow() {
+fn captured_outer_pack_forwarding_must_refill_the_captured_pack() {
+    // Forwarding a moved-in pack capture whole leaves the capture
+    // uninitialized when the closure returns, which the pin rejects.
     let src = "def outer[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n    def score[*Us: Movable & Deinitable](head: Int, var *values: *Us) -> Int:\n        return head + len(values)\n    def relay() {args^} -> Int:\n        return score(40, *args^)\n    return relay()\n\ndef main():\n    print(outer(1, True))\n";
-    assert_eq!(run(src).unwrap(), "42\n");
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("'args' is uninitialized at return"),
+        "got: {error}"
+    );
 }
 
 #[test]
@@ -548,9 +554,9 @@ fn whole_pack_forwarding_reaches_mir_as_one_tuple_move() {
     let relay = mir
         .functions
         .iter()
-        .find(|(name, _)| name.starts_with("relay$") && !name.ends_with("$whole_pack"))
+        .find(|(name, _)| name == "relay")
         .map(|(_, function)| function)
-        .expect("relay specialization");
+        .expect("relay's template body");
     let instructions = relay
         .blocks
         .iter()
@@ -572,8 +578,8 @@ fn whole_pack_forwarding_reaches_mir_as_one_tuple_move() {
     );
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        mojito::mir::MirInstr::Call { func, args, .. }
-            if func.0.ends_with("$whole_pack") && args.len() == 1
+        mojito::mir::MirInstr::Call { func, args, spread: Some(0), .. }
+            if func.0 == "sink" && args.len() == 1
     )));
 }
 
@@ -833,8 +839,16 @@ fn specialization_evaluates_dependent_parameter_defaults() {
 
 #[test]
 fn unified_reflection_handle_exposes_struct_field_facts() {
-    let src = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var label: String\n\ndef main():\n    comptime r = reflect[Point]\n    comptime count = r.field_count()\n    comptime names = r.field_names()\n    comptime types = r.field_types()\n    print(count, names[0], names[1])\n    comptime if types[0] == Int:\n        print(\"int\")\n";
+    let src = "@fieldwise_init\nstruct Point:\n    var x: Int\n    var label: String\n\ndef main():\n    comptime r = reflect[Point]\n    comptime count = r.field_count()\n    comptime names = r.field_names()\n    comptime types = r.field_types()\n    print(count, materialize[names[0]](), materialize[names[1]]())\n    comptime if types[0] == Int:\n        print(\"int\")\n";
     assert_eq!(run(src).unwrap(), "2 x label\nint\n");
+    // The names list is not implicitly copyable, so a plain runtime read
+    // must cross through `materialize`, as the pin requires.
+    let unmaterialized = src.replace(
+        "materialize[names[0]](), materialize[names[1]]()",
+        "names[0], names[1]",
+    );
+    let error = run(&unmaterialized).unwrap_err();
+    assert!(error.contains("cannot materialize"), "got: {error}");
 }
 
 #[test]
@@ -936,11 +950,7 @@ fn heterogeneous_pack_bound_failure_names_the_call_element() {
     let src = "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    print(count(1, \"two\", True))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("type-pack bound failed at 'count' instantiation"),
-        "got: {error}"
-    );
-    assert!(
-        error.contains("element 2 of type pack 'ArgTypes' has type 'StringLiteral'"),
+        error.contains("type 'StringLiteral' for parameter '*ArgTypes'"),
         "got: {error}"
     );
     assert!(error.contains("'Intable'"), "got: {error}");
@@ -955,7 +965,7 @@ fn heterogeneous_pack_bound_oracle_uses_nominal_user_conformance() {
     let rejected = format!("{declarations}def main():\n    print(count(Number(1), Opaque(2)))\n");
     let error = run(&rejected).unwrap_err();
     assert!(
-        error.contains("element 2 of type pack 'Types' has type 'Opaque'"),
+        error.contains("type 'Opaque' for parameter '*Types' does not conform to trait 'Valued'"),
         "got: {error}"
     );
     assert!(error.contains("'Valued'"), "got: {error}");
@@ -1290,20 +1300,14 @@ fn explicit_type_argument_naming_a_non_generic_struct_specializes() {
 
 #[test]
 fn explicit_type_argument_bound_violation_is_reported_at_the_call() {
-    // A dropped type argument is never re-validated by the checker against the
-    // residual signature, so the elaborator enforces the parameter's trait
-    // bounds when the instantiation is requested.
+    // The checker validates an explicit type argument against the
+    // parameter's trait bounds at the call.
     let src = "struct Pinned:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef pick[T: Copyable](x: T) -> Int:\n    comptime if T == Int:\n        return 1\n    else:\n        return 0\n\ndef main():\n    print(pick[Pinned](Pinned(3)))\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("generic bound failed at 'pick' instantiation"),
+        error.contains("type 'Pinned' for parameter 'T' does not conform to trait 'Copyable'"),
         "got: {error}"
     );
-    assert!(
-        error.contains("type parameter 'T' received type 'Pinned'"),
-        "got: {error}"
-    );
-    assert!(error.contains("'Copyable'"), "got: {error}");
 }
 
 #[test]

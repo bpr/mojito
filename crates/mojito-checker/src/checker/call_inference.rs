@@ -1400,6 +1400,7 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let arg_ty = self.infer_with_expected(arg, &params[i], true)?;
+            reject_generic_function_value(name, &names[i], arg, &arg_ty, &params[i])?;
             if !self.record_implicit_conversion(arg, &arg_ty, &params[i])? {
                 if super::builtins::callable_mismatch_is_environment_only(&arg_ty, &params[i]) {
                     return Err(TypeError::Unsupported(format!(
@@ -2297,4 +2298,29 @@ fn unsupplied_value_parameters(
             _ => None,
         })
         .collect()
+}
+
+/// Current Mojo does not infer a generic function's specialization from the
+/// parameter it is passed to, as it does not from a local annotation: only an
+/// explicit specialization (`f[...]`) is a non-generic function value.
+fn reject_generic_function_value(
+    func: &str,
+    parameter: &str,
+    argument: &Expr,
+    found: &Ty,
+    expected: &Ty,
+) -> Result<(), TypeError> {
+    if matches!(found, Ty::GenericFunc { .. })
+        && matches!(expected, Ty::Func { .. })
+        && matches!(argument.kind, ExprKind::Identifier(_))
+    {
+        return Err(TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!(
+                "value passed to '{parameter}' cannot be converted from the generic function \
+                 '{found}' to '{expected}'; specialize it explicitly"
+            ),
+        });
+    }
+    Ok(())
 }

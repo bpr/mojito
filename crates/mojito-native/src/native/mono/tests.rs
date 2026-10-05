@@ -772,7 +772,10 @@ const CONDITIONAL_MEMBERS: &str = "struct NoDefault(Movable):\n\
      \x20   var b = Slot[NoDefault](NoDefault(7))\n\
      \x20   print(b.item.v)\n";
 
-const NULLARY_SLOT_INIT: &str = "Slot.__init__$ov$";
+/// The nullary `Slot.__init__` overload's symbol.
+fn nullary_slot_init() -> String {
+    format!("Slot.__init__{}", mojito_symbol::symbol::OV_SEP)
+}
 
 /// The bindings of `Slot[argument]` over the compiled `CONDITIONAL_MEMBERS`.
 fn slot_bindings(specializer: &Specializer<'_>, argument: Ty) -> Bindings {
@@ -786,7 +789,7 @@ fn slot_bindings(specializer: &Specializer<'_>, argument: Ty) -> Bindings {
 fn discovered_member_its_instance_disproves_is_left_out() {
     let specialized = specialized_main(CONDITIONAL_MEMBERS);
     let nullary = |owner: &str| {
-        let name = mojito_symbol::symbol::retarget_method_symbol(NULLARY_SLOT_INIT, owner)
+        let name = mojito_symbol::symbol::retarget_method_symbol(&nullary_slot_init(), owner)
             .expect("constructor symbol retargets");
         specialized
             .program
@@ -833,14 +836,14 @@ fn demanded_member_its_instance_disproves_is_an_error() {
     let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     let available = slot_bindings(&specializer, Ty::Int);
     specializer
-        .enqueue(NULLARY_SLOT_INIT, available, Vec::new())
+        .enqueue(&nullary_slot_init(), available, Vec::new())
         .expect("`Int` is `Defaultable`");
     let unavailable = slot_bindings(
         &specializer,
         Ty::Struct("NoDefault".into(), Vec::new().into()),
     );
     let error = specializer
-        .enqueue(NULLARY_SLOT_INIT, unavailable, Vec::new())
+        .enqueue(&nullary_slot_init(), unavailable, Vec::new())
         .unwrap_err();
     assert!(error.construct.contains("unavailable"), "{error}");
 }
@@ -855,11 +858,11 @@ fn available_member_that_does_not_materialize_is_an_error() {
     // The empty tuple is `Defaultable`, and `T()` has no construction for it.
     let bindings = slot_bindings(&specializer, Ty::Tuple(Vec::new()));
     specializer
-        .enqueue(NULLARY_SLOT_INIT, bindings, Vec::new())
+        .enqueue(&nullary_slot_init(), bindings, Vec::new())
         .expect("the clause holds");
     let error = specializer.run(&[]).unwrap_err();
     assert!(
-        error.construct.contains("constructing type parameter"),
+        error.construct.contains("default-constructing `Tuple[]`"),
         "{error}"
     );
 }

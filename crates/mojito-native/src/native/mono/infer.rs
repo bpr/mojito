@@ -102,6 +102,7 @@ impl Specializer<'_> {
         }
         call.target = self.enqueue(&target, bindings, arguments)?;
         call.param_arg_regs.clear();
+        call.param_decls.clear();
         Ok(())
     }
 
@@ -213,10 +214,14 @@ impl Specializer<'_> {
                 // A type pack's solution is the element list the checker
                 // recorded, bound whole.
                 (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    // The checker spells each element as the template
+                    // application; the instance names its own symbol.
                     let elements = elements
                         .iter()
                         .map(|element| match element {
-                            CtValue::Type(ty) if !is_symbolic(ty) => Some((**ty).clone()),
+                            CtValue::Type(ty) if !is_symbolic(ty) => {
+                                substitute_ty(ty, &bindings).ok()
+                            }
                             _ => None,
                         })
                         .collect::<Option<Vec<Ty>>>();
@@ -362,6 +367,29 @@ impl Specializer<'_> {
             }
             _ => None,
         };
+        // Each collected keyword unifies against the `**kwargs` element; a
+        // forwarded collector (`**options^`) contributes its own element.
+        if let Some(element) = declaration.kw_variadic.as_ref()
+            && is_symbolic(element)
+        {
+            for index in &slots.keyword_overflow {
+                let (name, reg) = &kwargs[*index];
+                let actual = peel_refs(reg_ty(caller, *reg, owner)?);
+                let actual = match actual {
+                    Ty::Struct(_, arguments) if name == "**" => match arguments.as_slice() {
+                        [TyArg::Ty(collected)] => collected,
+                        _ => continue,
+                    },
+                    _ => actual,
+                };
+                unify(element, actual, &mut bindings).map_err(|e| {
+                    self.error(
+                        Some(owner),
+                        format!("monomorphizing `{target}` keywords: {e}"),
+                    )
+                })?;
+            }
+        }
         if receiver != Some(dest)
             && let Some(actual) = caller.reg_types.get(&dest.0)
         {

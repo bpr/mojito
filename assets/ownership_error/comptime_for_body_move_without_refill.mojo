@@ -3,6 +3,7 @@
 # pin decides it: the consume is a use on the back edge, rejected whatever
 # the trip count (docs/notes/comptime-region-ownership.md, l3).
 # expect: use of uninitialized value 'a'
+# requires: stdlib
 struct Thing(Movable):
     var s: String
 

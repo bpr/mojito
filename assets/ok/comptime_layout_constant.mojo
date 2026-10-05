@@ -3,6 +3,7 @@
 # answers it under the compilation's target: a value read is the query
 # itself, folded to the constant in concrete MIR, and an expression over the
 # constant reads the same answer.
+# requires: discovery
 from std.sys import size_of
 
 

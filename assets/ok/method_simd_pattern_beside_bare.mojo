@@ -1,6 +1,7 @@
 # A method overloaded on a `Scalar[dt]` pattern and a bare trait-bound
 # parameter: an argument with a lane selects the `Scalar[dt]` pattern, as a
 # free call does, and an argument without one selects the bare `T`.
+# requires: discovery
 
 
 struct Classifier:

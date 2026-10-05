@@ -589,8 +589,10 @@ fn self_hosted_algorithms_use_comptime_facts() {
         .join("extensions")
         .join("ok")
         .join("self_hosted_algorithms.mojo");
+    // Its `comptime if` over a type binder is served by the template, which
+    // only the production pipeline's elaborator instantiates.
     assert_eq!(
-        run(&main).unwrap(),
+        run_compiled(&main).unwrap(),
         "1 2 0\n8 24\n4 17\n42\nfallback\n7\nalpha\nbeta\n3\n"
     );
 }

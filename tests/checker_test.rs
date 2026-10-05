@@ -162,11 +162,22 @@ fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
     let parsed = parse(source).expect("parse");
     let elaborated = mojito::elaborate(parsed).expect("elaborate");
     let checked = check_program(&elaborated).expect("check");
-    let xs: Vec<_> = checked
+    // The clone unrolls the loop twice; the template's own `x` is not one
+    // of its copies.
+    let clone = checked
         .declarations()
         .iter()
-        .filter(|declaration| declaration.name == "x")
-        .collect();
+        .find(|declaration| declaration.name.starts_with("outer$"))
+        .expect("outer's clone");
+    let mut pending = clone.children.clone();
+    let mut xs = Vec::new();
+    while let Some(id) = pending.pop() {
+        let declaration = checked.declaration(id).expect("a child declaration");
+        if declaration.name == "x" {
+            xs.push(declaration);
+        }
+        pending.extend(declaration.children.iter().copied());
+    }
     assert_eq!(xs.len(), 2);
     assert!(xs[0].location.same_provenance(&xs[1].location));
     assert_ne!(xs[0].location.syntax, xs[1].location.syntax);
@@ -744,13 +755,13 @@ fn collection_displays_use_parameter_and_return_context() {
 
 #[test]
 fn rejects_non_bool_if_condition() {
-    let e = err("if 1:\n    pass\n");
+    let e = err("if (1, 2):\n    pass\n");
     match e {
         TypeError::TypeMismatch {
             expected, found, ..
         } => {
             assert_eq!(expected, "Bool");
-            assert_eq!(found, "Int");
+            assert_eq!(found, "Tuple[Int, Int]");
         }
         other => panic!("expected a type mismatch, got {other:?}"),
     }
@@ -758,7 +769,7 @@ fn rejects_non_bool_if_condition() {
 
 #[test]
 fn rejects_non_bool_while_condition() {
-    let e = err("while 1:\n    pass\n");
+    let e = err("while (1, 2):\n    pass\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
@@ -934,7 +945,7 @@ fn generic_call_sites_record_their_resolved_instantiations() {
     // plus exact compile-time arguments) for instantiation discovery —
     // explicit and inferred alike.
     let program = Parser::new(Lexer::new(
-        "def pick[T: Movable](x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
+        "def pick[T: Movable](var x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
     ))
     .parse_program()
     .expect("parse error");
@@ -2713,8 +2724,8 @@ fn accepts_inferred_var_and_uses_its_type() {
 
 #[test]
 fn inferred_var_rejects_wrong_later_use() {
-    // `n` is inferred `Int`, so using it as a `Bool` condition is a type error.
-    let e = err("var n = 5\nif n:\n    pass\n");
+    // `n` is inferred `Tuple[Int, Int]`, which is not a condition.
+    let e = err("var n = (5, 6)\nif n:\n    pass\n");
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
@@ -3436,10 +3447,10 @@ fn expression_surface_type_checks() {
 
 #[test]
 fn ternary_chained_comparison_and_unpacking_type_check() {
-    // Ternary branches must unify; the condition must be Bool.
+    // Ternary branches must unify; the condition must test as a Bool.
     ok_std("def f(n: Int) -> Int:\n    return 1 if n > 0 else -1\n");
     assert!(matches!(
-        err_std("var m: Int = 1 if 5 else 2\n"),
+        err_std("var m: Int = 1 if (5, 6) else 2\n"),
         TypeError::TypeMismatch { .. }
     ));
     // Chained comparison → Bool.
@@ -6308,12 +6319,10 @@ fn typelist_vocabulary_lowers_into_the_constraint_algebra() {
 
     // A concrete `of` list folds eagerly: a failing proposition rejects the
     // application through the ordinary constraint diagnostic.
-    assert!(matches!(
-        err(
-            "def gated(x: Int) -> Int where TypeList.of[Int]().contains[String]():\n    return x\n\ndef main():\n    print(gated(1))\n",
-        ),
-        TypeError::BadCall { .. }
-    ));
+    let e = err(
+        "def gated(x: Int) -> Int where TypeList.of[Int]().contains[Bool]():\n    return x\n\ndef main():\n    print(gated(1))\n",
+    );
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
 
     // Upstream removed the deprecated `size` alias of `length` (2026-08);
     // only `length` is a TypeList operand now.
