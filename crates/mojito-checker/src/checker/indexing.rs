@@ -1417,6 +1417,14 @@ impl Checker {
         object: &Expr,
         index: &Expr,
     ) -> Result<Ty, TypeError> {
+        // Source validation types a local `comptime` index as the runtime
+        // value the elaborator later folds, so an index it cannot compile
+        // takes the runtime pack's typing.
+        if let Some(pack) = self.value_pack_named(object)
+            && !(self.source_validation && self.compile_dependent_ct_expr(index).is_err())
+        {
+            return self.infer_value_pack_element(span, &pack, index);
+        }
         let obj_ty = self.infer(object)?;
         // A reference-typed base (a `ref` field projected off a collection
         // element, or reached through a binding) indexes its referent:

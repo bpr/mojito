@@ -867,7 +867,9 @@ impl Checker {
                 kwargs,
             } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
                 match args.as_slice() {
-                    [pack] => self.unbound_pack_named(pack),
+                    [pack] => self
+                        .unbound_pack_named(pack)
+                        .or_else(|| self.value_pack_named(pack)),
                     _ => None,
                 }
             }
@@ -877,7 +879,7 @@ impl Checker {
                 args,
                 kwargs,
             } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
-                collector_pack(object)
+                collector_pack(object).or_else(|| self.value_pack_named(object))
             }
             ExprKind::Member { object, field } if field == "length" => {
                 self.unbound_pack_named(object)

@@ -778,6 +778,55 @@ impl Checker {
         }
     }
 
+    /// The value pack an identifier names while it is still a parameter: a
+    /// `def`'s own `*values: Int`, typed as the pack of its element, which
+    /// no instance has bound yet.
+    pub(super) fn value_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return None;
+        };
+        let Some(Ty::VariadicPack(element)) = self.lookup(name) else {
+            return None;
+        };
+        if mojito_types::types::pack_spread(std::slice::from_ref(element.as_ref())).is_some() {
+            return None;
+        }
+        self.value_parameter_in_scope(name).filter(|pack| {
+            pack.as_decl_ref().is_some()
+                && matches!(pack.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
+        })
+    }
+
+    /// Type `values[index]` over a value pack that is still a parameter: the
+    /// element at a compile-time index, recorded at `span` as the parameter
+    /// constant the elaborator folds per instance.
+    pub(super) fn infer_value_pack_element(
+        &self,
+        span: SourceSpan,
+        pack: &ParamExpr,
+        index: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let index = self
+            .compile_dependent_ct_expr(index)
+            .map_err(|_| TypeError::TypeMismatch {
+                expected: "a compile-time Int index".to_string(),
+                found: "a runtime value".to_string(),
+                context: "value-pack index".to_string(),
+            })?;
+        let element = self
+            .param_context
+            .list_get(pack, &index)
+            .map_err(param_error)?;
+        let ty = element.meta().as_value().cloned().ok_or_else(|| {
+            TypeError::InvariantViolation(format!("value-pack element '{element}' is not a value"))
+        })?;
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ParamValue { value: element },
+        );
+        Ok(ty)
+    }
+
     /// Record a query of a pack that is still a parameter, read as a runtime
     /// value at `span`: the constant MIR carries and the elaborator folds.
     pub(super) fn record_pack_query_value(

@@ -813,6 +813,7 @@ assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanit
 assets/ok/untracked_pointer_ref_params.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/value_pack_template_served.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_inferred_from_argument_type.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized

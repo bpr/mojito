@@ -249,6 +249,9 @@ impl Scope {
 /// The kind a declaration's binder is referenced at.
 pub fn declared_kind(decl: &ParamDecl) -> MetaTy {
     match decl {
+        ParamDecl::Value {
+            ty, variadic: true, ..
+        } => MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone()))),
         ParamDecl::Value { ty, .. } => MetaTy::value((**ty).clone()),
         ParamDecl::Type { variadic: true, .. } => MetaTy::type_list(),
         ParamDecl::Type { .. } => MetaTy::Type,

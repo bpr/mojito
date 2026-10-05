@@ -778,6 +778,13 @@ impl Checker {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::Int);
         }
+        // `len(values)` of a value pack that is still a parameter.
+        if let [pack] = args
+            && let Some(pack) = self.value_pack_named(pack)
+        {
+            self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
+            return Ok(Ty::Int);
+        }
         let tys = self.builtin_args("len", 1, args)?;
         if let Some(message) = string_len_unavailable(&tys[0]) {
             return Err(TypeError::Unsupported(message));

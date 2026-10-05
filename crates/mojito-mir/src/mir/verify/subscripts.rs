@@ -702,11 +702,12 @@ pub(super) fn verify_param_arguments(
         }
         return;
     }
-    // A type pack takes every positional argument from its slot on.
+    // A type or value pack takes every positional argument from its slot on.
     let pack = |index: usize| {
         matches!(
             declarations[index],
             mojito_types::types::ParamDecl::Type { variadic: true, .. }
+                | mojito_types::types::ParamDecl::Value { variadic: true, .. }
         )
     };
     let mut occupied = vec![false; declarations.len()];

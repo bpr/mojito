@@ -1238,7 +1238,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Ts.all_conforms_to[T]()`, `inference.rs`); `derive_adjustment`
   (`templates.rs`) substitutes it for an instance, and a struct clone's
   derivation drops it where the clone folded the query
-  (`substituted_facts`, `folded_literals`). `Flatten::param_value` and
+  (`substituted_facts`, `folded_literals`). A value pack that is still a
+  parameter (`*values: Int`) is a `ParamList` of its element
+  (`annotations::value_parameter_expr`, `verify::declared_kind`):
+  `Checker::value_pack_named` resolves it and
+  `infer_value_pack_element` records `values[i]` as a `ListGet`, while
+  `infer_len`, the intrinsic `__len__` receiver, and `pack_length_binder`
+  record its length; `value_packs_read_as_parameters` (`comptime.rs`) keeps
+  the clone for any other read, and mono binds the pack from the call
+  (`bind_instantiated_arguments`, `mono/infer.rs`;
+  `bind_explicit_value_arguments`, `mono/unify.rs`) and folds the constants
+  in each unrolled copy too (`copy_body`, `mono/unroll.rs`). The erased
+  oracle reifies it as a tuple (`align_parameter_arguments`,
+  `backend/vm.rs`) that `const_value` reads from the frame's `comptime`
+  bindings. `Flatten::param_value` and
   `param_value_register` (`mir/lower_expr/expr_access.rs`) lower it; the
   pack operand is never lowered. `verify/scope.rs` checks its binders and
   `verify/concrete.rs` rejects a survivor.

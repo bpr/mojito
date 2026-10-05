@@ -217,7 +217,17 @@ pub(super) fn value_parameter(decl: &ParamDecl, ty: &Ty) -> CtValue {
     CtValue::Expr(value_parameter_expr(decl, ty))
 }
 
+/// A value pack (`*values: Int`) is a parameter list of its element type.
 pub(super) fn value_parameter_expr(decl: &ParamDecl, ty: &Ty) -> ParamExpr {
+    if matches!(decl, ParamDecl::Value { variadic: true, .. }) {
+        return ParamContext::detached().decl_ref(
+            decl.id().clone(),
+            decl.name().trim_start_matches('*'),
+            mojito_types::param_expr::MetaTy::ParamList(Box::new(
+                mojito_types::param_expr::MetaTy::value(ty.clone()),
+            )),
+        );
+    }
     value_binder_expr(decl.id().clone(), decl.name(), ty)
 }
 

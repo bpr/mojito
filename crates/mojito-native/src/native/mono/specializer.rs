@@ -961,7 +961,7 @@ impl<'a> Specializer<'a> {
     /// the verifier's concrete mode to name; one the bindings close with no
     /// answer (a reflection query of a field the struct lacks) fails the
     /// instantiation.
-    fn answer_param_constants(
+    pub(super) fn answer_param_constants(
         &self,
         blocks: &mut [MirBlock],
         bindings: &Bindings,

@@ -916,7 +916,7 @@ fn reify_value_parameters(
                 .flatten()
                 .unwrap_or(Value::None);
             Some((
-                name.clone(),
+                name.trim_start_matches('*').to_string(),
                 crate::runtime::coerce_checked(value, ty.as_ref()),
             ))
         })
@@ -1357,7 +1357,16 @@ fn resolve_value_parameter_slots(
                         .and_then(ct_value_as_runtime)
                 })
             })
-            .map(|value| crate::runtime::coerce_checked(value, ty.as_ref()));
+            .map(|value| match (value, declaration) {
+                // A value pack coerces each of its values.
+                (Value::Tuple(values), ParamDecl::Value { variadic: true, .. }) => Value::Tuple(
+                    values
+                        .into_iter()
+                        .map(|value| crate::runtime::coerce_checked(value, ty.as_ref()))
+                        .collect(),
+                ),
+                (value, _) => crate::runtime::coerce_checked(value, ty.as_ref()),
+            });
         let Some(value) = value else {
             continue;
         };
@@ -1496,12 +1505,18 @@ fn build_prog_lowered(lowered: mojito_mir::mir::MirProgram) -> Result<Prog, Runt
 
 /// Bind source-ordered compile-time arguments to their checked declarations.
 /// Keyword arguments may skip defaults or appear out of declaration order, and
-/// an erased type argument still occupies its selected declaration slot.
-fn align_parameter_arguments<T>(
+/// an erased type argument still occupies its selected declaration slot. A
+/// value pack takes every positional argument from its slot on, as the tuple
+/// of its values.
+fn align_parameter_arguments(
     declarations: &[ParamDecl],
-    arguments: Vec<(Option<String>, Option<T>)>,
-) -> Vec<Option<T>> {
-    let mut aligned: Vec<Option<T>> = (0..declarations.len()).map(|_| None).collect();
+    arguments: Vec<(Option<String>, Option<Value>)>,
+) -> Vec<Option<Value>> {
+    let value_pack =
+        |index: usize| matches!(declarations[index], ParamDecl::Value { variadic: true, .. });
+    let mut aligned: Vec<Option<Value>> = (0..declarations.len())
+        .map(|index| value_pack(index).then(|| Value::Tuple(Vec::new())))
+        .collect();
     let mut next_positional = 0;
     for (name, value) in arguments {
         let index = if let Some(name) = name {
@@ -1520,11 +1535,16 @@ fn align_parameter_arguments<T>(
                 next_positional += 1;
             }
             let index = (next_positional < declarations.len()).then_some(next_positional);
-            next_positional += usize::from(index.is_some());
+            next_positional += usize::from(index.is_some_and(|index| !value_pack(index)));
             index
         };
-        if let Some(index) = index {
+        let Some(index) = index else {
+            continue;
+        };
+        if !value_pack(index) {
             aligned[index] = value;
+        } else if let (Some(Value::Tuple(values)), Some(value)) = (&mut aligned[index], value) {
+            values.push(value);
         }
     }
     aligned
@@ -2220,6 +2240,7 @@ fn const_value(
     k: &Const,
     function: &MirFunction,
     variables: &[Value],
+    comptime: &[(String, Value)],
 ) -> Result<Value, RuntimeError> {
     Ok(match k {
         Const::Int(n) => Value::Int(*n),
@@ -2232,7 +2253,7 @@ fn const_value(
         Const::Dtype(dtype) => Value::Dtype(*dtype),
         Const::None => Value::None,
         Const::Param(expr) => expr
-            .evaluate_named(&erased_parameter_values(function, variables, &[]))
+            .evaluate_named(&erased_parameter_values(function, variables, comptime))
             .ok()
             .and_then(ct_value_as_runtime)
             .ok_or_else(|| {

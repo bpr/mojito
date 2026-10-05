@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R325**.
+Next free ID: **R328**.
 
 ## Ordered Work
 
@@ -163,19 +163,6 @@ correctness fix to existing behavior is allowed.
     schema 1.25), so each shape needs only its sequence compiled.
   - Depends on R290, R267, and R318.
   - Model: Fable, Planned.
-
-- [ ] **R318 (P3b) A `def` keyed on a variadic value pack still keys a
-  clone**
-
-  Problem: `def f[*vals: Int]()` is not served by its template:
-  `template_serves_binders` (`comptime.rs`) admits a value binder only when
-  it is not variadic, so every call clones the body with the values
-  substituted, where the pin checks the body once.
-  - The checker would type `vals` as a pack of symbolic `Int`s and MIR
-    carry the binder; `native::mono` binds it from the call's bracket.
-  - Found while landing part of R246 (2026-10-05).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R248 (P3b) A thunk condition inside a template-served `comptime for`
   cannot read the index**
@@ -2203,6 +2190,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R325 A value pack read as a runtime value is rejected**
+
+  Problem: `for v in values:` and `values[i]` with a runtime `i`, over
+  `def f[*values: Int]`, fail with "struct 'Tuple' was not registered" and
+  "expected a compile-time Int index", where the pin runs both over the
+  pack's runtime `VariadicList`.
+  - Such a `def` keeps its clone (`value_packs_read_as_parameters`), and
+    neither the clone nor MIR builds the pack as a runtime list.
+  - A template-served body would need MIR to materialize the parameter
+    list (a `Const::Param` of list meta) as runtime storage.
+  - Found while landing R318 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R326 An empty explicit application `f[]()` is a pointer dereference**
+
+  Problem: `none[]()` over `def none[*vals: Int]() -> Int` fails with "an
+  empty subscript ('value[]') is the pointer dereference", where the pin
+  binds the pack empty and prints `0`.
+  - The parser reads `name[]` as `EmptySubscript` whatever `name` denotes;
+    the checker would type it as an application when the callee is a
+    generic `def`.
+  - Found while landing R318 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R313 A generic struct's method that still clones per instance has
   no clone for a `StringLiteral` instance**
 
@@ -2881,6 +2894,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`tests/param_callable_value_test.rs`) pin it.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R327 An out-of-range value-pack index fails as an unsupported
+  constant**
+
+  Problem: `values[2]` in `def third[*values: Int]()` called as
+  `third[1, 2]()` stops with "keeps the parameter constant `values[2]` in
+  elaborated MIR", where the pin rejects the instantiation at compile time.
+  - The verdict is right; the words are internal.
+  - `Specializer::param_constant` (`mono/specializer.rs`) drops the
+    out-of-range error `eval_ct` reports as `Unsupported`, so the verifier
+    reports the surviving constant instead of the instantiation.
+  - Found while landing R318 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 

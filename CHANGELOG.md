@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def` keyed on a variadic value pack (`*values: Int`, `*flags: Bool`,
+  `*kinds: DType`), a method's own included, is served by its template, as
+  in the pin, where every call cloned the body with the values substituted:
+  the checker types the pack as a parameter list and records each
+  `len(values)`, `values.__len__()`, and `values[i]` as a parameter
+  constant, which the elaborator folds per instance from the call's
+  brackets and the erased oracle from the frame's reified pack. A
+  `values.__len__()` in a method, which failed with "type '$variadic[Int]'
+  has no method '__len__'", now runs (`assets/ok/value_pack_template_served.mojo`;
+  roadmap R325 keeps a runtime read of the whole pack on the clone).
+
 - A reflection query over a template-served body's parameter
   (`reflect[T].field_count()`, `is_struct()`, `field_index["x"]()`,
   `len(field_names())`, `field_names()[i]`, in a runtime position, a

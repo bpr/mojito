@@ -512,7 +512,11 @@ MIR records the elements the checker solved for the call
 binds the pack whole (`bind_pack`: the `RuntimePack` every spelling of the
 pack substitutes to, and the element tuple its parameter expressions fold
 under), so the loop's trip count and each copy's element type close at
-unrolling and the instance is named by its elements. A pack spread whole
+unrolling and the instance is named by its elements. A value pack
+(`*values: Int`) is served alike when the body reads it only as its length or
+an element at a compile-time index: the checker records each read as a
+parameter constant over the pack's `ParamList` binder, and `native::mono`
+binds the pack to the tuple of the call's values. A pack spread whole
 into another served `def` or into `print` (`show(*args)`, `drain(*args^)`)
 is a call whose spread argument is the collector itself, read in place or
 moved, at the position `MirInstr::Call::spread` names; the ownership

@@ -813,6 +813,7 @@ assets/ok/unspelled_loan_carrying_type_argument.mojo	-	ineligible	no-scalar-entr
 assets/ok/untracked_pointer_ref_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_argument_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variable_scoping.mojo	-	ineligible	no-scalar-entry-shape

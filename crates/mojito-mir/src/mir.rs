@@ -3641,6 +3641,14 @@ impl EnclosingBinders {
                 } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
                     binders.values.push((declaration.binder(), (**ty).clone()));
                 }
+                // A value pack has no frame local; a thunk reads it through
+                // the parameter constants it binds.
+                ParamDecl::Value {
+                    ty,
+                    variadic: true,
+                    callable_default: None,
+                    ..
+                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {}
                 ParamDecl::Value { .. } => continue,
             }
             binders.declarations.push(declaration.clone());

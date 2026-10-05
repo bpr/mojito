@@ -175,71 +175,13 @@ impl Specializer<'_> {
             unify(receiver_pattern, actual_receiver, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
-        // The type arguments the checker solved for the call bind the
-        // callee's own binders first: a parameter no runtime parameter or
-        // result spells has no other source. One still symbolic here belongs
-        // to a parametric caller, which unification leaves as it stands.
-        for (decl, argument) in declaration.param_decls[own_start..]
-            .iter()
-            .zip(instantiated)
-        {
-            match (decl, argument) {
-                // A pack the caller forwarded whole (`show(*args)`) was
-                // recorded as the caller's own pack, which substitution has
-                // bound to its elements.
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements)))
-                    if !elements.iter().any(is_symbolic) =>
-                {
-                    bind_pack(&decl.binder(), elements.clone(), &mut bindings);
-                }
-                (ParamDecl::Type { .. }, TyArg::Ty(ty)) if !is_symbolic(ty) => {
-                    bind_type(&decl.binder(), ty, &mut bindings).map_err(|e| {
-                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
-                    })?;
-                }
-                // A value the checker solved from an argument's type (`dt`
-                // from a `Scalar[dt]` parameter) binds here, as does an
-                // expression the caller's bindings close (an applied local
-                // constant); one still over the caller's binders is
-                // unification's.
-                (
-                    ParamDecl::Value {
-                        variadic: false, ..
-                    },
-                    TyArg::Val(value),
-                ) if !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) => {
-                    let closed = match value {
-                        CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
-                            Ok(value) => value,
-                            Err(_) => continue,
-                        },
-                        value => value.clone(),
-                    };
-                    bind_value(&decl.binder(), &closed, &mut bindings).map_err(|e| {
-                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
-                    })?;
-                }
-                // A type pack's solution is the element list the checker
-                // recorded, bound whole.
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
-                    // The checker spells each element as the template
-                    // application; the instance names its own symbol.
-                    let elements = elements
-                        .iter()
-                        .map(|element| match element {
-                            CtValue::Type(ty) if !is_symbolic(ty) => {
-                                substitute_ty(ty, &bindings).ok()
-                            }
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<Ty>>>();
-                    if let Some(elements) = elements {
-                        bind_pack(&decl.binder(), elements, &mut bindings);
-                    }
-                }
-                _ => {}
-            }
-        }
+        self.bind_instantiated_arguments(
+            owner,
+            target,
+            &declaration.param_decls[own_start..],
+            instantiated,
+            &mut bindings,
+        )?;
         bind_explicit_value_arguments(
             &declaration.param_decls,
             param_args,
@@ -802,5 +744,95 @@ impl Specializer<'_> {
             0,
         );
         self.functions.contains_key(target.as_str())
+    }
+
+    /// The type arguments the checker solved for the call bind the
+    /// callee's own binders first: a parameter no runtime parameter or
+    /// result spells has no other source. One still symbolic here belongs
+    /// to a parametric caller, which unification leaves as it stands.
+    fn bind_instantiated_arguments(
+        &self,
+        owner: &str,
+        target: &str,
+        decls: &[ParamDecl],
+        instantiated: &[TyArg],
+        bindings: &mut Bindings,
+    ) -> Result<(), MonoError> {
+        for (decl, argument) in decls.iter().zip(instantiated) {
+            match (decl, argument) {
+                // A pack the caller forwarded whole (`show(*args)`) was
+                // recorded as the caller's own pack, which substitution has
+                // bound to its elements.
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements)))
+                    if !elements.iter().any(is_symbolic) =>
+                {
+                    bind_pack(&decl.binder(), elements.clone(), bindings);
+                }
+                (ParamDecl::Type { .. }, TyArg::Ty(ty)) if !is_symbolic(ty) => {
+                    bind_type(&decl.binder(), ty, bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                    })?;
+                }
+                // A value the checker solved from an argument's type (`dt`
+                // from a `Scalar[dt]` parameter) binds here, as does an
+                // expression the caller's bindings close (an applied local
+                // constant); one still over the caller's binders is
+                // unification's.
+                (
+                    ParamDecl::Value {
+                        variadic: false, ..
+                    },
+                    TyArg::Val(value),
+                ) if !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) => {
+                    let closed = match value {
+                        CtValue::Expr(expr) => match eval_ct(expr, &self.enclosing) {
+                            Ok(value) => value,
+                            Err(_) => continue,
+                        },
+                        value => value.clone(),
+                    };
+                    bind_value(&decl.binder(), &closed, bindings).map_err(|e| {
+                        self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
+                    })?;
+                }
+                // A value pack's solution is the list of values the checker
+                // recorded, each closed under the caller's bindings.
+                (ParamDecl::Value { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    let elements = elements
+                        .iter()
+                        .map(|element| match element {
+                            CtValue::Expr(expr) => eval_ct(expr, &self.enclosing).ok(),
+                            CtValue::Deferred(_) | CtValue::Marker(_) => None,
+                            value => Some(value.clone()),
+                        })
+                        .collect::<Option<Vec<CtValue>>>();
+                    if let Some(elements) = elements {
+                        bindings
+                            .values
+                            .insert(decl.binder(), CtValue::Tuple(elements));
+                    }
+                }
+                // A type pack's solution is the element list the checker
+                // recorded, bound whole.
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    // The checker spells each element as the template
+                    // application; the instance names its own symbol.
+                    let elements = elements
+                        .iter()
+                        .map(|element| match element {
+                            CtValue::Type(ty) if !is_symbolic(ty) => {
+                                substitute_ty(ty, bindings).ok()
+                            }
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<Ty>>>();
+                    if let Some(elements) = elements {
+                        bind_pack(&decl.binder(), elements, bindings);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }

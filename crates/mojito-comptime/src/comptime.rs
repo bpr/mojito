@@ -1686,7 +1686,7 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
         let StmtKind::Def { name, .. } = &statement.kind else {
             continue;
         };
-        if !pack_keyed_declaration(statement) {
+        if !variadic_keyed_declaration(statement) {
             continue;
         }
         match pack_def_shape_served(statement) {
@@ -1882,7 +1882,9 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
 /// the callees its body spreads its pack into when so: its binders are ones
 /// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
 /// pack among them and an `Int`, `Bool`, or `DType` value beside it, which
-/// an explicit application binds from its brackets; the collector is read
+/// an explicit application binds from its brackets; every read of a value
+/// pack is its length or an element
+/// ([`value_packs_read_as_parameters`]); the collector is read
 /// or owned (`var *args`, destroyed last to first after its last element use;
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
@@ -1904,8 +1906,83 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
     };
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, params, name)
-        && !def_body_keys_specialization(body, &packs);
+        && !def_body_keys_specialization(body, &packs)
+        && value_packs_read_as_parameters(type_params, name, body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
+}
+
+/// Whether every read of a value pack (`*values: Int`) in a `def`'s body is
+/// one its template serves: its length (`len(values)`, `values.__len__()`)
+/// or an element (`values[i]`), which the check records as the parameter
+/// constant the elaborator folds per instance. A read of the whole pack as a
+/// runtime value keeps the clone.
+fn value_packs_read_as_parameters(type_params: &[TypeParam], owner: &str, body: &[Stmt]) -> bool {
+    struct Reads<'a> {
+        packs: Vec<&'a str>,
+        uses: usize,
+        served: usize,
+    }
+
+    impl Reads<'_> {
+        fn names_pack(&self, expr: &Expr) -> bool {
+            matches!(&expr.kind, ExprKind::Identifier(name) if self.packs.contains(&name.as_str()))
+        }
+    }
+
+    impl mojito_ast::visit::Visitor for Reads<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.served += usize::from(match &expr.kind {
+                ExprKind::Identifier(_) => {
+                    self.uses += usize::from(self.names_pack(expr));
+                    false
+                }
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args,
+                    kwargs,
+                } => {
+                    name == "len"
+                        && param_args.is_empty()
+                        && kwargs.is_empty()
+                        && matches!(args.as_slice(), [pack] if self.names_pack(pack))
+                }
+                ExprKind::MethodCall {
+                    object,
+                    method,
+                    args,
+                    kwargs,
+                } => {
+                    method == "__len__"
+                        && args.is_empty()
+                        && kwargs.is_empty()
+                        && self.names_pack(object)
+                }
+                ExprKind::Index { object, .. } => self.names_pack(object),
+                _ => false,
+            });
+        }
+    }
+
+    let mut reads = Reads {
+        packs: type_params
+            .iter()
+            .filter(|parameter| {
+                matches!(
+                    classify_ct_param(parameter, type_params, owner),
+                    Some(ParamDecl::Value { variadic: true, .. })
+                )
+            })
+            .filter_map(|parameter| parameter.name.strip_prefix('*'))
+            .collect(),
+        uses: 0,
+        served: 0,
+    };
+    if reads.packs.is_empty() {
+        return true;
+    }
+    mojito_ast::visit::walk_block(&mut reads, body);
+    reads.uses == reads.served
 }
 
 /// The callees a block spreads one of `packs` into as a call argument
@@ -3389,7 +3466,8 @@ pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
 /// Whether every compile-time parameter of a `def` is one its template
 /// serves: a type parameter — a type pack included, which the elaborator
 /// binds from the call's recorded elements — or a scalar (`Int`, `Bool`,
-/// `DType`) value parameter that a runtime parameter type names only as a
+/// `DType`) value parameter, a value pack among them, that a runtime
+/// parameter type names only as a
 /// vector's lane slot (`a: Scalar[dt]`, `v: SIMD[dt, width]`), if at all, so
 /// the elaborator binds it from the call's recorded arguments or from the
 /// argument's slot. A value a call must infer from any other argument type
@@ -3403,11 +3481,7 @@ pub(super) fn template_serves_binders(
         && type_params.iter().all(|parameter| {
             match classify_ct_param(parameter, type_params, owner) {
                 Some(ParamDecl::Type { .. }) => true,
-                Some(ParamDecl::Value {
-                    ty,
-                    variadic: false,
-                    ..
-                }) => {
+                Some(ParamDecl::Value { ty, .. }) => {
                     matches!(ty.as_ref(), Ty::Int | Ty::Bool | Ty::Dtype)
                         && !params
                             .iter()
@@ -3542,6 +3616,13 @@ fn pack_keyed_declaration(statement: &Stmt) -> bool {
             Some(ParamDecl::Type { variadic: true, .. })
         )
     })
+}
+
+/// Whether a top-level `def` declares a pack among its compile-time
+/// parameters: a `*Ts` type pack or a `*values` value pack.
+fn variadic_keyed_declaration(statement: &Stmt) -> bool {
+    matches!(&statement.kind, StmtKind::Def { type_params, .. }
+        if type_params.iter().any(|parameter| parameter.name.starts_with('*')))
 }
 
 /// Top-level compile-time-keyed templates (see

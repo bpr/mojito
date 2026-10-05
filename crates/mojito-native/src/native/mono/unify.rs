@@ -106,8 +106,15 @@ pub(super) fn matched_parameter_arguments<'a>(
             decls.iter().find(|declaration| declaration.name() == name)
         } else {
             let declaration = explicit.get(positional).copied();
-            // A type pack takes every positional argument from its slot on.
-            if !matches!(declaration, Some(ParamDecl::Type { variadic: true, .. })) {
+            // A type or value pack takes every positional argument from its
+            // slot on.
+            if !matches!(
+                declaration,
+                Some(
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                )
+            ) {
                 positional += 1;
             }
             declaration
@@ -128,6 +135,7 @@ pub(super) fn bind_explicit_value_arguments(
     is_struct: &dyn Fn(&str) -> bool,
     enclosing: &Bindings,
 ) -> Result<(), MonoError> {
+    let mut packs: Vec<(ParamRef, Vec<CtValue>)> = Vec::new();
     for (declaration, value_reg, argument) in matched_parameter_arguments(decls, arguments) {
         match declaration {
             // A constant register is the value; an argument built from the
@@ -156,7 +164,16 @@ pub(super) fn bind_explicit_value_arguments(
                         });
                     }
                 };
-                bindings.values.insert(declaration.binder(), value);
+                let binder = declaration.binder();
+                if !matches!(declaration, ParamDecl::Value { variadic: true, .. }) {
+                    bindings.values.insert(binder, value);
+                } else if let Some((_, elements)) =
+                    packs.iter_mut().find(|(pack, _)| *pack == binder)
+                {
+                    elements.push(value);
+                } else {
+                    packs.push((binder, vec![value]));
+                }
             }
             // A supplied constructible type argument (`hash[Fnv1a](x)`)
             // reifies as a string register naming the bound struct; an
@@ -185,6 +202,10 @@ pub(super) fn bind_explicit_value_arguments(
                 }
             }
         }
+    }
+    // A value pack binds the list of its positional arguments.
+    for (binder, elements) in packs {
+        bindings.values.insert(binder, CtValue::Tuple(elements));
     }
     Ok(())
 }
