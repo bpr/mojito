@@ -609,8 +609,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Tuple(*args^)`, which each instance expands per element with
   `mojito-checked` `templates.rs:PackElementNode` identities, by
   `template_facts/realization_folds.rs:spread_packs` from its `PackSpread`. `mojito-comptime`'s
-  `comptime.rs:instance_traces` carries one to the other. A pack-keyed instance (`TemplateClass::PackElements`)
-  substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
+  `comptime.rs:instance_traces` carries one to the other. A variadic struct's
+  member instance substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
   The design record is `docs/notes/instantiation-from-template.md`.
   Where each instance obligation goes once clones are gone is
   `docs/notes/generator-contract.md`.

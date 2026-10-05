@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R316**.
+Next free ID: **R318**.
 
 ## Ordered Work
 
@@ -101,14 +101,38 @@ correctness fix to existing behavior is allowed.
   - Depends on R307 and R4.
   - Model: Fable, Planned.
 
-- [ ] **R253 (P3b) The cloner's type-pack branch and the `PackElements`
-  certificate class are still live**
+- [ ] **R316 (P3b) A pack spread into a constructor keys a clone**
 
-  Problem: `pack_generic_template_names`, the pack request path, and
-  `TemplateClass::PackElements` serve the pack-keyed `def`s the template
-  does not (R250, R251, R252) and every pack-keyed method (R5).
-  - Delete the branch and the class once nothing reaches them.
-  - Depends on R250, R251, R252, and R5.
+  Problem: `return Tuple[*Ts](*args^)` and `return Tuple(*args^)` in a
+  pack-keyed `def` keep the `def` on the cloner, while the pin serves it
+  from one template.
+  - `pack_spread_callees` (`comptime.rs`) admits only `print` and a served
+    `def` as a spread's callee.
+  - `Tuple` and `Variant` are variadic structs specialized whole, so a
+    served body has no instance to name (R4).
+  - Reached by `conformance/fixtures/empty_runtime_pack.mojo`,
+    `tuple_values.mojo`, `pack_scope_restore.mojo`, and
+    `nested_heterogeneous_packs.mojo`, all pin-accepted.
+  - A spread into a plain struct's own-pack `__init__` is a method with a
+    pack of its own, so it can land with R256's admission by name.
+  - Depends on R4.
+  - Model: Fable, Planned.
+
+- [ ] **R253 (P3b) The cloner's type-pack branch is still live**
+
+  Problem: `pack_generic_template_names`, the `pack_generics` arm of the
+  explicit-application dispatch (`comptime/mono.rs`), and the
+  `unspecialized type-pack function` stub (`comptime/specialize.rs`) still
+  clone the pack-keyed `def`s the template does not serve.
+  - They are reached by a spread into a method (R256), a spread into a
+    constructor (R316), and a `comptime for` over a list in a pack-keyed
+    `def` (R246).
+  - Delete the branch, `served_pack_defs` and its gate, and the
+    `Elab::pack_generics`/`served_packs` fields once nothing reaches them;
+    `--instantiation-census` over the pack fixtures must show `def_pack 0`.
+  - Keep `def_pack_names`, `generate_spec`'s `type_pack_expansions` (R4,
+    R6), and `DefSpecializationRequest::with_variadic`.
+  - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
 - [ ] **R267 (P3b) A reflection query over a template-served `def`'s
@@ -383,6 +407,19 @@ correctness fix to existing behavior is allowed.
     slot.
   - Found while landing R62 (2026-10-04).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R317 (P3e) A nested generic `def` whose binder no runtime
+  parameter names fails to elaborate**
+
+  Problem: `def inner[U: AnyType](y: Int) -> Int` nested in a non-generic
+  `outer`, called as `inner[Int](3)`, fails with "unsupported
+  monomorphization cannot resolve parameter `U`", while the pin prints 3.
+  - The same `def` at top level runs, so the gap is the nested cloner's.
+  - Unlike R288 the binder is the nested `def`'s own, not its enclosing
+    function's.
+  - Found while landing part of R253 (2026-10-05).
+  - Depends on R6.
   - Model: Opus, Not Planned.
 
 - [ ] **R7 (P3e) A compile-time evaluation mints its own clones**

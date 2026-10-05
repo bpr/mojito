@@ -108,21 +108,12 @@ impl Checker {
         else {
             return outside("not a function");
         };
-        // A type pack is fixed per instance as a type binder is: the
-        // elaborator writes its elements into the clone's signature, and an
-        // element the body reads by loop index is fixed by the unrolling
-        // (`TemplateClass::PackElements`).
-        let pack_binders: Vec<&str> = decls
+        if decls
             .iter()
-            .filter_map(|decl| match decl {
-                ParamDecl::Type {
-                    name,
-                    variadic: true,
-                    ..
-                } => Some(name.trim_start_matches('*')),
-                ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
-            })
-            .collect();
+            .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
+        {
+            return outside("a pack-keyed body is served by its template");
+        }
         let plain_binders = type_params.iter().all(|parameter| {
             parameter.callable_bound.is_none()
                 && parameter.default.is_none()
@@ -162,21 +153,9 @@ impl Checker {
         // neither among them. A `comptime if` keys nothing: the template
         // keeps the region, and the elaborator below MIR selects.
         let keyed = self.source_validation;
-        if !keyed
-            && (!pack_binders.is_empty()
-                || crate::checker::rebind::body_keys_rebind(body, &self.rebind_keyed_bodies))
-        {
+        if !keyed && crate::checker::rebind::body_keys_rebind(body, &self.rebind_keyed_bodies) {
             return outside("a compile-time-keyed body is source validation's to certify");
         }
-        // A variadic parameter is admitted only as the collector of one of
-        // the declaration's own packs, which an instance binds as the tuple
-        // of the elements written in its signature.
-        let pack_collector = |parameter: &mojito_ast::ast::FnParam| {
-            parameter.kind == mojito_ast::ast::ParamKind::Variadic
-                && matches!(&parameter.ty, mojito_ast::ast::Type::Named(name, arguments)
-                    if arguments.is_empty()
-                        && pack_binders.contains(&name.trim_start_matches('*')))
-        };
         // A `var` or `mut` parameter of a runtime body is bound from its
         // declared convention alone, and is rooted at its own binding under
         // every instance, as a method's is.
@@ -188,7 +167,7 @@ impl Checker {
                 )
         };
         let plain_params = params.iter().all(|parameter| {
-            (parameter.kind == mojito_ast::ast::ParamKind::Regular || pack_collector(parameter))
+            parameter.kind == mojito_ast::ast::ParamKind::Regular
                 && (parameter.convention.is_none() || owned_param(parameter))
                 && parameter.default.as_ref().is_none_or(|default| {
                     literal_default(default) || self.literal_construction(default)
@@ -220,11 +199,6 @@ impl Checker {
         if !closed_scalar(ret_ty) && *ret_ty != Ty::None && keyed {
             return outside("the return type is not a concrete scalar");
         }
-        let packs: Vec<&str> = params
-            .iter()
-            .filter(|parameter| pack_collector(parameter))
-            .map(|parameter| parameter.name.as_str())
-            .collect();
         let desugars = self.with_desugars.borrow();
         let shape = BodyShape {
             origins: &self.syntax_origins,
@@ -240,9 +214,8 @@ impl Checker {
                 .iter()
                 .map(|parameter| parameter.name.as_str())
                 .collect(),
-            packs,
+            packs: Vec::new(),
             pack_struct: None,
-            pack_binders: pack_binders.clone(),
             loop_vars: RefCell::new(Vec::new()),
             values: decls
                 .iter()
@@ -420,9 +393,7 @@ impl Checker {
             .chain(&facts.expression_place_types)
             .chain(&facts.binding_types)
             .all(|(_, ty)| !mojito_types::types::is_symbolic(ty));
-        class(if !shape.packs.is_empty() {
-            TemplateClass::PackElements
-        } else if keyed {
+        class(if keyed {
             TemplateClass::ScalarBranches
         } else if widened {
             TemplateClass::FunctionBody(features)
@@ -879,7 +850,6 @@ impl Checker {
             static_calls: RefCell::new(Vec::new()),
             packs,
             pack_struct,
-            pack_binders: Vec::new(),
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: struct_scalar_binders(&self.self_decls),

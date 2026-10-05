@@ -780,14 +780,6 @@ pub enum TemplateClass {
     /// equalities they hold. A `def` keyed through a `comptime if` alone is
     /// its template's, and no longer this class's.
     ScalarBranches,
-    /// A module-level function source validation checks and the elaborator
-    /// then stubs, keyed on a type pack: its body is `comptime for` over the
-    /// pack's indices, reading each element as `pack[i]` into `print`,
-    /// beside the statements [`Self::ScalarBranches`] admits. The template
-    /// checked the element once at the dependent type `Ts[i]`; an instance
-    /// takes each unrolled copy at the element the fold fixed, and owes that
-    /// element `Writable`.
-    PackElements,
     /// A method of a generic struct with a plain read `self` and no binders
     /// of its own, returning a scalar over closed scalars, runtime
     /// parameters, and reads of `self`'s scalar fields.
@@ -812,7 +804,7 @@ impl TemplateClass {
     #[must_use]
     pub const fn keyed(self) -> bool {
         match self {
-            Self::ScalarBranches | Self::PackElements => true,
+            Self::ScalarBranches => true,
             Self::MethodBody(features) => features.contains(MethodFeatures::COMPTIME_CONTROL),
             Self::ClosedScalarBody
             | Self::FixedCalls

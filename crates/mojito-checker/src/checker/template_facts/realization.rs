@@ -380,7 +380,6 @@ impl Checker {
                     TemplateClass::ClosedScalarBody
                     | TemplateClass::FixedCalls
                     | TemplateClass::ScalarBranches
-                    | TemplateClass::PackElements
                     | TemplateClass::FunctionBody(_) => true,
                 };
         if !template && !baked {

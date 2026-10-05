@@ -341,6 +341,7 @@ assets/ok/owned_pointer_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_argument_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_beside_value_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_alias_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_alias_string_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_binding_served.mojo	-	ineligible	no-scalar-entry-shape

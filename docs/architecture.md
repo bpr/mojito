@@ -495,7 +495,8 @@ for the pruning. Every other `comptime for` — over a list, a pack's
 elements themselves, a reflection query, or with a local `comptime` binding
 in its body, and every one outside a generic `def` — is unrolled in the AST
 as before. A type pack crosses the waist the same way: a pack-keyed `def`
-the template serves (`served_pack_defs`: a read or owned collector, every
+the template serves (`served_pack_defs`: binders a non-pack `def`'s template
+also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no
 local `comptime` alias keying a clone) keeps its body; the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each

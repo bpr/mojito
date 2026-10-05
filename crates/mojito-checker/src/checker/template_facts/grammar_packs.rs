@@ -224,7 +224,7 @@ impl BodyShape<'_> {
             && self.element_construction(value)
     }
 
-    /// `Self.Ts[i]()`, or a `def`'s own `Ts[i]()`: a pack element's default
+    /// `Self.Ts[i]()`: a pack element's default
     /// construction at the innermost `comptime for` variable, stored to the
     /// element's own storage ([`Self::element_initialization`]), handed to
     /// `print`, or bound to a local.
@@ -240,33 +240,18 @@ impl BodyShape<'_> {
     /// it decides from its type — the store, the print's `Writable` proof,
     /// the local's binding — each instance decides at its own element.
     pub(super) fn element_construction(&self, value: &Expr) -> bool {
-        let (pack, param_args, args, kwargs) = match &value.kind {
-            ExprKind::Invoke {
-                callee,
-                param_args,
-                args,
-                kwargs,
-            } => (
-                matches!(&callee.kind, ExprKind::Member { object, field }
-                    if self.pack_struct == Some(field.as_str())
-                        && matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")),
-                param_args,
-                args,
-                kwargs,
-            ),
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } => (
-                self.pack_binders.contains(&name.as_str()),
-                param_args,
-                args,
-                kwargs,
-            ),
-            _ => return false,
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &value.kind
+        else {
+            return false;
         };
+        let pack = matches!(&callee.kind, ExprKind::Member { object, field }
+            if self.pack_struct == Some(field.as_str())
+                && matches!(&object.kind, ExprKind::Identifier(base) if base == "Self"));
         let dependent_element = |ty: &Ty| {
             matches!(ty, Ty::Dependent(dependent)
             if dependent.pack_element().is_some_and(|(_, index)| {

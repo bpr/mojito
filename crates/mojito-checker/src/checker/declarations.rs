@@ -3106,6 +3106,22 @@ impl Checker {
                         | ParamDecl::Value { variadic: true, .. }
                 );
                 if variadic {
+                    // A pack no bracket argument binds is inferred from the
+                    // runtime arguments, as Mojo binds `scaled[3](7, "x")`'s
+                    // `*Us` beside the explicit `n`.
+                    if arguments.is_empty()
+                        && let ParamDecl::Type { id, .. } = decl
+                    {
+                        let argument = self.collected_pack_argument(id, patterns, actuals);
+                        if let TyArg::Val(value) = &argument {
+                            value_environment.insert(
+                                decl.name().trim_start_matches('*').to_string(),
+                                value.clone(),
+                            );
+                        }
+                        tyargs.push(argument);
+                        continue;
+                    }
                     let values = arguments
                         .into_iter()
                         .map(|argument| self.resolve_param_arg(decl, argument))
@@ -3235,24 +3251,7 @@ impl Checker {
             }
         }
         unify_through_callable_bounds(decls, &mut subst)?;
-        // A pack element materializes like any other inferred instantiation
-        // argument (a literal binds `Int`/`String`). A seam without the
-        // linked String struct keeps the literal: materializing to an absent
-        // struct would fail every conformance the literal itself satisfies.
-        let materialize_pack_element = |ty: Ty| {
-            if ty == Ty::StringLiteral
-                && !self
-                    .structs
-                    .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
-            {
-                ty
-            } else {
-                match materialized_instantiation_argument(&TyArg::Ty(ty)) {
-                    TyArg::Ty(ty) => ty,
-                    _ => unreachable!("a type argument materializes to a type"),
-                }
-            }
-        };
+        let materialize_pack_element = |ty: Ty| self.materialize_pack_element(ty);
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
             .zip(actuals)
@@ -3572,6 +3571,49 @@ impl Checker {
             return Ok(expected);
         }
         self.resolve_dependent_ty(&expected, values)
+    }
+
+    /// A pack element materializes like any other inferred instantiation
+    /// argument (a literal binds `Int`/`String`). A seam without the linked
+    /// String struct keeps the literal: materializing to an absent struct
+    /// would fail every conformance the literal itself satisfies.
+    fn materialize_pack_element(&self, ty: Ty) -> Ty {
+        if ty == Ty::StringLiteral
+            && !self
+                .structs
+                .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
+        {
+            return ty;
+        }
+        match materialized_instantiation_argument(&TyArg::Ty(ty)) {
+            TyArg::Ty(ty) => ty,
+            _ => unreachable!("a type argument materializes to a type"),
+        }
+    }
+
+    /// The argument a type pack `id` takes from the runtime arguments its
+    /// collector gathered: a caller's whole pack forwarded into it, or the
+    /// tuple of the collected arguments' materialized types.
+    fn collected_pack_argument(
+        &self,
+        id: &mojito_types::param_expr::ParamId,
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> TyArg {
+        let collected = patterns
+            .iter()
+            .zip(actuals)
+            .filter(|(pattern, _)| matches!(pattern, Ty::Param { binder, .. } if binder.id == *id));
+        let mut elements = Vec::new();
+        for (_, actual) in collected {
+            if forwards_pack(actual) && !binds_pack_itself(actual, id) {
+                return TyArg::Ty(actual.clone());
+            }
+            elements.push(CtValue::Type(Box::new(
+                self.materialize_pack_element(actual.clone()),
+            )));
+        }
+        TyArg::Val(CtValue::Tuple(elements))
     }
 }
 

@@ -1666,9 +1666,6 @@ struct BodyShape<'a> {
     /// (`self.storage`, `other.storage`) the body may read by loop index,
     /// and whose length (`Self.Ts.length`) every instance folds.
     pack_struct: Option<&'a str>,
-    /// A `def`'s own type packs, whose element the body may default-construct
-    /// at a loop index ([`Self::element_construction`]).
-    pack_binders: Vec<&'a str>,
     /// The `comptime for` variables in scope, innermost last.
     loop_vars: RefCell<Vec<String>>,
     /// The declaration's scalar value parameters, which the elaborator

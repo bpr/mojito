@@ -1,8 +1,8 @@
 # A `def`'s or method's own type pack queried in a runtime position:
 # `Us.length`, `len(Us)`, `Us.contains[X]()`, and `Us.all_conforms_to[T]()`
-# read as values. A template-served body carries each query as a parameter
-# constant the elaborator folds per instance; a cloned body (a value
-# parameter beside the pack) folds it at the clone.
+# read as values. A template-served body, a value parameter beside the pack
+# included, carries each query as a parameter constant the elaborator folds
+# per instance.
 struct Plain:
     var n: Int
 

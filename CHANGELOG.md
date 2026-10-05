@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def` keyed on an `Int`, `Bool`, or `DType` value beside a type pack
+  (`def scaled[n: Int, *Us: Writable](*extra: *Us)`) is served by its
+  template, as in the pin: an explicit application `scaled[3](7, "x")` now
+  records the pack the call's arguments solve beside the bracketed value
+  instead of an empty pack, so the elaborator instantiates the template
+  rather than the cloner minting a copy
+  (`assets/ok/pack_beside_value_binder.mojo`). With no pack-keyed instance
+  left to derive, the `PackElements` certificate class is deleted. The
+  cloner's type-pack branch stays until R256, R316, and R246 land
+  (roadmap R253).
+
 - A method keyed on a type pack of its own (`def take[*Ts: Writable](self,
   *a: *Ts)`) is served by its template, as in the pin: its body is
   elaborated with the pack open, a `comptime for` or `comptime if` over the

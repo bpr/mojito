@@ -1865,8 +1865,10 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
 }
 
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
-/// the callees its body spreads its pack into when so: every compile-time
-/// parameter is a type parameter, the pack among them; the collector is read
+/// the callees its body spreads its pack into when so: its binders are ones
+/// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
+/// pack among them and an `Int`, `Bool`, or `DType` value beside it, which
+/// an explicit application binds from its brackets; the collector is read
 /// or owned (`var *args`, destroyed last to first after its last element use;
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
@@ -1887,12 +1889,8 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
         return None;
     };
     let packs = def_pack_names(type_params, params);
-    let shape = type_params.iter().all(|parameter| {
-        matches!(
-            classify_ct_param(parameter, type_params, name),
-            Some(ParamDecl::Type { .. })
-        )
-    }) && !def_body_keys_specialization(body, &packs);
+    let shape = template_serves_binders(type_params, params, name)
+        && !def_body_keys_specialization(body, &packs);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
 
