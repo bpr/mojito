@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` over a list, set, or dictionary display of `Int`,
+  `Bool`, or string literals in a generic `def` or a generic struct's method
+  is served by its template, as in the pin: MIR's `ComptimeFor` header now
+  iterates a compile-time sequence (`ComptimeSequence`, schema 1.25), as
+  upstream's `kgen.param.for` does, instead of only a `range`, and the
+  elaborator unrolls one copy per element. A compile-time `break` in such a
+  loop, which the AST unroller rejected, now runs, and a list loop no longer
+  keys a pack-keyed `def`'s clone
+  (`assets/ok/comptime_for_collection_template_served.mojo`; roadmap R246
+  keeps the loops still cloned).
+
 - A `def` keyed on an `Int`, `Bool`, or `DType` value beside a type pack
   (`def scaled[n: Int, *Us: Writable](*extra: *Us)`) is served by its
   template, as in the pin: an explicit application `scaled[3](7, "x")` now

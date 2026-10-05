@@ -160,8 +160,8 @@ fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
             MirTerm::ComptimeBranch { cond, .. } => errors.push(format!(
                 "{head} keeps a compile-time branch on `{cond:?}` in elaborated MIR"
             )),
-            MirTerm::ComptimeFor { index, .. } => errors.push(format!(
-                "{head} keeps a compile-time loop over `{index}` in elaborated MIR"
+            MirTerm::ComptimeFor { binder, .. } => errors.push(format!(
+                "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
             )),
             _ => {}
         }

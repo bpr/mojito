@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.24
+# Mojito Textual MIR Format, Version 1.25
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.24 is implemented end to end for inspection and loading: canonical
+Version 1.25 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.24
+mojito-mir 1.25
 ```
 
-The writer emits 1.24. The reader accepts 1.0 through 1.24; *Schema 1.0*
+The writer emits 1.25. The reader accepts 1.0 through 1.25; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -681,7 +681,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `Jump(target)` | `jump { target: bbN }` |
 | `Branch` | `branch { condition: %rN, then: bbN, else: bbN }` |
 | `ComptimeBranch` | `comptime_branch { condition: <constraint>, then: bbN, else: bbN }` — a `comptime if` on a parameter expression over the function's binders (the `availability` constraint grammar), decided by the elaborator; concrete MIR carries none |
-| `ComptimeFor` | `comptime_for { index: <binder>, slot: $vN, start: <param_expr>, stop: <param_expr>, step: <param_expr>, body: bbN, exit: bbN }` — a `comptime for` header: a loop whose index is the binder `index`, read by the body through the slot `slot`, over the `range` the three parameter expressions span; the body's back edge jumps to the header, the elaborator unrolls it, and concrete MIR carries none (schema 1.16) |
+| `ComptimeFor` | `comptime_for { binder: <binder>, slot: $vN, start: <param_expr>, stop: <param_expr>, step: <param_expr>, body: bbN, exit: bbN }` for a `range`, `comptime_for.elements { binder: <binder>, slot: $vN, elements: <param_expr>, body: bbN, exit: bbN }` for any other sequence — a `comptime for` header: a loop whose variable is the binder `binder`, read by the body through the slot `slot`, over the integers the three parameter expressions span as `range` does, or over the elements the `elements` value yields (a list's or a set's elements, a dictionary's keys); the body's back edge jumps to the header, the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `elements` form and the field name `binder`, `index` before, schema 1.25) |
 | `Return` | `return { value: option<reg> }` |
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` |
 | `FallOff` | `falloff {}` |
@@ -692,7 +692,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.24
+mojito-mir 1.25
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

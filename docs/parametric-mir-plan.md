@@ -616,7 +616,10 @@ branch for the class is deleted, and so is its certificate class.
   `comptime if`s over the index decided per copy, before substitution. The
   cloner's class keeps only the loops the template does not serve: over a
   list, a pack, a reflection query, or with a local `comptime` binding in
-  the body. Schema 1.16. The second landed the same day for a module-level
+  the body. Schema 1.16. On 2026-10-05 the header became a sequence
+  (`ComptimeSequence`, schema 1.25), as upstream's `kgen.param.for` iterates
+  one, and a loop over a list, set, or dictionary display of literals is
+  served too; R246 keeps the rest. The second landed the same day for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's
@@ -763,8 +766,9 @@ regions. Later forms may bump it again (decision D5).
     time on every row.
 - **D5. The MIR text schema.** Decided at P3a (2026-10-03): the bumps are
   allowed, and every earlier minor stays readable. Schema 1.15 carries the
-  `comptime_branch` terminator and 1.16 the `comptime_for` header; the
-  reader accepts 1.0 through 1.16.
+  `comptime_branch` terminator and 1.16 the `comptime_for` header, which
+  1.25 generalizes to a sequence; the reader accepts every minor through the
+  current one.
 
 ## What would stop the plan
 

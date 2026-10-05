@@ -476,25 +476,29 @@ application) is lowered as a zero-parameter thunk over the function's binders
 (`ComptimeThunks`, `lower_expression_thunk`), and its branch carries the
 thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
-template keeps a `comptime for` over a `range` of parameter expressions whose
-body declares no local `comptime` binding (`comptime_for_is_template_served`,
+template keeps a `comptime for` over a `range` of parameter expressions, or
+over a list, set, or dictionary display of literals, whose body declares no
+local `comptime` binding (`comptime_for_is_template_served`,
 `comptime/elab.rs::keep_template_comptime_for`): the checker types the body
-once with the index a symbolic `Int` binder of the loop's own and records
-the range (`SemanticAdjustment::ComptimeIteration`), HIR lowers it as a loop
-whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
-terminator — the index binder, the slot the body reads it through, and the
-range's three parameter expressions — the ownership analysis and drop
+once with the variable a symbolic binder of the loop's own, of the element's
+type, and records the sequence (`SemanticAdjustment::ComptimeIteration`, its
+`ComptimeSequence` a range or the display's elements), HIR lowers it as a
+loop whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
+terminator — the binder, the slot the body reads it through, and the
+sequence, as upstream's `kgen.param.for` iterates a compile-time sequence —
+the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
 unknown, and `native::mono` unrolls it under the instance's bindings before
 substitution (`unroll_comptime_loops`): the body — the blocks its entry
-dominates — is copied once per index value with fresh registers, the index's
+dominates — is copied once per element with fresh registers, the binder's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
-for the pruning. Every other `comptime for` — over a list, a pack's
-elements themselves, a reflection query, or with a local `comptime` binding
-in its body, and every one outside a generic `def` — is unrolled in the AST
-as before. A type pack crosses the waist the same way: a pack-keyed `def`
+for the pruning. Every other `comptime for` — over a named collection, a
+display over a parameter, a pack's elements themselves, a reflection query,
+or with a local `comptime` binding in its body, and every one outside a
+generic `def` or a generic struct's method — is unrolled in the AST as
+before. A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

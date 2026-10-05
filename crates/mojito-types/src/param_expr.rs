@@ -1767,6 +1767,18 @@ impl MetaTy {
         }
     }
 
+    /// The meta-type of what a `comptime for` over a sequence of this
+    /// meta-type binds ([`CtValue::comptime_iteration_elements`]): a list's,
+    /// a set's, or a pack's element, a dictionary's key.
+    pub fn iteration_element(&self) -> Option<&Self> {
+        match self {
+            Self::List(elements) | Self::Set(elements) | Self::Tuple(elements) => elements.first(),
+            Self::Dict(entries) => entries.first().map(|(key, _)| key),
+            Self::ParamList(element) => Some(element),
+            Self::Value(_) | Self::Type | Self::ReflectedType => None,
+        }
+    }
+
     /// The meta-type of a concrete value. A frozen struct is typed by its
     /// nominal name; the checker resolves the instance type at the conversion
     /// boundary where it matters.

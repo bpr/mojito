@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R318**.
+Next free ID: **R323**.
 
 ## Ordered Work
 
@@ -153,23 +153,47 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R246 (P3b) A `comptime for` over a compile-time collection, a
-  reflection query, or with a local `comptime` binding in its body still
-  keys a clone**
+- [ ] **R246 (P3b) A `comptime for` over a named collection, a display
+  over a parameter, a value pack, or a reflection query, or with a local
+  `comptime` binding in its body, still keys a clone**
 
   Problem: the template serves a `comptime for` only over a `range` of
-  parameter expressions whose body declares no `comptime` binding
-  (`comptime_for_is_template_served`); every other loop of a generic `def`
-  is unrolled in the AST on a clone per instantiation.
-  - A loop over a compile-time list, tuple, dictionary, or set binds its
-    variable to an element value MIR has no parameter expression for.
-  - A bound that queries a reflection handle (`range(r.field_count())`) and
-    a body binding `comptime FT = types[i]` are evaluated by the elaborator
-    above MIR, which has no value for the index
-    (`assets/ok/reflection_symbolic_fields.mojo`).
-  - A pack loop is R2's.
-  - Depends on R2.
+  parameter expressions or a list, set, or dictionary display of literals,
+  with no `comptime` binding in its body (`comptime_for_is_template_served`);
+  every other loop of a generic `def` is unrolled in the AST on a clone per
+  instantiation.
+  - A module collection constant (`comptime L = [10, 20]`, then `comptime
+    for x in L` in `def f[n: Int]()`) fails on the clone path with "cannot
+    materialize comptime value of type 'Array[Int, Int(2)]'", where the pin
+    prints `11`, `21`; serving it needs the cloner's predicate to know the
+    module's constants, as `Elab::top_consts` does.
+  - A display over a binder (`[n, n + 1]`) needs the elements as a thunk
+    the elaborator runs (`ComptimeThunks` with a non-`Bool` result); one
+    over an enclosing loop's variable also needs R248.
+  - A variadic value pack (`comptime for v in vals`, `*vals: Int`) waits on
+    its `def` being served at all (R318).
+  - A body binding (`comptime j = i * 2`) is R290's, and a reflection bound
+    or sequence (`range(reflect[T].field_count())`, `field_names()`) is
+    R267's, with R290 for the bound `comptime r = reflect[T]` form
+    (`assets/ok/reflection_symbolic_fields.mojo`,
+    `assets/ok/reflection_field_name_materialize.mojo`).
+  - The header already iterates a sequence (`ComptimeSequence::Elements`,
+    schema 1.25), so each shape needs only its sequence compiled.
+  - Depends on R290, R267, and R318.
   - Model: Fable, Planned.
+
+- [ ] **R318 (P3b) A `def` keyed on a variadic value pack still keys a
+  clone**
+
+  Problem: `def f[*vals: Int]()` is not served by its template:
+  `template_serves_binders` (`comptime.rs`) admits a value binder only when
+  it is not variadic, so every call clones the body with the values
+  substituted, where the pin checks the body once.
+  - The checker would type `vals` as a pack of symbolic `Int`s and MIR
+    carry the binder; `native::mono` binds it from the call's bracket.
+  - Found while landing part of R246 (2026-10-05).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R248 (P3b) A thunk condition inside a template-served `comptime for`
   cannot read the index**
@@ -2167,6 +2191,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R319 A local type alias applied as a constructor in an unrolled
+  `comptime for` body is an undefined variable**
+
+  Problem: `comptime T = Int` then `print(T(3))` inside `comptime for i in
+  range(2)` in a plain `main` fails with "Undefined variable 'T'", where the
+  pin prints `3` twice.
+  - The same alias used as an annotation works, and the same call outside a
+    loop works, so the AST unroller (`Elab::unroll_comptime_for`) loses the
+    alias's binding for a call position.
+  - Found while planning R246 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R320 A `comptime for` directly over `reflect[P].field_names()` is
+  rejected**
+
+  Problem: `comptime for name in reflect[P].field_names():` fails with
+  "'reflect[P].field_names()' is a compile-time list; bind it with
+  'comptime' and index it", even in a plain `main` over a concrete struct,
+  where the pin prints each field name.
+  - The iterable path does not accept the reflection list unbound, while
+    `comptime names = reflect[P].field_names()` indexed by a `range` loop
+    runs.
+  - Found while planning R246 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R313 A generic struct's method that still clones per instance has
   no clone for a `StringLiteral` instance**
 
@@ -3554,6 +3605,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     checker's discovery-round range shortcuts (`scalar_range_parts`) go.
   - Depends on R74.
   - Model: Opus, Planned.
+
+- [ ] **R321 A `comptime for` iterates by a built-in rule, not by its
+  iterable's iterator**
+
+  Problem: Mojito unrolls a `comptime for` over a `range`, a compile-time
+  list, set, or dictionary, or a pack by a rule of its own
+  (`CtValue::comptime_iteration_elements`, `ComptimeSequence`), and rejects
+  any other iterable with "'comptime for' iterates a range, a compile-time
+  list, or a pack", where the pin runs a user `Iterator & Copyable`
+  (`comptime for x in Count(3)` prints `2`, `1`, `0`).
+  - Upstream's parser desugars every `comptime for` to `seq.__iter__()` in
+    the parameter domain, and the elaborator steps it through the stdlib
+    stubs `paramfor_has_next`, `paramfor_next_iter`, and
+    `paramfor_next_value` (`std/builtin/_stubs.mojo`).
+  - Following it moves the MIR header's binder from the element to the
+    iterator, the element bound as `paramfor_next_value(it)`, with each
+    step a compile-time application the elaborator runs.
+  - Depends on R246.
+  - Model: Fable, Not Planned.
 
 - [ ] **R159 `Float64` and `Float32` print different text from the pin
   because Mojito formats floats in Rust rather than in Mojo**

@@ -2854,9 +2854,9 @@ impl Flatten<'_> {
                 then_b: map[then_b],
                 else_b: map[else_b],
             },
-            // A header with no recorded range is the explicit boundary: the
-            // iterable is one the elaborator unrolls in the AST, never a loop
-            // the check kept.
+            // A header with no recorded sequence is the explicit boundary:
+            // the iterable is one the elaborator unrolls in the AST, never a
+            // loop the check kept.
             Terminator::ComptimeLoop {
                 iter,
                 var,
@@ -2870,17 +2870,15 @@ impl Flatten<'_> {
                     // the checked binding's, as a `for` variable's.
                     let slot = binding.map_or(*index, |owner| self.binding_var(owner, var));
                     MirTerm::ComptimeFor {
-                        index: iteration.index,
+                        binder: iteration.binder,
                         slot,
-                        start: iteration.start,
-                        stop: iteration.stop,
-                        step: iteration.step,
+                        source: iteration.source,
                         body: map[body],
                         exit: map[exit],
                     }
                 } else {
                     self.emit(MirInstr::Unsupported(format!(
-                        "comptime for over `{:?}` is not a compile-time range",
+                        "comptime for over `{:?}` is not a compile-time sequence",
                         iter.syntax.kind
                     )));
                     MirTerm::Jump(map[exit])

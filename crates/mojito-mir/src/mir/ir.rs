@@ -1527,18 +1527,17 @@ pub enum MirTerm {
         then_b: MirBlockId,
         else_b: MirBlockId,
     },
-    /// A `comptime for` header: a loop whose index is the parameter binder
-    /// `index`, read by the body through the slot `slot`, over the range the
-    /// parameter expressions `start`, `stop`, and `step` span. The body's
+    /// A `comptime for` header: a loop whose variable is the parameter
+    /// binder `binder`, read by the body through the slot `slot`, over the
+    /// compile-time sequence `source` — a `range` of parameter expressions,
+    /// or a parameter expression whose value yields the elements. The body's
     /// back edge jumps here; `exit` follows the loop. Ownership and drops
     /// treat it as a loop with its trip count unknown; the elaborator unrolls
     /// it, so concrete MIR carries none.
     ComptimeFor {
-        index: mojito_types::param_expr::ParamRef,
+        binder: mojito_types::param_expr::ParamRef,
         slot: VarId,
-        start: mojito_types::param_expr::ParamExpr,
-        stop: mojito_types::param_expr::ParamExpr,
-        step: mojito_types::param_expr::ParamExpr,
+        source: mojito_checked::checked::ComptimeSequence,
         body: MirBlockId,
         exit: MirBlockId,
     },

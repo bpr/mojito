@@ -55,7 +55,7 @@ pub(super) fn verify_terminator(
             }
             if *slot as usize >= function.n_vars {
                 errors.push(format!(
-                    "{prefix}: compile-time loop index slot {slot} is out of range"
+                    "{prefix}: compile-time loop slot {slot} is out of range"
                 ));
             }
         }

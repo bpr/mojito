@@ -421,17 +421,65 @@ pub struct InteriorInvalidation {
     pub include_base_generation: bool,
 }
 
-/// A `comptime for` over a `range(...)` of parameter expressions.
+/// A `comptime for` over a compile-time sequence of parameter expressions.
 ///
-/// The loop's own index binder, and the range's start, stop, and step over
-/// the binders in scope. The body is checked once with the index symbolic;
-/// `native::mono` unrolls it under each instance's bindings.
+/// The loop's own binder, of the element's type, and the sequence it
+/// iterates over the binders in scope. The body is checked once with the
+/// binder symbolic; `native::mono` unrolls it under each instance's
+/// bindings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComptimeIteration {
-    pub index: mojito_types::param_expr::ParamRef,
-    pub start: mojito_types::param_expr::ParamExpr,
-    pub stop: mojito_types::param_expr::ParamExpr,
-    pub step: mojito_types::param_expr::ParamExpr,
+    pub binder: mojito_types::param_expr::ParamRef,
+    pub source: ComptimeSequence,
+}
+
+/// What a `comptime for` iterates, as upstream's `kgen.param.for` iterates
+/// a compile-time sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComptimeSequence {
+    /// `range(start, stop, step)`: the integers the bounds span.
+    Range {
+        start: mojito_types::param_expr::ParamExpr,
+        stop: mojito_types::param_expr::ParamExpr,
+        step: mojito_types::param_expr::ParamExpr,
+    },
+    /// Any other compile-time iterable, whose value yields the elements
+    /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names: a
+    /// list's or a set's elements, a dictionary's keys.
+    Elements(mojito_types::param_expr::ParamExpr),
+}
+
+impl ComptimeSequence {
+    /// The meta-type of the loop's binder: `Int` over a range, the
+    /// sequence's element otherwise.
+    pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
+        use mojito_types::param_expr::MetaTy;
+        match self {
+            Self::Range { .. } => MetaTy::int(),
+            Self::Elements(elements) => elements
+                .meta()
+                .iteration_element()
+                .cloned()
+                .unwrap_or_else(MetaTy::int),
+        }
+    }
+
+    /// Every parameter expression the sequence holds.
+    pub fn expressions(&self) -> Vec<&mojito_types::param_expr::ParamExpr> {
+        match self {
+            Self::Range { start, stop, step } => vec![start, stop, step],
+            Self::Elements(elements) => vec![elements],
+        }
+    }
+}
+
+impl std::fmt::Display for ComptimeSequence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Range { start, stop, step } => write!(f, "range({start}, {stop}, {step})"),
+            Self::Elements(elements) => write!(f, "{elements}"),
+        }
+    }
 }
 
 /// Checker decisions which lowering must apply explicitly.

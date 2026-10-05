@@ -1140,27 +1140,36 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## The compile-time loop (2026-10-03)
 
-- `MirTerm::ComptimeFor { index, slot, start, stop, step, body, exit }`
+- `MirTerm::ComptimeFor { binder, slot, source, body, exit }`
   (`mir/ir.rs`) is the `comptime for` header: HIR's
   `Terminator::ComptimeLoop { iter, var, binding, index, body, exit }`
   (`hir.rs`, lowered in `Lower::stmt` with the loop variable declared as a
   `for` variable is), lowered by `Flatten::lower_term` (`mir/lower_stmt.rs`)
   from the checker's `SemanticAdjustment::ComptimeIteration` (recorded by
   `Checker::record_comptime_iteration` inside `check_comptime_for`,
-  `checker/comptime_validation.rs`, the bounds compiled by
-  `compile_dependent_ct_expr`), its slot the checked binding's
+  `checker/comptime_validation.rs`, a range's bounds compiled by
+  `compile_dependent_ct_expr`, a literal display's elements by
+  `closed_iteration_elements`), its `source` the
+  `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
+  or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
+  value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
+  AST elaborator's `as_sequence` shares), its slot the checked binding's
   (`binding_var`). `mir.rs::loop_index_scopes` puts each loop's index among
   the `EnclosingBinders` of its body blocks, so a bracket argument built
-  from it (`g[i]()`) resolves. `verify/scope.rs` (`Scope::declare_loop_indices`)
-  brings the indices into scope and checks the bounds; `verify/concrete.rs`
-  rejects a survivor; the text form is `comptime_for` (schema 1.16).
+  from it (`g[i]()`) resolves. `verify/scope.rs` (`Scope::declare_loop_binders`)
+  brings the binders into scope and checks the sequence; `verify/concrete.rs`
+  rejects a survivor; the text form is `comptime_for` for a range (schema
+  1.16) and `comptime_for.elements` for any other sequence (schema 1.25). A
+  `Bool` loop binder is a `comptime if` condition of its own
+  (`is_bool_loop_binder`, `check_ct_bool`).
 - `mir/ir.rs` gained `instruction_regs_mut`, `terminator_regs_mut`,
   `terminator_targets`, and `terminator_targets_mut`, the register and
   target visitors a copied block is renumbered through, and
   `block_successors` is public.
 - `native::mono::unroll` (`mono/unroll.rs`): `unroll_comptime_loops` runs
   before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
-  pick a loop and its body, `copy_body` appends one finished copy per
+  pick a loop and its body, `trip_elements` evaluates its sequence, and
+  `copy_body` appends one finished copy per
   iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
   `substitute_value_parameter_reads` with the index among the locals,
@@ -1176,7 +1185,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   elaborator's walk (`Elab::mono_stmt`, `comptime/mono.rs`) treats a kept
   `comptime for`'s index as a symbolic parameter, so a struct applied over
   it (`Lanes[i]`) stays for the checker. `comptime_for_next`
-  (`backend/vm.rs`) runs the header on the erased path from the index slot.
+  (`backend/vm.rs`) runs the header on the erased path from the slot and a
+  per-frame cursor (`VmBackend::comptime_cursors`).
 - The cloner keys a top-level `def` on a `comptime for` its template does
   not serve (`comptime_for_is_template_served`, `comptime.rs`) or a nested
   `def` holding a `rebind`;

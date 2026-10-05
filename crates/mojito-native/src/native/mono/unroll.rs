@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     MirBlockId, SpanTable, instruction_regs_mut, terminator_regs_mut, terminator_targets,
@@ -137,18 +138,16 @@ impl Specializer<'_> {
         tables: &mut FrameTables<'_>,
     ) -> Result<(), MonoError> {
         let MirTerm::ComptimeFor {
-            index,
+            binder,
             slot,
-            start,
-            stop,
-            step,
+            source,
             body,
             exit,
         } = blocks[header].term.clone()
         else {
             return Ok(());
         };
-        let values = self.trip_values(frame.template, &index, [&start, &stop, &step], bindings)?;
+        let values = self.trip_elements(frame.template, &binder, &source, bindings)?;
         let members = loop_body(blocks, header, body, exit, frame.function_level);
         let width = members.len();
         let indexed: BTreeSet<VarId> =
@@ -158,7 +157,7 @@ impl Specializer<'_> {
                     tables
                         .var_tys
                         .get(slot)
-                        .is_some_and(|ty| mojito_types::types::names_binder(ty, &index))
+                        .is_some_and(|ty| mojito_types::types::names_binder(ty, &binder))
                 })
                 .collect();
         tables.retired.extend(indexed.iter().copied());
@@ -169,7 +168,7 @@ impl Specializer<'_> {
         // Each copy's blocks come first in what its iteration appends; the
         // loops nested in it follow.
         let mut firsts = Vec::with_capacity(values.len());
-        for value in &values {
+        for value in values {
             firsts.push(blocks.len());
             self.copy_body(
                 blocks,
@@ -177,7 +176,7 @@ impl Specializer<'_> {
                 frame,
                 bindings,
                 tables,
-                (&index, slot, *value),
+                (&binder, slot, value),
                 &indexed,
             )?;
         }
@@ -203,11 +202,11 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Append one copy of the loop body for the iteration binding `index`
+    /// Append one copy of the loop body for the iteration binding `binder`
     /// to `value`, finished under that binding: registers fresh, each of the
     /// `indexed` slots fresh at its type for the iteration, reads of the
-    /// index folded, types substituted, nested loops unrolled, and the
-    /// compile-time branches over the index decided.
+    /// binder folded, types substituted, nested loops unrolled, and the
+    /// compile-time branches over the binder decided.
     #[allow(clippy::too_many_arguments, reason = "one copy's parameters")]
     fn copy_body(
         &mut self,
@@ -216,12 +215,12 @@ impl Specializer<'_> {
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
-        (index, slot, value): (&ParamRef, VarId, i64),
+        (binder, slot, bound): (&ParamRef, VarId, CtValue),
         indexed: &BTreeSet<VarId>,
     ) -> Result<(), MonoError> {
         let first = blocks.len();
         let mut iteration = bindings.clone();
-        iteration.values.insert(index.clone(), CtValue::Int(value));
+        iteration.values.insert(binder.clone(), bound.clone());
         let mapping: HashMap<MirBlockId, MirBlockId> = members
             .iter()
             .enumerate()
@@ -255,7 +254,6 @@ impl Specializer<'_> {
         // are over this iteration's binding and their own, which nothing
         // else of the copy may be substituted without.
         self.unroll_in(blocks, first, frame, &iteration, tables)?;
-        let bound = CtValue::Int(value);
         let mut locals = bound_parameter_locals(frame.scope, bindings);
         if let Some(name) = tables.var_names.get(slot as usize) {
             locals.insert(name.clone(), &bound);
@@ -278,50 +276,79 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// The index values the range spans under the bindings, in order: a
-    /// zero step is an empty range, as `range` is.
-    fn trip_values(
+    /// The values the loop binds under the bindings, in order: the
+    /// integers a range spans — a zero step is an empty range, as `range`
+    /// is — or the elements of any other sequence
+    /// ([`CtValue::comptime_iteration_elements`]), each materialized at the
+    /// binder's type.
+    fn trip_elements(
         &mut self,
         template: &str,
-        index: &ParamRef,
-        bounds: [&ParamExpr; 3],
+        binder: &ParamRef,
+        source: &ComptimeSequence,
         bindings: &Bindings,
-    ) -> Result<Vec<i64>, MonoError> {
-        let mut evaluated = [0i64; 3];
-        for (value, bound) in evaluated.iter_mut().zip(bounds) {
-            *value = eval_ct(bound, bindings)
+    ) -> Result<Vec<CtValue>, MonoError> {
+        let undecided = |this: &Self, expression: &ParamExpr| {
+            this.error(
+                Some(template),
+                format!(
+                    "comptime for over `{binder}` has the sequence `{expression}` the instance does not decide"
+                ),
+            )
+        };
+        let elements = match source {
+            ComptimeSequence::Range { start, stop, step } => {
+                let mut evaluated = [0i64; 3];
+                for (value, bound) in evaluated.iter_mut().zip([start, stop, step]) {
+                    *value = eval_ct(bound, bindings)
+                        .ok()
+                        .as_ref()
+                        .and_then(mojito_types::param_expr::fold::integer_value)
+                        .and_then(|value| value.to_i64())
+                        .ok_or_else(|| undecided(self, bound))?;
+                }
+                let [start, stop, step] = evaluated;
+                let mut values = Vec::new();
+                let mut current = start;
+                while (step > 0 && current < stop) || (step < 0 && current > stop) {
+                    values.push(CtValue::Int(current));
+                    current = current.checked_add(step).ok_or_else(|| {
+                        self.error(
+                            Some(template),
+                            format!("comptime for over `{binder}` overflows its index"),
+                        )
+                    })?;
+                    self.spend_unroll_fuel(template)?;
+                }
+                return Ok(values);
+            }
+            ComptimeSequence::Elements(expression) => eval_ct(expression, bindings)
                 .ok()
                 .as_ref()
-                .and_then(mojito_types::param_expr::fold::integer_value)
-                .and_then(|value| value.to_i64())
-                .ok_or_else(|| {
-                    self.error(
-                        Some(template),
-                        format!(
-                            "comptime for over `{index}` has the bound `{bound}` the instance does not decide"
-                        ),
-                    )
-                })?;
-        }
-        let [start, stop, step] = evaluated;
-        let mut values = Vec::new();
-        let mut current = start;
-        while (step > 0 && current < stop) || (step < 0 && current > stop) {
-            self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
-                self.error(
-                    Some(template),
-                    "comptime for unrolling exceeded the compile-time fuel quota".to_string(),
-                )
-            })?;
-            values.push(current);
-            current = current.checked_add(step).ok_or_else(|| {
-                self.error(
-                    Some(template),
-                    format!("comptime for over `{index}` overflows its index"),
-                )
-            })?;
+                .and_then(CtValue::comptime_iteration_elements)
+                .ok_or_else(|| undecided(self, expression))?,
+        };
+        let meta = source.binder_meta();
+        let mut values = Vec::with_capacity(elements.len());
+        for element in elements {
+            self.spend_unroll_fuel(template)?;
+            values.push(match meta.as_value() {
+                Some(ty) => element.clone().materialize_as(ty).unwrap_or(element),
+                None => element,
+            });
         }
         Ok(values)
+    }
+
+    /// Spend one unit of compile-time fuel on one unrolled iteration.
+    fn spend_unroll_fuel(&mut self, template: &str) -> Result<(), MonoError> {
+        self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
+            self.error(
+                Some(template),
+                "comptime for unrolling exceeded the compile-time fuel quota".to_string(),
+            )
+        })?;
+        Ok(())
     }
 }
 

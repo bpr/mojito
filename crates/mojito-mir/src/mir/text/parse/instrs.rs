@@ -749,12 +749,36 @@ impl Decoder {
                 then_b: self.req(value, fields, "then", Self::block_id)?,
                 else_b: self.req(value, fields, "else", Self::block_id)?,
             }),
+            // Before 1.25 the range form named its binder `index`.
             "comptime_for" => Some(MirTerm::ComptimeFor {
-                index: self.req(value, fields, "index", Self::binder_ref)?,
+                binder: self.req(
+                    value,
+                    fields,
+                    if self.field(fields, "binder").is_ok() {
+                        "binder"
+                    } else {
+                        "index"
+                    },
+                    Self::binder_ref,
+                )?,
                 slot: self.req(value, fields, "slot", Self::var)?,
-                start: self.req(value, fields, "start", Self::param_expr)?,
-                stop: self.req(value, fields, "stop", Self::param_expr)?,
-                step: self.req(value, fields, "step", Self::param_expr)?,
+                source: mojito_checked::checked::ComptimeSequence::Range {
+                    start: self.req(value, fields, "start", Self::param_expr)?,
+                    stop: self.req(value, fields, "stop", Self::param_expr)?,
+                    step: self.req(value, fields, "step", Self::param_expr)?,
+                },
+                body: self.req(value, fields, "body", Self::block_id)?,
+                exit: self.req(value, fields, "exit", Self::block_id)?,
+            }),
+            "comptime_for.elements" => Some(MirTerm::ComptimeFor {
+                binder: self.req(value, fields, "binder", Self::binder_ref)?,
+                slot: self.req(value, fields, "slot", Self::var)?,
+                source: mojito_checked::checked::ComptimeSequence::Elements(self.req(
+                    value,
+                    fields,
+                    "elements",
+                    Self::param_expr,
+                )?),
                 body: self.req(value, fields, "body", Self::block_id)?,
                 exit: self.req(value, fields, "exit", Self::block_id)?,
             }),

@@ -448,15 +448,10 @@ impl CtValueExt for CtValue {
     /// iteration and indexing. A `TypeList` value (`Sized` and iterable
     /// upstream) yields its element types.
     fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
-        match self {
-            Self::Tuple(v) | Self::List(v) | Self::Set { elements: v, .. } => Ok(v.clone()),
-            // A dictionary iterates (and counts) its keys, as at runtime.
-            Self::Dict { entries, .. } => Ok(entries.iter().map(|(key, _)| key.clone()).collect()),
-            _ => self
-                .typelist_elements()
-                .map(<[Self]>::to_vec)
-                .ok_or_else(|| ComptimeError::BadRange(ctx.to_string())),
-        }
+        // A dictionary iterates (and counts) its keys, as at runtime.
+        self.comptime_iteration_elements()
+            .or_else(|| self.typelist_elements().map(<[Self]>::to_vec))
+            .ok_or_else(|| ComptimeError::BadRange(ctx.to_string()))
     }
 
     /// The element types carried by a compile-time `TypeList` value, or
@@ -1461,13 +1456,15 @@ fn block_has_unkept_comptime_for(stmts: &[Stmt], packs: &HashSet<String>) -> boo
 /// is a `range` whose bounds are parameter expressions — literals, names,
 /// `Self.` members, the length of one of the `def`'s `packs` as the pin
 /// spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
-/// `len(args)` is a runtime value there), and arithmetic over them — and
-/// the body declares no `comptime` binding of its own, which the elaborator
-/// above MIR would have to evaluate with the index unknown, other than an
-/// alias of a pack element ([`pack_element_alias`]). Such a loop is
-/// checked once with the index symbolic, carried by MIR as a loop header,
-/// and unrolled below MIR; any other — over a compile-time list, a pack, a
-/// reflection query — is unrolled in the AST, on a clone per instantiation.
+/// `len(args)` is a runtime value there), and arithmetic over them — or a
+/// list, set, or dictionary display of literals, and the body declares no
+/// `comptime` binding of its own, which the elaborator above MIR would have
+/// to evaluate with the loop variable unknown, other than an alias of a pack
+/// element ([`pack_element_alias`]). Such a loop is checked once with the
+/// variable symbolic, carried by MIR as a loop header, and unrolled below
+/// MIR; any other — over a named collection, a display over a parameter, a
+/// value pack, a reflection query — is unrolled in the AST, on a clone per
+/// instantiation.
 pub(super) fn comptime_for_is_template_served(
     iter: &Expr,
     body: &[Stmt],
@@ -1520,10 +1517,27 @@ pub(super) fn comptime_for_is_template_served(
             _ => false,
         }
     }
-    matches!(&iter.kind, ExprKind::Call { name, args, .. }
-        if name == "range"
-            && !args.is_empty()
-            && args.iter().all(|bound| parameter_shaped(bound, packs)))
+    fn literal(expression: &Expr) -> bool {
+        match &expression.kind {
+            ExprKind::Int(_) | ExprKind::Str(_) | ExprKind::Bool(_) => true,
+            ExprKind::Prefix(PrefixOp::Neg, inner) => matches!(inner.kind, ExprKind::Int(_)),
+            _ => false,
+        }
+    }
+    let sequence = match &iter.kind {
+        ExprKind::Call { name, args, .. } if name == "range" => {
+            !args.is_empty() && args.iter().all(|bound| parameter_shaped(bound, packs))
+        }
+        ExprKind::ListLit(items) => items.iter().all(literal),
+        ExprKind::BraceLit(entries) => {
+            !entries.is_empty()
+                && entries
+                    .iter()
+                    .all(|(key, value)| literal(key) && value.as_ref().is_none_or(literal))
+        }
+        _ => false,
+    };
+    sequence
         && !block_has_statement(body, &|kind| {
             matches!(kind, StmtKind::Comptime { .. })
                 && pack_element_alias(kind, &|base| packs.contains(base)).is_none()

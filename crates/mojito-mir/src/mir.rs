@@ -1422,13 +1422,20 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
         else {
             continue;
         };
-        let Some(index) = comptime_iteration(iter).map(|iteration| iteration.index) else {
+        let Some(iteration) = comptime_iteration(iter) else {
             continue;
         };
+        let binder = iteration.binder;
+        let ty = iteration
+            .source
+            .binder_meta()
+            .as_value()
+            .cloned()
+            .unwrap_or(Ty::Int);
         let decl = ParamDecl::Value {
-            id: index.id.clone(),
-            name: index.name.to_string(),
-            ty: Box::new(Ty::Int),
+            id: binder.id.clone(),
+            name: binder.name.to_string(),
+            ty: Box::new(ty),
             default: None,
             callable_default: None,
             infer_only: false,
@@ -1457,7 +1464,7 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
     scopes
 }
 
-/// The range a `comptime for` iterable was checked as, when the checker
+/// The sequence a `comptime for` iterable was checked as, when the checker
 /// recorded one (`SemanticAdjustment::ComptimeIteration`).
 fn comptime_iteration(iter: &hir::HirExpr) -> Option<mojito_checked::checked::ComptimeIteration> {
     iter.adjustments

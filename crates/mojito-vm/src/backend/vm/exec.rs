@@ -2338,8 +2338,14 @@ impl VmBackend {
                     };
                 }
                 header @ MirTerm::ComptimeFor { .. } => {
-                    block =
-                        comptime_for_next(header, &prog.mir.functions[function].1, vars, comptime)?;
+                    block = comptime_for_next(
+                        header,
+                        &prog.mir.functions[function].1,
+                        vars,
+                        comptime,
+                        &mut self.comptime_cursors,
+                        scope.id,
+                    )?;
                 }
                 MirTerm::Return(r) => {
                     let v = r

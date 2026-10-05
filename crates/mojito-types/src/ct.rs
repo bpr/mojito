@@ -214,6 +214,24 @@ impl fmt::Display for CtMarker {
 }
 
 impl CtValue {
+    /// What a `comptime for` over this value binds, in order: a list's or a
+    /// set's elements, a dictionary's keys, and a bound value pack's
+    /// elements; `None` for any other value. One rule for both unrollers,
+    /// the AST elaborator's and `native::mono`'s.
+    pub fn comptime_iteration_elements(&self) -> Option<Vec<Self>> {
+        match self {
+            Self::Tuple(values)
+            | Self::List(values)
+            | Self::Set {
+                elements: values, ..
+            } => Some(values.clone()),
+            Self::Dict { entries, .. } => {
+                Some(entries.iter().map(|(key, _)| key.clone()).collect())
+            }
+            _ => None,
+        }
+    }
+
     /// A compile-time dictionary from display-ordered entries: a repeated key
     /// keeps its first position and takes the last value.
     pub fn dict(spelling: Option<Ty>, entries: Vec<(Self, Self)>) -> Self {

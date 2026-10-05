@@ -17,7 +17,7 @@ use calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use mojito_ast::ast::Stmt;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
-use mojito_checked::checked::CheckedConst;
+use mojito_checked::checked::{CheckedConst, ComptimeSequence};
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
@@ -77,6 +77,9 @@ pub struct VmBackend {
     /// text, by text — the VM's counterpart to the native backend's interned
     /// `mjstr_<n>` globals, which `StringLiteral.ptr()` addresses.
     static_literals: HashMap<String, u64>,
+    /// The erased oracle's position in each running `comptime for`, by frame
+    /// and header: the index of the element its slot holds.
+    comptime_cursors: HashMap<(FrameId, usize), usize>,
 }
 
 impl VmBackend {
@@ -1121,21 +1124,22 @@ fn erased_closed_ty(
 /// of them. A condition over a type binder has no erased reading, since an
 /// erased frame carries no type argument.
 /// The block a `comptime for` header hands control to on the erased path,
-/// which runs the loop as written: the index slot holds the iteration's
-/// value, or nothing before the first and after the last, so the header
-/// steps it from the range the frame's reified parameters decide — a
-/// zero step is an empty range, as `range` is — and clears it on exit.
+/// which runs the loop as written: the slot holds the iteration's element,
+/// or nothing before the first and after the last, and `cursors` the
+/// element's position, keyed by the frame and the header — an empty slot
+/// starts the sequence the frame's reified parameters decide, which a range
+/// spans as `range` does, and the slot is cleared on exit.
 fn comptime_for_next(
     header: &MirTerm,
     function: &MirFunction,
     variables: &mut [Value],
     comptime: &[(String, Value)],
+    cursors: &mut HashMap<(FrameId, usize), usize>,
+    frame: FrameId,
 ) -> Result<usize, RuntimeError> {
     let MirTerm::ComptimeFor {
         slot,
-        start,
-        stop,
-        step,
+        source,
         body,
         exit,
         ..
@@ -1147,34 +1151,54 @@ fn comptime_for_next(
     };
     let unsupported = |what: &str| {
         RuntimeError::Unsupported(format!(
-            "the erased oracle cannot decide the comptime for {what} `{start}..{stop}:{step}`"
+            "the erased oracle cannot decide the comptime for {what} `{source}`"
         ))
     };
     let named = erased_parameter_values(function, variables, comptime);
-    let bound = |expr: &mojito_types::param_expr::ParamExpr, what: &str| {
-        let value = expr.evaluate_named(&named).map_err(|_| unsupported(what))?;
-        mojito_types::param_expr::fold::integer_value(&value)
-            .and_then(|value| value.to_i64())
-            .ok_or_else(|| unsupported(what))
+    let evaluate = |expr: &mojito_types::param_expr::ParamExpr, what: &str| {
+        expr.evaluate_named(&named).map_err(|_| unsupported(what))
     };
-    let (start, stop, step) = (
-        bound(start, "start")?,
-        bound(stop, "stop")?,
-        bound(step, "step")?,
-    );
+    let key = (frame, std::ptr::from_ref(header) as usize);
     let slot = *slot as usize;
-    let next = match &variables[slot] {
-        Value::Int(current) => current
-            .checked_add(step)
-            .ok_or_else(|| unsupported("index"))?,
-        _ => start,
+    let position = if matches!(variables[slot], Value::None) {
+        0
+    } else {
+        cursors.get(&key).map_or(0, |position| position + 1)
     };
-    let continues = (step > 0 && next < stop) || (step < 0 && next > stop);
-    if continues {
-        variables[slot] = Value::Int(next);
+    let next = match source {
+        ComptimeSequence::Range { start, stop, step } => {
+            let bound = |expr, what| {
+                mojito_types::param_expr::fold::integer_value(&evaluate(expr, what)?)
+                    .and_then(|value| value.to_i64())
+                    .ok_or_else(|| unsupported(what))
+            };
+            let (start, stop, step) = (
+                bound(start, "start")?,
+                bound(stop, "stop")?,
+                bound(step, "step")?,
+            );
+            i64::try_from(position)
+                .ok()
+                .and_then(|position| position.checked_mul(step))
+                .and_then(|offset| start.checked_add(offset))
+                .filter(|next| (step > 0 && *next < stop) || (step < 0 && *next > stop))
+                .map(Value::Int)
+        }
+        ComptimeSequence::Elements(elements) => evaluate(elements, "sequence")?
+            .comptime_iteration_elements()
+            .ok_or_else(|| unsupported("sequence"))?
+            .into_iter()
+            .nth(position)
+            .map(|element| ct_value_as_runtime(element).ok_or_else(|| unsupported("element")))
+            .transpose()?,
+    };
+    if let Some(next) = next {
+        variables[slot] = next;
+        cursors.insert(key, position);
         Ok(*body)
     } else {
         variables[slot] = Value::None;
+        cursors.remove(&key);
         Ok(*exit)
     }
 }
@@ -1214,6 +1238,7 @@ fn comptime_branch_holds(
         );
         match (op, &left, &right) {
             (InfixOp::Eq, CtValue::Str(left), CtValue::Str(right)) => Ok(left == right),
+            (InfixOp::Eq, CtValue::Bool(left), CtValue::Bool(right)) => Ok(left == right),
             _ => mojito_types::param_expr::fold::compare(op, &left, &right)
                 .map_err(|_| unsupported()),
         }

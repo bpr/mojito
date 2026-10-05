@@ -265,6 +265,8 @@ impl VmBackend {
                         &prog.mir.functions[frame.function].1,
                         &mut frame.variables,
                         &frame.comptime,
+                        &mut self.comptime_cursors,
+                        frame.id,
                     )?;
                     frame.instruction = 0;
                     self.frames.push(frame);

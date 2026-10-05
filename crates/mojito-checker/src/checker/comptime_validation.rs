@@ -191,6 +191,21 @@ impl Checker {
                     .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
                 return Ok(None);
             }
+            // A `comptime for` variable of `Bool` elements is the binder
+            // itself, compared with `True`: a thunk over the owner's binders
+            // could not take the loop's.
+            ExprKind::Identifier(name)
+                if let Some(binder) = self
+                    .value_parameter_in_scope(name)
+                    .filter(is_bool_loop_binder) =>
+            {
+                let constraint = GenericConstraint::Eq(
+                    ConstraintOperand::Expr(binder),
+                    ConstraintOperand::Value(mojito_types::ct::CtValue::Bool(true)),
+                );
+                self.record_comptime_condition(cond, &constraint);
+                return Ok(Some(constraint));
+            }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
             ExprKind::TypeApply { name, .. }
@@ -295,10 +310,20 @@ impl Checker {
         if let Some(bindings) = self.compile_time_bindings.last_mut() {
             bindings.insert(var.to_string());
         }
-        let binds_index = element == Ty::Int;
-        let binder = binds_index.then(|| comptime_index_binder(var, &iter));
+        let elements = self.closed_iteration_elements(&iter, &element);
+        // A string element binds as a `String` value parameter does.
+        let element = match (&elements, element) {
+            (Some(_), Ty::Struct(name, args))
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
+            {
+                Ty::StringLiteral
+            }
+            (_, element) => element,
+        };
+        let binds_index = element == Ty::Int || elements.is_some();
+        let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
         if let Some(binder) = &binder {
-            self.record_comptime_iteration(source, &iter, binder)?;
+            self.record_comptime_iteration(source, &iter, binder, elements)?;
         }
         let shadowed = binder.and_then(|binder| {
             self.innermost_value_scope()
@@ -321,21 +346,46 @@ impl Checker {
         result
     }
 
-    /// Record a `range(...)` iterable as the loop header's parameter
-    /// expressions, each bound compiled over the binders in scope
-    /// (`SemanticAdjustment::ComptimeIteration`). A bound the compiler does
-    /// not close — a pack length, a compile-time list's — is left unrecorded
-    /// under source validation, where the loop is the cloner's to unroll, and
-    /// is the explicit boundary in the executable check, which only sees a
-    /// loop the elaborator kept.
+    /// Record the loop header's sequence over the binders in scope
+    /// (`SemanticAdjustment::ComptimeIteration`): a closed collection
+    /// display's `elements`, or a `range(...)` iterable's bounds, each
+    /// compiled as a parameter expression. A bound the compiler does not
+    /// close — a pack length, a compile-time list's — is left unrecorded
+    /// under source validation, where the loop is the cloner's to unroll,
+    /// and is the explicit boundary in the executable check, which only sees
+    /// a loop the elaborator kept.
     fn record_comptime_iteration(
         &self,
         source: &Expr,
         iter: &Expr,
         binder: &ParamExpr,
+        elements: Option<Vec<mojito_types::ct::CtValue>>,
     ) -> Result<(), TypeError> {
-        let (ExprKind::Call { name, args, .. }, Some(index)) = (&iter.kind, binder.as_decl_ref())
-        else {
+        let Some(binder) = binder.as_decl_ref() else {
+            return Ok(());
+        };
+        let record = |sequence| {
+            self.operation_adjustments.borrow_mut().insert(
+                source.source_span(),
+                mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
+                    mojito_checked::checked::ComptimeIteration {
+                        binder: binder.clone(),
+                        source: sequence,
+                    },
+                )),
+            );
+        };
+        if let Some(elements) = elements {
+            let elements = self
+                .param_context
+                .constant(mojito_types::ct::CtValue::List(elements))
+                .map_err(|error| TypeError::Unsupported(error.to_string()))?;
+            record(mojito_checked::checked::ComptimeSequence::Elements(
+                elements,
+            ));
+            return Ok(());
+        }
+        let ExprKind::Call { name, args, .. } = &iter.kind else {
             return Ok(());
         };
         if name != "range" {
@@ -365,18 +415,45 @@ impl Checker {
             [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
             _ => return Ok(()),
         };
-        self.operation_adjustments.borrow_mut().insert(
-            source.source_span(),
-            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
-                mojito_checked::checked::ComptimeIteration {
-                    index: index.clone(),
-                    start,
-                    stop,
-                    step,
-                },
-            )),
-        );
+        record(mojito_checked::checked::ComptimeSequence::Range { start, stop, step });
         Ok(())
+    }
+
+    /// The elements a `comptime for` over a closed collection display binds,
+    /// in order, each materialized at the loop variable's `element` type: a
+    /// list display's elements, a set display's distinct elements, a
+    /// dictionary display's distinct keys. `None` for any other iterable, or
+    /// a display with an element that is not a literal of a scalar type a
+    /// loop binder takes (`Int`, `Bool`, `String`).
+    fn closed_iteration_elements(
+        &self,
+        iter: &Expr,
+        element: &Ty,
+    ) -> Option<Vec<mojito_types::ct::CtValue>> {
+        let scalar = matches!(element, Ty::Int | Ty::Bool)
+            || matches!(element, Ty::Struct(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
+        if !scalar {
+            return None;
+        }
+        let (leaves, distinct): (Vec<&Expr>, bool) = match &iter.kind {
+            ExprKind::ListLit(items) => (items.iter().collect(), false),
+            ExprKind::BraceLit(entries) if !entries.is_empty() => {
+                (entries.iter().map(|(key, _)| key).collect(), true)
+            }
+            _ => return None,
+        };
+        let mut elements = Vec::with_capacity(leaves.len());
+        for leaf in leaves {
+            let value = self
+                .eval_associated_ct(leaf, &HashMap::new())
+                .ok()?
+                .materialize_as(element)?;
+            if !(distinct && elements.contains(&value)) {
+                elements.push(value);
+            }
+        }
+        Some(elements)
     }
 
     /// The value-parameter scope beside the innermost open type-parameter
@@ -1760,18 +1837,31 @@ fn pack_element_view_binder(name: &str) -> ParamRef {
     }
 }
 
-/// The compile-time binder of an integer `comptime for` variable, so a
-/// dependent index over it (`Ts[i]`, `args[i]`) has a node. The loop's
-/// iterable names the binder: each loop owns its variable.
-fn comptime_index_binder(var: &str, iter: &Expr) -> ParamExpr {
+/// The prefix of a `comptime for` binder's owner, which the loop's
+/// iterable completes.
+const COMPTIME_FOR_OWNER: &str = "$comptime_for@";
+
+/// The compile-time binder of a `comptime for` variable of type `element`,
+/// so a dependent expression over it (`Ts[i]`, `args[i]`, `x * n`) has a
+/// node. The loop's iterable names the binder: each loop owns its variable.
+fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
     let span = iter.source_span();
     let owner = format!(
-        "$comptime_for@{}:{}..{}",
+        "{COMPTIME_FOR_OWNER}{}:{}..{}",
         span.source.as_deref().unwrap_or_default(),
         span.span.0,
         span.span.1
     );
-    value_binder_expr(ParamId::new(&owner, 0), var, &Ty::Int)
+    value_binder_expr(ParamId::new(&owner, 0), var, element)
+}
+
+/// Whether `binder` is a `comptime for` variable of `Bool` elements
+/// ([`comptime_index_binder`]).
+fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
+    binder
+        .as_decl_ref()
+        .is_some_and(|reference| reference.id.owner.starts_with(COMPTIME_FOR_OWNER))
+        && binder.meta().as_value() == Some(&Ty::Bool)
 }
 
 /// Record `value` for `name` unless a different value is already recorded,

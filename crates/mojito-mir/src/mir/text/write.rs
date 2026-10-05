@@ -4,7 +4,7 @@ use crate::mir::*;
 use mojito_ast::ast::{ArgConvention, InfixOp, PrefixOp};
 use mojito_checked::checked::{
     CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedIteratorCall,
-    CheckedResultAdapter,
+    CheckedResultAdapter, ComptimeSequence,
 };
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::origin::{
@@ -1270,21 +1270,35 @@ fn term_value(term: &MirTerm) -> String {
             ],
         ),
         MirTerm::ComptimeFor {
-            index,
+            binder,
             slot,
-            start,
-            stop,
-            step,
+            source: ComptimeSequence::Range { start, stop, step },
             body,
             exit,
         } => record(
             tag,
             &[
-                ("index", binder_ref(index)),
+                ("binder", binder_ref(binder)),
                 ("slot", var_value(*slot)),
                 ("start", param_expr(start)),
                 ("stop", param_expr(stop)),
                 ("step", param_expr(step)),
+                ("body", format!("bb{body}")),
+                ("exit", format!("bb{exit}")),
+            ],
+        ),
+        MirTerm::ComptimeFor {
+            binder,
+            slot,
+            source: ComptimeSequence::Elements(elements),
+            body,
+            exit,
+        } => record(
+            tag,
+            &[
+                ("binder", binder_ref(binder)),
+                ("slot", var_value(*slot)),
+                ("elements", param_expr(elements)),
                 ("body", format!("bb{body}")),
                 ("exit", format!("bb{exit}")),
             ],

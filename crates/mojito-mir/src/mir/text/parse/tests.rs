@@ -1036,14 +1036,16 @@ fn comptime_for_terminator_reprints() {
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
     function.blocks[0].term = MirTerm::ComptimeFor {
-        index: ParamRef {
+        binder: ParamRef {
             id: ParamId::new("$comptime_for@f:10..18", 0),
             name: "i".into(),
         },
         slot: 0,
-        start: constant(0),
-        stop: constant(4),
-        step: constant(1),
+        source: mojito_checked::checked::ComptimeSequence::Range {
+            start: constant(0),
+            stop: constant(4),
+            step: constant(1),
+        },
         body: 1,
         exit: 2,
     };
@@ -1056,6 +1058,38 @@ fn comptime_for_terminator_reprints() {
         term: MirTerm::Return(None),
     });
     let program = program_with(vec![("comptime_for".into(), function)]);
+    assert_reprints(&program);
+}
+
+#[test]
+fn comptime_for_elements_terminator_reprints() {
+    use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
+    let context = ParamContext::detached();
+    let elements = context
+        .constant(CtValue::List(vec![CtValue::Int(1), CtValue::Int(3)]))
+        .expect("a constant");
+    let mut function = function_with(vec![Ty::Int], Vec::new());
+    function.n_vars = 1;
+    function.var_names = vec!["x".to_string()];
+    function.blocks[0].term = MirTerm::ComptimeFor {
+        binder: ParamRef {
+            id: ParamId::new("$comptime_for@f:10..16", 0),
+            name: "x".into(),
+        },
+        slot: 0,
+        source: mojito_checked::checked::ComptimeSequence::Elements(elements),
+        body: 1,
+        exit: 2,
+    };
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Jump(0),
+    });
+    function.blocks.push(MirBlock {
+        instrs: Vec::new(),
+        term: MirTerm::Return(None),
+    });
+    let program = program_with(vec![("comptime_for_elements".into(), function)]);
     assert_reprints(&program);
 }
 

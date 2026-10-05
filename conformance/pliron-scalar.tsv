@@ -62,6 +62,7 @@ assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_body_scope.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_collection_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_index_typed_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape

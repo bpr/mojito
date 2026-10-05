@@ -1090,7 +1090,7 @@ fn comptime_for_index_typed_local_takes_a_slot_per_copy() {
         .blocks
         .iter()
         .find_map(|block| match &block.term {
-            MirTerm::ComptimeFor { index, .. } => Some(index.clone()),
+            MirTerm::ComptimeFor { binder, .. } => Some(binder.clone()),
             _ => None,
         })
         .expect("the template keeps the loop");

@@ -30,7 +30,7 @@ pub(super) fn verify_scope(
     errors: &mut Vec<String>,
 ) {
     let mut scope = Scope::of_function(name, declarations);
-    scope.declare_loop_indices(&function.blocks);
+    scope.declare_loop_binders(&function.blocks);
     let head = format!("MIR function '{name}'");
     let mut cx = ScopeCx {
         scope: &scope,
@@ -210,13 +210,13 @@ impl Scope {
         scope
     }
 
-    /// Bring every `comptime for` index of `blocks` into scope: a loop's own
-    /// `Int` binder, declared by no signature, that the body's types and
-    /// conditions name.
-    fn declare_loop_indices(&mut self, blocks: &[MirBlock]) {
+    /// Bring every `comptime for` binder of `blocks` into scope: a loop's
+    /// own binder, of its sequence's element type, declared by no signature,
+    /// that the body's types and conditions name.
+    fn declare_loop_binders(&mut self, blocks: &[MirBlock]) {
         for block in blocks {
-            if let MirTerm::ComptimeFor { index, .. } = &block.term {
-                self.kinds.insert(index.id.clone(), MetaTy::value(Ty::Int));
+            if let MirTerm::ComptimeFor { binder, source, .. } = &block.term {
+                self.kinds.insert(binder.id.clone(), source.binder_meta());
             }
             for instruction in &block.instrs {
                 if let MirInstr::Try {
@@ -232,7 +232,7 @@ impl Scope {
                         .chain(orelse.iter())
                         .chain(finalbody.iter())
                     {
-                        self.declare_loop_indices(region);
+                        self.declare_loop_binders(region);
                     }
                 }
             }
@@ -323,18 +323,17 @@ impl ScopeCx<'_> {
                 MirTerm::ComptimeBranch { cond, .. } => {
                     self.constraint(&format!("block {index} compile-time branch"), cond);
                 }
-                MirTerm::ComptimeFor {
-                    index: binder,
-                    start,
-                    stop,
-                    step,
-                    ..
-                } => {
+                MirTerm::ComptimeFor { binder, source, .. } => {
                     let role = format!("block {index} compile-time loop");
                     self.reference(&role, &binder.id, &binder.name, None, &[]);
-                    for bound in [start, stop, step] {
+                    for expression in source.expressions() {
                         let mut nested = Vec::new();
-                        self.expr_nodes(&role, "compile-time loop bound", bound, &mut nested);
+                        self.expr_nodes(
+                            &role,
+                            "compile-time loop sequence",
+                            expression,
+                            &mut nested,
+                        );
                     }
                 }
                 _ => {}
