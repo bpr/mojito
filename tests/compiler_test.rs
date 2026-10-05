@@ -1841,11 +1841,12 @@ fn template_value_shaped_lane_copy_is_template_served() {
 }
 
 #[test]
-fn template_struct_lane_members_derive() {
-    // A member of a `DType`-keyed struct specialized whole converts, builds,
-    // and combines values of the symbolic lane with literals, and derives at
-    // a vector lane and at the native `Int` and `Float64` lanes, where each
-    // literal beside a lane value materializes at the native scalar.
+fn template_struct_lane_members_are_template_served() {
+    // A member of a `DType`-keyed struct, a generator the template serves,
+    // converts, builds, and combines values of the symbolic lane with
+    // literals, and runs at a vector lane and at the native `Int` and
+    // `Float64` lanes, where each literal beside a lane value materializes
+    // at the native scalar.
     let source = "struct Lane[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        var first = pos\n        if Int(first) < 0:\n            first = 0\n        self.pos = first\n\n    def bump(mut self):\n        self.pos += 1\n\n    def twice(self) -> Scalar[Self.dtype]:\n        return 2 * self.pos - 1\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return self.pos + Scalar[Self.dtype](idx)\n\ndef main():\n    var a = Lane[DType.int](3)\n    var b = Lane[DType.int16](-4)\n    var c = Lane[DType.float64](5)\n    a.bump()\n    b.bump()\n    c.bump()\n    print(a.twice(), b.at(2), c.twice(), c.at(1))\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -1856,25 +1857,30 @@ fn template_struct_lane_members_derive() {
             "7 3 11.0 7.0\n"
         );
     }
-    let stats = derived.template_stats();
-    for lane in ["dint", "dint16", "dfloat64"] {
-        for member in ["__init__", "bump", "twice", "at"] {
-            let name = format!("Lane${lane};.{member}");
-            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-            assert!(
-                !stats.inferred_clones.contains(&name),
-                "{name} is never inferred: {stats:?}"
-            );
-        }
-    }
+    assert_struct_is_a_generator(&derived, "Lane");
+}
+
+/// A struct the template serves mints no specialization: no derived or
+/// inferred body is named for one of its instances (`Lane$dint;.bump`).
+fn assert_struct_is_a_generator(program: &mojito::compiler::CompiledProgram, name: &str) {
+    let stats = program.template_stats();
+    let prefix = format!("{name}$");
+    assert!(
+        !stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .any(|body| body.starts_with(&prefix)),
+        "{name} mints no specialization: {stats:?}"
+    );
 }
 
 #[test]
-fn float_lane_methods_derive() {
+fn float_lane_methods_are_template_served() {
     // `__ceil__` and `__fma__` on values of a struct's symbolic lane — the
-    // bundled float range's and a user struct's — derive at a sized float
-    // lane and at the native `Float64`, whose `__fma__` borrows its place
-    // arguments and reads its temporary ones.
+    // bundled float range's and a user struct's — run from the template at
+    // a sized float lane and at the native `Float64`, whose `__fma__`
+    // borrows its place arguments and reads its temporary ones.
     let source = "struct R[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var start: Scalar[Self.dtype]\n    var step: Scalar[Self.dtype]\n\n    def __init__(out self, start: Scalar[Self.dtype], step: Scalar[Self.dtype]):\n        self.start = start\n        self.step = step\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step, self.start)\n\n    def far(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step * self.step, self.start + self.step)\n\n    def up(self) -> Scalar[Self.dtype]:\n        return (self.start / self.step).__ceil__()\n\ndef main():\n    var a = R[DType.float32](1.5, 2.0)\n    var b = R[DType.float64](1.5, 2.0)\n    print(a.at(2), a.up(), b.at(2), b.up())\n    print(a.far(2), b.far(2))\n    for x in range(Float64(0.5), Float64(1.5), Float64(0.5)):\n        print(x)\n    for y in range(Float32(1.0), Float32(0.0), Float32(-0.5)):\n        print(y)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -1885,34 +1891,14 @@ fn float_lane_methods_derive() {
             "5.5 1.0 5.5 1.0\n11.5 11.5\n0.5\n1.0\n1.0\n0.5\n"
         );
     }
-    let stats = derived.template_stats();
-    let members = [
-        "R$dfloat32;.at",
-        "R$dfloat32;.far",
-        "R$dfloat32;.up",
-        "R$dfloat64;.at",
-        "R$dfloat64;.far",
-        "R$dfloat64;.up",
-    ]
-    .map(str::to_string)
-    .into_iter()
-    .chain(["dfloat32", "dfloat64"].into_iter().flat_map(|lane| {
-        ["__init__", "__next__"]
-            .map(|member| format!("__module$std$range$_FloatStridedRange${lane};.{member}"))
-    }));
-    for name in members {
-        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-        assert!(
-            !stats.inferred_clones.contains(&name),
-            "{name} is never inferred: {stats:?}"
-        );
-    }
+    assert_struct_is_a_generator(&derived, "R");
+    assert_struct_is_a_generator(&derived, "__module$std$range$_FloatStridedRange");
 }
 
 #[test]
-fn lane_comparisons_derive() {
+fn lane_comparisons_are_template_served() {
     // A comparison between values of a symbolic lane, as a condition or
-    // through `Bool(...)`, derives at a sized lane, whose mask a condition
+    // through `Bool(...)`, runs at a sized lane, whose mask a condition
     // tests through `__bool__`, and at a native `Int` or `Float64`, which
     // compares to a plain `Bool`. Bound to a local, the mask and each read
     // of it are re-typed alike, and an integer literal operand materializes
@@ -1927,24 +1913,18 @@ fn lane_comparisons_derive() {
             "True False True\n2 3.5 4\nTrue True False\n1 -1 0\n-1 1 0\n"
         );
     }
-    let stats = derived.template_stats();
-    let lanes = ["dint", "dfloat64", "dint32"];
-    let members = lanes.iter().flat_map(|lane| {
-        ["below", "clamp", "same", "positive"].map(|member| format!("W${lane};.{member}"))
-    });
-    for name in members {
-        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-    }
+    assert_struct_is_a_generator(&derived, "W");
     // The lane-keyed `sign` is served by its template at every lane.
     let census = derived.instantiation_census();
     assert!(!census.cloned.minted("sign"), "{census:?}");
 }
 
 #[test]
-fn float_lane_literals_derive() {
+fn float_lane_literals_are_template_served() {
     // A float literal beside a value of a symbolic lane — an operand, a
-    // comparison's operand, or an augmented assignment's value — derives at
-    // a sized float lane and at the native `Float64`, where it materializes.
+    // comparison's operand, or an augmented assignment's value — runs from
+    // the template at a sized float lane and at the native `Float64`, where
+    // it materializes.
     let source = "struct W[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        self.pos = pos\n\n    def half(self) -> Scalar[Self.dtype]:\n        return self.pos * 0.5\n\n    def small(self) -> Bool:\n        if self.pos < 0.5:\n            return True\n        return False\n\n    def big(self) -> Bool:\n        return Bool(1.5 <= self.pos)\n\n    def nudge(mut self):\n        self.pos += 0.25\n\n\ndef main():\n    var a = W[DType.float64](3.0)\n    var b = W[DType.float32](0.25)\n    a.nudge()\n    b.nudge()\n    print(a.half(), a.small(), a.big(), b.half(), b.small(), b.big())\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -1955,17 +1935,7 @@ fn float_lane_literals_derive() {
             "1.625 False True 0.25 False False\n"
         );
     }
-    let stats = derived.template_stats();
-    let members = ["dfloat64", "dfloat32"].iter().flat_map(|lane| {
-        ["half", "small", "big", "nudge"].map(|member| format!("W${lane};.{member}"))
-    });
-    for name in members {
-        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-        assert!(
-            !stats.inferred_clones.contains(&name),
-            "{name} is never inferred: {stats:?}"
-        );
-    }
+    assert_struct_is_a_generator(&derived, "W");
 }
 
 #[test]
@@ -2549,36 +2519,32 @@ fn template_method_own_lane_derives() {
 }
 
 #[test]
-fn template_value_struct_per_call_clones_derive() {
-    // A struct specialized whole because a value binder is a lane width
-    // (`Width[n: Int]` spelling `SIMD[dt, Self.n]`) has its members
-    // validated as templates, and each per-call clone of a method keyed on
-    // its own binder derives from its template under both the struct's
-    // folded value and the call's.
+fn template_value_struct_per_call_clones_are_minted_on_the_generator() {
+    // A struct whose value binder is a lane width (`Width[n: Int]` spelling
+    // `SIMD[dt, Self.n]`) is a generator the template serves: no instance is
+    // specialized whole, and each per-call clone of a method keyed on its own
+    // binder is minted on the template with the struct's binder symbolic,
+    // checked as a per-call clone of any generic struct is (R5).
     let source = "struct Width[n: Int]:\n    def __init__(out self):\n        pass\n\n    def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt, Self.n]:\n        return a + a\n\n    def sized[dt: DType](self, a: SIMD[dt, Self.n]) -> Int:\n        return Self.n + len(a)\n\n    def widen[w: Int](self) -> SIMD[DType.int32, w]:\n        return SIMD[DType.int32, w](Self.n)\n\ndef main():\n    var w = Width[4]()\n    print(w.rep[DType.int16](SIMD[DType.int16, 4](1, 2, 3, 4)))\n    print(w.sized(SIMD[DType.uint8, 4](1)), w.widen[2]())\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let per_call: std::collections::HashSet<&str> = served
+        let per_call: std::collections::HashSet<&str> = stats
+            .inferred_clones
             .iter()
             .map(String::as_str)
-            .filter(|name| name.starts_with("Width$i4;.") && name.ends_with(';'))
+            .filter(|name| name.starts_with("Width"))
             .collect();
         assert_eq!(
             per_call,
             [
-                "Width$i4;.rep$dint16;",
-                "Width$i4;.sized$duint8;",
-                "Width$i4;.widen$i2;"
+                "Width.rep$dint16;",
+                "Width.sized$duint8;",
+                "Width.widen$i2;"
             ]
             .into(),
-            "every per-call clone derives: {stats:?}"
+            "every per-call clone is on the generator: {stats:?}"
         );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
@@ -3273,10 +3239,11 @@ fn template_method_simd_leaf_default_bits_lanes_derive() {
 
 #[test]
 fn template_value_keyed_struct_members_derive() {
-    // A struct keyed on a `DType` or vector value is specialized whole per
-    // value; source validation checks its members once with the value
-    // symbolic, and every specialization's members derive, a sibling call
-    // naming the specialization's own member.
+    // A struct keyed on a vector value is specialized whole per value;
+    // source validation checks its members once with the value symbolic, and
+    // every specialization's members derive, a sibling call naming the
+    // specialization's own member. A `DType`-keyed struct is a generator the
+    // template serves, so it mints no specialization at all.
     let source = include_str!("../assets/ok/template_value_keyed_struct.mojo");
     let expected = "3 18 6\n2 20 10\n3751\n";
     let compiler = Compiler::default();
@@ -3292,8 +3259,6 @@ fn template_value_keyed_struct_members_derive() {
     );
     let stats = derived.template_stats();
     for member in [
-        "Tally$dint32;.add_twice",
-        "Tally$dfloat64;.mean",
         "Salted$vuint64:2;[i1;i2;].__init__",
         "Salted$vuint64:2;[i1;i2;].mix_pair",
     ] {
@@ -3311,14 +3276,20 @@ fn template_value_keyed_struct_members_derive() {
         "no member is inferred: {:?}",
         stats.inferred_clones
     );
+    assert!(
+        !stats.derived.iter().any(|name| name.starts_with("Tally$")),
+        "a DType-keyed struct mints no specialization: {:?}",
+        stats.derived
+    );
 }
 
 #[test]
 fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() {
-    // `Pair64(3, 5)` (a vector alias called as a constructor) and
-    // `Int(self.value)` (over a symbolic lane) both type under the symbolic
-    // check, so each member is certified rather than ending without a
-    // verdict. Their clones are still checked per specialization.
+    // `Pair64(3, 5)` (a vector alias called as a constructor) types under the
+    // symbolic check, so the member is certified rather than ending without
+    // a verdict, and its clone is still checked per specialization.
+    // `Int(self.value)` over a `DType`-keyed struct's symbolic lane is
+    // checked once on the template, which serves every instance.
     let source = "comptime Pair64 = SIMD[DType.uint64, 2]\n\n\n\
         struct Lane[dt: DType](Copyable, Movable):\n\
         \x20   var value: Scalar[Self.dt]\n\n\
@@ -3341,20 +3312,28 @@ fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() 
         "42\n2\n"
     );
     let stats = program.template_stats();
-    for member in ["Lane.widened", "Seeded.__init__"] {
-        assert!(
-            stats.certified.iter().any(|name| name == member),
-            "{member} is certified: {:?}",
-            stats.no_verdict
-        );
-    }
-    for member in ["Lane$dint16;.widened", "Seeded$vuint64:2;[i1;i2;].__init__"] {
-        assert!(
-            stats.inferred_clones.iter().any(|name| name == member),
-            "{member} keeps the clone check: {:?}",
-            stats.inferred_clones
-        );
-    }
+    assert!(
+        stats.certified.iter().any(|name| name == "Seeded.__init__"),
+        "Seeded.__init__ is certified: {:?}",
+        stats.no_verdict
+    );
+    assert!(
+        stats
+            .inferred_clones
+            .iter()
+            .any(|name| name == "Seeded$vuint64:2;[i1;i2;].__init__"),
+        "the vector-keyed clone keeps the clone check: {:?}",
+        stats.inferred_clones
+    );
+    assert!(
+        !stats
+            .inferred_clones
+            .iter()
+            .chain(&stats.derived)
+            .any(|name| name.starts_with("Lane$")),
+        "the DType-keyed struct mints no clone: {:?}",
+        stats.inferred_clones
+    );
 }
 
 #[test]

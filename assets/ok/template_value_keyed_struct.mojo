@@ -1,7 +1,8 @@
-# A struct keyed on a `DType` or a vector value, which the elaborator
-# specializes whole per value, has its members checked once by source
-# validation with the value symbolic; each specialization's members, the
-# sibling calls among them included, reuse those facts.
+# A struct keyed on a `DType` is a generator the template serves, and one
+# keyed on a vector value, which the elaborator specializes whole per value,
+# has its members checked once by source validation with the value symbolic;
+# each specialization's members, the sibling calls among them included,
+# reuse those facts.
 struct Tally[dt: DType](Copyable, Movable):
     var count: Int
     var total: Int

@@ -335,7 +335,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compile-time-only values, `struct_valued_template` and `validates_body`
   draw the per-instantiation boundary (struct-value template shells; a
   body keyed on the `Hasher` wildcard vector binder is validated), and
-  `value_keyed_struct` names a struct keyed on a `DType` or vector value,
+  `value_keyed_struct` names a struct keyed on a vector value,
   every member of which is validated, with no verdict where it cannot be
   typed, as is the body `value_keyed_def` names (a `def` keyed on a
   `DType` binder or using a parameter as a lane width, which the executable
@@ -858,7 +858,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   trace differential compares against. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
-  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`).
+  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`); `make_frame`
+  binds a method frame's receiver value parameters among its reified ones,
+  which `exec.rs` closes a symbolic lane by (`vm.rs`'s `erased_closed_ty`).
 - `backend/vm/references.rs` owns runtime reference handle read/write/projection,
   including `place_crosses_reference`/`place_handle`, which decide whether a
   place reaches a stored handle at or below its root and must therefore be

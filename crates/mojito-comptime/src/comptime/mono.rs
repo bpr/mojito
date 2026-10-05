@@ -881,15 +881,36 @@ impl Elab<'_> {
                         self.request_instance(name, param_args, consts, mono);
                     }
                 }
-                // A checker-selected constructor occurrence — a scalar
-                // `range(...)` or a bare variadic-struct construction whose
+                // A checker-selected scalar `range(...)`: the construction of
+                // the range-family struct at its dtype, as the pin's
+                // `range[dtype: DType, //]` overloads return it.
+                if name == "range"
+                    && let Some((template, vals)) = mono
+                        .struct_call_targets
+                        .get(&source_span.clone().without_syntax())
+                        .cloned()
+                {
+                    let arguments = vals
+                        .iter()
+                        .map(|value| value.materialize(source_span.span).map(ParamArg::Value))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            ComptimeError::NotComptime(format!(
+                                "range dtype of '{template}' has no source spelling"
+                            ))
+                        })?;
+                    *name = template;
+                    *param_args = arguments;
+                    return Ok(());
+                }
+                // A checker-selected bare variadic-struct construction whose
                 // pack the checker inferred (`Pair((1, True))`): rewrite the
                 // call into the concrete specialization's constructor and
                 // queue that specialization.
                 let bare_pack_construction = param_args.is_empty()
                     && mono.resolves_top_template(name)
                     && self.single_pack_template(name);
-                if (name == "range" || bare_pack_construction)
+                if bare_pack_construction
                     && let Some((template, vals)) = mono
                         .struct_call_targets
                         .get(&source_span.clone().without_syntax())

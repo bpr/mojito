@@ -455,8 +455,8 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// module-qualified) with one concrete dtype value argument.
 ///
 /// This form exists only in the discovery round: the specialization fixpoint
-/// rewrites every occurrence into a registered concrete struct before MIR
-/// lowering.
+/// rewrites every occurrence into a construction of the linked range struct
+/// at its dtype before MIR lowering.
 pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dtype)> {
     let Ty::Struct(name, arguments) = ty else {
         return None;

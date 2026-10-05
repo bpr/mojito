@@ -635,10 +635,21 @@ branch for the class is deleted, and so is its certificate class.
   per instance. The cloner keeps a `def` whose body shuffles, slices, joins,
   or hashes a lane value, queries a float format over its binder, binds a
   local `comptime`, or holds a nested `def`, and every overloaded one
-  (R257–R261); the lane-keyed struct members wait on P3d (R4) and a method's
-  own lane binder on P3e (R5).
+  (R257–R261); a method's own lane binder waits on P3e (R5).
 - **P3d. Struct generators.** Value-keyed and variadic structs, `Tuple` and
   `TString` included, are declared once and instantiated by the elaborator.
+  The first step landed 2026-10-05 for a struct keyed on a `DType` or on a
+  lane width (the range family, a user `Walker[dt: DType]`, `Lanes[w: Int]`
+  holding `SIMD[DType.int32, Self.w]`): it is an ordinary generic struct,
+  checked once with the binder symbolic, and `native::mono` mints its
+  instances. A scalar `range(...)` constructs the range struct at its dtype,
+  and the erased oracle closes a member's lane from its frame's and
+  receiver's reified binders. Hello World's census reads
+  `struct_dtype_vector 22` (was 43, all `AHasher` now) and
+  `template_method_struct_lane.mojo`'s `def_dtype_vector 0` (was 5). The
+  vector-keyed, struct-valued, and variadic structs remain on the cloner
+  (R4), behind a method's own compile-time parameters (R5) and a method
+  holding compile-time control flow.
 - **P3e.** Three steps: a method's own compile-time parameters, nested
   definitions and their captures, and clones minted during CTFE.
 

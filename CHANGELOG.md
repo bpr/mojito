@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct keyed on a `DType`, or on a value parameter it uses as a lane
+  width, is a generator, as in the pin: its members are checked once and
+  instantiated by the elaborator from the template's MIR, where the cloner
+  used to specialize the struct whole. `Lanes[n](3).v` for `struct
+  Lanes[w: Int]` holding `SIMD[DType.int32, Self.w]` now runs in `def
+  owned[n: Int]` and at a `comptime for` index, where it failed with "type
+  'Lanes[n]' has no field 'v'", and a lane-keyed `def` building such a
+  struct over its own binder is served by its template
+  (`assets/ok/struct_generator_lane_symbolic_width.mojo`).
+
 - A `comptime T = Ts[i]` alias of a pack element under a pack-keyed `def`'s
   `comptime for`, and a `Ts[i]` annotation spelled directly, are served by
   the template, as the pin elaborates them: the alias stands for the

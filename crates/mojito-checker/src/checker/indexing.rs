@@ -132,7 +132,7 @@ impl Checker {
                     .fields
                     .iter()
                     .find(|(candidate, _)| candidate == field)?;
-                let field_ty = substitute(field_ty, &struct_subst(&info.decls, &arguments));
+                let field_ty = substitute_at(field_ty, info, &arguments);
                 Some(if arguments.is_empty() {
                     field_ty
                 } else {
@@ -1729,8 +1729,8 @@ impl Checker {
             && self.is_abstract_struct(name)
         {
             // A discovery-round abstract scalar range subscripts by Int to
-            // its scalar element; the fixpoint rewrite registers the
-            // concrete struct with its ordinary `__getitem__` before any
+            // its scalar element; the fixpoint rewrite constructs the
+            // linked struct, with its ordinary `__getitem__`, before any
             // lowering consumes this shortcut.
             if let Some((_, dtype)) = mojito_types::types::scalar_range_parts(&obj_ty) {
                 let idx_ty = self.infer(index)?;

@@ -125,6 +125,25 @@ impl VmBackend {
 
         let id = FrameId(self.next_frame_id);
         self.next_frame_id += 1;
+        // A method's frame binds its struct's reified value parameters too,
+        // read off the receiver (through the handle of a `mut`/`ref self`),
+        // so an erased member closes `Scalar[Self.dtype]` at its instance.
+        let mut comptime = value_params.to_vec();
+        if f.var_names.first().is_some_and(|name| name == "self") {
+            let receiver = match vars.first() {
+                Some(reference @ Value::Ref { .. }) => {
+                    self.read_reference(reference, id, &vars).ok()
+                }
+                other => other.cloned(),
+            };
+            if let Some(Value::Struct { value_params, .. }) = receiver {
+                for (name, value) in value_params {
+                    if !comptime.iter().any(|(bound, _)| *bound == name) {
+                        comptime.push((name, value));
+                    }
+                }
+            }
+        }
         Ok(Frame {
             id,
             function: fidx,
@@ -133,7 +152,7 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation,
-            comptime: value_params.to_vec(),
+            comptime,
         })
     }
 
@@ -160,8 +179,11 @@ impl VmBackend {
                 match self.exec_instr(
                     prog,
                     &instruction,
-                    frame.function,
-                    frame.id,
+                    FrameScope {
+                        function: frame.function,
+                        id: frame.id,
+                        comptime: &frame.comptime,
+                    },
                     &mut frame.registers,
                     &mut frame.variables,
                 )? {

@@ -1093,6 +1093,27 @@ fn erased_parameter_values(
         .collect()
 }
 
+/// A type over the erased frame's value binders, closed by the values the
+/// frame reifies: an erased body keyed on a `DType` or lane binder
+/// (`Scalar[Self.dtype]` in a range-family member) builds its values at the
+/// lane its frame binds. A closed type, or one over a binder the frame does
+/// not hold, is returned as it is.
+fn erased_closed_ty(
+    ty: &Ty,
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> Ty {
+    if comptime.is_empty() || !mojito_types::types::is_symbolic(ty) {
+        return ty.clone();
+    }
+    let named = erased_parameter_values(function, variables, comptime);
+    let context = mojito_types::param_expr::ParamContext::detached();
+    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, &named);
+    mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
+        .unwrap_or_else(|_| ty.clone())
+}
+
 /// Decide a `comptime if` on the erased path from the frame's reified value
 /// parameters: a comparison over value binders, constants, and expressions
 /// of them. A condition over a type binder has no erased reading, since an
@@ -1327,6 +1348,15 @@ struct Frame {
     /// The reified value parameters of an erased generic body, by name:
     /// what a `comptime if` over a value binder reads on the erased path.
     comptime: Vec<(String, Value)>,
+}
+
+/// The frame an instruction executes in: its function, its id, and the value
+/// parameters it reifies (`Frame::comptime`).
+#[derive(Clone, Copy)]
+struct FrameScope<'a> {
+    function: usize,
+    id: FrameId,
+    comptime: &'a [(String, Value)],
 }
 
 struct WritebackCall<'a> {

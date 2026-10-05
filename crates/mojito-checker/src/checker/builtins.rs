@@ -832,7 +832,7 @@ impl Checker {
     /// concrete non-Int scalar, so the ordinary no-match error stands. On
     /// success the result is the abstract family type plus a recorded
     /// instantiation, and the specialization fixpoint rewrites the call into
-    /// the generated concrete struct's constructor.
+    /// a construction of the linked range struct at the dtype.
     pub(super) fn infer_scalar_range(
         &self,
         span: &mojito_common::token::SourceSpan,

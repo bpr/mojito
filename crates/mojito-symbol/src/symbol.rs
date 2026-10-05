@@ -1721,11 +1721,15 @@ fn annotation_display(ty: &Type) -> String {
 
 /// The dtype named by a `DType.<dt>` annotation argument, if that is what it is.
 fn param_arg_dtype(argument: &ParamArg) -> Option<mojito_ast::ast::Dtype> {
-    let ParamArg::Value(Expr {
-        kind: ExprKind::Member { object, field },
-        ..
-    }) = argument
-    else {
+    let ParamArg::Value(value) = argument else {
+        return None;
+    };
+    expr_dtype(value)
+}
+
+/// The dtype a `DType.<dt>` expression names, if that is what it is.
+fn expr_dtype(expr: &Expr) -> Option<mojito_ast::ast::Dtype> {
+    let ExprKind::Member { object, field } = &expr.kind else {
         return None;
     };
     matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
@@ -1915,11 +1919,16 @@ fn syntactic_origin_argument(
 }
 
 /// The mangled spelling of a compile-time value argument in an annotation
-/// (`FixedBuffer[8]` → `8`). A non-literal expression degrades to a stable
-/// placeholder — good enough because the name only needs to be deterministic.
+/// (`FixedBuffer[8]` → `8`, `_ZeroStartingRange[DType.int]` → `DType.int`,
+/// as a checked `CtValue` displays). A non-literal expression degrades to a
+/// stable placeholder — good enough because the name only needs to be
+/// deterministic.
 fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
     if let Some(value) = eval_comptime_int(expr, comptimes) {
         return value.to_string();
+    }
+    if let Some(dtype) = expr_dtype(expr) {
+        return format!("DType.{}", dtype.name());
     }
     match &expr.kind {
         ExprKind::Bool(b) => b.to_string(),

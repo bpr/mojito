@@ -558,7 +558,7 @@ selected — so a type error in an untaken arm rejects as upstream rejects it,
 a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
 is still symbolic, exactly as upstream does; the equality is asserted on each
-clone. Every method body of a struct keyed on a `DType` or vector value
+clone. Every method body of a struct keyed on a vector value
 (`value_keyed_struct`), which the elaborator specializes whole and drops, is
 checked the same way, to produce its template only: a body this check cannot
 type gets no verdict, and its specializations keep their own check. A
@@ -655,9 +655,11 @@ application's values, to a concrete lane or to the caller's own symbolic
 verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
 uniquely named `DType`- or lane-keyed `def` whose body holds no other form
-is a bound generic served by its template (`served_lane_defs`); a struct
-keyed on a lane and a method with a lane binder of its own are still cloned
-(roadmap R4, R5).
+is a bound generic served by its template (`served_lane_defs`). A struct
+keyed on a `DType` or on a lane width is an ordinary generic struct, a
+generator: the executable check types its members with the binder symbolic,
+its template crosses MIR, and `native::mono` mints each instance. A method
+with a lane binder of its own is still cloned per call (roadmap R5).
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
 parameter — a `def`'s type parameter, or `Self` in a generic struct's method —
@@ -1028,10 +1030,14 @@ method-level pack does), rejects a constructor naming the pack nowhere
 `GenericInstantiation` on the struct's own name at the call occurrence and
 — once the specialization is declared — types the call as that concrete
 struct's construction (`finish_variadic_construction`). `Compiler::compile_linked` turns the
-recording into a constructor-rewrite request (`variadic_struct_requests`,
-the scalar-range shape), which `seed_def_call_targets` files under
-`Mono::struct_call_targets` and `mono_expr` serves by rewriting the call to
-`mangle(template, [pack])` — the same symbol an explicit application mints.
+recording into a constructor-rewrite request (`variadic_struct_requests`),
+which `seed_def_call_targets` files under `Mono::struct_call_targets` and
+`mono_expr` serves by rewriting the call to `mangle(template, [pack])` — the
+same symbol an explicit application mints. A scalar `range(...)` takes the
+same route (`scalar_range_requests`) to a different rewrite: its range
+struct is a generator, so the call becomes the construction of the linked
+struct at the recorded dtype (`_ZeroStartingRange[DType.int32](…)`), which
+the next round checks as any generic construction.
 
 Inferred applications reach the same clones through the compiler's discovery
 fixpoint. Each round's check stops at a `DiscoveryResult` (Stage 3): the
@@ -1045,7 +1051,7 @@ its body fixes its element from the loop index the elaborator folded there.
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar
 `range` family; a bare variadic-struct construction — the last two are
-constructor rewrites on a struct template) and `MethodSpecializationRequest`s from its recorded generic
+constructor rewrites) and `MethodSpecializationRequest`s from its recorded generic
 *method* instantiations — on a specialized variadic struct, on a closed
 instance of an ordinary generic struct (the request owner is the instance
 key `mangle(template, arguments)` and the instance's arguments bake before
@@ -1773,7 +1779,7 @@ and its soundness argument, is
 - **One producer per body.** The executable check retains the template of a
   trait-bound generic that survives elaboration. Source validation retains
   the template of a body it checks and the elaborator then stubs or drops,
-  a member of a struct keyed on a `DType` or vector value among them.
+  a member of a struct keyed on a vector value among them.
 - **Capture is total or it refuses.** `FactTable` enumerates every
   occurrence-keyed fact table. A body that recorded into a table without a
   derivation recipe, keyed a fact outside its own occurrences, grew a store
@@ -2590,7 +2596,11 @@ in declaration order and in the caller's binder scope
 callee's own type parameters from them before unifying the runtime
 arguments, so a parameter no runtime parameter or result spells is bound
 too; the erased oracle reifies the struct's name from them where the
-brackets spelled none. Elaborated MIR carries none.
+brackets spelled none. An erased frame binds the value parameters its call
+reifies and, for a method, those its receiver carries, and closes a symbolic
+lane by them where it builds a value (`MaterializeLiteral`, `MakeSimd`,
+`SimdCast`, `SimdBitcast`; `erased_closed_ty`), so a generator member keyed
+on a `DType` runs erased. Elaborated MIR carries none.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection

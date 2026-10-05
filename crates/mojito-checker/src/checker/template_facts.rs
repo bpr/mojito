@@ -1678,9 +1678,10 @@ struct BodyShape<'a> {
     /// The struct's scalar value binders a method body reads as
     /// `Self.<value>` ([`Self::struct_value`]).
     struct_values: Vec<&'a str>,
-    /// The `DType` binders of a struct specialized whole
-    /// (`_SequentialRange[dtype]`), which a validated member's lane types
-    /// name and every specialization folds ([`Self::value_shaped_scalar`]).
+    /// The `DType` and `Int` binders of a struct whose members source
+    /// validation checks, which a validated member's lane types name
+    /// (`SIMD[dt, Self.n]`) and every clone folds
+    /// ([`Self::value_shaped_scalar`]).
     struct_lanes: Vec<&'a str>,
     /// The closed vector binders of a struct specialized whole
     /// (`AHasher[key: U256]`), which a validated member reads as

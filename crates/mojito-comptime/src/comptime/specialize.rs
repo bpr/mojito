@@ -412,15 +412,25 @@ impl Elab<'_> {
     fn seed_def_call_targets(&self, def_requests: &[DefSpecializationRequest], mono: &mut Mono) {
         for request in def_requests {
             let callee = request.callee();
+            // A scalar-range request names a range-family struct, a generator
+            // the template serves, and its dtype: the call becomes that
+            // struct's construction at the dtype (`_ZeroStartingRange[dt](…)`).
+            if !self.struct_template(callee)
+                && self.struct_names.contains(callee)
+                && let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments()
+            {
+                mono.struct_call_targets
+                    .entry(request.occurrence().clone().without_syntax())
+                    .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
+                continue;
+            }
             // A request on a struct template is a constructor rewrite rather
-            // than a def clone: a scalar-range request names the DType-keyed
-            // range-family template and its dtype, and a bare variadic-struct
-            // construction names the template and the pack the checker
-            // inferred, spelled element by element. The Job queues lazily at
-            // the rewrite, like the def targets below.
+            // than a def clone: a bare variadic-struct construction names the
+            // template and the pack the checker inferred, spelled element by
+            // element. The Job queues lazily at the rewrite, like the def
+            // targets below.
             if self.struct_template(callee) {
                 let vals = match request.arguments() {
-                    [TyArg::Val(value @ CtValue::Dtype(_))] => Some(vec![value.clone()]),
                     [TyArg::Val(value @ CtValue::Tuple(_))]
                         if self.single_pack_template(callee) =>
                     {

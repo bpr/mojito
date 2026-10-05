@@ -2,7 +2,7 @@
 //! types, statements, and expressions. The elaborator specializes such a
 //! declaration per call, and source validation checks its template.
 
-use crate::ast::{Expr, ExprKind, Method, Param, ParamArg, Stmt, StmtKind, Type, TypeParam};
+use crate::ast::{Expr, ExprKind, Method, ParamArg, Stmt, StmtKind, Type, TypeParam};
 
 /// Whether a generic `def` uses one of its parameters as a lane width.
 ///
@@ -36,56 +36,6 @@ pub fn def_uses_layout_dependent_param(statement: &Stmt) -> bool {
         || body
             .iter()
             .any(|inner| stmt_uses_param_simd_width(inner, &names))
-}
-
-/// Whether a generic struct uses one of its own parameters as a lane width.
-///
-/// That is a `SIMD`/`Scalar` width (`SIMD[DType.int64, Self.length]`) in a
-/// field, a method signature, or a method body. An erased body has no lane
-/// count for it, so such a struct specializes per application.
-pub fn struct_uses_layout_dependent_param(statement: &Stmt) -> bool {
-    let StmtKind::Struct {
-        type_params,
-        fields,
-        methods,
-        ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    struct_members_use_layout_dependent_param(type_params, fields, methods)
-}
-
-/// [`struct_uses_layout_dependent_param`] over a struct's parts.
-pub fn struct_members_use_layout_dependent_param(
-    type_params: &[TypeParam],
-    fields: &[Param],
-    methods: &[Method],
-) -> bool {
-    let names: Vec<&str> = type_params
-        .iter()
-        .map(|parameter| parameter.name.as_str())
-        .collect();
-    if names.is_empty() {
-        return false;
-    }
-    fields
-        .iter()
-        .any(|field| type_uses_param_simd_width(&field.ty, &names))
-        || methods.iter().any(|method| {
-            method
-                .params
-                .iter()
-                .any(|parameter| type_uses_param_simd_width(&parameter.ty, &names))
-                || method
-                    .ret
-                    .as_ref()
-                    .is_some_and(|ty| type_uses_param_simd_width(ty, &names))
-                || method
-                    .body
-                    .iter()
-                    .any(|inner| stmt_uses_param_simd_width(inner, &names))
-        })
 }
 
 /// Whether a struct method's template body constructs a vector at a lane its

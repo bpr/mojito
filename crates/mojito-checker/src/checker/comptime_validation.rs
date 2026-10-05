@@ -36,7 +36,7 @@ impl Checker {
         self_ty: &Ty,
     ) -> Result<(), TypeError> {
         let mut overload_indices = HashMap::<String, usize>::new();
-        let value_keyed = value_keyed_struct(&self.self_decls, declaration);
+        let value_keyed = value_keyed_struct(&self.self_decls);
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m).to_string();
             let overload_index = *overload_indices.entry(method_name.clone()).or_default();
@@ -1405,14 +1405,13 @@ pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<Sour
         .collect();
     let value_keyed = |type_params: &[mojito_ast::ast::TypeParam]| {
         let keyed = |parameter: &mojito_ast::ast::TypeParam| {
-            matches!(parameter.bounds.as_slice(), [only]
-                if only == "DType" || vector_aliases.contains(only.as_str()))
+            matches!(parameter.bounds.as_slice(), [only] if vector_aliases.contains(only.as_str()))
                 || matches!(&parameter.value_type,
                     Some(mojito_ast::ast::Type::Named(name, _)) if name == "SIMD")
         };
         let scalar = |parameter: &mojito_ast::ast::TypeParam| {
             matches!(parameter.bounds.as_slice(), [only]
-                if matches!(only.as_str(), "Int" | "UInt" | "Bool" | "Float64"))
+                if matches!(only.as_str(), "Int" | "UInt" | "Bool" | "Float64" | "DType"))
         };
         type_params.iter().any(keyed)
             && type_params
@@ -1634,13 +1633,11 @@ fn stmt_has_comptime(stmt: &Stmt) -> bool {
 }
 
 /// Whether a struct's binders are all compile-time values and one is a
-/// `DType` or a vector (`_SequentialRange[dtype: DType]`,
-/// `AHasher[key: U256]`), or one is a lane width (`Width[n: Int]` spelling
-/// `SIMD[dt, Self.n]`): the elaborator specializes such a struct whole per
-/// value and drops its template, so source validation checks every method
-/// body with the values symbolic.
-fn value_keyed_struct(decls: &[ParamDecl], declaration: &StructDeclaration<'_>) -> bool {
-    let values_only = decls.iter().all(|decl| {
+/// vector (`AHasher[key: U256]`): the elaborator specializes such a struct
+/// whole per value and drops its template, so source validation checks every
+/// method body with the values symbolic.
+fn value_keyed_struct(decls: &[ParamDecl]) -> bool {
+    decls.iter().all(|decl| {
         matches!(
             decl,
             ParamDecl::Value {
@@ -1648,15 +1645,9 @@ fn value_keyed_struct(decls: &[ParamDecl], declaration: &StructDeclaration<'_>) 
                 ..
             }
         )
-    });
-    values_only
-        && (decls.iter().any(|decl| {
-            matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Dtype | Ty::Simd { .. }))
-        }) || mojito_ast::simd_width::struct_members_use_layout_dependent_param(
-            declaration.type_params,
-            declaration.fields,
-            declaration.methods,
-        ))
+    }) && decls
+        .iter()
+        .any(|decl| matches!(decl, ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Simd { .. })))
 }
 
 /// The element spelling of a materialized compile-time tuple: a literal

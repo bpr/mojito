@@ -760,9 +760,8 @@ impl Checker {
         // the struct is specialized whole, its receiver's arguments are the
         // pack's elements, and an element the body reads by loop index is
         // fixed by the unrolling. Only source validation checks such a body.
-        // A `DType` or vector value binder (`_SequentialRange[dtype]`,
-        // `AHasher[key]`) keys a struct specialized whole: only source
-        // validation checks its members, and each specialization's member
+        // A vector value binder (`AHasher[key]`) keys a struct specialized
+        // whole: only source validation checks its members, and each specialization's member
         // folds the values its trace names. The method's own `DType`
         // binders are among the declarations, folded as its scalar ones are.
         let plain_struct = decls.iter().all(|decl| {
@@ -1290,9 +1289,8 @@ fn struct_pack_collectors<'m, 'd>(
     (pack, collectors)
 }
 
-/// The names of a struct's `DType` and `Int` binders, which key a struct
-/// specialized whole and name its members' symbolic lane
-/// (`Scalar[Self.dtype]`, `SIMD[dt, Self.n]`).
+/// The names of a struct's `DType` and `Int` binders, which name its
+/// members' symbolic lane (`Scalar[Self.dtype]`, `SIMD[dt, Self.n]`).
 fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
     decls
         .iter()

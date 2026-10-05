@@ -19,11 +19,15 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         i: &MirInstr,
-        function: usize,
-        frame_id: FrameId,
+        scope: FrameScope<'_>,
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
+        let FrameScope {
+            function,
+            id: frame_id,
+            comptime,
+        } = scope;
         // The executing frame's function, before any callee shadows the name.
         let caller_function = function;
         self.burn_ctfe()?;
@@ -273,8 +277,10 @@ impl VmBackend {
                 value,
                 target,
             } => {
+                let target =
+                    erased_closed_ty(target, &prog.mir.functions[function].1, vars, comptime);
                 regs[dest.0 as usize] =
-                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
+                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), &target)?;
             }
             MirInstr::UseVar { dest, var, mode } => {
                 let slot = *var as usize;
@@ -1598,7 +1604,13 @@ impl VmBackend {
                         *val = self.call_dunder(prog, &name, "__int__", vec![receiver])?;
                     }
                 }
-                let (dtype, width) = concrete_simd_slots(dtype, width)?;
+                let (dtype, width) = concrete_simd_slots(&erased_closed_slots(
+                    dtype,
+                    width,
+                    &prog.mir.functions[function].1,
+                    vars,
+                    comptime,
+                ))?;
                 regs[dest.0 as usize] = simd_from_values(dtype, width, &vals)?;
             }
             MirInstr::SimdCast {
@@ -1607,7 +1619,13 @@ impl VmBackend {
                 dtype,
                 width,
             } => {
-                let (dtype, _) = concrete_simd_slots(dtype, width)?;
+                let (dtype, _) = concrete_simd_slots(&erased_closed_slots(
+                    dtype,
+                    width,
+                    &prog.mir.functions[function].1,
+                    vars,
+                    comptime,
+                ))?;
                 regs[dest.0 as usize] = crate::runtime::simd_cast(dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdBitcast {
@@ -1616,7 +1634,13 @@ impl VmBackend {
                 dtype,
                 width,
             } => {
-                let (dtype, _) = concrete_simd_slots(dtype, width)?;
+                let (dtype, _) = concrete_simd_slots(&erased_closed_slots(
+                    dtype,
+                    width,
+                    &prog.mir.functions[function].1,
+                    vars,
+                    comptime,
+                ))?;
                 regs[dest.0 as usize] =
                     crate::runtime::simd_to_bits(dtype, &regs[value.0 as usize])?;
             }
@@ -2069,8 +2093,7 @@ impl VmBackend {
                 // propagate that outcome to the block driver.
                 return self.exec_try(
                     prog,
-                    function,
-                    frame_id,
+                    scope,
                     &TryRegions {
                         body,
                         handler,
@@ -2102,11 +2125,11 @@ impl VmBackend {
     pub(super) fn exec_try(
         &mut self,
         prog: &Prog,
-        function: usize,
-        frame_id: FrameId,
+        scope: FrameScope<'_>,
         regions: &TryRegions<'_>,
         frame: CallerFrame<'_>,
     ) -> Result<Flow, RuntimeError> {
+        let function = scope.function;
         let TryRegions {
             body,
             handler,
@@ -2120,7 +2143,7 @@ impl VmBackend {
             registers: regs,
             variables: vars,
         } = frame;
-        let outcome = match self.run_region(prog, function, frame_id, body, regs, vars) {
+        let outcome = match self.run_region(prog, scope, body, regs, vars) {
             // The body raised: run the exceptional-edge cleanup (destroy the body's
             // locals as they go out of scope), then dispatch to the handler or
             // re-propagate.
@@ -2134,7 +2157,7 @@ impl VmBackend {
                         if let Some(slot) = err_slot {
                             vars[*slot as usize] = error;
                         }
-                        self.run_region(prog, function, frame_id, hblocks, regs, vars)
+                        self.run_region(prog, scope, hblocks, regs, vars)
                     }
                     None => Err(RuntimeError::Raised(error)),
                 }
@@ -2148,9 +2171,7 @@ impl VmBackend {
                 self.run_cleanup(prog, cleanup, function, vars)?;
                 match flow {
                     Flow::Normal => match orelse {
-                        Some(eblocks) => {
-                            self.run_region(prog, function, frame_id, eblocks, regs, vars)
-                        }
+                        Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
                         None => Ok(Flow::Normal),
                     },
                     ret => Ok(ret),
@@ -2165,7 +2186,7 @@ impl VmBackend {
                 Ok(Flow::Return { cleanup, .. }) => cleanup.clone(),
                 _ => Vec::new(),
             };
-            match self.run_region(prog, function, frame_id, fblocks, regs, vars) {
+            match self.run_region(prog, scope, fblocks, regs, vars) {
                 Ok(Flow::Normal) => {}
                 Ok(Flow::Return {
                     value,
@@ -2224,12 +2245,14 @@ impl VmBackend {
     pub(super) fn run_region(
         &mut self,
         prog: &Prog,
-        function: usize,
-        frame_id: FrameId,
+        scope: FrameScope<'_>,
         blocks: &[MirBlock],
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
+        let FrameScope {
+            function, comptime, ..
+        } = scope;
         let mut block = 0usize;
         loop {
             let b = &blocks[block];
@@ -2237,7 +2260,7 @@ impl VmBackend {
                 // A non-`Normal` outcome from a nested `try` (a `return`, or a
                 // `break`/`continue` escaping to an outer loop) leaves this region
                 // carrying that outcome.
-                match self.exec_instr(prog, instr, function, frame_id, regs, vars)? {
+                match self.exec_instr(prog, instr, scope, regs, vars)? {
                     Flow::Normal => {}
                     non_normal => return Ok(non_normal),
                 }
@@ -2260,18 +2283,20 @@ impl VmBackend {
                     then_b,
                     else_b,
                 } => {
-                    // A region runs apart from its frame, so only a binder
-                    // the body also reads as a local is in reach here.
-                    block =
-                        if comptime_branch_holds(cond, &prog.mir.functions[function].1, vars, &[])?
-                        {
-                            *then_b
-                        } else {
-                            *else_b
-                        };
+                    block = if comptime_branch_holds(
+                        cond,
+                        &prog.mir.functions[function].1,
+                        vars,
+                        comptime,
+                    )? {
+                        *then_b
+                    } else {
+                        *else_b
+                    };
                 }
                 header @ MirTerm::ComptimeFor { .. } => {
-                    block = comptime_for_next(header, &prog.mir.functions[function].1, vars, &[])?;
+                    block =
+                        comptime_for_next(header, &prog.mir.functions[function].1, vars, comptime)?;
                 }
                 MirTerm::Return(r) => {
                     let v = r
@@ -2370,12 +2395,38 @@ impl VmBackend {
     }
 }
 
-/// The known lane dtype and width of a SIMD instruction. Concrete MIR holds
-/// known slots; a symbolic one is a generator form the elaborator closes
-/// before the VM runs, so meeting it here is the unsupported boundary.
-fn concrete_simd_slots(
+/// A SIMD instruction's slots, closed by the erased frame's value binders
+/// ([`erased_closed_ty`]).
+fn erased_closed_slots(
     dtype: &mojito_types::types::SimdDtype,
     width: &mojito_types::types::SimdWidth,
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> (
+    mojito_types::types::SimdDtype,
+    mojito_types::types::SimdWidth,
+) {
+    let slots = (dtype.clone(), width.clone());
+    if comptime.is_empty() || !(dtype.is_symbolic() || width.is_symbolic()) {
+        return slots;
+    }
+    mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone())
+        .ok()
+        .map(|ty| erased_closed_ty(&ty, function, variables, comptime))
+        .and_then(|ty| mojito_types::types::simd_slots(&ty))
+        .unwrap_or(slots)
+}
+
+/// The known lane dtype and width of a SIMD instruction. Concrete MIR holds
+/// known slots; a symbolic one is a generator form the elaborator closes
+/// before the VM runs (or the erased frame closes from its binders), so
+/// meeting it here is the unsupported boundary.
+fn concrete_simd_slots(
+    (dtype, width): &(
+        mojito_types::types::SimdDtype,
+        mojito_types::types::SimdWidth,
+    ),
 ) -> Result<(mojito_ast::ast::Dtype, usize), RuntimeError> {
     match (
         dtype.known(),

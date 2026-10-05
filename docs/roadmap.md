@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R305**.
+Next free ID: **R307**.
 
 ## Ordered Work
 
@@ -169,23 +169,6 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R294 (P3c) A struct whose field is a vector over its own value
-  parameter has no fields when applied at a symbolic argument**
-
-  Problem: `Lanes[n](3).v`, for `struct Lanes[w: Int]` holding `var v:
-  SIMD[DType.int32, Self.w]`, fails in `def owned[n: Int]` with "type
-  'Lanes[n]' has no field 'v'"; the pin prints `[3, 3]` for `owned[2]`.
-  - The same application at a `comptime for` index (`Lanes[i]`) fails the
-    same way.
-  - Cause to confirm: the comptime elaborator specializes such a struct
-    eagerly, and an application over a symbolic parameter keeps the
-    template only as a shell (`resolve_struct_spec_args_if_ready`), which
-    the checker sees with no fields.
-  - A struct whose fields do not name the parameter (`var v: Int`) already
-    runs at a symbolic argument and at the index.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R257 (P3c) A lane gather at a symbolic width keys a clone**
 
   Problem: `v.shuffle[...]()`, `v.slice[w, offset=o]()`, and `v.join(w)` in
@@ -270,19 +253,50 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R4 (P3d) A value-keyed or variadic struct is specialized whole in
-  the AST**
+- [ ] **R305 (P3) A generic struct's method holding a `comptime if` or
+  `comptime for` clones per instance**
 
-  Problem: `Tuple`, `TString`, a user variadic struct, and a struct keyed on
-  a value are re-declared per instance by the cloner, from requests the
-  checker records.
-  - A struct declaration is a generator in MIR, and the elaborator mints its
-    instances and their members.
-  - The `Tuple` and `TString` request types leave the driver.
-  - A lane-keyed `def` applying such a struct over its own binder
-    (`Walker[dt]` in `assets/ok/template_method_struct_lane.mojo`'s `show`)
-    keeps its clone until then (`lane_def_shape_served`).
-  - Depends on R2 and R3.
+  Problem: `Cell.label`, holding a `comptime if` on `Self.T`
+  (`benchmarks/compile/keyed.mojo`), mints a clone per instance of its
+  struct, where a generic `def` holding one is served by its template.
+  - The elaborator stubs any method body whose elaboration names a struct
+    parameter (`unspecialized_method_stub`, `comptime/elab.rs`), and
+    `keyed_methods` (`comptime/specialize.rs`) clones it.
+  - The served `def`'s forms carry over: MIR's `comptime_branch` and
+    `comptime_for` with the owner's binders in scope, decided by
+    `native::mono` under the receiver's bindings.
+  - A method holding a `rebind` is stubbed the same way; the elaborator
+    should assert the type equality per instance, as the pin does.
+  - This is the first class R8 lists; nearly every `Tuple` member holds a
+    `comptime for`, so R4 needs it.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R4 (P3d) A vector-keyed, struct-valued, or variadic struct is
+  specialized whole in the AST**
+
+  Problem: `Tuple`, `TString`, `Variant`, a user variadic struct,
+  `AHasher[key: U256]`, and a struct keyed on a struct-typed value are
+  re-declared per instance by the cloner, from requests the driver derives
+  and applications the elaborator finds syntactically.
+  - A struct keyed on a `DType` or a lane width is already a generator
+    (2026-10-05); these are what remain.
+  - Their members need a method's own compile-time parameters (R5):
+    `Tuple.__getitem_param__[idx]`, `__contains__[T]`, `Variant.isa[T]`,
+    and `AHasher._update_with_simd(SIMD[_, _])`.
+  - Nearly every `Tuple` member holds a `comptime for` (R305).
+  - `native::mono` must bind a struct's pack: `bind_ty_args`
+    (`mono/unify.rs`) has no pack case, and `substitute_ty` does not expand
+    a spread inside a field's `__RuntimeTuple[*Self.Ts]`.
+  - The erased oracle and CTFE's AST route must run a variadic generator,
+    with the pack's elements reified on the instance.
+  - `Tuple`'s synthesized `reverse` and `concat` and its value twins
+    (`__getitem_param_value__$k`) have no upstream counterpart: the pin
+    writes the transforms in source over type-list operations.
+  - The `Tuple` and `TString` request types, `variadic_struct_requests`,
+    and `pending_struct_instances` leave the driver and elaborator with
+    them.
+  - Depends on R5 and R305.
   - Model: Fable, Planned.
 
 - [ ] **R5 (P3e) A method with its own compile-time parameters is cloned per
@@ -639,18 +653,19 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R300 (P5) The erased oracle cannot run a vector whose lane is a
-  binder**
+- [ ] **R300 (P5) The erased oracle cannot run a vector whose width is a
+  layout query**
 
-  Problem: a template-served `def` keyed on a `DType` or a width
-  (`SIMD[dt, w](v)`) runs on concrete MIR and stops under `--erased` with
-  "a SIMD instruction over the symbolic slots `SIMD[dt, w]` reached the VM".
-  - The elaborator closes the slots per instance; the erased frame keeps
-    them symbolic, and the VM's SIMD instructions need known slots.
-  - Ten `assets/ok` fixtures (`lane_template_served.mojo` and the
-    `template_value_*` lane fixtures among them) are its
-    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
+  Problem: `SIMD[DType.float32, S]` for `comptime S = size_of[Pair]()`
+  runs on concrete MIR and stops under `--erased` with "a SIMD instruction
+  over the symbolic slots `SIMD[DType.float32, size_of[Pair]()]` reached
+  the VM".
+  - The elaborator answers the query under the compilation's target; the
+    erased frame closes a lane only from the binders it reifies, and a
+    layout query names none.
+  - `assets/ok/comptime_layout_constant.mojo` is its `ERASED_VM_RESIDUE`
+    row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and the row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3371,6 +3386,25 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R306 A scalar `range(...)` is typed by a checker rule where the
+  pin declares infer-only overloads**
+
+  Problem: `range(Int32(4))` is typed by `Checker::infer_scalar_range`
+  once overload selection fails, and the elaborator rewrites the call into
+  the range struct's construction, where the pin's `std.builtin.range`
+  declares `def range[dtype: DType, //](end: Scalar[dtype]) ->
+  _ZeroStartingRange[dtype]` and its two- and three-argument siblings.
+  - Mojito's float range is a separate `_FloatStridedRange`; the pin's
+    `_StridedRange[dtype, forward]` takes the float path under `comptime if
+    Self.dtype.is_floating_point()`.
+  - The overloads reject a float or `Bool` lane with `comptime assert`,
+    which Mojito does not parse (R74).
+  - With the overloads in source, `infer_scalar_range`,
+    `scalar_range_requests`, the elaborator's range rewrite, and the
+    checker's discovery-round range shortcuts (`scalar_range_parts`) go.
+  - Depends on R74.
+  - Model: Opus, Planned.
 
 - [ ] **R159 `Float64` and `Float32` print different text from the pin
   because Mojito formats floats in Rust rather than in Mojo**

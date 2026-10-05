@@ -353,12 +353,15 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_overloaded_def_explicit",
     "comptime_if_template_served",
     "dtype_compile_time_values",
+    "lane_template_served",
     "extensions::self_hosted_algorithms",
     "pack_overload_beside_keyed",
     "simd_symbolic_surface",
     "template_def_converting_argument",
     "template_folded_value",
     "template_two_arms",
+    "template_value_shaped_construction",
+    "template_value_shaped_operations",
     "type_predicate_comptime_if",
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
@@ -371,18 +374,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R292, the erased oracle: a kept `comptime for` runs its index as a
     // runtime value, so a vector at the index's width has no known width.
     "comptime_for_index_typed_local",
-    // R300, the erased oracle: a vector whose lane dtype or width is a
-    // binder reaches the VM with its slots symbolic.
+    // R300, the erased oracle: a vector whose width is a layout query
+    // reaches the VM with its slot symbolic.
     "comptime_layout_constant",
-    "dtype_keyed_method_forward",
-    "dtype_value_param",
-    "lane_template_served",
-    "simd_generic_width",
-    "simd_scalar_splat",
-    "simd_to_bits_default_symbolic",
-    "template_value_keyed_lane_def",
-    "template_value_shaped_construction",
-    "template_value_shaped_operations",
     // R301, the erased oracle: a kept `comptime for` bounded by a value
     // parameter or a pack's length has no runtime value to stop at.
     "comptime_for_template_served",

@@ -732,7 +732,7 @@ pub struct GeneratedDeclarations {
 /// tag stamped on its body, and the byte range of its own body's first
 /// statement — same-name overloads clone under one name and one tag, and a
 /// `Method` has no range of its own. A member of a struct specialized whole
-/// (`Tuple$t2[…]`, `_SequentialRange$dint;`) is traced the same way, its
+/// (`Tuple$t2[…]`, `AHasher$vuint64:4;[…]`) is traced the same way, its
 /// `owner` the specialized struct and its `template_owner` the template.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstanceTrace {
@@ -1283,7 +1283,7 @@ mod unparse;
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use ctfe_calls::*;
-use mojito_ast::simd_width::{def_uses_layout_dependent_param, struct_uses_layout_dependent_param};
+use mojito_ast::simd_width::def_uses_layout_dependent_param;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use packs::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -2539,17 +2539,16 @@ fn is_specializable_declaration_in(
             type_params
                 .iter()
                 .any(|parameter| parameter.name.starts_with('*'))
-                // DType-, struct-, and vector-typed value parameters, and a
-                // parameter used as a lane count, only execute concretely,
-                // so the struct monomorphizes per application.
+                // Struct- and vector-typed value parameters only execute
+                // concretely, so the struct monomorphizes per application. A
+                // `DType` or lane-width parameter is a generator's binder the
+                // template serves: the elaborator closes it per instance.
                 || type_params.iter().any(|parameter| {
-                    matches!(parameter.bounds.as_slice(), [only]
-                        if only == "DType" || is_value_struct(only))
+                    matches!(parameter.bounds.as_slice(), [only] if is_value_struct(only))
                         || parameter.value_type.as_ref().is_some_and(|source| {
                             matches!(ct_param_source_type(source), Some(Ty::Simd { .. }))
                         })
                 })
-                || struct_uses_layout_dependent_param(statement)
         }
         _ => false,
     }

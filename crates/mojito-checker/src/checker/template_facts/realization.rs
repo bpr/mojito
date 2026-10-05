@@ -1446,9 +1446,9 @@ impl Checker {
         })
     }
 
-    /// `ty` with every application of a value-keyed struct at closed values
-    /// (`_StridedRange[DType.int]`) named as the specialization the
-    /// elaborator minted for it (`_StridedRange$dint;`), which is the type
+    /// `ty` with every application of a vector-keyed struct at closed values
+    /// (`AHasher[…]`) named as the specialization the elaborator minted for
+    /// it (`AHasher$vuint64:4;[…]`), which is the type
     /// the clone check reads, and so is a user variadic struct at a closed
     /// pack (`Bag[Int, String]` as `Bag$t2[…]`). An application with no
     /// minted specialization is left as it is.

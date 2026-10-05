@@ -335,7 +335,7 @@ impl Checker {
                 return Ok(builtin(Ty::Int));
             }
             // A discovery-round abstract scalar range iterates its scalar
-            // element; the fixpoint rewrite registers the concrete struct
+            // element; the fixpoint rewrite constructs the linked struct
             // before any lowering consumes this protocol.
             if let Some((_, dtype)) = mojito_types::types::scalar_range_parts(ty) {
                 return Ok(builtin(simd_ty(dtype, 1)));

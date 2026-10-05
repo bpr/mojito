@@ -92,9 +92,8 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// too is stubbed as a template, and its target is taken on faith here,
 /// asserted on each clone (`rebind::rebind_keyed_bodies`, scanned before the
 /// erasure removes the calls). Every method body of a struct keyed on a
-/// `DType` or vector value (`_SequentialRange[dtype]`, `AHasher[key]`) is
-/// checked too, since the elaborator specializes such a struct whole and
-/// drops its template; one this check cannot type gets no verdict, and its
+/// vector value (`AHasher[key]`) is checked too, since the elaborator
+/// specializes such a struct whole and drops its template; one this check cannot type gets no verdict, and its
 /// specializations keep their own check. Other bodies are declared (so the
 /// validated bodies can call them) but not checked here — the executable
 /// check covers them.
