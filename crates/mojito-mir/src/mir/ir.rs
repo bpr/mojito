@@ -1141,6 +1141,13 @@ pub enum MirInstr {
         /// argument spells (`s.name[Int]()`) is bound from here by the
         /// elaborator; a resolved call keeps none.
         instantiated_args: Vec<TyArg>,
+        /// Like `Call::spread`: the position in `args` of a whole type pack
+        /// spread into the method's collector (`Sink().take(*args)`), whose
+        /// register holds the caller's collector and whose `arg_places`
+        /// entry retains the collector's place when the pack is read. The
+        /// elaborator replaces it with the bound pack's element places;
+        /// concrete MIR carries none.
+        spread: Option<usize>,
     },
     /// Move an initialized element from compiler-private `UnsafePointer`
     /// collection storage. The source slot becomes uninitialized, so subsequent

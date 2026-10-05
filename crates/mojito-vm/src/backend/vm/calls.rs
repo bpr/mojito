@@ -21,8 +21,8 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
     }
 }
 
-/// Splice the collector a call spreads whole (`show(*args)`) into its
-/// positional arguments, element by element, so the callee's own matcher
+/// Splice the collector a call or a method call spreads whole (`show(*args)`,
+/// `Sink().take(*args)`) into its positional arguments, element by element, so the callee's own matcher
 /// collects them. Only the erased oracle runs a template's spread as it
 /// stands; elaborated MIR carries none.
 pub(super) fn splice_pack_spread(argv: &mut Vec<Value>, spread: Option<usize>) {

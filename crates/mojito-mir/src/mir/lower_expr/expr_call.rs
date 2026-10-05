@@ -864,6 +864,9 @@ impl Flatten<'_> {
             param_arg_regs,
             param_decls,
             instantiated_args,
+            spread: args
+                .iter()
+                .position(|argument| matches!(argument.kind, ExprKind::Spread(_))),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         dest

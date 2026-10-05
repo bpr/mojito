@@ -345,6 +345,7 @@ impl Flatten<'_> {
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
                 instantiated_args: Vec::new(),
+                spread: None,
             });
             return dest;
         }

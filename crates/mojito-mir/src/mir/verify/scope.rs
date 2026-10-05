@@ -871,6 +871,7 @@ mod tests {
                 bounds: Vec::new(),
                 callable_bound: None,
             })],
+            spread: None,
         });
         assert!(
             findings(&function, &declarations)

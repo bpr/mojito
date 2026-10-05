@@ -404,6 +404,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
             instantiated_args: self.instantiated_args(e),
+            spread: None,
         });
         self.emit_nested_closure_argument_keepalives(std::slice::from_ref(value), &[]);
         if matches!(op, InfixOp::NotIn) {

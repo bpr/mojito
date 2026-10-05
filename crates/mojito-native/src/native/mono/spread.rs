@@ -1,5 +1,6 @@
 //! Expanding a whole-pack spread: an instance replaces the collector a call
-//! spreads (`show(*args)`) with the bound pack's element places.
+//! or a method call spreads (`show(*args)`, `Sink().take(*args)`) with the
+//! bound pack's element places.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -9,8 +10,8 @@ use mojito_mir::mir::Proj;
 /// upstream's pack expansion: the spread argument's register, typed the
 /// collector's tuple once the pack is bound, becomes one register per
 /// element, each read from the collector's element place (or moved out of
-/// it, when the caller transferred the pack), and the call's `spread` is
-/// cleared. The collector's own read goes with it. A spread whose pack the
+/// it, when the caller transferred the pack), and the call's or method
+/// call's `spread` is cleared. The collector's own read goes with it. A spread whose pack the
 /// bindings leave open is the instance's unsupported boundary.
 pub(super) fn expand_pack_spreads(
     template: &str,
@@ -80,16 +81,12 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
             index += 1;
             continue;
         }
-        let MirInstr::Call {
-            spread: Some(position),
-            args,
-            ..
-        } = &block.instrs[index]
+        let Some((position, pack)) = spread_operands(&mut block.instrs[index])
+            .and_then(|call| call.spread.map(|position| (position, call.args[position])))
         else {
             index += 1;
             continue;
         };
-        let (position, pack) = (*position, args[*position]);
         let collector = collector_read(&block.instrs[..index], pack, tables.var_tys)
             .ok_or_else(|| tables.error("a spread reads no collector"))?;
         let elements = match tables.reg_types.get(&pack.0) {
@@ -115,19 +112,13 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
             });
             registers.push(dest);
         }
-        let MirInstr::Call {
-            spread,
-            args,
-            arg_places,
-            ..
-        } = &mut block.instrs[index]
-        else {
-            unreachable!("the spread call was matched above");
-        };
+        let call =
+            spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
         let count = registers.len();
-        args.splice(position..=position, registers);
-        arg_places.splice(position..=position, std::iter::repeat_n(None, count));
-        *spread = None;
+        call.args.splice(position..=position, registers);
+        call.arg_places
+            .splice(position..=position, std::iter::repeat_n(None, count));
+        *call.spread = None;
         let inserted = loads.len();
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
@@ -141,6 +132,36 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
         index += inserted;
     }
     Ok(())
+}
+
+/// The operands a whole-pack spread rewrites on a direct call or a method
+/// call: its position, the positional arguments, and their places.
+struct SpreadOperands<'a> {
+    spread: &'a mut Option<usize>,
+    args: &'a mut Vec<Reg>,
+    arg_places: &'a mut Vec<Option<MirPlace>>,
+}
+
+const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_>> {
+    match instruction {
+        MirInstr::Call {
+            spread,
+            args,
+            arg_places,
+            ..
+        }
+        | MirInstr::MethodCall {
+            spread,
+            args,
+            arg_places,
+            ..
+        } => Some(SpreadOperands {
+            spread,
+            args,
+            arg_places,
+        }),
+        _ => None,
+    }
 }
 
 /// The collector the register `pack` was read from, among the instructions

@@ -88,10 +88,17 @@ correctness fix to existing behavior is allowed.
   Problem: a `def` that spreads its collector into a method's collector
   (`Sink().take(*a)`) stays on the cloner, since `pack_spread_callees`
   (`comptime.rs`) admits only `print` and a served `def` as the callee.
-  - Admit a method once its template serves it; the elaborator's expansion
-    (`expand_pack_spreads`) needs the position on `MirInstr::MethodCall`
-    as `Call` carries it.
-  - Depends on R5.
+  - The callee is a method with a type pack of its own, which no template
+    serves until R307, so admitting it now would admit nothing.
+  - MIR, the elaborator, and the erased oracle already handle the spread
+    (`MirInstr::MethodCall::spread`); with R307's exclusion lifted and the
+    gate opened, `Sink().tagged(7, *a)` and `Sink().drain(*a^)` ran on the
+    VM, erased, and natively with no `def_pack` clone.
+  - Admit the callee by method name, judged over every struct method of
+    that name: `served_pack_defs` runs before checking, when the receiver's
+    type is unknown. A name no struct declares keeps the clone.
+  - A spread into a variadic struct's method (`*b: *Self.Ts`) also needs R4.
+  - Depends on R307 and R4.
   - Model: Fable, Planned.
 
 - [ ] **R253 (P3b) The cloner's type-pack branch and the `PackElements`
@@ -310,7 +317,7 @@ correctness fix to existing behavior is allowed.
     body is still elaborated without its binders open (`comptime/elab.rs`).
   - The served pack-keyed `def`'s forms carry over: `bind_pack` for the
     receiver call, the template's `comptime for` over the collector, and
-    the spread `MethodCall` lacks (R256).
+    the spread `MethodCall`, whose position MIR already carries.
   - `assets/ok/pack_forwarding_method.mojo` and the `pack_method_*` fixtures
     are the bodies that wait.
   - Depends on nothing.
@@ -2152,21 +2159,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Only a method R312 still clones can hit it.
   - Probe: `conformance/probes/stub_method_string_literal_instance.mojo`.
   - Found while landing R305 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R291 A pack-keyed `def` spreading its collector into a method fails
-  on the cloner**
-
-  Problem: `def outer[*Us: Writable](*extra: *Us)` returning
-  `Plain().tally(*extra)` into a method with its own pack fails with
-  "register r5 has no checked type (Index …)" in the `outer` clone, while
-  the pin runs it.
-  - No pack query is involved: the forwarded collector's element reads
-    reach MIR untyped.
-  - R256 serves the shape from its template and assumes the cloner runs it
-    meanwhile; it does not.
-  - Found while landing R62 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

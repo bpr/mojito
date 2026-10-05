@@ -514,8 +514,12 @@ moved, at the position `MirInstr::Call::spread` names; the ownership
 analysis sees the whole collector lent or moved, and the elaborator
 (`expand_pack_spreads`) replaces the argument with one place read or move
 per element of the bound pack before it binds the callee, so concrete MIR
-carries no spread. A clone that spreads its bound pack into a served `def`
-spells the elements itself (`PackRewriter::served_callees`). A pack query
+carries no spread. A method call carries the same position
+(`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator and the
+erased oracle expand alike; the gate (`pack_spread_callees`) still keeps a
+`def` spreading into a method on the cloner until an own-pack method is
+served by its template. A clone that spreads its bound pack into a served
+`def` spells the elements itself (`PackRewriter::served_callees`). A pack query
 read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
 `Ts.all_conforms_to[T]()` of a `def`'s or method's own pack — is upstream's
 `kgen.param.constant` with a symbolic attribute: the checker records the

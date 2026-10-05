@@ -325,6 +325,7 @@ impl Flatten<'_> {
                 param_arg_regs: Vec::new(),
                 param_decls: contract.param_decls,
                 instantiated_args: self.instantiated_args(e),
+                spread: None,
             });
             return dest;
         }

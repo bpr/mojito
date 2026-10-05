@@ -852,6 +852,7 @@ impl VmBackend {
                 param_arg_regs,
                 param_decls,
                 instantiated_args,
+                spread,
                 ..
             } => {
                 let recv_val = regs[recv.0 as usize].clone();
@@ -868,8 +869,9 @@ impl VmBackend {
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
                 } else {
-                    let argv: Vec<Value> =
+                    let mut argv: Vec<Value> =
                         args.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                    splice_pack_spread(&mut argv, *spread);
                     let kw: Vec<(String, Value)> = kwargs
                         .iter()
                         .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))

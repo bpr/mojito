@@ -93,9 +93,20 @@ pub(super) fn verify_call_instruction(
             capture_accesses,
             param_arg_regs,
             param_decls,
+            spread,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
+            if let Some(position) = spread {
+                verify_pack_spread(
+                    prefix,
+                    cx.function,
+                    *position,
+                    args,
+                    declared(cx.declarations, callee),
+                    errors,
+                );
+            }
             let abstract_value_next = callee.starts_with("__trait_dispatch.")
                 && method == "__next__"
                 && reference_result.is_none();
@@ -175,15 +186,25 @@ pub(super) fn verify_call_instruction(
                 ));
             }
         }
+        // A spread names the collector of the method the checker selected;
+        // a dispatch-resolved call has none to check it against.
+        MirInstr::MethodCall {
+            resolved: None,
+            spread: Some(position),
+            ..
+        } => errors.push(format!(
+            "{prefix}: unresolved method call spreads argument {position}"
+        )),
         MirInstr::CallIndirect { .. } => verify_indirect_call(cx, instruction, errors),
         _ => {}
     }
 }
 
-/// A whole pack spread into the callee's collector (`show(*args)`): the
-/// position names an argument whose register holds a `VariadicPack` over a
-/// pack still a parameter, which only a template holds, and a declared
-/// callee collects a positional pack. `print` is undeclared and collects.
+/// A whole pack spread into the callee's collector (`show(*args)`,
+/// `Sink().take(*args)`): the position names an argument whose register
+/// holds a `VariadicPack` over a pack still a parameter, which only a
+/// template holds, and a declared callee collects a positional pack.
+/// `print` is undeclared and collects.
 fn verify_pack_spread(
     prefix: &str,
     function: &MirFunction,

@@ -1993,6 +1993,7 @@ impl<'a> Specializer<'a> {
                             param_arg_regs: Vec::new(),
                             param_decls: Vec::new(),
                             instantiated_args: Vec::new(),
+                            spread: None,
                         };
                     }
                     // A retained callable names its lifted body on the

@@ -1253,3 +1253,80 @@ fn defaultable_pack_instance_keeps_no_reification_slot_and_builds_its_elements()
         "the `Bool` element constructs as `False`"
     );
 }
+
+#[test]
+fn method_call_spread_expands_into_the_bound_pack_elements() {
+    let pack = Ty::Tuple(vec![Ty::Int, Ty::Bool]);
+    let collector = MirPlace::root(0, Some(pack.clone()));
+    let mut call = dunder_method_call(
+        Reg(3),
+        Reg(1),
+        "tagged",
+        Some("Sink.tagged".into()),
+        vec![Reg(2), Reg(0)],
+    );
+    if let MirInstr::MethodCall {
+        spread, arg_places, ..
+    } = &mut call
+    {
+        *spread = Some(1);
+        arg_places[1] = Some(collector.clone());
+    }
+    let mut function = MirFunction {
+        blocks: vec![MirBlock {
+            instrs: vec![
+                MirInstr::LoadPlace {
+                    dest: Reg(0),
+                    place: collector,
+                },
+                call,
+            ],
+            term: MirTerm::Return(None),
+        }],
+        n_regs: 4,
+        n_vars: 1,
+        var_names: vec!["a".into()],
+        n_params: 1,
+        param_types: vec![pack.clone()],
+        owned_params: vec![false],
+        deinit_params: vec![false],
+        ref_params: vec![false],
+        returns_reference: false,
+        var_tys: HashMap::from([(0, pack.clone())]),
+        ret_ty: Some(Ty::None),
+        raises: false,
+        error_ty: None,
+        spans: mojito_mir::mir::SpanTable::default(),
+        reg_types: HashMap::from([(0, pack), (2, Ty::Int)]),
+    };
+    expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
+    let instrs = &function.blocks[0].instrs;
+    assert!(
+        !instrs.iter().any(
+            |instruction| matches!(instruction, MirInstr::LoadPlace { dest, .. } if *dest == Reg(0))
+        ),
+        "the collector's whole read must go once its elements are read"
+    );
+    let loaded: Vec<(Reg, MirPlace)> = instrs
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::LoadPlace { dest, place } => Some((*dest, place.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(loaded.len(), 2);
+    let Some(MirInstr::MethodCall {
+        args,
+        arg_places,
+        spread,
+        ..
+    }) = instrs.last()
+    else {
+        panic!("the method call must stay last");
+    };
+    assert_eq!(*spread, None);
+    assert_eq!(args, &vec![Reg(2), loaded[0].0, loaded[1].0]);
+    assert_eq!(arg_places.len(), 3);
+    assert!(arg_places.iter().all(Option::is_none));
+    assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::Bool));
+}

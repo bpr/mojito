@@ -1770,6 +1770,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
                     instantiated_args: Vec::new(),
+                    spread: None,
                 }],
                 MirTerm::Return(None),
             )],
@@ -1924,4 +1925,49 @@ fn verifier_checks_stores_into_erased_instance_storage() {
     let unqualified = with_environment(mojito::CallableEnvironment::Default);
     clean(&store(unqualified.clone(), capturing.clone()));
     expect_finding(&store(capturing, unqualified), "store of def(");
+}
+
+#[test]
+fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
+    let spread_call = |resolved: Option<String>| {
+        program(function(
+            vec![block(
+                vec![MirInstr::MethodCall {
+                    dest: Reg(2),
+                    recv: Reg(0),
+                    method: "take".to_string(),
+                    resolved,
+                    raises: None,
+                    reference_result: None,
+                    result_adapter: None,
+                    args: vec![Reg(1)],
+                    kwargs: Vec::new(),
+                    recv_place: None,
+                    recv_writes: false,
+                    arg_places: vec![None],
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    param_decls: Vec::new(),
+                    instantiated_args: Vec::new(),
+                    spread: Some(0),
+                }],
+                MirTerm::Return(None),
+            )],
+            3,
+            &[
+                (0, Ty::Struct("Sink".to_string(), Vec::new().into())),
+                (1, Ty::Int),
+                (2, Ty::None),
+            ],
+        ))
+    };
+    expect_finding(
+        &spread_call(Some("Sink.take".to_string())),
+        "spread argument 0 has type Int, not a pack collector",
+    );
+    expect_finding(
+        &spread_call(None),
+        "unresolved method call spreads argument 0",
+    );
 }

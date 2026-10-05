@@ -1189,12 +1189,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `pack_def_template_served` reads it; `PackRewriter::served_callees`
   (`comptime/rewrite.rs`) spells a clone's spread into a served callee
   element by element; `comptime_for_is_template_served` admits a pack's
-  length as a bound; a whole-pack spread is `MirInstr::Call::spread`
+  length as a bound; a whole-pack spread is `MirInstr::Call::spread` or
+  `MirInstr::MethodCall::spread`
   (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
   `verify/calls.rs`; `splice_pack_spread`, `backend/vm/calls.rs`, for the
   erased oracle) and `native::mono::spread` (`mono/spread.rs`:
-  `expand_pack_spreads`, after `substitute_function`) replaces it with the
-  bound pack's element places; `Checker::pack_length_binder`/`pack_length_query`
+  `expand_pack_spreads`, after `substitute_function`; `spread_operands` reads
+  either call form) replaces it with the bound pack's element places; `Checker::pack_length_binder`/`pack_length_query`
   (`checker/constraints.rs`) read `args.__len__()`, `Ts.length`, and
   `len(Ts)` as `PackQuery::Length` for the loop bound and as a
   `ConstraintOperand::PackLength` in a `comptime if`; a pack element's

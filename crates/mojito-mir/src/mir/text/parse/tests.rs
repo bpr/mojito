@@ -745,6 +745,7 @@ fn instruction_families_reprint_byte_identically() {
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
             instantiated_args: vec![TyArg::Ty(Ty::Int)],
+            spread: Some(0),
         },
         MirInstr::PointerStorageTake {
             dest: Reg(13),
@@ -1694,6 +1695,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
                     param_arg_regs: Vec::new(),
                     param_decls: Vec::new(),
                     instantiated_args,
+                    spread: None,
                 }],
             ),
         )])
@@ -1719,6 +1721,17 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
         .replace(", instantiated_args: []", "");
     assert!(!older.contains("instantiated_args"));
     assert!(recorded(&older).is_empty());
+
+    // Schema 1.24 records a method call's spread; an older artifact none.
+    let before_spread = write::program(&program)
+        .replacen("mojito-mir 1.24", "mojito-mir 1.23", 1)
+        .replace(", spread: absent", "");
+    assert!(!before_spread.contains("spread"));
+    let parsed = artifact(before_spread.as_bytes(), "unit.mir".to_string()).expect("parse 1.23");
+    assert!(matches!(
+        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        MirInstr::MethodCall { spread: None, .. }
+    ));
 }
 
 /// Schema 1.7 carries the expression a value argument built from the

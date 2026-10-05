@@ -542,12 +542,18 @@ impl VmBackend {
             param_arg_regs,
             param_decls,
             instantiated_args,
+            spread,
             ..
         } = instruction
             && let Value::Struct { name, .. } = &caller.registers[recv.0 as usize]
         {
+            let mut positional: Vec<Value> = args
+                .iter()
+                .map(|register| caller.registers[register.0 as usize].clone())
+                .collect();
+            splice_pack_spread(&mut positional, *spread);
             let function_name =
-                prog.runtime_method_name(name, method, resolved.as_deref(), args.len());
+                prog.runtime_method_name(name, method, resolved.as_deref(), positional.len());
             let Some(index) = prog.index_of(&function_name) else {
                 return Ok(None);
             };
@@ -561,10 +567,6 @@ impl VmBackend {
             if !prog.mir.functions[index].1.returns_reference {
                 return Ok(None);
             }
-            let positional: Vec<Value> = args
-                .iter()
-                .map(|register| caller.registers[register.0 as usize].clone())
-                .collect();
             let keywords: Vec<(String, Value)> = kwargs
                 .iter()
                 .map(|(key, register)| (key.clone(), caller.registers[register.0 as usize].clone()))

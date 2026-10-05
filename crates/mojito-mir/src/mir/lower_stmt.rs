@@ -733,6 +733,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             param_decls: contract.param_decls.clone(),
             instantiated_args: Vec::new(),
+            spread: None,
         });
         let updated = self.fresh_typed(span, Some(tmp), operand_ty.clone());
         self.emit(MirInstr::UseVar {
@@ -794,6 +795,7 @@ impl Flatten<'_> {
             param_arg_regs: Vec::new(),
             param_decls: contract.param_decls.clone(),
             instantiated_args: Vec::new(),
+            spread: None,
         });
         self.emit_nested_closure_argument_keepalives(std::slice::from_ref(rhs_expression), &[]);
         true

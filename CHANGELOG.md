@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method call in MIR carries the position of a whole type pack spread into
+  the method's collector (`Sink().take(*args)`; textual MIR 1.24,
+  `call.method`'s `spread`), as a `def` call has since 1.17: the verifier
+  checks it, the elaborator replaces it with the bound pack's element
+  places, and the erased oracle splices the elements, so a template-served
+  body that spreads its pack into a method runs on the VM, erased, and
+  natively. A `def` spreading into a method still keys a clone until a
+  method with a type pack of its own is served by its template (roadmap
+  R256, R307). The cloner failure filed as R291 no longer reproduces.
+
 - A generic struct's method holding a `comptime if` or `comptime for` over
   its struct's parameters (`comptime if Self.T == Int`, `comptime for i in
   range(Self.n)`) is served by its template, as in the pin: the elaborator

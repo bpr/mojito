@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.23
+# Mojito Textual MIR Format, Version 1.24
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.23 is implemented end to end for inspection and loading: canonical
+Version 1.24 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.23
+mojito-mir 1.24
 ```
 
-The writer emits 1.23. The reader accepts 1.0 through 1.23; *Schema 1.0*
+The writer emits 1.24. The reader accepts 1.0 through 1.24; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -191,6 +191,12 @@ the storage's own. The elaborator asserts the two types equal per instance,
 after deciding its `comptime_branch`es, and erases both, so elaborated MIR
 holds none and a mismatch fails the instance. A 1.22 consumer rejects the
 instruction as unknown.
+
+Minor version 24 carries a whole pack spread into a method's collector: a
+`call.method` gains `spread`, as a `call` did in version 17, the position in
+`args` of the caller's collector (`Sink().take(*args)`). The elaborator
+replaces it with the bound pack's element places, so elaborated MIR records
+`absent`. An older artifact reads as recording no spread.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -686,7 +692,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.23
+mojito-mir 1.24
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
