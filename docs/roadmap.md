@@ -65,13 +65,22 @@ correctness fix to existing behavior is allowed.
 
   Problem: `first_variant[*Ts: Movable]() -> Variant[*Ts]` returning
   `Variant[*Ts](3)` is cloned per explicit application
-  (`assets/ok/variadic_pack_forwarding_generic_def.mojo`).
-  - The checker would type the body with `Variant[*Ts]` an application of a
-    variadic struct over an open pack, and the elaborator expand the result
-    and the construction with `expand_pack_spread` once the pack is bound.
-  - A `def` with a collector spreads the pack whole into `print` or another
-    served `def` from its template already; a spread in a type is the gap.
-  - Depends on nothing.
+  (`assets/ok/variadic_pack_forwarding_generic_def.mojo`), and it cannot
+  move to its template before R4 and R5 land.
+  - The clone is kept by the driver, not by the comptime pack gate:
+    `TemplateReach::keyed_methods` (`src/compiler/template_reach.rs`) keys
+    the `def` for `Variant[*Ts]`, a struct specialized whole (R4), and for
+    `Variant`'s generic `__init__`, a per-call constructor clone (R5).
+  - The template's own MIR already types the body as `Variant[param *Ts]`.
+  - The caller must close the result: `Checker::infer_generic_call`
+    substitutes the result type without `expand_pack_spread`, so a served
+    call leaves `Variant[*Ts]` unbound in the caller's slot.
+  - The elaborator must expand the spread: `substitute_ty`'s `Ty::Struct`
+    arm (`mono/substitute.rs`) would spell `Variant[RuntimePack[..]]`
+    instead of the checker's `Variant[(Int, String)]`.
+  - The non-pack `wrap` and `wrap_outer` in the same fixture close with R4
+    and R5 alone.
+  - Depends on R4 and R5.
   - Model: Fable, Planned.
 
 - [ ] **R256 (P3b) A pack spread into a pack-keyed method keys a clone**
