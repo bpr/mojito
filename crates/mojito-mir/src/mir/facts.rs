@@ -253,6 +253,20 @@ impl Flatten<'_> {
             .unwrap_or_default()
     }
 
+    /// The operand and target types of the `rebind` `expression` is the
+    /// operand of, where the two differ.
+    pub(super) fn rebind_target(&self, expression: &Expr) -> Option<(Ty, Ty)> {
+        self.facts(expression)?
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::Rebind { operand, dest } => {
+                    Some((operand.clone(), dest.clone()))
+                }
+                _ => None,
+            })
+    }
+
     /// Whether `expression` is a checker-resolved `DType.<name>` value, which
     /// is a constant rather than a field of a `DType` binding.
     pub(super) fn is_dtype_constant(&self, expression: &Expr) -> bool {

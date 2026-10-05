@@ -430,6 +430,7 @@ pub(super) fn reg_ty<'a>(
     owner: &str,
 ) -> Result<&'a Ty, MonoError> {
     function.reg_types.get(&reg.0).ok_or_else(|| MonoError {
+        kind: MonoErrorKind::Unsupported,
         function: Some(owner.to_string()),
         construct: format!("register r{} lacks a concrete type", reg.0),
     })

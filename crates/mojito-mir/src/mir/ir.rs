@@ -138,7 +138,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(target, &mut out);
         }
         MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
-        MirInstr::CopyValue { dest, value } => out.extend([dest, value]),
+        MirInstr::CopyValue { dest, value } | MirInstr::Rebind { dest, value } => {
+            out.extend([dest, value]);
+        }
         MirInstr::WriteRef { reference, value } => out.extend([reference, value]),
         MirInstr::MakeClosure { dest, captures, .. } => {
             out.push(dest);
@@ -871,6 +873,14 @@ pub enum MirInstr {
     ReadRef {
         dest: Reg,
         reference: Reg,
+    },
+    /// `rebind[Dest](value)` read as a value: `dest`, typed `Dest`, holds
+    /// what `value` held, typed the operand's own type — upstream's
+    /// `kgen.rebind`. Only a generator holds one; the elaborator asserts the
+    /// two register types equal per instance and replaces `dest` by `value`.
+    Rebind {
+        dest: Reg,
+        value: Reg,
     },
     /// Materialize an owned copy of a register value.  Reference-returning
     /// expressions use this after `ReadRef` in ordinary value contexts; an

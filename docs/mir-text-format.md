@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.22
+# Mojito Textual MIR Format, Version 1.23
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.22 is implemented end to end for inspection and loading: canonical
+Version 1.23 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.22
+mojito-mir 1.23
 ```
 
-The writer emits 1.22. The reader accepts 1.0 through 1.22; *Schema 1.0*
+The writer emits 1.23. The reader accepts 1.0 through 1.23; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -182,6 +182,15 @@ declaration order and in the caller's binder scope (`s.name[Int]()` records
 `[Int]`). The elaborator binds the method's own binders from them, and a
 resolved call in concrete MIR records an empty list. An older artifact reads
 as carrying none.
+
+Minor version 23 adds the instruction `value.rebind { dest, value }`:
+`rebind[Dest](x)` read as a value in a generator, `dest` typed `Dest` and
+`value` typed the operand's own type, as upstream's `kgen.rebind`. A rebound
+place is spelled by its terminal `type`, `Dest`, beside projections typed at
+the storage's own. The elaborator asserts the two types equal per instance,
+after deciding its `comptime_branch`es, and erases both, so elaborated MIR
+holds none and a mismatch fails the instance. A 1.22 consumer rejects the
+instruction as unknown.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -625,7 +634,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `EstablishLoans` | `loans.establish` |
 | `InvalidateInteriors` | `interiors.invalidate` |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
-| `CopyValue` | `value.copy` |
+| `CopyValue` / `Rebind` | `value.copy` / `value.rebind` |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `UseVar` / `DefVar` | `var.use` / `var.store` |
@@ -677,7 +686,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.22
+mojito-mir 1.23
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

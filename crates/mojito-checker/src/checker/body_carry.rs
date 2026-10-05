@@ -256,7 +256,6 @@ pub struct InternalStores {
     view_result_interiors: FactMap<SourceSpan, Vec<String>>,
     call_parameters: FactMap<SourceSpan, Vec<super::CallParameter>>,
     with_desugars: FactMap<SourceSpan, super::with_stmt::WithDesugar>,
-    rebind_assertions: FactMap<SourceSpan, mojito_checked::templates::RebindAssertion>,
     hash_leaf_demands: FactVec<super::HashLeafDemand>,
     copyable_reference_result_reads: FactSet<SourceSpan>,
     discarded_reference_results: FactSet<SourceSpan>,
@@ -312,6 +311,7 @@ macro_rules! carried_stores {
             result set read_temporary_arguments = read_temporary_arguments;
             result set implicitly_copied_consuming_receivers = implicitly_copied_consuming_receivers;
             result set truthiness_conditions = truthiness_conditions;
+            result map rebind_assertions = rebind_assertions;
             result map declaration_effects = declaration_effects;
             internal map transfer_effects = transfer_effects;
             internal map call_through_effects = call_through_effects;
@@ -324,7 +324,6 @@ macro_rules! carried_stores {
             internal map view_result_interiors = view_result_interiors;
             internal map call_parameters = call_parameters;
             internal map with_desugars = with_desugars;
-            internal map rebind_assertions = rebind_assertions;
             internal vec hash_leaf_demands = hash_leaf_demands;
             internal set copyable_reference_result_reads = copyable_reference_result_reads;
             internal set discarded_reference_results = discarded_reference_results;
@@ -484,7 +483,6 @@ macro_rules! define_carry_ops {
                     view_result_interiors: self.view_result_interiors.into_inner(),
                     call_parameters: self.call_parameters.into_inner(),
                     with_desugars: self.with_desugars.into_inner(),
-                    rebind_assertions: self.rebind_assertions.into_inner(),
                     hash_leaf_demands: self.hash_leaf_demands.into_inner(),
                     copyable_reference_result_reads: self.copyable_reference_result_reads.into_inner(),
                     discarded_reference_results: self.discarded_reference_results.into_inner(),
@@ -828,6 +826,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         read_temporary_arguments: checker.read_temporary_arguments.take(),
         implicitly_copied_consuming_receivers: checker.implicitly_copied_consuming_receivers.take(),
         truthiness_conditions: checker.truthiness_conditions.take(),
+        rebind_assertions: checker.rebind_assertions.take(),
         declaration_effects: checker.declaration_effects.take(),
     }
 }

@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic struct's method holding a `comptime if` or `comptime for` over
+  its struct's parameters (`comptime if Self.T == Int`, `comptime for i in
+  range(Self.n)`) is served by its template, as in the pin: the elaborator
+  decides the branch and unrolls the loop per instance, where the cloner
+  used to mint a clone per instance (`keyed.mojo`'s `Cell.label` now mints
+  none; `assets/ok/struct_method_comptime_template_served.mojo`). A
+  `rebind[Dest](x)` is a template form too (textual MIR 1.23, `value.rebind`):
+  a `def` or a method holding one is served by its template and the
+  elaborator asserts the type equality only for the instances a call
+  reaches, after deciding their `comptime if`s, as the pin does. A
+  `Box[String]` beside an uncalled `rebind[Int](self.value)` method now runs
+  where it was refused with "type mismatch for rebind", and a reached
+  mismatch fails with the pin's "rebind input type 'String' does not match
+  result type 'Int'" (`assets/ok/rebind_method_template_served.mojo`,
+  `assets/type_error/rebind_method_instance_mismatch.mojo`). The erased
+  oracle now binds a struct's type parameters on an inferred construction,
+  through a caller's binder, and on a static call's spelled receiver, so it
+  decides such a `comptime if` as concrete MIR does.
+
 - A method with compile-time parameters of its own is a generator, as in the
   pin: its call carries the arguments the checker solved (textual MIR 1.22)
   and the elaborator instantiates the method's template per call, where the

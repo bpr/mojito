@@ -6,28 +6,31 @@
 //! The call is erased in place before checking (`erase_rebinds`): the operand
 //! keeps its own node, so every place, origin, and transfer rule reads it as
 //! the value it is, and lowering never sees a call. What remains is a
-//! retyping recorded at the operand's span: source validation, where the
-//! operand's type is still symbolic, takes `Dest` on faith (the operand's
-//! bounds prove nothing about `Dest`, as upstream); the executable check,
-//! where both sides are concrete, demands that they agree. An assignment to
-//! a rebound variable (`rebind[Dest](x) = value`) becomes the plain
-//! assignment `x = value`, its retyping recorded at the statement's span.
+//! retyping recorded at the operand's span: where either side is still
+//! symbolic — source validation, or a generator's executable check — `Dest`
+//! is taken on faith (the operand's bounds prove nothing about `Dest`, as
+//! upstream), and the recorded assertion reaches MIR as a rebind the
+//! elaborator judges per instance; where both sides are closed, the check
+//! demands that they agree. An assignment to a rebound variable
+//! (`rebind[Dest](x) = value`) becomes the plain assignment `x = value`, its
+//! retyping recorded at the statement's span and, reversed, at the value's.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_types::types::is_symbolic;
 
 /// The bodies source validation must check because they hold a `rebind`:
 /// every module-level `def` body and struct method body naming the builtin,
 /// keyed at the body's first statement.
 ///
 /// A `rebind` asserts that a parametric operand type resolves to its target
-/// once instantiated, so the elaborator keys specialization on it exactly as
-/// on a `comptime if`: the template is stubbed and only clones are checked
-/// executably. Validation is then the only place the template is judged, and
-/// it must run on the source as written — `erase_rebinds` removes the calls
-/// this scan looks for, so the scan precedes it.
+/// once instantiated; where the template is still stubbed (a nested `def`, a
+/// compile-time evaluation's subprogram), validation is the only place it is
+/// judged with its parameters symbolic. The scan must run on the source as
+/// written — `erase_rebinds` removes the calls it looks for, so it precedes
+/// the erasure.
 pub fn rebind_keyed_bodies(statements: &[Stmt]) -> HashSet<SourceSpan> {
     let mut keyed = HashSet::new();
     let mut record = |body: &[Stmt]| {
@@ -232,6 +235,33 @@ impl Checker {
         }))
     }
 
+    /// A rebound whole-variable assignment (`rebind[Dest](x) = value`)
+    /// stores `value`, typed `Dest`, into `x`'s own storage: the value is
+    /// rebound back to the variable's type where the store reads it, so a
+    /// generator's MIR carries the equality for the elaborator to judge.
+    pub(super) fn record_assignment_rebind(&self, statement: &Stmt, value: &Expr) {
+        let assertion = self
+            .rebind_assertions
+            .borrow()
+            .get(&statement.source_span())
+            .filter(|_| {
+                self.rebind_targets
+                    .assignments
+                    .contains_key(&statement.source_span())
+            })
+            .cloned();
+        if let Some(assertion) = assertion {
+            self.rebind_assertions.borrow_mut().insert(
+                value.source_span(),
+                mojito_checked::templates::RebindAssertion {
+                    operand: assertion.dest,
+                    dest: assertion.operand,
+                    by_value: false,
+                },
+            );
+        }
+    }
+
     /// The rejection for a `rebind` call the eraser left in place.
     pub(super) fn rebind_shape_error(param_args: &[ParamArg], args: &[Expr]) -> TypeError {
         if param_args.len() != 1 {
@@ -272,9 +302,10 @@ impl Checker {
                     .any(|frame| frame.keeps_symbolic_selection))
     }
 
-    /// `Dest` for an operand of type `ty`. Under source validation the target
-    /// stands in for the still-symbolic operand type; the executable check
-    /// requires the two to be the same type.
+    /// `Dest` for an operand of type `ty`. Under source validation, or where
+    /// either side is still symbolic, the target stands in for the operand
+    /// type and the elaborator asserts the equality per instance; between
+    /// two closed types the check requires the two to be the same type.
     fn rebound_ty(&self, target: &ParamArg, ty: &Ty, site: &SourceSpan) -> Result<Ty, TypeError> {
         let dest = self.rebind_target_ty(target)?;
         self.rebind_assertions.borrow_mut().insert(
@@ -285,7 +316,8 @@ impl Checker {
                 by_value: self.rebinds_by_value(ty),
             },
         );
-        if !self.source_validation && *ty != dest {
+        let closed = !is_symbolic(ty) && !is_symbolic(&dest);
+        if !self.source_validation && closed && *ty != dest {
             return Err(TypeError::TypeMismatch {
                 expected: dest.to_string(),
                 found: ty.to_string(),

@@ -557,8 +557,9 @@ or a `Bool` value), each arm and loop body in its own scope, no arm assumed
 selected — so a type error in an untaken arm rejects as upstream rejects it,
 a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
-is still symbolic, exactly as upstream does; the equality is asserted on each
-clone. Every method body of a struct keyed on a vector value
+is still symbolic, exactly as upstream does; the equality is asserted per
+instance by the elaborator below MIR, or on each clone of a body still
+cloned (a nested `def`). Every method body of a struct keyed on a vector value
 (`value_keyed_struct`), which the elaborator specializes whole and drops, is
 checked the same way, to produce its template only: a body this check cannot
 type gets no verdict, and its specializations keep their own check. A
@@ -809,13 +810,16 @@ The implemented forms are:
 
 Generic `def` templates monomorphize in two classes sharing one worklist,
 mangling, and clone generator. A **comptime-class** template (a `comptime
-if`/`for` body, a `rebind` over the declaration's own parameters, or a type
-pack) must specialize at every reference: resolution
+if`/`for` body, or a type pack) must specialize at every reference: resolution
 failure is an error, and the template is replaced by its clones (a dead
-template is dropped unchecked). A `rebind` keys the class because it asserts
-that a parametric operand type resolves to its target, which only an
-instantiation can settle; a generic struct's method holding one is stubbed on
-the template for the same reason, and the assertion is made on every clone.
+template is dropped unchecked). A `rebind` keys nothing: the template
+carries it into MIR, as a value rebind (`MirInstr::Rebind`) or a place whose
+terminal type is the target, and the elaborator asserts each one's equality
+per instance once its `comptime if`s are decided, as upstream's
+`processRebindOp` does (`native::mono`'s `discharge_rebinds`,
+`mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
+error on a mismatch. Only a `def` nested in a body, which still clones, makes
+the assertion on each clone.
 Three comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
 statically evident, a **compile-time-keyed** `def`
@@ -1118,10 +1122,16 @@ constructor, and the struct's parameters of a static call, which MIR records
 on the call as its spelled receiver type (`MirInstr::Call::receiver`,
 `Pair[Self.U].count()`).
 
-The methods that still clone are the ones MIR cannot express yet
-(`keyed_methods`, `comptime/specialize.rs`): a body the template stubs (a
-`comptime if`, a `comptime for`, a `rebind`), one holding a nested `def` or a
-lambda, and one that reaches a compile-time-keyed `def`. A type name over
+A `comptime if` or a `comptime for` over the struct's parameters stays in
+the template, as a generic `def`'s does: the elaborator's struct walk opens
+the struct's parameters as binders of each method's body (`Elab::def_body`),
+as `Self.`-qualified names only, so `native::mono` decides the branch and
+unrolls the loop per instance; a `rebind` stays too. The methods that still
+clone are the ones MIR cannot express yet (`keyed_methods`,
+`comptime/specialize.rs`): a body the template stubs (a local `comptime`
+binding over the struct's parameters, a `comptime for` the template does not
+serve), one holding a nested `def` or a lambda, and one that reaches a
+compile-time-keyed `def`. A type name over
 the struct's parameters clones nothing: the template carries the type in
 `MirInstr::TypeName`, and the elaborator writes the name from the
 substituted type. The driver adds the ones only checked types show
@@ -2665,6 +2675,7 @@ Representative instructions:
 Const
 SizeOf
 TypeName
+Rebind
 UseVar
 MovePlace
 DefVar

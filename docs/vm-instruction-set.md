@@ -83,6 +83,7 @@ accessed; the compact notation omits this analysis-only field.
 | `const.*` | `Const` | Load a literal into a register |
 | `var.copy` | `UseVar(Copy)` | Copy a variable value into a register |
 | `value.copy` | `CopyValue` | Run checked `Copyable` value semantics for an SSA value produced by a consuming reference or projected-place read |
+| `value.rebind` | `Rebind` | Read a generator's `rebind[Dest](x)` operand at `Dest`; erased per instance by the elaborator |
 | `var.move` | `UseVar(Move)` | Move a variable value into a register |
 | `var.borrow` | `UseVar(BorrowShared)` | Read through a shared borrow |
 | `var.borrow_mut` | `UseVar(BorrowMut)` | Read through an exclusive borrow |
@@ -260,6 +261,21 @@ its copy lifecycle instead of becoming an accidental alias. An explicit
 copy. A checker-proven consuming field read also emits `place.load` followed by
 `value.copy`; borrowed receiver, formatting, and iteration loads stay
 handle-preserving and omit it.
+
+### `value.rebind` — Rebind a register to its target type
+
+```text
+value.rebind { dest: %r1, value: %r0 }
+```
+
+`rebind[Dest](x)` read as a value in a generator: `dest` is typed `Dest`,
+`value` the operand's own type, as upstream's `kgen.rebind`. Only a template
+holds one. The elaborator asserts the two types equal for each instance a
+call reaches, after deciding its `comptime if`s, and replaces `dest` by
+`value`; a mismatch fails the instance ("rebind input type 'String' does not
+match result type 'Int'"). Concrete MIR and the native backend never see
+it, and the erased oracle runs it as the value it rebinds. A rebound place
+needs no instruction: its terminal type is `Dest`.
 
 ### `var.move` — Move Variable
 

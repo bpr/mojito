@@ -535,7 +535,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("reference", reg_value(*reference)),
             ],
         ),
-        MirInstr::CopyValue { dest, value } => record(
+        MirInstr::CopyValue { dest, value } | MirInstr::Rebind { dest, value } => record(
             tag,
             &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
         ),

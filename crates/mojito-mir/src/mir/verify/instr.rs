@@ -65,6 +65,7 @@ pub(super) fn verify_instruction(
         | MirInstr::SizeOf { .. }
         | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
+        | MirInstr::Rebind { .. }
         | MirInstr::DefVar { .. }
         | MirInstr::MakeVariant { .. }
         | MirInstr::MakeClosure { .. } => verify_value_instruction(&cx, instruction, errors),
@@ -465,6 +466,17 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             {
                 errors.push(format!(
                     "{prefix}: copied value has type {found}, destination has type {expected}"
+                ));
+            }
+        }
+        // Two closed types a rebind names must already agree; the
+        // elaborator judges one over a parameter per instance.
+        MirInstr::Rebind { dest, value } => {
+            if let (Some(found), Some(expected)) = (cx.reg_ty(*value), cx.reg_ty(*dest))
+                && !types_compatible(found, expected)
+            {
+                errors.push(format!(
+                    "{prefix}: rebinds {found} to {expected}, which never agree"
                 ));
             }
         }

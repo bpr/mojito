@@ -363,6 +363,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::NegatedEquality
         | SemanticAdjustment::ReceiverFromFirstArgument { .. }
         | SemanticAdjustment::Truthiness
+        | SemanticAdjustment::Rebind { .. }
         | SemanticAdjustment::ComptimeCondition(..)
         | SemanticAdjustment::ComptimeIteration(..)
         | SemanticAdjustment::Move

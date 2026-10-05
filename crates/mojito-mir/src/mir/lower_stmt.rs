@@ -547,6 +547,11 @@ impl Flatten<'_> {
     }
 
     pub(super) fn place(&mut self, e: &Expr) -> MirPlace {
+        let place = self.place_unrebound(e);
+        self.rebound_place(e, place)
+    }
+
+    fn place_unrebound(&mut self, e: &Expr) -> MirPlace {
         // A materialized borrow-source temporary's place is its hidden slot,
         // registered under the checker-minted owner when the argument lowered.
         if let Some(owner) =
@@ -1866,6 +1871,11 @@ impl Flatten<'_> {
     /// `None` for a temporary or an indexed place (write-back to those is refused by
     /// the VM). Distinct from [`Self::try_place`], which emits index evaluations.
     pub(super) fn simple_place(&mut self, e: &Expr) -> Option<MirPlace> {
+        let place = self.simple_place_unrebound(e)?;
+        Some(self.rebound_place(e, place))
+    }
+
+    fn simple_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
             ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
             ExprKind::Index { object, .. } if self.variant_projection_index(e).is_some() => {
@@ -1903,6 +1913,11 @@ impl Flatten<'_> {
     /// distinguish a place read (`LoadPlace`) from a temporary/indexed read, and
     /// a partial move (`p.a^`) from an untracked indexed transfer. Emits nothing.
     pub(super) fn pure_field_place(&mut self, e: &Expr) -> Option<MirPlace> {
+        let place = self.pure_field_place_unrebound(e)?;
+        Some(self.rebound_place(e, place))
+    }
+
+    fn pure_field_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
             ExprKind::Identifier(name) => {
                 // `Self.<name>` (a reified value-parameter read, e.g. `Self.size`)
@@ -1930,6 +1945,11 @@ impl Flatten<'_> {
     }
 
     pub(super) fn try_place(&mut self, e: &Expr) -> Option<MirPlace> {
+        let place = self.try_place_unrebound(e)?;
+        Some(self.rebound_place(e, place))
+    }
+
+    fn try_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
             ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
             ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {

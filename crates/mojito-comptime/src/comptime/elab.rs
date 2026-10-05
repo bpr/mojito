@@ -326,7 +326,7 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let body = self.def_body(type_params, params, body, env)?;
+                let body = self.def_body(&[], type_params, params, body, env)?;
                 let params = fold_default_bindings(params, env);
                 out.push(rebuilt(
                     stmt,
@@ -383,38 +383,31 @@ impl Elab<'_> {
                             m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
                             return Ok(m);
                         }
-                        // A `rebind` asserts that a parametric operand type
-                        // resolves to its target; only the per-instantiation
-                        // clone can make that assertion, so the template body
-                        // is a trap stub even though it elaborates.
-                        if !type_params.is_empty() && super::block_has_rebind(&m.body) {
-                            m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
-                            return Ok(m);
-                        }
                         // A `comptime if` or `comptime for` over the
-                        // method's own binders stays in its template, as a
-                        // generic `def`'s does: the elaborator below MIR
-                        // decides it per call. A method keyed on a pack of
-                        // its own still clones per call.
-                        let own_binders = !m.type_params.is_empty()
-                            && !m
-                                .type_params
-                                .iter()
-                                .any(|parameter| parameter.name.starts_with('*'));
-                        let body = if own_binders {
-                            self.def_body(&m.type_params, &m.params, &m.body, env)
+                        // struct's binders or the method's own stays in its
+                        // template, as a generic `def`'s does: the
+                        // elaborator below MIR decides it per instance and
+                        // per call. A method keyed on a pack of its own
+                        // still clones per call.
+                        let own_binders: &[TypeParam] = if m
+                            .type_params
+                            .iter()
+                            .any(|parameter| parameter.name.starts_with('*'))
+                        {
+                            &[]
                         } else {
-                            self.block(&m.body, env, true)
+                            &m.type_params
                         };
+                        let body = self.def_body(type_params, own_binders, &m.params, &m.body, env);
                         m.body = match body {
                             Ok(body) => body,
                             // A method whose body only elaborates with the
-                            // struct's parameters (a `comptime if` on
-                            // `Self.T`) or its pack (a `comptime for` over a
-                            // method pack) bound becomes a trap stub on the
-                            // template; every concrete call retargets to a
-                            // per-instantiation or per-call clone, which
-                            // folds it bound.
+                            // struct's parameters or its own bound — a local
+                            // `comptime` binding over one, or a `comptime
+                            // for` the template does not serve — becomes a
+                            // trap stub on the template; every concrete call
+                            // retargets to a per-instantiation or per-call
+                            // clone, which folds it bound.
                             Err(error)
                                 if names_struct_parameter(&error, type_params)
                                     || names_method_parameter(&error, &m) =>
@@ -1036,17 +1029,21 @@ fn fold_default_bindings(
 /// `out`. Each is a scope of its own, so a block that declares a binding is
 /// wrapped in one; a block that declares nothing is spliced as it is.
 impl Elab<'_> {
-    /// Elaborate a `def`'s body. A generic body is a template: its binders
-    /// are in scope for [`Self::keep_template_comptime_if`], so a `comptime
-    /// if` over them stays for the check and the elaborator.
+    /// Elaborate a `def`'s or a method's body. A generic body is a template:
+    /// its binders are in scope for [`Self::keep_template_comptime_if`], so
+    /// a `comptime if` over them stays for the check and the elaborator. A
+    /// method's struct parameters (`struct_params`) are binders of its body
+    /// as `Self.`-qualified names only, which is how a method reads them; a
+    /// bare name equal to one is a module constant or a local.
     fn def_body(
         &self,
+        struct_params: &[TypeParam],
         type_params: &[TypeParam],
         params: &[FnParam],
         body: &[Stmt],
         env: &mut HashMap<String, CtValue>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
-        if type_params.is_empty() {
+        if struct_params.is_empty() && type_params.is_empty() {
             return self.block(body, env, true);
         }
         // A pack's collector stands for the pack in a bound (`len(args)`),
@@ -1063,6 +1060,11 @@ impl Elab<'_> {
             })
             .collect();
         binders.extend(def_pack_names(type_params, params));
+        binders.extend(
+            struct_params
+                .iter()
+                .map(|parameter| self_qualified(&parameter.name)),
+        );
         self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, env, true);
         self.template_binders.borrow_mut().pop();
@@ -1218,8 +1220,6 @@ impl Elab<'_> {
     }
 }
 
-/// Whether `expression` spells one of `names` as an identifier, a call, a
-/// type, or a `Self.`-qualified parameter.
 /// Whether a compile-time condition asks a layout query (`size_of[T]()`).
 fn asks_layout(expression: &Expr) -> bool {
     struct Finder(bool);
@@ -1236,6 +1236,8 @@ fn asks_layout(expression: &Expr) -> bool {
     finder.0
 }
 
+/// Whether `expression` spells one of `names` as an identifier, a call, a
+/// type, or a `Self.`-qualified parameter (an entry [`self_qualified`]).
 fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     struct Finder<'a> {
         names: &'a HashSet<String>,
@@ -1250,7 +1252,7 @@ fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
                 }
                 ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") =>
                 {
-                    self.found |= self.names.contains(field);
+                    self.found |= self.names.contains(&self_qualified(field));
                 }
                 _ => {}
             }
@@ -1258,8 +1260,11 @@ fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
 
         fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
             match ty {
-                mojito_ast::ast::Type::Named(name, _) | mojito_ast::ast::Type::SelfParam(name) => {
+                mojito_ast::ast::Type::Named(name, _) => {
                     self.found |= self.names.contains(name.trim_start_matches('*'));
+                }
+                mojito_ast::ast::Type::SelfParam(name) => {
+                    self.found |= self.names.contains(&self_qualified(name));
                 }
                 _ => {}
             }
@@ -1272,6 +1277,12 @@ fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     };
     mojito_ast::visit::walk_expr(&mut finder, expression);
     finder.found
+}
+
+/// The binder-set entry of a struct parameter, which a method body names
+/// only as `Self.<name>`.
+fn self_qualified(name: &str) -> String {
+    format!("Self.{}", name.trim_start_matches('*'))
 }
 
 /// Whether a loop body holds a `break` or `continue` of its own: one at its

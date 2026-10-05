@@ -182,6 +182,7 @@ fn defines(instruction: &MirInstr, register: Reg) -> bool {
 impl SpreadTables<'_> {
     fn error(&self, construct: &str) -> MonoError {
         MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: Some(self.template.to_string()),
             construct: construct.to_string(),
         }

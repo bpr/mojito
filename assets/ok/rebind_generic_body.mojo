@@ -1,7 +1,8 @@
 # `rebind[Dest](value)` asserts that a parametric operand type resolves to
 # `Dest` once instantiated, so a body holding one can only be judged per
 # instantiation — with or without a `comptime if` to key it. The template is
-# never checked with `T` symbolic; each clone asserts the equality, and a
+# checked once with `T` symbolic and carries the rebind into MIR; the
+# elaborator asserts the equality for each instance a call reaches, and a
 # template no call instantiates is not judged at all.
 @fieldwise_init
 struct Box[T: Copyable & Deinitable](Copyable):

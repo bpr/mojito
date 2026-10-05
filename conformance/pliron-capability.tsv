@@ -13,11 +13,13 @@ instruction	interiors.invalidate	supported	ownership fact; erased after validati
 instruction	ref.make	supported	materializes a verified place address
 instruction	ref.read	partial	typed referent registers
 instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompiled copy constructors reject
+instruction	value.rebind	unsupported	the elaborator judges and erases every rebind; one that survives rejects
 instruction	ref.write	partial	typed referent registers
 instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
 instruction	lifetime.keep_alive	supported	erased
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
-instruction	layout.size_of	partial	an `Int` constant from the target layout; a type without a layout rejects
+instruction	layout.size_of	unsupported	the elaborator answers every layout query under the target; one that survives rejects
+instruction	type.name	unsupported	the elaborator spells every type name as a constant; one that survives rejects
 instruction	type.construct	unsupported	monomorphization leaves no type parameter to construct; one that survives rejects
 instruction	literal.materialize	partial	scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects
 instruction	var.use	supported	copy/move/borrow

@@ -59,6 +59,7 @@ pub(super) fn ordered_arguments(
                     .map(InstanceArg::Value),
             }
             .ok_or_else(|| MonoError {
+                kind: MonoErrorKind::Unsupported,
                 function: Some(target.to_string()),
                 construct: format!(
                     "monomorphization cannot resolve parameter `{}`",
@@ -147,6 +148,7 @@ pub(super) fn bind_explicit_value_arguments(
                     }
                     (None, None) => {
                         return Err(MonoError {
+                            kind: MonoErrorKind::Unsupported,
                             function: Some(target.to_string()),
                             construct: format!(
                                 "value parameter `{name}` is not compile-time constant"

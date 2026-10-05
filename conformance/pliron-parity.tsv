@@ -513,6 +513,7 @@ assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
 assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_generic_body.mojo	main	exe-differential	sanitized
+assets/ok/rebind_method_template_served.mojo	main	exe-differential	sanitized
 assets/ok/rebind_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
@@ -613,6 +614,7 @@ assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_generator_lane_symbolic_width.mojo	main	exe-differential	sanitized
+assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized

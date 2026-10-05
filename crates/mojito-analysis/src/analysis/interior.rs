@@ -887,6 +887,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::MaterializeLiteral { .. }
         | MirInstr::ReadRef { .. }
         | MirInstr::CopyValue { .. }
+        | MirInstr::Rebind { .. }
         | MirInstr::WriteRef { .. }
         | MirInstr::UnOp { .. }
         | MirInstr::BinOp { .. }

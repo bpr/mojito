@@ -10,6 +10,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::MakeRef { dest, .. }
         | MirInstr::ReadRef { dest, .. }
         | MirInstr::CopyValue { dest, .. }
+        | MirInstr::Rebind { dest, .. }
         | MirInstr::Const { dest, .. }
         | MirInstr::SizeOf { dest, .. }
         | MirInstr::TypeName { dest, .. }
@@ -81,7 +82,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::MovePlace { place: p, .. }
         | MirInstr::LoadPlace { place: p, .. } => place(p, out),
         MirInstr::ReadRef { reference, .. } => out.push(*reference),
-        MirInstr::CopyValue { value, .. } => out.push(*value),
+        MirInstr::CopyValue { value, .. } | MirInstr::Rebind { value, .. } => out.push(*value),
         MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
         MirInstr::MaterializeLiteral { value, .. } => out.push(*value),
         MirInstr::UnOp { a, .. } => out.push(*a),

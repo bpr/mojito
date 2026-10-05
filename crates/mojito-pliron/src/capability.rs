@@ -105,6 +105,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "compiled `__copyinit__` only; raising or uncompiled copy constructors reject",
     ),
     (
+        "value.rebind",
+        CapabilityStatus::Unsupported,
+        "the elaborator judges and erases every rebind; one that survives rejects",
+    ),
+    (
         "ref.write",
         CapabilityStatus::Partial,
         "typed referent registers",
@@ -124,6 +129,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "layout.size_of",
         CapabilityStatus::Unsupported,
         "the elaborator answers every layout query under the target; one that survives rejects",
+    ),
+    (
+        "type.name",
+        CapabilityStatus::Unsupported,
+        "the elaborator spells every type name as a constant; one that survives rejects",
     ),
     (
         "type.construct",

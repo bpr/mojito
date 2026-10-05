@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R312**.
+Next free ID: **R316**.
 
 ## Ordered Work
 
@@ -253,24 +253,24 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R305 (P3) A generic struct's method holding a `comptime if` or
-  `comptime for` clones per instance**
+- [ ] **R312 (P3) A generic struct's method that binds a local `comptime`
+  over its struct's parameters still clones per instance**
 
-  Problem: `Cell.label`, holding a `comptime if` on `Self.T`
-  (`benchmarks/compile/keyed.mojo`), mints a clone per instance of its
-  struct, where a generic `def` holding one is served by its template.
-  - The elaborator stubs any method body whose elaboration names a struct
-    parameter (`unspecialized_method_stub`, `comptime/elab.rs`), and
+  Problem: `comptime k = Self.n + 1` or `comptime U = Self.T` in a generic
+  struct's method, and a `comptime for` the template does not serve (over a
+  compile-time list or a reflection query), still stub the template and
+  mint a clone per instance, where a `comptime if` or a `range` loop over
+  `Self.T` or `Self.n` is served by the template.
+  - The elaborator walks the method with the struct's parameters open as
+    binders (`Elab::def_body`, `comptime/elab.rs`), but evaluates a local
+    `comptime` binding before the check, where the binder has no value; the
+    body then falls back to `unspecialized_method_stub`, and
     `keyed_methods` (`comptime/specialize.rs`) clones it.
-  - The served `def`'s forms carry over: MIR's `comptime_branch` and
-    `comptime_for` with the owner's binders in scope, decided by
-    `native::mono` under the receiver's bindings.
-  - A method holding a `rebind` is stubbed the same way; the elaborator
-    should assert the type equality per instance, as the pin does.
-  - This is the first class R8 lists; nearly every `Tuple` member holds a
-    `comptime for`, so R4 needs it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  - This is the method case of R290 (a local `comptime` over a `def`'s
+    binder) and of R246 (an unserved `comptime for`); the fix is theirs.
+  - The census class `InstanceMethodComptime` counts what is left.
+  - Depends on R290 and R246.
+  - Model: Opus, Not Planned.
 
 - [ ] **R4 (P3d) A vector-keyed, struct-valued, or variadic struct is
   specialized whole in the AST**
@@ -438,6 +438,23 @@ correctness fix to existing behavior is allowed.
     classes in `checker/template_facts`.
   - Depends on R1, R4, R5, and R6.
   - Model: Fable, Planned.
+
+- [ ] **R314 (P3) A rebound place is spelled by its terminal type rather
+  than an explicit step**
+
+  Problem: MIR reads or writes the operand place of `rebind[Dest](place)`
+  through a place whose terminal type is `Dest` while its projections keep
+  the storage's own type, where upstream's reference overload rebinds the
+  pointer it returns with an explicit `kgen.rebind`.
+  - Only a rebind produces such a place, and `native::mono` judges every
+    place whose two types disagree as one (`mono/rebind.rs`), but nothing in
+    the place itself says it was rebound.
+  - A `Proj::Rebind` step would say it; every ownership pass and the VM
+    test a place for no projections to mean its whole root, so the step
+    must read as transparent there first.
+  - The value form is already explicit (`MirInstr::Rebind`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R9 (P4) The driver elaborates and checks to a fixpoint**
 
@@ -756,6 +773,20 @@ correctness fix to existing behavior is allowed.
     `assets/ok/generic_method_per_call_clones.mojo` are its
     `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R315 (P5) The erased oracle cannot decide a conformance condition
+  over a type binder**
+
+  Problem: `comptime if conforms_to(Self.T, Hashable)` in a template-served
+  method runs on concrete MIR and stops under `--erased` with "the erased
+  oracle cannot decide the comptime if condition `Conforms { … }`".
+  - An erased frame binds a struct's type parameter to the spelling of its
+    type (`Box[Int]` binds `T` to `Int`), which names no conformance table.
+  - `assets/ok/keyed_def_builds_loan_carrying_instance.mojo` is its
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and the row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2106,6 +2137,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - R261 is the lane-keyed case of the same gap; the fix is the one it
     names, leaving the binding to the checker, which binds it symbolically.
   - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R313 A generic struct's method that still clones per instance has
+  no clone for a `StringLiteral` instance**
+
+  Problem: `Box("a").local_ty()`, on a `Box[T]` whose `local_ty` binds
+  `comptime U = Self.T`, stops with "abort: Box.local_ty: unspecialized
+  type-keyed method", while the pin prints `1 0` beside `Box(1)`.
+  - The receiver is typed `Box[StringLiteral]`, and MIR holds the `Int`
+    instance's clone of `local_ty` but none for `StringLiteral`, so the call
+    reaches the template's stub; `Box(String("a"))` runs.
+  - Only a method R312 still clones can hit it.
+  - Probe: `conformance/probes/stub_method_string_literal_instance.mojo`.
+  - Found while landing R305 (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

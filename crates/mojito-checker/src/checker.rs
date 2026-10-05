@@ -88,9 +88,9 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// is checked once with its declaration's parameters left symbolic: every
 /// condition must be a compile-time `Bool`, every arm and loop body is
 /// checked in its own scope, and no arm is ever dropped unchecked. A body
-/// holding a `rebind` is checked the same way and for the same reason — it
-/// too is stubbed as a template, and its target is taken on faith here,
-/// asserted on each clone (`rebind::rebind_keyed_bodies`, scanned before the
+/// holding a `rebind` is checked the same way: its target is taken on faith
+/// here, and asserted per instance by the elaborator, or on each clone of a
+/// body still stubbed (`rebind::rebind_keyed_bodies`, scanned before the
 /// erasure removes the calls). Every method body of a struct keyed on a
 /// vector value (`AHasher[key]`) is checked too, since the elaborator
 /// specializes such a struct whole and drops its template; one this check cannot type gets no verdict, and its

@@ -180,6 +180,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         }
     }
     match instruction {
+        MirInstr::Rebind { .. } => {
+            errors.push(format!("{head} keeps a value rebind in elaborated MIR"));
+        }
         MirInstr::ConstructTypeParam { param, .. } => errors.push(format!(
             "{head} constructs compile-time parameter `{}` in elaborated MIR",
             param.name

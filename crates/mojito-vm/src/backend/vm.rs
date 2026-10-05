@@ -803,6 +803,8 @@ struct CallerFrame<'a> {
     function: usize,
     registers: &'a mut [Value],
     variables: &'a mut Vec<Value>,
+    /// The caller frame's compile-time bindings (`Frame::comptime`).
+    comptime: &'a [(String, Value)],
 }
 
 /// Executing-frame storage that must remain reachable while adapting an
@@ -1504,22 +1506,73 @@ fn align_parameter_arguments<T>(
 }
 
 impl VmBackend {
-    /// The receiver-less `self` slot of a static method on a
-    /// value-parameterized struct (`W[5].st()`), bound to the call's spelled
-    /// receiver with its value parameters reified, so the body's `Self.k`
-    /// reads it as an instance method reads its receiver's. A receiver
-    /// argument naming an enclosing binder (`W[Self.k]`) resolves in the
-    /// caller's frame. `None` when the callee has no such slot.
+    /// The bindings a static method call's spelled receiver (`W[5].st()`,
+    /// `Box[Int].accepts[Int]()`) gives its frame: each type parameter of the
+    /// receiver's struct reified by name, so a `comptime if` on `Self.T`
+    /// decides as in an instance method, and the receiver-less `self` slot
+    /// of a value-parameterized struct, bound with its value parameters
+    /// reified so the body's `Self.k` reads it as an instance method reads
+    /// its receiver's. A receiver argument naming an enclosing binder
+    /// (`W[Self.k]`) resolves in the caller's frame.
     fn static_receiver_binding(
         &self,
         prog: &Prog,
         caller: CallerBindings<'_>,
         callee: usize,
         receiver: Option<&Ty>,
-    ) -> Option<(String, Value)> {
+    ) -> Vec<(String, Value)> {
         let Some(Ty::Struct(name, arguments)) = receiver else {
-            return None;
+            return Vec::new();
         };
+        let Some(definition) = prog.structs.get(name) else {
+            return Vec::new();
+        };
+        let mut bindings: Vec<(String, Value)> = definition
+            .param_decls
+            .iter()
+            .zip(arguments.iter())
+            .filter_map(|(declaration, argument)| {
+                let (
+                    ParamDecl::Type {
+                        name,
+                        variadic: false,
+                        ..
+                    },
+                    TyArg::Ty(ty),
+                ) = (declaration, argument)
+                else {
+                    return None;
+                };
+                let value = match ty {
+                    Ty::Param { binder, .. } => self
+                        .bound_type_parameter(
+                            prog,
+                            caller.function,
+                            caller.frame,
+                            caller.variables,
+                            &binder.name,
+                        )
+                        .or_else(|| caller.comptime_binding(&binder.name))?,
+                    ty => Value::Str(reified_type_spelling(ty)?),
+                };
+                Some((name.clone(), value))
+            })
+            .collect();
+        bindings.extend(self.static_self_binding(prog, caller, callee, name, arguments));
+        bindings
+    }
+
+    /// The receiver-less `self` slot of a static method on a
+    /// value-parameterized struct ([`Self::static_receiver_binding`]);
+    /// `None` when the callee has no such slot.
+    fn static_self_binding(
+        &self,
+        prog: &Prog,
+        caller: CallerBindings<'_>,
+        callee: usize,
+        name: &str,
+        arguments: &mojito_types::types::TyArgs,
+    ) -> Option<(String, Value)> {
         let function = &prog.mir.functions[callee].1;
         function
             .var_names
@@ -1549,6 +1602,7 @@ impl VmBackend {
                             caller.variables,
                             binder,
                         )
+                        .or_else(|| caller.comptime_binding(binder))
                         .or_else(|| static_self_parameter(prog, caller, binder))?
                     }
                     value => ct_value_as_runtime(value.clone())?,
@@ -1562,7 +1616,7 @@ impl VmBackend {
         Some((
             "self".to_string(),
             Value::Struct {
-                name: name.clone(),
+                name: name.to_string(),
                 fields: Vec::new(),
                 value_params,
             },
@@ -1605,13 +1659,15 @@ impl VmBackend {
                     } else if let Ty::Param { binder, .. } = ty {
                         // A binder of the caller's own forwards the type the
                         // caller's frame reified for it.
-                        *slot = self.bound_type_parameter(
-                            prog,
-                            caller.function,
-                            caller.frame,
-                            caller.variables,
-                            &binder.name,
-                        );
+                        *slot = self
+                            .bound_type_parameter(
+                                prog,
+                                caller.function,
+                                caller.frame,
+                                caller.variables,
+                                &binder.name,
+                            )
+                            .or_else(|| caller.comptime_binding(&binder.name));
                     }
                 }
                 // A type pack's solution is its element list, which the
@@ -1633,6 +1689,53 @@ impl VmBackend {
                 }
                 _ => {}
             }
+        }
+        supplied
+    }
+
+    /// A constructed instance's compile-time arguments: those the call
+    /// supplied, with each unsupplied type parameter reified from the call's
+    /// checked result type, so `Cell(9)` builds the same `Cell[Int]` value an
+    /// explicit `Cell[Int](9)` does, and its methods' erased frames bind
+    /// `Self.T` from the receiver. An argument over the caller's binder
+    /// (`Box[T](v)` in a generic `def`) reads what the caller's frame bound.
+    fn constructed_parameter_arguments(
+        &self,
+        prog: &Prog,
+        caller: CallerBindings<'_>,
+        declarations: &[ParamDecl],
+        mut supplied: Vec<Option<Value>>,
+        result_ty: Option<&Ty>,
+    ) -> Vec<Option<Value>> {
+        let Some(Ty::Struct(_, arguments)) = result_ty else {
+            return supplied;
+        };
+        supplied.resize(supplied.len().max(declarations.len()), None);
+        for ((slot, declaration), argument) in
+            supplied.iter_mut().zip(declarations).zip(arguments.iter())
+        {
+            let (
+                None,
+                ParamDecl::Type {
+                    variadic: false, ..
+                },
+                TyArg::Ty(ty),
+            ) = (&slot, declaration, argument)
+            else {
+                continue;
+            };
+            *slot = match ty {
+                Ty::Param { binder, .. } => self
+                    .bound_type_parameter(
+                        prog,
+                        caller.function,
+                        caller.frame,
+                        caller.variables,
+                        &binder.name,
+                    )
+                    .or_else(|| caller.comptime_binding(&binder.name)),
+                ty => reified_type_spelling(ty).map(Value::Str),
+            };
         }
         supplied
     }
@@ -1661,6 +1764,7 @@ impl VmBackend {
                                     caller.variables,
                                     &spelling,
                                 )
+                                .or_else(|| caller.comptime_binding(&spelling))
                                 .unwrap_or(Value::Str(spelling)),
                             other => other,
                         });
@@ -1739,6 +1843,20 @@ struct CallerBindings<'a> {
     frame: FrameId,
     registers: &'a [Value],
     variables: &'a [Value],
+    /// The caller frame's compile-time bindings (`Frame::comptime`).
+    comptime: &'a [(String, Value)],
+}
+
+impl CallerBindings<'_> {
+    /// What the caller's frame binds its compile-time parameter `name` to:
+    /// a reified type's spelling or a value parameter's value, including a
+    /// struct parameter read off its receiver.
+    fn comptime_binding(&self, name: &str) -> Option<Value> {
+        self.comptime
+            .iter()
+            .find(|(bound, _)| bound == name)
+            .map(|(_, value)| value.clone())
+    }
 }
 
 impl<'a> From<&'a Frame> for CallerBindings<'a> {
@@ -1748,6 +1866,7 @@ impl<'a> From<&'a Frame> for CallerBindings<'a> {
             frame: frame.id,
             registers: &frame.registers,
             variables: &frame.variables,
+            comptime: &frame.comptime,
         }
     }
 }

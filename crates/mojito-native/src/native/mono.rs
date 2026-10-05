@@ -65,15 +65,39 @@ pub struct ParametricInstances {
 /// A source-template-oriented specialization failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoError {
+    pub kind: MonoErrorKind,
     pub function: Option<String>,
+    /// The construct the elaborator cannot instantiate, or the reason the
+    /// instance fails.
     pub construct: String,
+}
+
+/// Whose failure a [`MonoError`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonoErrorKind {
+    /// A construct the elaborator does not instantiate yet.
+    Unsupported,
+    /// An instance the program demands fails, as the pin's function
+    /// instantiation does (`rebind input type 'String' does not match
+    /// result type 'Int'`).
+    Instantiation,
 }
 
 impl std::fmt::Display for MonoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.function {
-            Some(function) => write!(f, "in `{function}`: unsupported {}", self.construct),
-            None => write!(f, "unsupported {}", self.construct),
+        let construct = &self.construct;
+        match (&self.function, self.kind) {
+            (Some(function), MonoErrorKind::Unsupported) => {
+                write!(f, "in `{function}`: unsupported {construct}")
+            }
+            (None, MonoErrorKind::Unsupported) => write!(f, "unsupported {construct}"),
+            (Some(function), MonoErrorKind::Instantiation) => write!(
+                f,
+                "function instantiation of `{function}` failed: {construct}"
+            ),
+            (None, MonoErrorKind::Instantiation) => {
+                write!(f, "function instantiation failed: {construct}")
+            }
         }
     }
 }
@@ -246,6 +270,7 @@ impl LayoutOracle {
             .layout_of(ty)
             .map(|layout| layout.size as i64)
             .map_err(|error| MonoError {
+                kind: MonoErrorKind::Unsupported,
                 function: None,
                 construct: format!("size_of of `{ty}`: {error}"),
             })
@@ -325,6 +350,7 @@ mod equiv;
 mod infer;
 mod instances;
 mod promote;
+mod rebind;
 mod slots;
 mod specializer;
 mod spread;

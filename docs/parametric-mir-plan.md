@@ -331,7 +331,7 @@ Hello World at the same revision; rows that read zero in both are left out:
 | `def` expanding a type pack | P3b | 0 | 5 |
 | Member of a `DType`- or vector-keyed struct | P3c, P3d | 43 | 43 |
 | Member of a variadic struct | P3d | 175 | 175 |
-| Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 3 |
+| Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 3 (0 since 2026-10-05) |
 | Per-call method clone | P3e | 14 | 14 |
 | **Checked**: inferred | | 20 | 30 |
 | **Checked**: derived from a checked template | | 212 | 224 |
@@ -595,8 +595,17 @@ branch for the class is deleted, and so is its certificate class.
   instance's bindings and prunes the untaken arm. The request path's first
   code landed with it (`docs/notes/ctfe-request-path.md`). The cloner's
   `comptime if` class is gone for every top-level `def`, uniquely named or an
-  overload family's member; a method's and a nested `def`'s stay with their
-  entries.
+  overload family's member; a nested `def`'s stays with its entry. A generic
+  struct's method followed 2026-10-05: its body is elaborated with the
+  struct's parameters open as `Self.`-qualified binders, so a `comptime if`
+  or a `range` loop over `Self.T` or `Self.n` stays in the template, and
+  `keyed.mojo`'s per-instantiation `comptime` row reads 0 (was 3; the
+  cloned total 211). A local `comptime` binding over the struct's
+  parameters still keys a clone (R312). The same step made `rebind` a
+  template form: MIR carries it as a value rebind (`MirInstr::Rebind`,
+  schema 1.23) or a place retyped to its target, and the elaborator asserts
+  the equality per instance after deciding its branches, as upstream's
+  `processRebindOp` does, so a `def` or a method holding one is served too.
 - **P3b. `comptime for` over a value index**, then **heterogeneous pack
   expansion**. They share the loop form and differ in their correctness
   conditions, so they are two steps. The first landed 2026-10-03: MIR

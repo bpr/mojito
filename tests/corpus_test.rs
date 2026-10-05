@@ -296,10 +296,8 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
 const ERASED_VM_RESIDUE: &[&str] = &[
-    // Section 1, the methods that still clone: an erased value carries no
-    // type arguments, so a template-served body's call cannot be handed to
-    // the receiver instance's clone as the elaborator hands it.
-    "generic_struct_template_reach",
+    // R315, the erased oracle: a struct's type parameter binds the
+    // spelling of its type, which decides no conformance condition.
     "keyed_def_builds_loan_carrying_instance",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to construct `T()` from where `T` is a SIMD type or a struct
@@ -322,6 +320,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // argument to spell a type name over a parameter from.
     "generic_struct_instance_bodies",
     "generic_struct_instance_dispatch",
+    "generic_struct_template_reach",
     "optional_raising_subscript",
     "template_def_string_builtins",
     "template_method_string_builtins",
@@ -335,11 +334,8 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // Section 1, the erased oracle: an erased frame carries no type
     // argument to decide a `comptime if` over a type binder with, and runs
     // no thunk for a condition that applies a function.
-    "comptime_if_abstract_body_call",
     "comptime_if_condition_applies_def",
     "comptime_if_generic_struct_lifecycle",
-    "comptime_if_generic_struct_method_call",
-    "comptime_if_inferred_def",
     "comptime_if_layout_query",
     "comptime_if_nested_def_call",
     "dtype_compile_time_values",
@@ -368,10 +364,6 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // parameter or a pack's length has no runtime value to stop at.
     "comptime_for_template_served",
     "pack_element_alias_served",
-    // R311, the erased oracle: a call over the caller's own type binder
-    // reifies no type argument, so the callee's `comptime if` is undecided.
-    "comptime_if_inferred_static_method",
-    "generic_method_per_call_clones",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",

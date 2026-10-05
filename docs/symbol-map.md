@@ -57,7 +57,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | Native compile (`backend-pliron`) | `backend::pliron::{compile, compile_mir, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. `compile` takes the driver's cached concrete graph and elaborates nothing; `compile_mir` elaborates drop-elaborated MIR from the entries a caller names. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, LayoutError, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the elaborator's answer to a layout query (`native::mono`, under the compilation's target; `LayoutError::Symbolic` is the one refusal of a type that still names a parameter), the erased oracle's `SizeOf` on the host, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
-| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
+| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError, MonoErrorKind}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mono/rebind.rs`: `Specializer::discharge_rebinds`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
 
 ## Source Versus Checked Naming
 
@@ -653,11 +653,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   each well-formed call by its operand before checking and records the
   retyping in `Checker.rebind_targets`; `apply_rebind_target` (from
   `infer`, the `ref` binding, and `check_place`) takes `Dest` on faith under
-  validation and demands equality once instantiated; `check_rebind_place`
+  validation or where either side is symbolic and demands equality between
+  closed types, recording each judged rebind in `Checker.rebind_assertions`,
+  which `CheckedProgram.rebind_assertions` hands to MIR as
+  `SemanticAdjustment::Rebind`; `check_rebind_place`
   rejects writing through a by-value (`TrivialRegisterPassable`) rebind,
   outside `$`-mangled clones. The eraser turns `rebind[Dest](x) = value`
   into the plain `Assign` of `x`, whose retyping `rebind_assignment_target`
-  applies from the `Assign` arm. `RebindTargets::target_spans` names the
+  applies from the `Assign` arm and `record_assignment_rebind` records,
+  reversed, on the assigned value. MIR lowering reads a rebound operand
+  through `Flatten::rebind_value` (`MirInstr::Rebind`) or
+  `Flatten::rebound_place` (the place's terminal type), both in
+  `lower_expr/entry.rs`, and `native::mono`'s `discharge_rebinds`
+  (`mono/rebind.rs`) judges and erases them per instance. `RebindTargets::target_spans` names the
   spans a body's erased targets embed, which template capture tolerates as
   it does a return annotation's. The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).
@@ -665,9 +673,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the bodies source validation must check for this reason
   (`Checker.rebind_keyed_bodies`, read through `body_keys_rebind` by
   `validates_body` and `explicit_destroy::walks_body`); the elaborator's twin
-  is `comptime::block_has_rebind`, which keys specialization on it
-  (`is_specializable_declaration_in`, `collect_comptime_generic_templates`,
-  and the method stub in `comptime/elab.rs`).
+  is `comptime::block_has_rebind`, which keys a nested `def` and a
+  compile-time evaluation's method on it, and a top-level `def` holding
+  such a nested `def` (`nested_def_has_rebind`).
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` compiles a clause,
   `bind_constraint`/`bind_declared_constraints`/`compile_condition` bind its
@@ -1088,8 +1096,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR
   lowering copies into `MirInstr::Call::receiver` (a static method's
   `Self.n` reads a receiver-less `self` slot `Flatten::intern_static_self`
-  types as the struct at its own binders; the erased VM binds that slot
-  from the same field, `static_receiver_binding`), and `infer_call` binds a
+  types as the struct at its own binders; the erased VM binds that slot,
+  and each of the struct's type parameters by name, from the same field,
+  `static_receiver_binding`; an erased construction reifies an inferred
+  type argument from the call's result type,
+  `VmBackend::constructed_parameter_arguments`, and a binder of the caller
+  from its frame, `CallerBindings::comptime_binding`), and `infer_call` binds a
   `def`'s own type parameters from the arguments the checker solved, which
   `SemanticAdjustment::InstantiatedArguments` carries into
   `MirInstr::Call::instantiated_args`, and a method's own from a
@@ -1166,7 +1178,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it (`Lanes[i]`) stays for the checker. `comptime_for_next`
   (`backend/vm.rs`) runs the header on the erased path from the index slot.
 - The cloner keys a top-level `def` on a `comptime for` its template does
-  not serve (`comptime_for_is_template_served`, `comptime.rs`) or a `rebind`;
+  not serve (`comptime_for_is_template_served`, `comptime.rs`) or a nested
+  `def` holding a `rebind`;
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
@@ -1250,7 +1263,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
   `FunctionFrame` around a nested materialization. The cloner's
   `comptime if` class is gone: `def_body_keys_specialization` keys a
-  top-level `def` on an unserved `comptime for` or a `rebind` only, and
+  top-level `def` on an unserved `comptime for` or a nested `def`'s
+  `rebind` only, and
   `template_serves_binders` admits a scalar value parameter an application
   binds (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Layout` keeps
   a layout constant symbolic through elaboration.

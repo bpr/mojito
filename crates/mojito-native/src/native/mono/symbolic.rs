@@ -11,6 +11,7 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
     let replaced = context
         .replace(expr, &ct_bindings(bindings))
         .map_err(|error| MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: None,
             construct: error.to_string(),
         })?;
@@ -36,6 +37,7 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
         }
     }
     replaced.require_constant().map_err(|error| MonoError {
+        kind: MonoErrorKind::Unsupported,
         function: None,
         construct: replaced.free_parameters().first().map_or_else(
             || error.to_string(),
@@ -240,6 +242,7 @@ pub(super) fn ensure_concrete_function(
         Ok(())
     } else {
         Err(MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: Some(template.to_string()),
             construct: format!("{} after monomorphization", findings.join("; ")),
         })

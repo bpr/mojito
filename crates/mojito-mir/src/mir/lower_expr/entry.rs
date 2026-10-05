@@ -130,12 +130,41 @@ impl Flatten<'_> {
 
     pub(in crate::mir) fn expr(&mut self, e: &Expr) -> Reg {
         let result = self.expr_with_adjustments(e);
+        let result = match self.rebind_target(e) {
+            Some((operand, dest)) => self.rebind_value(e, result, operand, dest),
+            None => result,
+        };
         // An emit-site type (a conversion result, a closure value) is more
         // precise than the source expression's pre-adjustment checked type.
         if let Some(ty) = self.checked_ty(e) {
             self.f.reg_types.entry(result.0).or_insert(ty);
         }
         result
+    }
+
+    /// `rebind[dest](e)` read as a value: `value` holds the operand at its
+    /// own type, or already at `dest` when its place was retyped
+    /// ([`Self::rebound_place`]).
+    fn rebind_value(&mut self, e: &Expr, value: Reg, operand: Ty, dest: Ty) -> Reg {
+        let source = self.f.reg_types.entry(value.0).or_insert(operand).clone();
+        if source == dest {
+            return value;
+        }
+        let rebound = self.fresh_typed(span(e), None, dest);
+        self.emit(MirInstr::Rebind {
+            dest: rebound,
+            value,
+        });
+        rebound
+    }
+
+    /// The place of the operand of `rebind[dest](e)`, retyped to `dest`:
+    /// the same storage, read and written at the type the rebind names.
+    pub(in crate::mir) fn rebound_place(&self, e: &Expr, mut place: MirPlace) -> MirPlace {
+        if let Some((_, dest)) = self.rebind_target(e) {
+            place.ty = Some(dest);
+        }
+        place
     }
 
     pub(in crate::mir) fn expr_with_adjustments(&mut self, e: &Expr) -> Reg {

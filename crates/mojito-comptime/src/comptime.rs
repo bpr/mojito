@@ -1563,12 +1563,13 @@ pub(super) fn pack_element_alias(
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
-/// `def` included: that nested body specializes per call, so the body holding
-/// it has to reach it through a clone of its own.
+/// `def` included.
 ///
 /// `rebind` asserts that the operand's parametric type resolves to `Dest`
-/// once instantiated, so — like a `comptime if` — the body it sits in can
-/// only check with that parameter bound. The assertion is made on the clone.
+/// once instantiated. A generator's MIR carries the assertion for the
+/// elaborator to judge per instance; a body that still specializes as a
+/// clone — a nested `def`, or a compile-time evaluation's unelaborated
+/// subprogram — makes it on the clone.
 pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
     struct Finder {
         found: bool,
@@ -1588,22 +1589,44 @@ pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
     finder.found
 }
 
-/// Whether a method's or a nested `def`'s body can only check once its own
-/// parameters are bound: it holds compile-time control flow, or a `rebind`
-/// assertion over them. Either way the template is stubbed and every
-/// instantiation clones.
+/// Whether a nested `def`'s or a compile-time evaluation's body can only
+/// check once its own parameters are bound: it holds compile-time control
+/// flow, or a `rebind` assertion over them. Either way the template is
+/// stubbed and every instantiation clones.
 fn block_keys_specialization(stmts: &[Stmt]) -> bool {
     block_has_comptime(stmts) || block_has_rebind(stmts)
 }
 
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
-/// unrolls a `comptime for` over a compile-time list or a pack, or asserts
-/// a `rebind` over its parameters. A `comptime if` and a `comptime for`
-/// over a `range` — of a pack's length included — do not: the template
-/// keeps the region, the check types it with the binders symbolic, and the
-/// elaborator below MIR selects or unrolls.
+/// unrolls a `comptime for` over a compile-time list or a pack, or a `def`
+/// nested in it asserts a `rebind` — that nested body specializes per call,
+/// so the body holding it reaches it through a clone of its own. A `comptime
+/// if`, a `comptime for` over a `range` — of a pack's length included — and
+/// a `rebind` of its own do not: the template keeps the region or the
+/// assertion, the check types it with the binders symbolic, and the
+/// elaborator below MIR selects, unrolls, or judges it.
 fn def_body_keys_specialization(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
-    block_has_unkept_comptime_for(stmts, packs) || block_has_rebind(stmts)
+    block_has_unkept_comptime_for(stmts, packs) || nested_def_has_rebind(stmts)
+}
+
+/// Whether a `def` (or a lambda) nested anywhere in a block names
+/// `rebind[Dest](value)` ([`block_has_rebind`]).
+fn nested_def_has_rebind(stmts: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::Def { body, .. } = &statement.kind {
+                self.found |= block_has_rebind(body);
+            }
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, stmts);
+    finder.found
 }
 
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,

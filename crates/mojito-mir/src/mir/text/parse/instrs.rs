@@ -192,6 +192,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
             }),
+            "value.rebind" => Some(MirInstr::Rebind {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+            }),
             "ref.write" => Some(MirInstr::WriteRef {
                 reference: self.req(value, fields, "reference", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,

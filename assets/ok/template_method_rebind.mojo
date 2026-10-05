@@ -1,9 +1,7 @@
-# A `rebind`-keyed method of a generic struct: `rebind[Int](self.value)`
-# under `comptime if Self.T == Int`. Source validation checks every arm once
-# with `T` symbolic and takes the `rebind`'s equality on faith; each instance
-# keeps the arms the elaborator selected, discharges the equality at its own
-# type, and derives its facts from the checked template instead of being
-# checked again.
+# A `rebind` in a method of a generic struct: `rebind[Int](self.value)`
+# under `comptime if Self.T == Int`. The method is served by its template,
+# checked once with `T` symbolic: the elaborator selects each instance's arm
+# and judges the `rebind`'s equality only in the arm it keeps.
 struct Box[T: Movable & Copyable & Deinitable](Movable, Copyable):
     var value: Self.T
     var count: Int

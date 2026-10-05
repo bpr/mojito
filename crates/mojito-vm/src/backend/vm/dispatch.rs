@@ -12,9 +12,9 @@ pub(super) struct CallTypes<'a> {
     pub(super) param_vals: &'a [Option<Value>],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
     pub(super) result_ty: Option<&'a mojito_types::types::Ty>,
-    /// The receiver-less `self` binding of a static method call
+    /// The bindings a static method call's spelled receiver gives its frame
     /// ([`VmBackend::static_receiver_binding`]).
-    pub(super) static_receiver: Option<&'a (String, Value)>,
+    pub(super) static_receiver: &'a [(String, Value)],
 }
 
 impl VmBackend {
@@ -685,7 +685,7 @@ impl VmBackend {
                         Some(sig) => reify_value_parameters(&sig.param_decls, param_vals),
                         None => Vec::new(),
                     };
-                    value_params.extend(static_receiver.cloned());
+                    value_params.extend(static_receiver.iter().cloned());
                     self.call_function(prog, idx, bound, &value_params)
                 }
                 None => Err(RuntimeError::Unsupported(format!(

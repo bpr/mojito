@@ -439,6 +439,14 @@ pub struct ComptimeIteration {
 #[non_exhaustive]
 pub enum SemanticAdjustment {
     ResolveCallable(String),
+    /// `rebind[dest](x)` over an operand `x` of type `operand`, which only
+    /// a generator holds: MIR reads the operand as a value at `dest` through
+    /// a value rebind, or retypes its place to `dest`, and the elaborator
+    /// asserts the two types equal per instance.
+    Rebind {
+        operand: Ty,
+        dest: Ty,
+    },
     /// Construct the concrete runtime type bound to a checked type parameter.
     ConstructTypeParam {
         param: mojito_types::param_expr::ParamRef,
@@ -1137,6 +1145,8 @@ pub struct DiscoveryResult {
     pub read_temporary_arguments: FactSet<SourceSpan>,
     pub implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
     pub truthiness_conditions: FactSet<SourceSpan>,
+    /// Each erased `rebind` the check judged, at its operand.
+    pub rebind_assertions: FactMap<SourceSpan, crate::templates::RebindAssertion>,
     pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
 }
 
@@ -1186,6 +1196,7 @@ impl DiscoveryResult {
             &self.read_temporary_arguments,
             &self.implicitly_copied_consuming_receivers,
             &self.truthiness_conditions,
+            &self.rebind_assertions,
             self.declaration_effects.into_inner(),
         )
     }
@@ -1226,6 +1237,7 @@ impl DiscoveryResult {
             &self.read_temporary_arguments,
             &self.implicitly_copied_consuming_receivers,
             &self.truthiness_conditions,
+            &self.rebind_assertions,
             &self.generic_instantiations,
             &self.method_instantiations,
             Some(visit),
@@ -1617,6 +1629,7 @@ impl CheckedProgram {
         read_temporary_arguments: &HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
         truthiness_conditions: &HashSet<SourceSpan>,
+        rebind_assertions: &HashMap<SourceSpan, crate::templates::RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
@@ -1651,6 +1664,7 @@ impl CheckedProgram {
             read_temporary_arguments,
             implicitly_copied_consuming_receivers,
             truthiness_conditions,
+            rebind_assertions,
             &generic_instantiations,
             &method_instantiations,
             None,
@@ -1842,6 +1856,7 @@ fn build_checked_expressions(
     read_temporary_arguments: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
+    rebind_assertions: &HashMap<SourceSpan, crate::templates::RebindAssertion>,
     generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: &HashMap<SourceSpan, MethodInstantiation>,
     scan: Option<&mut dyn FnMut(&Expr)>,
@@ -1882,6 +1897,7 @@ fn build_checked_expressions(
         read_temporary_arguments: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
+        rebind_assertions: &'a HashMap<SourceSpan, crate::templates::RebindAssertion>,
         generic_instantiations: &'a HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: &'a HashMap<SourceSpan, MethodInstantiation>,
     }
@@ -2173,6 +2189,14 @@ fn build_checked_expressions(
             }
             if self.truthiness_conditions.contains(&span) {
                 adjustments.push(SemanticAdjustment::Truthiness);
+            }
+            if let Some(assertion) = self.rebind_assertions.get(&span)
+                && assertion.operand != assertion.dest
+            {
+                adjustments.push(SemanticAdjustment::Rebind {
+                    operand: assertion.operand.clone(),
+                    dest: assertion.dest.clone(),
+                });
             }
             if let Some((dtype, width)) = self.simd_constructions.get(&span) {
                 adjustments.push(SemanticAdjustment::ConstructSimd {
@@ -2477,6 +2501,7 @@ fn build_checked_expressions(
         read_temporary_arguments,
         implicitly_copied_consuming_receivers,
         truthiness_conditions,
+        rebind_assertions,
         generic_instantiations,
         method_instantiations,
     };

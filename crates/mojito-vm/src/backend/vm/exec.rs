@@ -83,6 +83,11 @@ impl VmBackend {
                             ))
                         })?;
             }
+            // The erased oracle runs a rebind as the value it rebinds; the
+            // type equality is the elaborator's to judge.
+            MirInstr::Rebind { dest, value } => {
+                regs[dest.0 as usize] = regs[value.0 as usize].clone();
+            }
             MirInstr::CopyValue { dest, value } => {
                 let source = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = if self.has_copyinit {
@@ -428,13 +433,20 @@ impl VmBackend {
                     frame: frame_id,
                     registers: regs,
                     variables: vars,
+                    comptime,
                 };
                 // An explicitly resolved `__init__` overload constructs its
                 // struct, so the supplied arguments align with the struct's
                 // declarations (`Dict[K, V, H](keys, values, None)`), not the
-                // constructor's own.
-                let declarations = mojito_symbol::symbol::init_overload_struct(&func.0)
+                // constructor's own; so does a call naming the struct.
+                let constructed = mojito_symbol::symbol::init_overload_struct(&func.0)
                     .and_then(|struct_name| prog.structs.get(struct_name))
+                    .or_else(|| {
+                        (!prog.sigs.contains_key(&func.0))
+                            .then(|| prog.structs.get(&func.0))
+                            .flatten()
+                    });
+                let declarations = constructed
                     .map(|definition| definition.param_decls.as_slice())
                     .or_else(|| {
                         prog.sigs
@@ -462,6 +474,16 @@ impl VmBackend {
                         )
                     },
                 );
+                let pvals = match constructed {
+                    Some(definition) => self.constructed_parameter_arguments(
+                        prog,
+                        caller,
+                        &definition.param_decls,
+                        pvals,
+                        prog.mir.functions[function].1.reg_types.get(&dest.0),
+                    ),
+                    None => pvals,
+                };
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
                 // Its synthetic `self` occupies parameter slot zero.
@@ -547,15 +569,18 @@ impl VmBackend {
                         })
                     })
                     .flatten();
-                let static_receiver = prog.index_of(&func.0).and_then(|callee| {
-                    self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
-                });
+                let static_receiver = prog
+                    .index_of(&func.0)
+                    .map(|callee| {
+                        self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
+                    })
+                    .unwrap_or_default();
                 let mut runtime_value_params = prog
                     .sigs
                     .get(&func.0)
                     .map(|signature| reify_value_parameters(&signature.param_decls, &pvals))
                     .unwrap_or_default();
-                runtime_value_params.extend(static_receiver.clone());
+                runtime_value_params.extend(static_receiver.iter().cloned());
                 let result = if let Some(idx) = writeback {
                     self.call_with_writeback(
                         prog,
@@ -573,6 +598,7 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
+                            comptime,
                         },
                     )?
                 } else {
@@ -608,7 +634,7 @@ impl VmBackend {
                             param_vals: &pvals,
                             arg_types: &arg_types,
                             result_ty: result_ty.as_ref(),
-                            static_receiver: static_receiver.as_ref(),
+                            static_receiver: &static_receiver,
                         },
                     );
                     self.restore_caller_mirror(stack_base, vars)?;
@@ -707,6 +733,7 @@ impl VmBackend {
                                 frame: frame_id,
                                 registers: regs,
                                 variables: vars,
+                                comptime,
                             },
                             contract,
                             param_arg_regs,
@@ -806,6 +833,7 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
+                        comptime,
                     },
                 )?;
                 regs[dest.0 as usize] = result;
@@ -877,6 +905,7 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
+                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1051,6 +1080,7 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
+                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1170,6 +1200,7 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
+                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1255,6 +1286,7 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
+                        comptime,
                     },
                 )?;
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1327,6 +1359,7 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
+                        comptime,
                     },
                 )?;
             }
@@ -2112,6 +2145,7 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
+                        comptime,
                     },
                 );
             }
@@ -2148,6 +2182,7 @@ impl VmBackend {
             function: _,
             registers: regs,
             variables: vars,
+            comptime: _,
         } = frame;
         let outcome = match self.run_region(prog, scope, body, regs, vars) {
             // The body raised: run the exceptional-edge cleanup (destroy the body's

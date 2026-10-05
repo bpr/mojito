@@ -149,6 +149,7 @@ impl<'a> Specializer<'a> {
             invariant_errors: self.source.invariant_errors.clone(),
         };
         let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: None,
             construct: format!(
                 "specialized MIR that does not verify: {}",
@@ -454,6 +455,7 @@ impl<'a> Specializer<'a> {
         retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
+        self.discharge_rebinds(&key.template, &mut function)?;
         self.answer_param_constants(&mut function.blocks, bindings);
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
@@ -2556,6 +2558,7 @@ impl<'a> Specializer<'a> {
     )]
     pub(super) fn error(&self, function: Option<&str>, construct: impl Into<String>) -> MonoError {
         MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: function.map(str::to_string),
             construct: construct.into(),
         }

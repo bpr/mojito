@@ -513,6 +513,7 @@ assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_augmented_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_generic_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/rebind_method_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_overloaded_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/receiver_origin_iterator_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-shape
@@ -613,6 +614,7 @@ assets/ok/string_span_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_view_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_generator_lane_symbolic_width.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape

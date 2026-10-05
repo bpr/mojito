@@ -29,6 +29,7 @@ impl VmBackend {
             function: caller_function,
             registers: regs,
             variables: vars,
+            comptime,
         } = frame;
         // Order the arguments into parameter slots (filling defaults/keywords),
         // keeping the slot map so each parameter's source argument is known.
@@ -94,6 +95,7 @@ impl VmBackend {
                 function: caller_function,
                 registers: regs,
                 variables: vars,
+                comptime,
             },
         )?;
         Ok(result)
@@ -123,6 +125,7 @@ impl VmBackend {
             function: _,
             registers: caller_registers,
             variables: caller_variables,
+            comptime: _,
         } = caller;
         for (parameter, handle) in reference_inputs {
             let slot = arguments.get_mut(*parameter).ok_or_else(|| {
@@ -388,6 +391,7 @@ impl VmBackend {
             function: caller_function,
             registers: regs,
             variables: vars,
+            comptime,
         } = frame;
         // A receiver read out of a `ref`-typed field arrives as a reference
         // handle: dispatch on its referent. A `mut self` write-back re-enters
@@ -456,6 +460,7 @@ impl VmBackend {
                                     function: caller_function,
                                     registers: regs,
                                     variables: vars,
+                                    comptime,
                                 },
                             );
                         }
@@ -769,6 +774,7 @@ impl VmBackend {
                                 frame: frame_id,
                                 registers: regs,
                                 variables: vars,
+                                comptime,
                             },
                             contract,
                             param_arg_regs,
@@ -792,6 +798,7 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
+                            comptime,
                         },
                     )?;
                 let returns_reference = prog.mir.functions[fidx].1.returns_reference;

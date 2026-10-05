@@ -263,6 +263,7 @@ pub(super) fn substitute_value_parameter_reads(
                 } else {
                     let value = locals[name];
                     value_parameter_constant(value, var_tys.get(var)).ok_or_else(|| MonoError {
+                        kind: MonoErrorKind::Unsupported,
                         function: None,
                         construct: format!("unsupported runtime value parameter `{value}`"),
                     })?
@@ -459,6 +460,7 @@ pub(super) fn substitute_instruction(
                 [(keyword, source)] if keyword == "copy" => *source,
                 _ => {
                     return Err(MonoError {
+                        kind: MonoErrorKind::Unsupported,
                         function: None,
                         construct: format!(
                             "constructing type parameter `{}` through an initializer other than `copy=`",
@@ -493,6 +495,7 @@ pub(super) fn substitute_instruction(
                 }
                 _ => {
                     return Err(MonoError {
+                        kind: MonoErrorKind::Unsupported,
                         function: None,
                         construct: format!(
                             "copying through type parameter `{}` without a concrete binding",
@@ -506,6 +509,7 @@ pub(super) fn substitute_instruction(
         // type's default construction (`default_construct_parameters`).
         ConstructTypeParam { param, element, .. } => {
             return Err(MonoError {
+                kind: MonoErrorKind::Unsupported,
                 function: None,
                 construct: match element {
                     Some(_) => format!(
@@ -705,6 +709,7 @@ pub(super) fn substitute_iterator_call(
 
 pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
     let unsupported = |what: String| MonoError {
+        kind: MonoErrorKind::Unsupported,
         function: None,
         construct: what,
     };
@@ -1073,6 +1078,7 @@ fn declared_associated_type(
     };
     bind_ty_args(&declared.param_decls, struct_args, &mut instance).map_err(|construct| {
         MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: None,
             construct,
         }
@@ -1117,6 +1123,7 @@ fn constructed_type(
     };
     let Ty::RuntimePack(elements) = bound else {
         return Err(MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: None,
             construct: format!(
                 "pack `{}` is bound to the non-pack type `{bound}`",
@@ -1136,6 +1143,7 @@ fn constructed_type(
         return Ok(None);
     };
     let chosen = elements.get(index).ok_or_else(|| MonoError {
+        kind: MonoErrorKind::Unsupported,
         function: None,
         construct: format!(
             "element {index} of pack `{}` is out of range for its {} elements",
@@ -1175,6 +1183,7 @@ fn default_construction(
         Ty::Simd { dtype, width } => {
             let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                 return Err(MonoError {
+                    kind: MonoErrorKind::Unsupported,
                     function: None,
                     construct: format!("default-constructing the open vector type `{ty}`"),
                 });
@@ -1217,6 +1226,7 @@ fn default_construction(
             spread: None,
         }]),
         _ => Err(MonoError {
+            kind: MonoErrorKind::Unsupported,
             function: None,
             construct: format!("default-constructing `{ty}`, which is no struct"),
         }),
@@ -1245,6 +1255,7 @@ fn check_reinterpretation_widths(
                         && target.bit_width() < source.bit_width()
                     {
                         return Err(MonoError {
+                            kind: MonoErrorKind::Unsupported,
                             function: None,
                             construct: format!(
                                 "constraint failed: the target type `{}` of `to_bits` must be at least as wide as the source lane `{}`",
