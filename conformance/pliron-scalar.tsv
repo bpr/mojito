@@ -91,6 +91,7 @@ assets/ok/comptime_if_overloaded_def_explicit.mojo	-	ineligible	no-scalar-entry-
 assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_local_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape

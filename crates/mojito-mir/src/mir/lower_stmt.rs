@@ -2514,31 +2514,8 @@ impl Flatten<'_> {
                 let src = self.expr(e);
                 self.emit(MirInstr::Raise { src });
             }
-            // `comptime N = e` is an ordinary binding at runtime.
             StmtKind::Comptime { name, value, .. } => {
-                let materialized = self.literal_materialization(value);
-                let src = self.expr(value);
-                let var = match statement_binding {
-                    Some(binding) => self.declare_binding_var(binding, name),
-                    None => self.var(name),
-                };
-                // A comptime statement remains a fallback HIR statement rather
-                // than `HirInstr::Bind`; copy its checked expression type when
-                // present, or the already-typed initializer register for
-                // synthetic/compatibility paths. This makes closure capture
-                // places typed without relying on an unrelated later use. A
-                // materialized literal binds at its materialization target.
-                let binding_ty = materialized
-                    .or_else(|| self.checked_ty(value))
-                    .or_else(|| self.f.reg_types.get(&src.0).cloned());
-                if let Some(ty) = binding_ty.clone() {
-                    self.var_types.insert(var, ty);
-                }
-                self.emit(MirInstr::DefVar {
-                    var,
-                    src,
-                    binding_ty,
-                });
+                self.lower_comptime_binding(name, value, statement_binding);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
@@ -2768,6 +2745,43 @@ impl Flatten<'_> {
                 )));
             }
         }
+    }
+
+    /// `comptime N = e` is an ordinary binding at runtime. A local type
+    /// alias (`comptime U = T` over a template's binder) lives in the
+    /// checker's scope alone: it records no binding and its value no type.
+    fn lower_comptime_binding(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        statement_binding: Option<mojito_types::origin::OwnerId>,
+    ) {
+        if statement_binding.is_none() && self.checked_ty(value).is_none() {
+            return;
+        }
+        let materialized = self.literal_materialization(value);
+        let src = self.expr(value);
+        let var = match statement_binding {
+            Some(binding) => self.declare_binding_var(binding, name),
+            None => self.var(name),
+        };
+        // A comptime statement remains a fallback HIR statement rather
+        // than `HirInstr::Bind`; copy its checked expression type when
+        // present, or the already-typed initializer register for
+        // synthetic/compatibility paths. This makes closure capture
+        // places typed without relying on an unrelated later use. A
+        // materialized literal binds at its materialization target.
+        let binding_ty = materialized
+            .or_else(|| self.checked_ty(value))
+            .or_else(|| self.f.reg_types.get(&src.0).cloned());
+        if let Some(ty) = binding_ty.clone() {
+            self.var_types.insert(var, ty);
+        }
+        self.emit(MirInstr::DefVar {
+            var,
+            src,
+            binding_ty,
+        });
     }
 
     pub(super) fn lower_hir_stmt(

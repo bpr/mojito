@@ -1778,6 +1778,13 @@ impl Checker {
                     self.mark_compile_time_binding(name);
                     return Ok(());
                 }
+                if !self.source_validation
+                    && type_params.is_empty()
+                    && self.bind_template_comptime(name, value)?
+                {
+                    self.mark_compile_time_binding(name);
+                    return Ok(());
+                }
                 if !local_validation
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)

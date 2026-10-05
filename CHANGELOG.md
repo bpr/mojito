@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` binding over a generic `def`'s or a generic struct's
+  parameters (`comptime m = N + 1`, `comptime n = Us.length`, `comptime k =
+  Self.n + 1`, `comptime U = T`) now runs, as in the pin, where it failed
+  with "'N' is not a compile-time type": the elaborator keeps the binding
+  for the template, and the checker binds it to its parameter expression
+  (or, for a type, as a scoped alias), so a `comptime if`, a vector width,
+  or a `comptime for` bound over it is decided per instance and the body
+  stays served by its template
+  (`assets/ok/comptime_local_over_binder.mojo`).
+
 - A `comptime for` over a list, set, or dictionary display of `Int`,
   `Bool`, or string literals in a generic `def` or a generic struct's method
   is served by its template, as in the pin: MIR's `ComptimeFor` header now

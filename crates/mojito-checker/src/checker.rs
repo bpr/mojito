@@ -588,6 +588,11 @@ pub struct Checker {
     /// construction); a compile-time position inlines the defining
     /// expression in their place.
     local_comptime_values: Vec<HashMap<String, Expr>>,
+    /// Per-scope function-local `comptime NAME = <parameter expression>`
+    /// bindings over the binders of the template body being checked, each
+    /// beside the parameter-scope depth it was bound at: a compile-time
+    /// position reads the expression, as it reads a value parameter.
+    local_comptime_parameters: Vec<HashMap<String, (usize, ParamExpr)>>,
     /// The retypings the erased `rebind[Dest](value)` calls left behind (see
     /// `rebind.rs`).
     rebind_targets: RebindTargets,
@@ -1045,6 +1050,7 @@ impl Checker {
             source_validation: false,
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
+            local_comptime_parameters: vec![HashMap::new()],
             rebind_targets: RebindTargets::default(),
             rebind_keyed_bodies: HashSet::new(),
             no_verdict_bodies: FactSet::default(),

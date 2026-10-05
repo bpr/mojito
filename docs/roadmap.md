@@ -2177,20 +2177,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R290 A local `comptime` binding over a generic `def`'s binder is
-  rejected**
-
-  Problem: `comptime m = N + 1` in `def f[N: Int]()`, and `comptime n =
-  Us.length` over a pack, fail with "not a compile-time value: 'N' is not a
-  compile-time type", while the pin runs both.
-  - The elaborator evaluates a local `comptime` binding before the check,
-    where the binder has no value.
-  - R261 is the lane-keyed case of the same gap; the fix is the one it
-    names, leaving the binding to the checker, which binds it symbolically.
-  - Found while landing R62 (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R319 A local type alias applied as a constructor in an unrolled
   `comptime for` body is an undefined variable**
 

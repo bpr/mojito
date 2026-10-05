@@ -349,6 +349,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "template_value_shaped_operations",
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
+    "comptime_local_over_binder",
     "pack_length_runtime_position",
     // R295, the erased oracle: an erased frame leaves a pack's reified
     // spellings unbound, so it has no element to construct `Ts[i]()` from

@@ -608,12 +608,25 @@ impl Checker {
     /// The typed reference a bare name denotes when it is a value parameter
     /// of an enclosing declaration, innermost first.
     pub(super) fn value_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
-        self.vparams
+        let parameter = self
+            .vparams
             .iter()
             .take(self.tparams.len())
+            .enumerate()
+            .rev()
+            .find_map(|(level, scope)| scope.get(name).map(|reference| (level, reference)));
+        // A local `comptime` binding shadows a parameter of its own body or
+        // an enclosing one, not one of a `def` nested below it.
+        let local = self
+            .local_comptime_parameters
+            .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .map(|reference| self.param_context.intern(reference))
+            .filter(|(level, _)| parameter.is_none_or(|(declared, _)| *level >= declared));
+        local
+            .map(|(_, expression)| expression)
+            .or_else(|| parameter.map(|(_, reference)| reference))
+            .map(|expression| self.param_context.intern(expression))
     }
 
     /// Open the scope of a declaration's own binders: its type parameters and,
@@ -1589,6 +1602,19 @@ impl Checker {
                 ConstraintOperand::Type(
                     self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
                 )
+            }
+            // A local `comptime` over the binders (`comptime k = n + 1`) is
+            // the parameter expression it names.
+            ExprKind::Identifier(name)
+                if let Some(expression) = self.value_parameter_in_scope(name)
+                    && expression
+                        .as_decl_ref()
+                        .is_none_or(|reference| &*reference.name != name) =>
+            {
+                match expression.as_decl_ref() {
+                    Some(reference) => ConstraintOperand::Param(reference.clone()),
+                    None => ConstraintOperand::Expr(expression),
+                }
             }
             ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {

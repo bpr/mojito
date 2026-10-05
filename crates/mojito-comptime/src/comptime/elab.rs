@@ -22,6 +22,24 @@ impl Elab<'_> {
         env: &mut HashMap<String, CtValue>,
         in_fn: bool,
     ) -> Result<Vec<Stmt>, ComptimeError> {
+        // A local `comptime` a template body keeps is a binder of its own
+        // block alone ([`Self::keep_template_comptime_binding`]).
+        let binders = self.template_binders.borrow().last().cloned();
+        let Some(binders) = binders else {
+            return self.block_statements(stmts, env, in_fn);
+        };
+        self.template_binders.borrow_mut().push(binders);
+        let block = self.block_statements(stmts, env, in_fn);
+        self.template_binders.borrow_mut().pop();
+        block
+    }
+
+    fn block_statements(
+        &self,
+        stmts: &[Stmt],
+        env: &mut HashMap<String, CtValue>,
+        in_fn: bool,
+    ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
         // Type handles bound by `comptime T = ...` in this block have no
         // runtime representation, so every later statement of the block
@@ -140,6 +158,9 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 if !in_fn && self.keep_layout_constant(stmt, name, env, out) {
+                    return Ok(());
+                }
+                if self.keep_template_comptime_binding(stmt, value, in_fn, out) {
                     return Ok(());
                 }
                 let mut v = self.eval(value, env)?;
@@ -1080,6 +1101,33 @@ impl Elab<'_> {
             .borrow_mut()
             .insert(name.to_string(), marker.clone());
         env.insert(name.to_string(), marker);
+        out.push(stmt.clone());
+        true
+    }
+
+    /// Keep a local `comptime` binding whose value names a binder of the
+    /// generic `def` being elaborated as a template (`comptime m = N + 1`):
+    /// the check binds it with the binders symbolic, and the binding is a
+    /// binder of the rest of its block, so a `comptime if` over it stays too.
+    /// Whether the statement was kept.
+    fn keep_template_comptime_binding(
+        &self,
+        stmt: &Stmt,
+        value: &Expr,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> bool {
+        let StmtKind::Comptime { name, .. } = &stmt.kind else {
+            return false;
+        };
+        let mut binders = self.template_binders.borrow_mut();
+        let Some(binders) = binders.last_mut() else {
+            return false;
+        };
+        if !in_fn || !expression_names_any(value, binders) {
+            return false;
+        }
+        binders.insert(name.clone());
         out.push(stmt.clone());
         true
     }

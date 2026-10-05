@@ -465,6 +465,50 @@ impl Checker {
             .and_then(|level| self.vparams.get_mut(level))
     }
 
+    /// Bind a local `comptime NAME = value` over the binders of the template
+    /// body being checked, which the elaborator keeps (`comptime m = N + 1`):
+    /// a type-valued one is a scoped type alias, and a value-valued one names
+    /// its parameter expression wherever the body reads a compile-time value
+    /// (a type argument, a `comptime if` condition), as upstream's
+    /// `comptime` alias does. A type alias records no statement binding, so
+    /// MIR gives it no runtime form. Returns `false` when the binding is not
+    /// symbolic, or when the ordinary binding path still types its runtime
+    /// reads.
+    pub(super) fn bind_template_comptime(
+        &mut self,
+        name: &str,
+        value: &Expr,
+    ) -> Result<bool, TypeError> {
+        let Some(level) = self.tparams.len().checked_sub(1) else {
+            return Ok(false);
+        };
+        if let Some(ty) = self.comptime_type_operand(value)? {
+            self.local_type_aliases
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), ty);
+            return Ok(true);
+        }
+        if let Ok(expression) = self.compile_dependent_ct_expr(value)
+            && expression.as_constant().is_none()
+            && let Some(scope) = self.local_comptime_parameters.last_mut()
+        {
+            scope.insert(name.to_string(), (level, expression));
+        }
+        if matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "reflect") {
+            self.local_comptime_values
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), value.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// Bind a `comptime NAME = value` constant under source validation. A
     /// type-valued binding becomes a scoped type alias; an annotated
     /// binding takes its annotation; a compile-time-only value the checker
