@@ -1692,10 +1692,21 @@ impl VmBackend {
                 other,
                 mask,
             } => {
+                let source = &regs[value.0 as usize];
+                let mask = match mask.known() {
+                    Some(mask) => std::borrow::Cow::Borrowed(mask),
+                    None => std::borrow::Cow::Owned(erased_lane_mask(
+                        mask,
+                        source,
+                        &prog.mir.functions[function].1,
+                        vars,
+                        comptime,
+                    )?),
+                };
                 let gathered = crate::runtime::simd_shuffle(
-                    &regs[value.0 as usize],
+                    source,
                     other.map(|other| &regs[other.0 as usize]),
-                    mask,
+                    &mask,
                 )?;
                 regs[dest.0 as usize] = gathered;
             }
@@ -2466,6 +2477,36 @@ fn erased_closed_slots(
         .map(|ty| erased_closed_ty(&ty, function, variables, comptime))
         .and_then(|ty| mojito_types::types::simd_slots(&ty))
         .unwrap_or(slots)
+}
+
+/// A template's lane mask, closed by the erased frame's value binders and
+/// checked against the receiver's lanes as an instance's is.
+fn erased_lane_mask(
+    mask: &mojito_types::types::LaneMask,
+    source: &Value,
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> Result<Vec<usize>, RuntimeError> {
+    let Value::Simd { lanes, .. } = source else {
+        return Err(RuntimeError::TypeError(format!(
+            "cannot shuffle {} as a SIMD value",
+            crate::runtime::type_name(source)
+        )));
+    };
+    let named = super::erased_parameter_values(function, variables, comptime);
+    let context = mojito_types::param_expr::ParamContext::detached();
+    mask.close_with(&|expr| {
+        expr.evaluate_named(&named)
+            .and_then(|value| context.constant(value))
+            .ok()
+            .and_then(|value| value.as_i64())
+    })
+    .resolve(lanes.width() as i64)
+    .ok_or_else(|| {
+        RuntimeError::Unsupported(format!("the lane mask `{mask}` reached the VM unclosed"))
+    })?
+    .map_err(|constraint| RuntimeError::Unsupported(format!("constraint failed: {constraint}")))
 }
 
 /// The known lane dtype and width of a SIMD instruction. Concrete MIR holds

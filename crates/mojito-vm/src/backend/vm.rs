@@ -582,6 +582,49 @@ impl VmBackend {
     }
 }
 
+/// The values an erased frame reads a parameter expression against, by
+/// name: its slots and reified value parameters that have a compile-time
+/// reading, and each type pack of the signature by its collector's runtime
+/// arity — a tuple of as many placeholder elements, which answers the
+/// pack's length query and nothing else, since the frame carries no type
+/// argument.
+pub(super) fn erased_parameter_values(
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> HashMap<String, CtValue> {
+    let packs = function
+        .param_types
+        .iter()
+        .zip(variables)
+        .filter_map(|(ty, value)| {
+            let (Ty::VariadicPack(element), Value::Tuple(items)) = (ty, value) else {
+                return None;
+            };
+            let Ty::Param { binder, .. } =
+                mojito_types::types::pack_spread(std::slice::from_ref(&**element))?
+            else {
+                return None;
+            };
+            let placeholder = CtValue::Type(Box::new(Ty::None));
+            Some((
+                binder.name.trim_start_matches('*').to_string(),
+                CtValue::Tuple(vec![placeholder; items.len()]),
+            ))
+        });
+    function
+        .var_names
+        .iter()
+        .zip(variables)
+        .chain(comptime.iter().map(|(name, value)| (name, value)))
+        .filter_map(|(name, value)| {
+            runtime_value_as_ct(value)
+                .map(|value| (name.trim_start_matches('*').to_string(), value))
+        })
+        .chain(packs)
+        .collect()
+}
+
 /// The whole program the VM executes: the lowered MIR plus the struct and
 /// function-signature registries. Immutable during execution, so it threads as
 /// `&Prog` beside the mutable output.
@@ -1053,49 +1096,6 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Expr(_)
         | CtValue::Deferred(_) | CtValue::Marker(_) => return None,
     })
-}
-
-/// The values an erased frame reads a parameter expression against, by
-/// name: its slots and reified value parameters that have a compile-time
-/// reading, and each type pack of the signature by its collector's runtime
-/// arity — a tuple of as many placeholder elements, which answers the
-/// pack's length query and nothing else, since the frame carries no type
-/// argument.
-fn erased_parameter_values(
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> HashMap<String, CtValue> {
-    let packs = function
-        .param_types
-        .iter()
-        .zip(variables)
-        .filter_map(|(ty, value)| {
-            let (Ty::VariadicPack(element), Value::Tuple(items)) = (ty, value) else {
-                return None;
-            };
-            let Ty::Param { binder, .. } =
-                mojito_types::types::pack_spread(std::slice::from_ref(&**element))?
-            else {
-                return None;
-            };
-            let placeholder = CtValue::Type(Box::new(Ty::None));
-            Some((
-                binder.name.trim_start_matches('*').to_string(),
-                CtValue::Tuple(vec![placeholder; items.len()]),
-            ))
-        });
-    function
-        .var_names
-        .iter()
-        .zip(variables)
-        .chain(comptime.iter().map(|(name, value)| (name, value)))
-        .filter_map(|(name, value)| {
-            runtime_value_as_ct(value)
-                .map(|value| (name.trim_start_matches('*').to_string(), value))
-        })
-        .chain(packs)
-        .collect()
 }
 
 /// A type over the erased frame's value binders, closed by the values the

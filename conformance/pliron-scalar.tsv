@@ -223,6 +223,7 @@ assets/ok/lambda_basic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lambda_generic_comptime.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lambda_hof.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lambda_in_control_flow.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/lane_gather_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lane_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifecycle_deprecated_spellings.mojo	-	ineligible	no-scalar-entry-shape

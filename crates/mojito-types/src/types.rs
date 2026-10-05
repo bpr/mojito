@@ -230,12 +230,7 @@ impl SimdWidth {
     pub fn known(&self) -> Option<i64> {
         match self {
             Self::Known(width) => Some(*width),
-            Self::Expr(expr) => expr
-                .require_constant()
-                .ok()
-                .as_ref()
-                .and_then(crate::param_expr::fold::integer_value)
-                .and_then(|width| width.to_i64()),
+            Self::Expr(expr) => expr.as_i64(),
         }
     }
 
@@ -260,6 +255,135 @@ impl fmt::Display for SimdWidth {
         match self {
             Self::Known(width) => write!(f, "{width}"),
             Self::Expr(expr) => write!(f, "{expr}"),
+        }
+    }
+}
+
+/// A lane gather's mask (`pop.simd.shuffle`'s mask parameter): result lane
+/// `i` reads lane `mask[i]` of the source lanes, a join's being the
+/// receiver's followed by its argument's.
+///
+/// A gather whose receiver width, or whose own compile-time arguments, name
+/// a template's binders keeps its method's form, which the instantiation
+/// closes and checks against the method's constraints, as the pin's
+/// `comptime assert`s do. Concrete MIR holds only `Known`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LaneMask {
+    Known(Vec<usize>),
+    /// `v.shuffle[i, j, …]()`: one `Int` lane index per receiver lane.
+    Shuffle(Vec<ParamExpr>),
+    /// `v.slice[count, offset=start]()`: `count` consecutive receiver lanes
+    /// from `start`.
+    Slice {
+        start: ParamExpr,
+        count: SimdWidth,
+    },
+    /// `v.join(w)`: every lane of the receiver, then of the argument.
+    Join,
+}
+
+impl LaneMask {
+    pub fn known(&self) -> Option<&[usize]> {
+        match self {
+            Self::Known(mask) => Some(mask),
+            _ => None,
+        }
+    }
+
+    pub const fn is_symbolic(&self) -> bool {
+        !matches!(self, Self::Known(_))
+    }
+
+    /// The parameter expressions the mask reads.
+    pub fn expressions(&self) -> Vec<&ParamExpr> {
+        match self {
+            Self::Known(_) | Self::Join => Vec::new(),
+            Self::Shuffle(lanes) => lanes.iter().collect(),
+            Self::Slice { start, count } => {
+                let count = match count {
+                    SimdWidth::Expr(expr) => Some(expr),
+                    SimdWidth::Known(_) => None,
+                };
+                std::iter::once(start).chain(count).collect()
+            }
+        }
+    }
+
+    /// The mask with each expression `close` answers replaced by its
+    /// constant; one it leaves open stays as written.
+    #[must_use]
+    pub fn close_with(&self, close: &impl Fn(&ParamExpr) -> Option<i64>) -> Self {
+        let context = ParamContext::detached();
+        let expr = |expr: &ParamExpr| {
+            close(expr)
+                .and_then(|value| context.constant(CtValue::Int(value)).ok())
+                .unwrap_or_else(|| expr.clone())
+        };
+        let width = |width: &SimdWidth| match width {
+            SimdWidth::Expr(slot) => close(slot).map_or_else(|| width.clone(), SimdWidth::Known),
+            SimdWidth::Known(_) => width.clone(),
+        };
+        match self {
+            Self::Known(_) | Self::Join => self.clone(),
+            Self::Shuffle(lanes) => Self::Shuffle(lanes.iter().map(expr).collect()),
+            Self::Slice { start, count } => Self::Slice {
+                start: expr(start),
+                count: width(count),
+            },
+        }
+    }
+
+    /// The lane indices of a gather over a `width`-lane receiver, checked
+    /// against its method's constraints, worded as the pin's: `None` while
+    /// an expression is open.
+    pub fn resolve(&self, width: i64) -> Option<Result<Vec<usize>, String>> {
+        let range = |start: i64, count: i64| (start..start + count).map(|lane| lane as usize);
+        let lanes = match self {
+            Self::Known(mask) => return Some(Ok(mask.clone())),
+            Self::Shuffle(lanes) => {
+                let lanes = lanes
+                    .iter()
+                    .map(ParamExpr::as_i64)
+                    .collect::<Option<Vec<_>>>()?;
+                if lanes.len() as i64 != width {
+                    return Some(Err("mismatch in the number of elements".to_string()));
+                }
+                if lanes.iter().any(|lane| !(0..width).contains(lane)) {
+                    return Some(Err("invalid index in the shuffle operation".to_string()));
+                }
+                lanes.into_iter().map(|lane| lane as usize).collect()
+            }
+            Self::Slice { start, count } => {
+                let (start, count) = (start.as_i64()?, count.known()?);
+                if !(0 <= start && start < count + start && count + start <= width) {
+                    return Some(Err(
+                        "output width must be a positive integer less than simd size".to_string(),
+                    ));
+                }
+                range(start, count).collect()
+            }
+            Self::Join => {
+                let joined = width * 2;
+                if joined > 1 << 15 {
+                    return Some(Err(format!("SIMD width {joined} is too wide")));
+                }
+                range(0, joined).collect()
+            }
+        };
+        Some(Ok(lanes))
+    }
+}
+
+impl fmt::Display for LaneMask {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(mask) => write!(f, "{mask:?}"),
+            Self::Shuffle(lanes) => {
+                let lanes: Vec<String> = lanes.iter().map(ToString::to_string).collect();
+                write!(f, "shuffle[{}]", lanes.join(", "))
+            }
+            Self::Slice { start, count } => write!(f, "slice[{count}, offset={start}]"),
+            Self::Join => write!(f, "join"),
         }
     }
 }

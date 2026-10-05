@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A lane gather in a `DType`- or width-keyed `def` (`v.shuffle[1, 0]()`,
+  `v.slice[w // 2, offset = w // 2]()`, `v.shuffle[n, 0]()`, `v.join(w)`)
+  is served by its template, as in the pin, where the `def` was cloned per
+  call and a gather whose own arguments named a binder failed to check:
+  MIR carries the mask in its method's form (`LaneMask`, text schema
+  1.26), and the elaborator closes it per instance and checks the method's
+  constraints, failing the instantiation with the pin's message
+  (`assets/ok/lane_gather_template_served.mojo`). The MIR text reader now
+  keeps an operator over constants unfolded as written (`4 // 2` in an
+  instance's type), so such a program round-trips.
+
 - An annotated vector binding at a symbolic width or dtype with a numeric
   literal initializer (`var v: SIMD[DType.int32, n] = 7` in `def h[n: Int]`,
   or at a `comptime for` index) now runs, as in the pin, where it failed

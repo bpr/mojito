@@ -349,9 +349,9 @@ pub(super) fn substitute_instruction(
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
         MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, PointerStorageDestroy,
-        PointerStorageTake, SimdBitcast, SimdCast, SizeOf, Slice, Store, StoreRef, Try, TryNext,
-        TypeName, UninitStorageDestroy, UninitStorageTake, VariantReplace, VariantSet,
-        VariantSetInitWith,
+        PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle, SizeOf, Slice, Store, StoreRef,
+        Try, TryNext, TypeName, UninitStorageDestroy, UninitStorageTake, VariantReplace,
+        VariantSet, VariantSetInitWith,
     };
     match instruction {
         // A SIMD instruction's slots close as the vector type they build
@@ -371,6 +371,14 @@ pub(super) fn substitute_instruction(
                 *dtype = closed_dtype;
                 *width = closed_width;
             }
+        }
+        // A template's lane mask closes part by part; the instance checks
+        // the closed mask against its receiver (`close_lane_masks`).
+        SimdShuffle { mask, .. } => {
+            *mask = mask.close_with(&|expr| match eval_ct(expr, bindings) {
+                Ok(CtValue::Int(value)) => Some(value),
+                _ => None,
+            });
         }
         EstablishLoans { loans, .. } => {
             for loan in loans {

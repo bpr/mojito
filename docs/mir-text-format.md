@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.25
+# Mojito Textual MIR Format, Version 1.26
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.25 is implemented end to end for inspection and loading: canonical
+Version 1.26 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.25
+mojito-mir 1.26
 ```
 
-The writer emits 1.25. The reader accepts 1.0 through 1.25; *Schema 1.0*
+The writer emits 1.26. The reader accepts 1.0 through 1.26; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -655,7 +655,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeTuple` | `tuple.make` |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` |
-| `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18) |
+| `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
 | `Raise` / `Try` | `raise` / `try` |
 | `Drop` / `DropVar` | `drop.reg` / `drop.var` |
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
@@ -692,7 +692,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.25
+mojito-mir 1.26
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

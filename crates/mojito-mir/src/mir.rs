@@ -3419,7 +3419,8 @@ fn close_register_types(
                         dest,
                         mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone()).ok(),
                     )),
-                    // A shuffle keeps the source dtype at the mask's width.
+                    // A shuffle keeps the source dtype at a known mask's
+                    // width; a template's result is its checked type.
                     MirInstr::SimdShuffle {
                         dest, value, mask, ..
                     } => {
@@ -3429,7 +3430,7 @@ fn close_register_types(
                         };
                         Some((
                             dest,
-                            dtype.map(|dtype| Ty::Simd {
+                            dtype.zip(mask.known()).map(|(dtype, mask)| Ty::Simd {
                                 dtype,
                                 width: mojito_types::types::SimdWidth::Known(mask.len() as i64),
                             }),

@@ -1379,14 +1379,15 @@ pub enum MirInstr {
     /// Lane gather `v.shuffle[*mask]()`, `v.slice[...]()`, or `v.join(w)`:
     /// result lane `i` is lane `mask[i]` of `value`'s lanes followed by
     /// `other`'s, which only a join has (`shufflevector`'s second operand,
-    /// of `value`'s own type). The mask is a checker-resolved compile-time
-    /// parameter — every index is within those lanes and the mask length is
-    /// a valid SIMD width.
+    /// of `value`'s own type). The mask is a compile-time parameter: a
+    /// known one has every index within those lanes and a valid SIMD width
+    /// as its length; a template's names its binders, and the elaborator
+    /// closes it per instance. Concrete MIR holds only a known mask.
     SimdShuffle {
         dest: Reg,
         value: Reg,
         other: Option<Reg>,
-        mask: Vec<usize>,
+        mask: mojito_types::types::LaneMask,
     },
     /// `raise <src>` — raise an error value. Propagates as an exceptional outcome
     /// (the VM unwinds to the nearest enclosing [`MirInstr::Try`] handler).

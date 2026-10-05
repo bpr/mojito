@@ -168,6 +168,11 @@ pub fn derive_adjustment(
             (!mojito_types::types::is_symbolic(&target))
                 .then_some(SemanticAdjustment::MaterializeLiteral(target))
         }
+        // A known mask is the source's; a template's names binders whose
+        // closing and constraints are the instance's.
+        SemanticAdjustment::SimdShuffle { mask, .. } => {
+            (!mask.is_symbolic()).then(|| adjustment.clone())
+        }
         // A splat's vector type substitutes; a symbolic one names no lane
         // count to fill.
         SemanticAdjustment::SplatScalar(target) => {
@@ -371,7 +376,6 @@ pub fn derive_adjustment(
         | SemanticAdjustment::Iterate(..)
         | SemanticAdjustment::SizeOf { .. }
         | SemanticAdjustment::DtypeFloatQuery { .. }
-        | SemanticAdjustment::SimdShuffle { .. }
         | SemanticAdjustment::ConstructVariant { .. }
         | SemanticAdjustment::ConstructVariantInitWith { .. }
         | SemanticAdjustment::ConstructArrayLiteral { .. }

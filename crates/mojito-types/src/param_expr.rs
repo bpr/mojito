@@ -1234,6 +1234,15 @@ impl ParamExpr {
         }
     }
 
+    /// The integer a closed `Int`-valued expression denotes.
+    pub fn as_i64(&self) -> Option<i64> {
+        self.require_constant()
+            .ok()
+            .as_ref()
+            .and_then(fold::integer_value)
+            .and_then(|value| value.to_i64())
+    }
+
     /// The value established for this application, when it is an evaluated
     /// one ([`ParamKind::Apply`]).
     pub fn evaluated(&self) -> Option<&CtValue> {

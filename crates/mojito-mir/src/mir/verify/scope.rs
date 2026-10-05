@@ -312,6 +312,13 @@ impl ScopeCx<'_> {
                     };
                     self.walk(&format!("block {index} vector slots"), &built);
                 }
+                if let MirInstr::SimdShuffle { mask, .. } = instruction {
+                    let role = format!("block {index} lane mask");
+                    for value in mask.expressions() {
+                        let mut nested = Vec::new();
+                        self.expr_nodes(&role, "lane mask", value, &mut nested);
+                    }
+                }
                 if let MirInstr::Const {
                     k: Const::Param(value),
                     ..

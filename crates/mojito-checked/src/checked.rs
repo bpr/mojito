@@ -815,12 +815,14 @@ pub enum SemanticAdjustment {
         value: mojito_types::param_expr::ParamExpr,
     },
     /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
-    /// lane gathers by checker-resolved compile-time indices; the result
-    /// takes the mask's (power-of-two) width. A shuffle's mask has one index
-    /// per receiver lane. A `joined` gather indexes the receiver's lanes
-    /// followed by the argument's.
+    /// lane gathers by a compile-time mask; the result takes the mask's
+    /// (power-of-two) width. A shuffle's mask has one index per receiver
+    /// lane. A `joined` gather indexes the receiver's lanes followed by the
+    /// argument's. The mask is known where the receiver width and the
+    /// gather's arguments are; a template's keeps its method's form, which
+    /// each instance closes.
     SimdShuffle {
-        mask: Vec<usize>,
+        mask: mojito_types::types::LaneMask,
         joined: bool,
     },
     /// Construct the selected alternative of a checked `Variant` type.

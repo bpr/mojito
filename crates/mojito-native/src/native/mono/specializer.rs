@@ -461,6 +461,7 @@ impl<'a> Specializer<'a> {
                 error.function.get_or_insert_with(|| key.template.clone());
                 error
             })?;
+        self.close_lane_masks(&key.template, &mut function)?;
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
                 .folded_captures

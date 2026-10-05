@@ -1150,7 +1150,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("value", reg_value(*value)),
                 ("other", option(other.map(reg_value))),
-                ("mask", list(mask.iter().map(usize::to_string))),
+                ("mask", lane_mask(mask)),
             ],
         ),
         MirInstr::Raise { src } => record(tag, &[("src", reg_value(*src))]),
@@ -1966,6 +1966,26 @@ fn simd_width_slot(width: &mojito_types::types::SimdWidth) -> String {
     match width {
         mojito_types::types::SimdWidth::Known(width) => width.to_string(),
         mojito_types::types::SimdWidth::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
+/// A known mask is its index list; a template's keeps its method's form.
+fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
+    use mojito_types::types::LaneMask;
+    match mask {
+        LaneMask::Known(lanes) => list(lanes.iter().map(usize::to_string)),
+        LaneMask::Shuffle(lanes) => record(
+            "lane_shuffle",
+            &[("lanes", list(lanes.iter().map(param_expr)))],
+        ),
+        LaneMask::Slice { start, count } => record(
+            "lane_slice",
+            &[
+                ("offset", param_expr(start)),
+                ("width", simd_width_slot(count)),
+            ],
+        ),
+        LaneMask::Join => record("lane_join", &[]),
     }
 }
 

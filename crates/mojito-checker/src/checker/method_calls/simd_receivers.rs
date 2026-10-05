@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::LaneMask;
 
 impl Checker {
     /// `v.to_bits[DType.target]()`: the target must be unsigned and at least
@@ -245,6 +246,8 @@ impl Checker {
     }
 
     /// `v.shuffle[i, j, …]()`: one compile-time lane index per receiver lane.
+    /// A receiver width or an index over a template's binders keeps the
+    /// mask's form, whose count and range the instance checks.
     fn infer_simd_shuffle(
         &self,
         site: MethodCallSite<'_>,
@@ -256,7 +259,7 @@ impl Checker {
         // Compile-time lane indices, one per receiver lane:
         // upstream spells a narrowing gather `slice` and a
         // widening one `join`.
-        let mut mask = Vec::with_capacity(param_args.len());
+        let mut lanes = Vec::with_capacity(param_args.len());
         for argument in param_args {
             let mojito_ast::ast::ParamArg::Value(index) = argument else {
                 return Err(TypeError::TypeMismatch {
@@ -265,38 +268,36 @@ impl Checker {
                     context: "SIMD.shuffle".to_string(),
                 });
             };
-            let value = self.eval_ct(index)?;
-            let lane = value.to_i64().unwrap_or(-1);
-            if lane < 0 || width.known().is_some_and(|width| lane >= width) {
+            let lane = self.gather_parameter(index)?;
+            if let Some(known) = lane.as_i64()
+                && (known < 0 || width.known().is_some_and(|width| known >= width))
+            {
                 return Err(TypeError::TypeMismatch {
                     expected: format!("a lane index below {width}"),
-                    found: value.to_string(),
+                    found: known.to_string(),
                     context: "SIMD.shuffle".to_string(),
                 });
             }
-            mask.push(lane as usize);
+            lanes.push(lane);
         }
-        if let Some(known) = width.known() {
-            if mask.len() as i64 != known {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("{width} lane indices, one per receiver lane"),
-                    found: format!("{} indices", mask.len()),
-                    context: "SIMD.shuffle".to_string(),
-                });
-            }
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                    mask,
-                    joined: false,
-                },
-            );
+        if let Some(known) = width.known()
+            && lanes.len() as i64 != known
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("{width} lane indices, one per receiver lane"),
+                found: format!("{} indices", lanes.len()),
+                context: "SIMD.shuffle".to_string(),
+            });
         }
+        let mask = LaneMask::Shuffle(lanes);
+        self.record_lane_gather(span, &mask, &width, false);
         simd_of(dtype, width)
     }
 
     /// `v.slice[output_width, offset=o]()`: `output_width` consecutive lanes
-    /// starting at lane `o` (default 0).
+    /// starting at lane `o` (default 0). A width or an offset over a
+    /// template's binders keeps the slice's form, whose bounds the instance
+    /// checks.
     fn infer_simd_slice(
         &self,
         site: MethodCallSite<'_>,
@@ -311,55 +312,51 @@ impl Checker {
             context: "SIMD.slice".to_string(),
         };
         let mut output_width = None;
-        let mut offset = 0;
+        let mut offset = None;
         for argument in param_args {
             match argument {
                 mojito_ast::ast::ParamArg::Value(expression) if output_width.is_none() => {
-                    output_width = Some(
-                        self.eval_ct(expression)?
-                            .to_i64()
-                            .ok_or_else(bad_argument)?,
-                    );
+                    let count = self.gather_parameter(expression)?;
+                    output_width = Some(match count.as_i64() {
+                        Some(count) if count < 1 || (count & (count - 1)) != 0 => {
+                            return Err(TypeError::BadSimdWidth(count.to_string()));
+                        }
+                        Some(count) => SimdWidth::Known(count),
+                        None => SimdWidth::Expr(count),
+                    });
                 }
                 mojito_ast::ast::ParamArg::Named { name, value } if name == "offset" => {
                     let mojito_ast::ast::ParamArg::Value(expression) = value.as_ref() else {
                         return Err(bad_argument());
                     };
-                    offset = self
-                        .eval_ct(expression)?
-                        .to_i64()
-                        .ok_or_else(bad_argument)?;
+                    offset = Some(self.gather_parameter(expression)?);
                 }
                 _ => return Err(bad_argument()),
             }
         }
         let output_width = output_width.ok_or_else(bad_argument)?;
-        if output_width < 1 || (output_width & (output_width - 1)) != 0 {
-            return Err(TypeError::BadSimdWidth(output_width.to_string()));
-        }
-        if offset < 0
-            || width
-                .known()
-                .is_some_and(|width| offset + output_width > width)
+        let offset = match offset {
+            Some(offset) => offset,
+            None => self
+                .param_context
+                .constant(CtValue::Int(0))
+                .map_err(param_error)?,
+        };
+        if let (Some(count), Some(start)) = (output_width.known(), offset.as_i64())
+            && (start < 0 || width.known().is_some_and(|width| start + count > width))
         {
             return Err(TypeError::TypeMismatch {
                 expected: format!("an output width and offset within the receiver's {width} lanes"),
-                found: format!("width {output_width} at offset {offset}"),
+                found: format!("width {count} at offset {start}"),
                 context: "SIMD.slice".to_string(),
             });
         }
-        if width.known().is_some() {
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                    mask: (offset..offset + output_width)
-                        .map(|lane| lane as usize)
-                        .collect(),
-                    joined: false,
-                },
-            );
-        }
-        simd_of(dtype, SimdWidth::Known(output_width))
+        let mask = LaneMask::Slice {
+            start: offset,
+            count: output_width.clone(),
+        };
+        self.record_lane_gather(span, &mask, width, false);
+        simd_of(dtype, output_width)
     }
 
     /// `v.join(w)`: the receiver's lanes then `w`'s, at twice the width.
@@ -381,19 +378,13 @@ impl Checker {
                 context: "SIMD.join".to_string(),
             });
         }
+        self.record_lane_gather(span, &LaneMask::Join, width, true);
         let joined = match width {
             SimdWidth::Known(width) => {
                 let joined = width * 2;
                 if joined > 1 << 15 {
                     return Err(TypeError::BadSimdWidth(joined.to_string()));
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
-                    mojito_checked::checked::SemanticAdjustment::SimdShuffle {
-                        mask: (0..joined as usize).collect(),
-                        joined: true,
-                    },
-                );
                 SimdWidth::Known(joined)
             }
             // `SIMD[dt, 2 * width]`, in the pin's normal form.
@@ -408,5 +399,48 @@ impl Checker {
             }
         };
         simd_of(dtype, joined)
+    }
+
+    /// A gather's compile-time `Int` argument: its constant, or the
+    /// expression over a template's binders that only an instance closes.
+    fn gather_parameter(&self, expression: &Expr) -> Result<ParamExpr, TypeError> {
+        let literal = match self.eval_ct(expression) {
+            Ok(literal) => literal,
+            Err(error) => {
+                return match self.eval_associated_ct(expression, &HashMap::new()) {
+                    Ok(CtValue::Expr(expr)) if expr.meta().is_integer() => Ok(expr),
+                    _ => Err(error),
+                };
+            }
+        };
+        let value = literal.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+            expected: "a compile-time Int".to_string(),
+            found: literal.to_string(),
+            context: "SIMD lane gather".to_string(),
+        })?;
+        self.param_context
+            .constant(CtValue::Int(value))
+            .map_err(param_error)
+    }
+
+    /// Record a gather's mask: known where the receiver width and the
+    /// gather's arguments are, else the template's form for the instance to
+    /// close.
+    fn record_lane_gather(
+        &self,
+        span: &SourceSpan,
+        mask: &LaneMask,
+        width: &SimdWidth,
+        joined: bool,
+    ) {
+        let mask = width
+            .known()
+            .and_then(|width| mask.resolve(width))
+            .and_then(Result::ok)
+            .map_or_else(|| mask.clone(), LaneMask::Known);
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined },
+        );
     }
 }

@@ -1,6 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
+use mojito_types::types::LaneMask;
 
 fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
@@ -926,13 +927,34 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(37),
             value: Reg(35),
             other: None,
-            mask: vec![3, 1, 2, 0],
+            mask: LaneMask::Known(vec![3, 1, 2, 0]),
         },
         MirInstr::SimdShuffle {
             dest: Reg(38),
             value: Reg(35),
             other: Some(Reg(36)),
-            mask: vec![0, 1, 2, 3, 4, 5, 6, 7],
+            mask: LaneMask::Known(vec![0, 1, 2, 3, 4, 5, 6, 7]),
+        },
+        MirInstr::SimdShuffle {
+            dest: Reg(37),
+            value: Reg(35),
+            other: None,
+            mask: LaneMask::Shuffle(vec![int_parameter("f", 0, "n"), constant(CtValue::Int(0))]),
+        },
+        MirInstr::SimdShuffle {
+            dest: Reg(37),
+            value: Reg(35),
+            other: None,
+            mask: LaneMask::Slice {
+                start: constant(CtValue::Int(1)),
+                count: mojito_types::types::SimdWidth::Expr(int_parameter("f", 1, "w")),
+            },
+        },
+        MirInstr::SimdShuffle {
+            dest: Reg(38),
+            value: Reg(35),
+            other: Some(Reg(36)),
+            mask: LaneMask::Join,
         },
         MirInstr::Raise { src: Reg(1) },
         MirInstr::Drop { reg: Reg(2) },

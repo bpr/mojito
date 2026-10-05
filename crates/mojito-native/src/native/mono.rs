@@ -349,6 +349,7 @@ struct Specializer<'a> {
 
 mod availability;
 mod equiv;
+mod gather;
 mod infer;
 mod instances;
 mod promote;

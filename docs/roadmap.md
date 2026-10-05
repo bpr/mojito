@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R330**.
+Next free ID: **R332**.
 
 ## Ordered Work
 
@@ -162,25 +162,6 @@ correctness fix to existing behavior is allowed.
   - The header already iterates a sequence (`ComptimeSequence::Elements`,
     schema 1.25), so each shape needs only its sequence compiled.
   - Depends on R290, R267, and R318.
-  - Model: Fable, Planned.
-
-- [ ] **R257 (P3c) A lane gather at a symbolic width keys a clone**
-
-  Problem: `v.shuffle[...]()`, `v.slice[w, offset=o]()`, and `v.join(w)` in
-  a `DType`- or width-keyed `def` keep the `def` on the cloner
-  (`lane_def_shape_served`), where every other lane form is served by the
-  template.
-  - `SimdShuffle` carries its mask as a list of known lane indices, which
-    `join` and `slice` build from the receiver's width; the checker records
-    the adjustment only at a known width (`infer_simd_join`,
-    `infer_simd_slice`, `infer_simd_shuffle`).
-  - The gather needs a form over the width's parameter expression — a
-    `join` as "the receiver's lanes then the argument's", a `slice` as an
-    offset and an output width — that the elaborator expands to the mask
-    once the width is known.
-  - `assets/ok/simd_symbolic_surface.mojo`'s `doubled` is the body that
-    waits.
-  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R258 (P3c) A `DType` float query over a binder keys a clone**
@@ -3756,6 +3737,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R330 SIMD's lane gathers are checker intrinsics where the pin's
+  are `SIMD` methods over `pop.simd.shuffle`**
+
+  Problem: `shuffle`, `slice`, and `join` are typed by rule in
+  `simd_receivers.rs`, and their constraints are checked by
+  `LaneMask::resolve`, where the pin declares them in `std/simd.mojo` and
+  checks them with `comptime assert`.
+  - Join's template mask is the structured `LaneMask::Join`, where the
+    pin's is the compile-time result of `indices()`.
+  - The pin's `slice` lowers to `llvm.vector.extract` or an element loop,
+    not a shuffle.
+  - A self-hosted `SIMD` would move the typing, the constraints, and the
+    lowering choice into source, and `LaneMask` would shrink to the known
+    mask.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Grow The CPU Standard Library *(demand-first)*
 
 Track: `stdlib`.
@@ -4260,6 +4258,21 @@ residue found inside a task moves to the task that owns its fix.
   runtime services.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R331 A one-operand `shuffle` rejects a lane index at or above the
+  receiver's width, which the pin accepts**
+
+  Problem: `SIMD[DType.int32, 2](5, 6).shuffle[3, 0]()` fails to check
+  with "expected a lane index below 2", where the pin prints `[6, 5]`.
+  - The pin's one-operand `shuffle` gathers from the receiver joined with
+    itself and asserts only `0 <= mask[i] < 2 * Self.length`.
+  - The checker's rule is in `infer_simd_shuffle`, and an instance's in
+    `LaneMask::resolve`; both should take the pin's bound and fold an
+    index `i >= w` to `i - w`.
+  - `tests/checker_test.rs`'s `rejects_bad_simd_shuffle_masks` pins the
+    current rejection.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Packaging, Artifacts, And Developer Tooling
 

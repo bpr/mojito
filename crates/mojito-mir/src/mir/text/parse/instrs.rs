@@ -630,13 +630,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
                 other: self.req(value, fields, "other", |d, v| Some(d.option_reg(v)))?,
-                mask: self.req(value, fields, "mask", |d, v| {
-                    Some(
-                        d.list(v)
-                            .map(|values| values.iter().filter_map(|v| d.uint(v)).collect())
-                            .unwrap_or_default(),
-                    )
-                })?,
+                mask: self.req(value, fields, "mask", Self::lane_mask)?,
             }),
             "raise" => Some(MirInstr::Raise {
                 src: self.req(value, fields, "src", Self::reg)?,

@@ -563,7 +563,9 @@ impl Decoder {
 
     /// A parameter expression. Every form re-enters the canonicalizing
     /// constructors, so a parsed expression is canonical whatever order the
-    /// text spelled it in. Schema 1.0's name-only tree is accepted in a 1.0
+    /// text spelled it in; an operator re-enters through `rebuild`, which
+    /// keeps an opaque atom over constants (`4 // 2` in an instance's type)
+    /// unfolded, as replacement left it. Schema 1.0's name-only tree is accepted in a 1.0
     /// artifact and translated through the artifact's declared binders.
     /// A vector's lane dtype slot: a dtype name, or `ct_expr(...)` while it
     /// is a parameter expression.
@@ -589,6 +591,41 @@ impl Decoder {
                 .param_expr(inner)
                 .map(mojito_types::types::SimdWidth::Expr),
             _ => self.int64(value).map(mojito_types::types::SimdWidth::Known),
+        }
+    }
+
+    /// A lane gather's mask: a known index list, or a template's
+    /// `lane_shuffle`/`lane_slice`/`lane_join` form.
+    pub(super) fn lane_mask(&mut self, value: &Value) -> Option<mojito_types::types::LaneMask> {
+        use mojito_types::types::LaneMask;
+        match &value.kind {
+            ValueKind::Record(tag, fields) => match tag.as_str() {
+                "lane_shuffle" => self
+                    .req(value, fields, "lanes", |d, v| {
+                        d.list(v)
+                            .ok()?
+                            .iter()
+                            .map(|lane| d.param_expr(lane))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .map(LaneMask::Shuffle),
+                "lane_slice" => Some(LaneMask::Slice {
+                    start: self.req(value, fields, "offset", Self::param_expr)?,
+                    count: self.req(value, fields, "width", Self::simd_width_slot)?,
+                }),
+                "lane_join" => Some(LaneMask::Join),
+                other => {
+                    self.error(value.span, format!("unknown lane mask `{other}`"));
+                    None
+                }
+            },
+            _ => self
+                .list(value)
+                .ok()?
+                .iter()
+                .map(|lane| self.uint(lane))
+                .collect::<Option<Vec<_>>>()
+                .map(LaneMask::Known),
         }
     }
 
@@ -673,7 +710,7 @@ impl Decoder {
                         .map(|operand| self.param_expr(operand))
                         .collect::<Option<_>>()?;
                     self.unknown(fields, &["op", "type", "operands"]);
-                    let built = self.context.op(op, &operands);
+                    let built = self.context.rebuild(op, &operands);
                     let built = self.built(value, built)?;
                     if *built.meta() != meta {
                         self.error(

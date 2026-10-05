@@ -1772,8 +1772,7 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
 /// it: every compile-time parameter is a type parameter or an `Int`, `Bool`,
 /// or `DType` value the runtime parameters name only as a lane slot
 /// ([`template_serves_binders`]), and the body holds no form MIR has no
-/// symbolic lane for: a `shuffle`, `slice`, or `join` (a lane gather whose
-/// mask is the width's), a `DType` float query over a binder, a `hash` of a
+/// symbolic lane for: a `DType` float query over a binder, a `hash` of a
 /// lane value (whose hasher leaf is keyed by the closed vector type), a
 /// local `comptime` binding (which the cloner's body elaboration evaluates
 /// before the check), a nested `def` or lambda, or an application of one of
@@ -1820,24 +1819,20 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
                     name, param_args, ..
                 } => name == "hash" || self.whole_application(name, param_args),
                 ExprKind::TypeApply { name, args } => self.whole_application(name, args),
-                ExprKind::MethodCall { method, .. } => {
-                    matches!(method.as_str(), "shuffle" | "slice" | "join")
-                }
                 ExprKind::Invoke {
                     callee, param_args, ..
                 } => match &callee.kind {
-                    ExprKind::Member { object, field } => {
-                        matches!(field.as_str(), "shuffle" | "slice")
-                            || (matches!(&object.kind, ExprKind::Identifier(head) if head == "DType")
-                                && param_args.iter().any(|argument| {
-                                    !matches!(
-                                        argument,
-                                        ParamArg::Value(Expr {
-                                            kind: ExprKind::Member { object, .. },
-                                            ..
-                                        }) if matches!(&object.kind, ExprKind::Identifier(head) if head == "DType")
-                                    )
-                                }))
+                    ExprKind::Member { object, .. } => {
+                        matches!(&object.kind, ExprKind::Identifier(head) if head == "DType")
+                            && param_args.iter().any(|argument| {
+                                !matches!(
+                                    argument,
+                                    ParamArg::Value(Expr {
+                                        kind: ExprKind::Member { object, .. },
+                                        ..
+                                    }) if matches!(&object.kind, ExprKind::Identifier(head) if head == "DType")
+                                )
+                            })
                     }
                     _ => false,
                 },

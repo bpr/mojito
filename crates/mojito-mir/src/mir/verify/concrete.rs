@@ -210,6 +210,11 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps the symbolic vector slots `SIMD[{dtype}, {width}]` in elaborated MIR"
             ));
         }
+        MirInstr::SimdShuffle { mask, .. } if mask.is_symbolic() => {
+            errors.push(format!(
+                "{head} keeps the symbolic lane mask `{mask}` in elaborated MIR"
+            ));
+        }
         MirInstr::MaterializeLiteral { target: ty, .. }
         | MirInstr::PointerStorageTake { element: ty, .. }
         | MirInstr::PointerStorageDestroy { element: ty, .. }

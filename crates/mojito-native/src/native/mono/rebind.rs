@@ -42,12 +42,9 @@ impl Specializer<'_> {
     }
 }
 
-/// A judged rebind's operand and target types where they disagree.
-type Mismatch = Box<(Ty, Ty)>;
-
 /// The blocks of `blocks` its entry reaches: a decided `comptime if` leaves
 /// its untaken arm behind in a `try` region, which no pruning renumbers.
-fn reachable(blocks: &[MirBlock]) -> Vec<bool> {
+pub(super) fn reachable(blocks: &[MirBlock]) -> Vec<bool> {
     let mut reached = vec![false; blocks.len()];
     let mut pending = vec![0usize];
     while let Some(block) = pending.pop() {
@@ -58,6 +55,9 @@ fn reachable(blocks: &[MirBlock]) -> Vec<bool> {
     }
     reached
 }
+
+/// A judged rebind's operand and target types where they disagree.
+type Mismatch = Box<(Ty, Ty)>;
 
 /// Judge the rebinds of the reached blocks of one block list and the regions
 /// below it, recording each value rebind's `dest → value` and removing the
