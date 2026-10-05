@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R328**.
+Next free ID: **R330**.
 
 ## Ordered Work
 
@@ -164,21 +164,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R290, R267, and R318.
   - Model: Fable, Planned.
 
-- [ ] **R248 (P3b) A thunk condition inside a template-served `comptime for`
-  cannot read the index**
-
-  Problem: `comptime if is_even(i):` inside `comptime for i in range(n)` in
-  a generic `def` fails with "compile-time application of
-  `$comptime$thunked$0` binds 2 of its 1 parameters"; the pin accepts it.
-  - The thunk the checker lifts for an application in a condition is a
-    function over the owner's binders (`ComptimeThunks`); the loop's index
-    is a binder of the loop, not the owner, so the application neither
-    declares nor passes it.
-  - The thunk needs the indices of the loops enclosing the condition among
-    its binders, and the unroller must bind them per copy.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R293 (P3c) An annotated vector binding at a symbolic width rejects
   its literal initializer**
 
@@ -294,6 +279,21 @@ correctness fix to existing behavior is allowed.
     binder) and of R246 (an unserved `comptime for`); the fix is theirs.
   - The census class `InstanceMethodComptime` counts what is left.
   - Depends on R290 and R246.
+  - Model: Opus, Not Planned.
+
+- [ ] **R328 (P3) A thunk condition cannot read a local `comptime` binding
+  over a binder**
+
+  Problem: `comptime m = n + 1` then `comptime if is_even(m):` in `def
+  k[n: Int]()` fails with "VM CTFE failed for `$comptime$k$0$mono$V1`:
+  operator Mod is not defined for None and Int", where the pin prints `k`.
+  - The checker binds `m` to its parameter expression, so a compiled
+    condition over it closes, but the thunk lifted for an application reads
+    `m` as a frame slot no binder fills.
+  - The thunk should read `m` as the parameter expression it denotes
+    (`Const::Param`), as it reads an enclosing `comptime for` index.
+  - Found while landing R248 (2026-10-05).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R4 (P3d) A vector-keyed, struct-valued, or variadic struct is
@@ -413,6 +413,21 @@ correctness fix to existing behavior is allowed.
     function's.
   - Found while landing part of R253 (2026-10-05).
   - Depends on R6.
+  - Model: Opus, Not Planned.
+
+- [ ] **R329 (P3e) A nested `def` inside a `comptime for` cannot read the
+  index**
+
+  Problem: `def inner(): print("in", i)` in a `comptime for i in range(n)`
+  body fails with "Undefined variable 'i'", in a generic `def` and in a
+  plain `main` alike, where the pin prints `in 0` and `in 1`.
+  - The index is a compile-time binder of the loop, which the nested body
+    neither captures nor declares.
+  - Unlike R110 the value is a loop index rather than a local `comptime`
+    binding, and unlike R6 and R288 its binder is the loop's, not the
+    enclosing `def`'s.
+  - Found while landing R248 (2026-10-05).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R7 (P3e) A compile-time evaluation mints its own clones**

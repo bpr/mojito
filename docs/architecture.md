@@ -472,8 +472,10 @@ diamond with the `ComptimeBranch` terminator — a branch whose condition is a
 elaboration (`select_comptime_branches`), keeping the taken arm and pruning
 the other (`mir::prune_unreachable_blocks`) before any call in it is
 enqueued. A condition the constraint compiler does not close (an
-application) is lowered as a zero-parameter thunk over the function's binders
-(`ComptimeThunks`, `lower_expression_thunk`), and its branch carries the
+application) is lowered as a zero-parameter thunk over the binders in scope at
+the condition — the function's, then the enclosing `comptime for` indices,
+which it reads as parameter references (`Const::Param`) — (`ComptimeThunks`,
+`lower_expression_thunk`), and its branch carries the
 thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
 template keeps a `comptime for` over a `range` of parameter expressions, or

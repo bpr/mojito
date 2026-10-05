@@ -254,6 +254,13 @@ impl Flatten<'_> {
         {
             return self.constant(e, Const::Function(name.to_owned()));
         }
+        if let Some(value) = self
+            .checked_owner(e)
+            .and_then(|owner| self.parameter_reads.get(&owner))
+            .and_then(|binder| self.enclosing_binders.value_of(binder))
+        {
+            return self.param_value_register(e, value);
+        }
         let var = self.expression_var(name, e);
         let d = self.fresh(span(e), Some(var));
         if self.is_origin_bearing_pointer(e) {

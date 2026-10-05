@@ -1075,7 +1075,8 @@ fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
 /// The constant each compile-time parameter's local reads. MIR names a
 /// value binder's local by its spelling, which the declaration's `scope`
 /// resolves to the binder: a signature declares a spelling once. A callable
-/// promoted to a runtime parameter keeps its reads.
+/// promoted to a runtime parameter keeps its reads, and a `comptime for`
+/// index, which a thunk reads as a parameter reference, has no local.
 pub(super) fn bound_parameter_locals<'a>(
     scope: &[ParamDecl],
     bindings: &'a Bindings,
@@ -1084,6 +1085,7 @@ pub(super) fn bound_parameter_locals<'a>(
         .iter()
         .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
         .map(ParamDecl::binder)
+        .filter(|binder| !binder.id.is_comptime_for_binder())
         .filter(|binder| !bindings.runtime_callables.contains(binder))
         .filter_map(|binder| {
             let value = bindings.values.get(&binder)?;

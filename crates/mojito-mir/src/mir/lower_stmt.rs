@@ -1771,6 +1771,7 @@ impl Flatten<'_> {
                 enclosing_origin_parameters: self.enclosing_origin_parameters.clone(),
                 enclosing_binders: self.enclosing_binders.clone(),
                 comptime_thunks: std::mem::take(&mut self.comptime_thunks),
+                parameter_reads: self.parameter_reads.clone(),
                 overloads: self.overloads.clone(),
                 checked: std::sync::Arc::clone(&self.checked),
                 active_semantics: Vec::new(),
@@ -1789,7 +1790,7 @@ impl Flatten<'_> {
                 fl.cur = map[&hb];
                 fl.enclosing_binders = self
                     .enclosing_binders
-                    .with(loop_scopes.get(&hb).into_iter().flatten());
+                    .with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
                 for instr in &region_cfg.g[hb].instrs {
                     fl.lower_instr(instr, outer_map);
                 }
@@ -2873,16 +2874,24 @@ impl Flatten<'_> {
             // loop the check kept.
             Terminator::ComptimeLoop {
                 iter,
-                var,
                 binding,
                 index,
                 body,
                 exit,
+                ..
             } => {
                 if let Some(iteration) = comptime_iteration(iter) {
                     // The slot the body's reads of the variable resolve to:
-                    // the checked binding's, as a `for` variable's.
-                    let slot = binding.map_or(*index, |owner| self.binding_var(owner, var));
+                    // the one HIR declared for the checked binding, which a
+                    // second loop of one name holds under a shadow spelling.
+                    let slot = binding.map_or(*index, |owner| {
+                        *self.owner_vars.entry(owner).or_insert(*index)
+                    });
+                    // Typed even when no body read types it: each unrolled
+                    // copy stores its element there.
+                    if let Some(ty) = iteration.source.binder_meta().as_value() {
+                        self.var_types.entry(slot).or_insert_with(|| ty.clone());
+                    }
                     MirTerm::ComptimeFor {
                         binder: iteration.binder,
                         slot,

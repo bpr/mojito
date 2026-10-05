@@ -129,7 +129,8 @@ evaluates by demanding a concrete instance and running it on the VM.**
 - The checker lowers a compile-time expression that applies anything — a
   call, a constructor, a static method, a method chain on a compile-time
   value — as a zero-parameter thunk whose compile-time parameters are the
-  enclosing binders, the way `CheckedConst::Evaluate { function }` already
+  enclosing binders (an enclosing `comptime for` index among them, which
+  the thunk reads as a parameter reference), the way `CheckedConst::Evaluate { function }` already
   lowers a non-literal default argument. The expression's symbolic value is
   `Apply(thunk, binders)`, typed by the thunk's declared result. Runtime
   arguments (`f(7)`) live in the thunk's body; a generic callee's solved

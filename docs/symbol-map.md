@@ -1158,9 +1158,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
   AST elaborator's `as_sequence` shares), its slot the checked binding's
-  (`binding_var`). `mir.rs::loop_index_scopes` puts each loop's index among
-  the `EnclosingBinders` of its body blocks, so a bracket argument built
-  from it (`g[i]()`) resolves. `verify/scope.rs` (`Scope::declare_loop_binders`)
+  (the slot HIR declared for the binding, typed by `binder_meta`).
+  `mir.rs::loop_index_scopes` puts each loop's index among the
+  `EnclosingBinders` of its body blocks, with its checked binding
+  (`EnclosingBinders::with_loops`, `loop_bindings`), so a bracket argument
+  built from it (`g[i]()`) resolves. A loop binder's owner starts
+  `mojito_types::param_expr::COMPTIME_FOR_OWNER`
+  (`ParamId::is_comptime_for_binder`), which the checker mints
+  (`comptime_index_binder`) and `mono/substitute.rs::bound_parameter_locals`
+  skips. `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
   rejects a survivor; the text form is `comptime_for` for a range (schema
   1.16) and `comptime_for.elements` for any other sequence (schema 1.25). A
@@ -1281,8 +1287,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   checker's `SemanticAdjustment::ComptimeCondition` (recorded by
   `Checker::check_comptime_condition`, `checker/comptime_validation.rs`, per
   leaf under `not`/`and`/`or`) or, for a leaf with no constraint, from the
-  thunk `ComptimeThunks::request` registers and `lower_expression_thunk`
-  lowers (`mir.rs`, shared with `lower_default`). `verify/scope.rs`
+  thunk `ComptimeThunks::request` registers with the binders in scope at
+  the condition and `lower_expression_thunk` lowers over them (`mir.rs`,
+  shared with `lower_default`); the thunk reads an enclosing loop's index
+  as a parameter reference (`Flatten::parameter_reads`, filled from
+  `EnclosingBinders::loop_bindings`, read in `Flatten::identifier_read`). `verify/scope.rs`
   (`ScopeCx::constraint`) checks its binders; `verify/concrete.rs` rejects a
   survivor; the text form is `comptime_branch` (schema 1.15).
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` and `CTFE_FUEL`;

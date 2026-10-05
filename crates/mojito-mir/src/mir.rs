@@ -924,13 +924,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &EnclosingBinders::default(),
             &mut thunks,
         );
-        thunks.lower(
-            checked,
-            &overloads,
-            &EnclosingBinders::default(),
-            &mut functions,
-            &mut declarations,
-        );
+        thunks.lower(checked, &overloads, &mut functions, &mut declarations);
         function
     };
     // The synthetic module initializer returns nothing and never raises.
@@ -1137,12 +1131,14 @@ fn lower_expression_thunk(
 /// The `comptime if` conditions one function's lowering lifts as thunks: a
 /// condition the checker compiled to no constraint (it applies a function,
 /// or reads a `Bool` binding) becomes the zero-parameter function
-/// `$comptime$<owner>$<k>` over the owner's binders, and its branch carries
-/// the application of that thunk, which the elaborator demands and runs.
+/// `$comptime$<owner>$<k>` over the binders in scope at the condition — the
+/// owner's, then the enclosing `comptime for` indices — and its branch
+/// carries the application of that thunk, which the elaborator demands and
+/// runs.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
-    requests: Vec<(String, Expr)>,
+    requests: Vec<(String, Expr, EnclosingBinders)>,
 }
 
 impl ComptimeThunks {
@@ -1157,7 +1153,8 @@ impl ComptimeThunks {
     /// the thunk applied to every binder in scope, equal to `True`.
     fn request(&mut self, condition: &Expr, binders: &EnclosingBinders) -> GenericConstraint {
         let name = format!("$comptime${}${}", self.owner, self.requests.len());
-        self.requests.push((name.clone(), condition.clone()));
+        self.requests
+            .push((name.clone(), condition.clone(), binders.clone()));
         let context = mojito_types::param_expr::ParamContext::detached();
         let args: Vec<_> = binders
             .declarations
@@ -1181,16 +1178,16 @@ impl ComptimeThunks {
         )
     }
 
-    /// Lower every requested thunk, each `return <condition>` typed `Bool`.
+    /// Lower every requested thunk, each `return <condition>` typed `Bool`
+    /// over the binders its request recorded.
     fn lower(
         self,
         checked: &CheckedProgram,
         overloads: &mojito_symbol::symbol::OverloadSets,
-        binders: &EnclosingBinders,
         functions: &mut Vec<(String, MirFunction)>,
         declarations: &mut MirDeclarations,
     ) {
-        for (name, condition) in &self.requests {
+        for (name, condition, binders) in &self.requests {
             lower_expression_thunk(
                 ExpressionThunk {
                     checked,
@@ -1383,6 +1380,10 @@ struct Flatten<'a> {
     enclosing_binders: EnclosingBinders,
     /// The `comptime if` conditions this function lifts as thunks.
     comptime_thunks: ComptimeThunks,
+    /// The enclosing `comptime for` variables this function declares as
+    /// compile-time parameters (a thunk lifted from a condition inside the
+    /// loops), read as references to the index binders they denote.
+    parameter_reads: HashMap<mojito_types::origin::OwnerId, mojito_types::param_expr::ParamRef>,
     /// Names rebound more than once, or captured by a nested `def`. A pointer
     /// variable outside this set keeps one statically known loan place for its
     /// whole live range, so deref sites may substitute the owner place.
@@ -1390,11 +1391,19 @@ struct Flatten<'a> {
     returns_reference: bool,
 }
 
+/// A `comptime for` index in scope: the binder the checker recorded on the
+/// loop's iterable, and the loop variable's checked binding.
+#[derive(Clone)]
+struct LoopIndex {
+    declaration: ParamDecl,
+    binding: Option<mojito_types::origin::OwnerId>,
+}
+
 /// The `comptime for` indices in scope at each block of a CFG, outermost
 /// first: a loop's body blocks — those its body reaches without passing its
 /// header or exit — see the loop's `Int` binder as a value binder of the
 /// body. The binder is the one the checker recorded on the iterable.
-fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
+fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
     fn targets(term: Option<&Terminator>) -> Vec<hir::BlockId> {
         match term {
             Some(Terminator::Jump(to)) => vec![*to],
@@ -1413,11 +1422,15 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
         }
     }
     let g = &cfg.g;
-    let mut scopes: HashMap<hir::BlockId, Vec<ParamDecl>> = HashMap::new();
-    let mut loops: Vec<(Vec<hir::BlockId>, ParamDecl)> = Vec::new();
+    let mut scopes: HashMap<hir::BlockId, Vec<LoopIndex>> = HashMap::new();
+    let mut loops: Vec<(Vec<hir::BlockId>, LoopIndex)> = Vec::new();
     for header in g.node_indices() {
         let Some(Terminator::ComptimeLoop {
-            iter, body, exit, ..
+            iter,
+            binding,
+            body,
+            exit,
+            ..
         }) = &g[header].term
         else {
             continue;
@@ -1432,7 +1445,7 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
             .as_value()
             .cloned()
             .unwrap_or(Ty::Int);
-        let decl = ParamDecl::Value {
+        let declaration = ParamDecl::Value {
             id: binder.id.clone(),
             name: binder.name.to_string(),
             ty: Box::new(ty),
@@ -1451,14 +1464,20 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<ParamDecl>> {
             members.push(block);
             pending.extend(targets(g[block].term.as_ref()));
         }
-        loops.push((members, decl));
+        loops.push((
+            members,
+            LoopIndex {
+                declaration,
+                binding: *binding,
+            },
+        ));
     }
     // An enclosing loop's body holds the nested loop's, so the larger body
     // is the outer scope.
     loops.sort_by_key(|(members, _)| std::cmp::Reverse(members.len()));
-    for (members, decl) in loops {
+    for (members, index) in loops {
         for block in members {
-            scopes.entry(block).or_default().push(decl.clone());
+            scopes.entry(block).or_default().push(index.clone());
         }
     }
     scopes
@@ -2812,6 +2831,7 @@ fn lower_cfg_nested(
             enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
             enclosing_binders: enclosing_binders.clone(),
             comptime_thunks: std::mem::take(comptime_thunks),
+            parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
             overloads: overloads.clone(),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
@@ -2837,7 +2857,7 @@ fn lower_cfg_nested(
             // A `comptime for` body sees the loop's index as a value binder,
             // so a bracket argument built from it (`g[i]()`) resolves.
             fl.enclosing_binders =
-                enclosing_binders.with(loop_scopes.get(&hb).into_iter().flatten());
+                enclosing_binders.with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
             for instr in &cfg.g[hb].instrs {
                 // At the function level the "outer" map is this function's own map
                 // (a `try`'s escape targets are this function's loop blocks).
@@ -3620,6 +3640,12 @@ struct EnclosingBinders {
     values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
     /// The declarations of `types` and `values`, in scope order.
     declarations: Vec<ParamDecl>,
+    /// The enclosing `comptime for` loops' variables, each checked binding
+    /// with the index binder it denotes.
+    loop_bindings: Vec<(
+        mojito_types::origin::OwnerId,
+        mojito_types::param_expr::ParamRef,
+    )>,
 }
 
 impl EnclosingBinders {
@@ -3656,6 +3682,18 @@ impl EnclosingBinders {
         binders
     }
 
+    /// These binders, then the indices of the `comptime for` loops
+    /// enclosing a block, outermost first.
+    fn with_loops(&self, indices: &[LoopIndex]) -> Self {
+        let mut binders = self.with(indices.iter().map(|index| &index.declaration));
+        binders.loop_bindings.extend(
+            indices
+                .iter()
+                .filter_map(|index| Some((index.binding?, index.declaration.binder()))),
+        );
+        binders
+    }
+
     /// Whether `expression` spells `Self` or one of these binders.
     fn named_by(&self, expression: &Expr) -> bool {
         struct Names(Vec<String>);
@@ -3681,6 +3719,19 @@ impl EnclosingBinders {
                     .chain(self.values.iter().map(|(binder, _)| binder))
                     .any(|binder| binder.name.as_ref() == name)
         })
+    }
+
+    /// The reference to `binder`, one of these value binders.
+    fn value_of(&self, binder: &mojito_types::param_expr::ParamRef) -> Option<ParamExpr> {
+        let (_, ty) = self
+            .values
+            .iter()
+            .find(|(candidate, _)| candidate.id == binder.id)?;
+        Some(ParamContext::detached().decl_ref(
+            binder.id.clone(),
+            &binder.name,
+            mojito_types::param_expr::MetaTy::value(ty.clone()),
+        ))
     }
 
     /// The reference a value binder's spelling denotes: `Self.n` names the

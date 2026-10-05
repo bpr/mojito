@@ -1930,17 +1930,14 @@ fn pack_element_view_binder(name: &str) -> ParamRef {
     }
 }
 
-/// The prefix of a `comptime for` binder's owner, which the loop's
-/// iterable completes.
-const COMPTIME_FOR_OWNER: &str = "$comptime_for@";
-
 /// The compile-time binder of a `comptime for` variable of type `element`,
 /// so a dependent expression over it (`Ts[i]`, `args[i]`, `x * n`) has a
 /// node. The loop's iterable names the binder: each loop owns its variable.
 fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
     let span = iter.source_span();
     let owner = format!(
-        "{COMPTIME_FOR_OWNER}{}:{}..{}",
+        "{}{}:{}..{}",
+        mojito_types::param_expr::COMPTIME_FOR_OWNER,
         span.source.as_deref().unwrap_or_default(),
         span.span.0,
         span.span.1
@@ -1953,7 +1950,7 @@ fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
 fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
     binder
         .as_decl_ref()
-        .is_some_and(|reference| reference.id.owner.starts_with(COMPTIME_FOR_OWNER))
+        .is_some_and(|reference| reference.id.is_comptime_for_binder())
         && binder.meta().as_value() == Some(&Ty::Bool)
 }
 

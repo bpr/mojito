@@ -335,6 +335,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // argument to decide a `comptime if` over a type binder with, and runs
     // no thunk for a condition that applies a function.
     "comptime_if_condition_applies_def",
+    "comptime_if_condition_reads_index",
     "comptime_if_generic_struct_lifecycle",
     "comptime_if_layout_query",
     "comptime_if_nested_def_call",

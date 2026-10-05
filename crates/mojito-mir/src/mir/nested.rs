@@ -105,7 +105,7 @@ pub(super) fn lower_fn_nested(
         &enclosing_binders,
         &mut thunks,
     );
-    thunks.lower(checked, overloads, &enclosing_binders, out, declarations);
+    thunks.lower(checked, overloads, out, declarations);
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
         f.var_tys.entry(slot as VarId).or_insert_with(|| ty.clone());
@@ -578,7 +578,7 @@ fn lower_nested_node(
             enclosing_binders,
             &mut thunks,
         );
-        thunks.lower(checked, overloads, enclosing_binders, out, declarations);
+        thunks.lower(checked, overloads, out, declarations);
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {
             nf.var_tys

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime if` whose condition applies a function inside a
+  template-served `comptime for` (`comptime if is_even(i):` in `comptime for
+  i in range(n)`) now runs, as in the pin, where it failed with "binds 2 of
+  its 1 parameters": the condition's thunk declares every binder in scope,
+  the enclosing loops' indices included, and reads an index as a parameter
+  reference, so nested loops, two loops of one name, and a shadowing index
+  decide per copy. A second loop of one name, or a `Bool` loop variable
+  only a condition reads, also compiles natively now
+  (`assets/ok/comptime_if_condition_reads_index.mojo`; roadmap R328, R329).
+
 - A `def` keyed on a variadic value pack (`*values: Int`, `*flags: Bool`,
   `*kinds: DType`), a method's own included, is served by its template, as
   in the pin, where every call cloned the body with the values substituted:

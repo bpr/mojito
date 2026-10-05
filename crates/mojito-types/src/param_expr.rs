@@ -1747,7 +1747,17 @@ impl ParamId {
             slot,
         }
     }
+
+    /// Whether this is a `comptime for` variable's binder, whose owner
+    /// [`COMPTIME_FOR_OWNER`] starts.
+    pub fn is_comptime_for_binder(&self) -> bool {
+        self.owner.starts_with(COMPTIME_FOR_OWNER)
+    }
 }
+
+/// The prefix of a `comptime for` binder's owner, which the loop's iterable
+/// completes.
+pub const COMPTIME_FOR_OWNER: &str = "$comptime_for@";
 
 /// The owner spelling every [`ParamRef::unbound`] reference starts with.
 pub const UNBOUND_BINDER_PREFIX: &str = "$unbound:";
