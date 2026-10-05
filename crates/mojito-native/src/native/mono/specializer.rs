@@ -45,18 +45,18 @@ impl<'a> Specializer<'a> {
                     .map(|d| d.name.clone())
                     .collect(),
             ),
-            associated_types: Rc::new(
+            struct_shapes: Rc::new(
                 source
                     .declarations
                     .structs
                     .iter()
-                    .filter(|d| !d.associated_types.is_empty())
                     .map(|d| {
                         (
                             d.name.clone(),
-                            AssociatedTypes {
+                            StructShape {
                                 param_decls: d.param_decls.clone(),
                                 members: d.associated_types.clone(),
+                                fields: d.fields.clone(),
                             },
                         )
                     })
@@ -185,7 +185,7 @@ impl<'a> Specializer<'a> {
         Bindings {
             generic_templates: Rc::clone(&self.generic_templates),
             tuple_specializations: Rc::clone(&self.tuple_specializations),
-            associated_types: Rc::clone(&self.associated_types),
+            struct_shapes: Rc::clone(&self.struct_shapes),
             ..Bindings::default()
         }
     }
@@ -456,7 +456,11 @@ impl<'a> Specializer<'a> {
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_rebinds(&key.template, &mut function)?;
-        self.answer_param_constants(&mut function.blocks, bindings);
+        self.answer_param_constants(&mut function.blocks, bindings)
+            .map_err(|mut error| {
+                error.function.get_or_insert_with(|| key.template.clone());
+                error
+            })?;
         if !bindings.folded_captures.is_empty() {
             let constants = bindings
                 .folded_captures
@@ -954,8 +958,14 @@ impl<'a> Specializer<'a> {
     /// expression denotes under the bindings: a pack's length by
     /// replacement, and a pack's membership, conformance, or predicate by the
     /// oracle that decides a `comptime if`. One the bindings leave open stays for
-    /// the verifier's concrete mode to name.
-    fn answer_param_constants(&self, blocks: &mut [MirBlock], bindings: &Bindings) {
+    /// the verifier's concrete mode to name; one the bindings close with no
+    /// answer (a reflection query of a field the struct lacks) fails the
+    /// instantiation.
+    fn answer_param_constants(
+        &self,
+        blocks: &mut [MirBlock],
+        bindings: &Bindings,
+    ) -> Result<(), MonoError> {
         for block in blocks {
             for instruction in &mut block.instrs {
                 if let MirInstr::Try {
@@ -971,7 +981,7 @@ impl<'a> Specializer<'a> {
                         .chain(orelse.iter_mut())
                         .chain(finalbody.iter_mut());
                     for region in regions {
-                        self.answer_param_constants(region, bindings);
+                        self.answer_param_constants(region, bindings)?;
                     }
                     continue;
                 }
@@ -982,14 +992,19 @@ impl<'a> Specializer<'a> {
                 else {
                     continue;
                 };
-                if let Some(k) = self.param_constant(value, bindings) {
+                if let Some(k) = self.param_constant(value, bindings)? {
                     *instruction = MirInstr::Const { dest: *dest, k };
                 }
             }
         }
+        Ok(())
     }
 
-    fn param_constant(&self, value: &ParamExpr, bindings: &Bindings) -> Option<Const> {
+    fn param_constant(
+        &self,
+        value: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<Option<Const>, MonoError> {
         let proposition = match value.kind() {
             ParamKind::PackQuery {
                 pack,
@@ -1013,7 +1028,7 @@ impl<'a> Specializer<'a> {
                 let element = match element.kind() {
                     ParamKind::TypeShape(ty) => (**ty).clone(),
                     ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
-                    _ => return None,
+                    _ => return Ok(None),
                 };
                 Some(GenericConstraint::PackContains {
                     param: pack.clone(),
@@ -1023,12 +1038,14 @@ impl<'a> Specializer<'a> {
             _ => None,
         };
         match proposition {
-            Some(proposition) => self
+            Some(proposition) => Ok(self
                 .constraint_holds(&proposition, bindings, &mut HashSet::new())
-                .map(Const::Bool),
-            None => eval_ct(value, bindings)
-                .ok()
-                .and_then(|value| value_parameter_constant(&value, None)),
+                .map(Const::Bool)),
+            None => match eval_ct(value, bindings) {
+                Ok(value) => Ok(value_parameter_constant(&value, None)),
+                Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
+                Err(_) => Ok(None),
+            },
         }
     }
 

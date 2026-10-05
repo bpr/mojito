@@ -31,6 +31,9 @@ impl Flatten<'_> {
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Bool(b)) => {
                 Const::Bool(*b)
             }
+            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Str(s)) => {
+                Const::Str(s.clone())
+            }
             _ => Const::Param(value),
         };
         self.constant(e, k)

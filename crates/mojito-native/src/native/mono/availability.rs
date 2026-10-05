@@ -363,7 +363,7 @@ fn operand_value(operand: &ConstraintOperand, bindings: &Bindings) -> Option<TyA
                 types: bindings.types.clone(),
                 values: bindings.values.clone(),
                 associated: bindings.associated.clone(),
-                associated_types: Rc::clone(&bindings.associated_types),
+                struct_shapes: Rc::clone(&bindings.struct_shapes),
                 ..Bindings::default()
             };
             substitute_ty(ty, &spelled)

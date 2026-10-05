@@ -2,16 +2,29 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::param_expr::{ParamError, ReflectQuery};
 
 /// The constant a parameter expression denotes under the mono environment:
-/// the shared replacement, then explicit concrete extraction. Monomorphization
-/// holds no arithmetic of its own.
+/// the shared replacement, every reflection query the instance's types
+/// answer, then explicit concrete extraction. Monomorphization holds no
+/// arithmetic of its own. A query with no answer at the instance
+/// (`field_index["z"]()` of a struct lacking `z`) fails the instantiation,
+/// as at the pin.
 pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
     let replaced = context
         .replace(expr, &ct_bindings(bindings))
+        .and_then(|replaced| {
+            context.answer_reflections(&replaced, &mut |subject, query| {
+                reflection_answer(subject, query, bindings)
+            })
+        })
         .map_err(|error| MonoError {
-            kind: MonoErrorKind::Unsupported,
+            kind: if matches!(error, ParamError::Reflect(_)) {
+                MonoErrorKind::Instantiation
+            } else {
+                MonoErrorKind::Unsupported
+            },
             function: None,
             construct: error.to_string(),
         })?;
@@ -57,6 +70,49 @@ pub(super) fn ct_bindings(bindings: &Bindings) -> ParamBindings {
         }
     }
     bound
+}
+
+/// The answer to a reflection query over `subject` at the instance: a
+/// source struct's fields at its arguments, under the policy the checker
+/// applies to a closed subject. A subject the bindings leave symbolic, or a
+/// struct the source does not declare, keeps the query.
+fn reflection_answer(
+    subject: &ParamExpr,
+    query: &ReflectQuery,
+    bindings: &Bindings,
+) -> Result<Option<CtValue>, ParamError> {
+    let subject = match subject.kind() {
+        ParamKind::TypeShape(ty) => match substitute_ty(ty, bindings) {
+            Ok(ty) => ty,
+            Err(_) => return Ok(None),
+        },
+        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        _ => return Ok(None),
+    };
+    if is_symbolic(&subject) {
+        return Ok(None);
+    }
+    let unsupported = |error: MonoError| ParamError::Unsupported(error.construct);
+    let answer = match &subject {
+        Ty::Struct(_, args) => {
+            let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
+                return Ok(None);
+            };
+            let fields = instance
+                .shape
+                .fields
+                .iter()
+                .map(|(name, ty)| {
+                    substitute_ty(ty, &instance.bindings).map(|ty| (name.clone(), ty))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(unsupported)?;
+            let declared = Ty::Struct(instance.template.to_string(), args.clone());
+            query.answer(&declared, Some(&fields))
+        }
+        _ => query.answer(&subject, None),
+    };
+    answer.map(Some).map_err(ParamError::Reflect)
 }
 
 pub(super) fn is_symbolic(ty: &Ty) -> bool {

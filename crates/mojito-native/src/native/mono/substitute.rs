@@ -707,6 +707,60 @@ pub(super) fn substitute_iterator_call(
     Ok(())
 }
 
+/// A closed struct type's source declaration, with its own parameters bound
+/// at the type's arguments.
+pub(super) struct StructInstance<'b> {
+    /// The source declaration's name, which a generic instance's symbol
+    /// extends.
+    pub(super) template: &'b str,
+    pub(super) shape: &'b StructShape,
+    /// The bindings a member type over the struct's own parameters
+    /// substitutes under.
+    pub(super) bindings: Bindings,
+}
+
+/// The source struct `ty` instantiates, read off the shapes `bindings`
+/// carries. `None` where `ty` is no struct the source declares.
+pub(super) fn struct_instance<'b>(
+    ty: &Ty,
+    bindings: &'b Bindings,
+) -> Result<Option<StructInstance<'b>>, MonoError> {
+    let Ty::Struct(struct_name, struct_args) = ty else {
+        return Ok(None);
+    };
+    let Some((template, shape)) = bindings
+        .struct_shapes
+        .get_key_value(struct_name.as_str())
+        .or_else(|| {
+            bindings
+                .struct_shapes
+                .get_key_value(nominal_template(struct_name))
+        })
+    else {
+        return Ok(None);
+    };
+    let mut instance = Bindings {
+        generic_templates: Rc::clone(&bindings.generic_templates),
+        tuple_specializations: Rc::clone(&bindings.tuple_specializations),
+        struct_shapes: Rc::clone(&bindings.struct_shapes),
+        self_instance: Some((template.clone(), ty.clone())),
+        ..Bindings::default()
+    };
+    bind_ty_args(&shape.param_decls, struct_args, &mut instance).map_err(|construct| {
+        MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct,
+        }
+    })?;
+    apply_defaults(&shape.param_decls, &mut instance)?;
+    Ok(Some(StructInstance {
+        template,
+        shape,
+        bindings: instance,
+    }))
+}
+
 pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
     let unsupported = |what: String| MonoError {
         kind: MonoErrorKind::Unsupported,
@@ -1052,39 +1106,18 @@ fn declared_associated_type(
         return Ok(None);
     }
     let base = substitute_ty(base, bindings)?;
-    let Ty::Struct(struct_name, struct_args) = peel_refs(&base) else {
+    let Some(instance) = struct_instance(peel_refs(&base), bindings)? else {
         return Ok(None);
     };
-    let Some((template, declared)) = bindings
-        .associated_types
-        .get_key_value(struct_name.as_str())
-        .or_else(|| {
-            bindings
-                .associated_types
-                .get_key_value(nominal_template(struct_name))
-        })
+    let Some((_, member)) = instance
+        .shape
+        .members
+        .iter()
+        .find(|(member, _)| member == name)
     else {
         return Ok(None);
     };
-    let Some((_, member)) = declared.members.iter().find(|(member, _)| member == name) else {
-        return Ok(None);
-    };
-    let mut instance = Bindings {
-        generic_templates: Rc::clone(&bindings.generic_templates),
-        tuple_specializations: Rc::clone(&bindings.tuple_specializations),
-        associated_types: Rc::clone(&bindings.associated_types),
-        self_instance: Some((template.clone(), peel_refs(&base).clone())),
-        ..Bindings::default()
-    };
-    bind_ty_args(&declared.param_decls, struct_args, &mut instance).map_err(|construct| {
-        MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct,
-        }
-    })?;
-    apply_defaults(&declared.param_decls, &mut instance)?;
-    substitute_ty(member, &instance).map(Some)
+    substitute_ty(member, &instance.bindings).map(Some)
 }
 
 /// The specialization a closed public `Tuple` over `args` names, when the

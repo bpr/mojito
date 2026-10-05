@@ -2,13 +2,15 @@
 //! struct table when its subject is a registered struct and as a
 //! `ParamKind::Reflect` node when the subject is still a parameter, so a body
 //! reading a reflection handle validates with its parameters symbolic. The
-//! elaborator evaluates the same queries per instance (`comptime/eval.rs`).
+//! elaborator evaluates the same queries per instance: on a clone in
+//! `comptime/eval.rs`, and in a template-served body through the parameter
+//! constant `record_reflection_value` records, which `native::mono` answers.
 //! See `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ParamArg;
-use mojito_types::param_expr::ReflectQuery;
+use mojito_types::param_expr::{ParamKind, ReflectQuery};
 use mojito_types::types::DependentType;
 
 impl Checker {
@@ -26,13 +28,23 @@ impl Checker {
             },
             ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
                 match self.reflection_query_of(expr)? {
-                    Some((subject, query)) => self.reflection_value_ty(&subject, &query).map(Some),
+                    Some((subject, query)) => {
+                        let value = self.eval_reflection(&subject, query.clone())?;
+                        let ty = reflection_value_ty(&subject, &query, &value)?;
+                        self.record_reflection_value(expr, value);
+                        Ok(Some(ty))
+                    }
                     None => Ok(None),
                 }
             }
             ExprKind::Index { object, index } => match self.reflection_list(object)? {
-                Some((ReflectQuery::FieldNames, _)) => {
-                    self.reflection_index(index)?;
+                Some((ReflectQuery::FieldNames, list)) => {
+                    let index = self.reflection_index(index)?;
+                    if let Ok(list) = self.param_context.constant(list)
+                        && let Ok(element) = self.param_context.list_get(&list, &index)
+                    {
+                        self.record_reflection_value(expr, CtValue::Expr(element));
+                    }
                     Ok(Some(Ty::StringLiteral))
                 }
                 Some(_) => Err(TypeError::NotComptime(
@@ -43,7 +55,7 @@ impl Checker {
                 None => Ok(None),
             },
             ExprKind::Member { object, field } if field == "length" => {
-                Ok(self.reflection_list(object)?.map(|_| Ty::Int))
+                Ok(self.reflection_list_length(expr, object)?)
             }
             ExprKind::Call {
                 name,
@@ -51,7 +63,7 @@ impl Checker {
                 args,
                 kwargs,
             } if name == "len" && param_args.is_empty() && args.len() == 1 && kwargs.is_empty() => {
-                Ok(self.reflection_list(&args[0])?.map(|_| Ty::Int))
+                Ok(self.reflection_list_length(expr, &args[0])?)
             }
             // `types[i]()`: a construction of the field type at `i`.
             ExprKind::Call {
@@ -172,10 +184,13 @@ impl Checker {
         subject: &Ty,
         query: ReflectQuery,
     ) -> Result<CtValue, TypeError> {
-        let (name, arguments, info) = match subject {
-            Ty::Struct(name, arguments) if let Some(info) = self.structs.get(name) => {
-                (name, arguments, info)
-            }
+        let fields = match subject {
+            Ty::Struct(name, arguments) if let Some(info) = self.structs.get(name) => Some(
+                info.fields
+                    .iter()
+                    .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
+                    .collect::<Vec<_>>(),
+            ),
             Ty::Param { .. } | Ty::Dependent(_) | Ty::SelfType => {
                 let shape = self.param_context.type_shape(subject.clone());
                 return Ok(CtValue::Expr(
@@ -188,38 +203,11 @@ impl Checker {
                     self.param_context.reflect_query(&shape, query),
                 ));
             }
-            _ => {
-                return match query {
-                    ReflectQuery::IsStruct => Ok(CtValue::Bool(true)),
-                    query => Err(TypeError::NotComptime(format!(
-                        "reflect[{subject}].{query} requires a struct type"
-                    ))),
-                };
-            }
+            _ => None,
         };
-        let field_ty =
-            |(_, ty): &(String, Ty)| CtValue::Type(Box::new(substitute_at(ty, info, arguments)));
-        let position = |field: &str| {
-            info.fields
-                .iter()
-                .position(|(declared, _)| declared == field)
-                .ok_or_else(|| {
-                    TypeError::NotComptime(format!("struct '{name}' has no field named '{field}'"))
-                })
-        };
-        Ok(match query {
-            ReflectQuery::IsStruct => CtValue::Bool(true),
-            ReflectQuery::FieldCount => CtValue::Int(info.fields.len() as i64),
-            ReflectQuery::FieldNames => CtValue::Tuple(
-                info.fields
-                    .iter()
-                    .map(|(declared, _)| CtValue::Str(declared.clone()))
-                    .collect(),
-            ),
-            ReflectQuery::FieldTypes => CtValue::Tuple(info.fields.iter().map(field_ty).collect()),
-            ReflectQuery::FieldIndex(field) => CtValue::Int(position(&field)? as i64),
-            ReflectQuery::FieldNamed(field) => field_ty(&info.fields[position(&field)?]),
-        })
+        query
+            .answer(subject, fields.as_deref())
+            .map_err(|error| TypeError::NotComptime(error.to_string()))
     }
 
     /// The handle and query an expression reads: `r.field_count()`,
@@ -409,18 +397,41 @@ impl Checker {
         }
     }
 
-    /// The runtime type of a query's answer: an `Int`, a `Bool`; a list is
-    /// a compile-time value only.
-    fn reflection_value_ty(&self, subject: &Ty, query: &ReflectQuery) -> Result<Ty, TypeError> {
-        let value = self.eval_reflection(subject, query.clone())?;
-        match &value {
-            CtValue::Int(_) | CtValue::IntLiteral(_) => Ok(Ty::Int),
-            CtValue::Bool(_) => Ok(Ty::Bool),
-            CtValue::Expr(expr) if let Some(ty) = expr.meta().as_value() => Ok(ty.clone()),
-            _ => Err(TypeError::NotComptime(format!(
-                "'reflect[{subject}].{query}' is a compile-time list; bind it with 'comptime' \
-                 and index it"
-            ))),
+    /// The length of a `field_names()` or `field_types()` list read at
+    /// `expr`: an `Int`, which over a symbolic subject is its field count,
+    /// as upstream sizes both lists by `_field_types_of[T]().length`.
+    fn reflection_list_length(&self, expr: &Expr, list: &Expr) -> Result<Option<Ty>, TypeError> {
+        let Some((_, value)) = self.reflection_list(list)? else {
+            return Ok(None);
+        };
+        let count = match value {
+            CtValue::Expr(value) => match value.kind() {
+                ParamKind::Reflect { subject, .. } => Some(CtValue::Expr(
+                    self.param_context
+                        .reflect_query(subject, ReflectQuery::FieldCount),
+                )),
+                _ => None,
+            },
+            CtValue::Tuple(elements) => Some(CtValue::Int(elements.len() as i64)),
+            _ => None,
+        };
+        if let Some(count) = count {
+            self.record_reflection_value(expr, count);
+        }
+        Ok(Some(Ty::Int))
+    }
+
+    /// Record the answer to a query read as a runtime value at `expr`, as the
+    /// constant MIR carries: the elaborator answers one over a subject that
+    /// is still a parameter per instance. A closed answer reaches here where
+    /// its subject was not (`reflect[Self].field_count()` in a generic
+    /// struct's method), so the crossing pass could not fold it.
+    fn record_reflection_value(&self, expr: &Expr, value: CtValue) {
+        if let Ok(value) = self.param_context.constant(value) {
+            self.operation_adjustments.borrow_mut().insert(
+                expr.source_span(),
+                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+            );
         }
     }
 
@@ -498,6 +509,24 @@ fn reflection_field_name(param_args: &[ParamArg]) -> Result<String, TypeError> {
             "reflect[T].field_index[name]() takes one String parameter".to_string(),
         )
     })
+}
+
+/// The runtime type of a query's answer: an `Int`, a `Bool`; a list is a
+/// compile-time value only.
+fn reflection_value_ty(
+    subject: &Ty,
+    query: &ReflectQuery,
+    value: &CtValue,
+) -> Result<Ty, TypeError> {
+    match value {
+        CtValue::Int(_) | CtValue::IntLiteral(_) => Ok(Ty::Int),
+        CtValue::Bool(_) => Ok(Ty::Bool),
+        CtValue::Expr(expr) if let Some(ty) = expr.meta().as_value() => Ok(ty.clone()),
+        _ => Err(TypeError::NotComptime(format!(
+            "'reflect[{subject}].{query}' is a compile-time list; bind it with 'comptime' and \
+             index it"
+        ))),
+    }
 }
 
 fn no_such_reflection_method(subject: &Ty, method: &str) -> TypeError {

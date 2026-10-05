@@ -405,10 +405,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `types::pack_spread` owns the spread convention.
 - `checker/reflection.rs` owns `reflect[T]` under the checker.
   `eval_reflection` answers a query from the struct table for a registered
-  struct and as a `ParamKind::Reflect` node (`ParamContext::reflect_query`,
-  `ReflectQuery` in `mojito-types`) for a subject still a parameter;
-  `infer_reflection` types a query read as a value (hooked at the top of
-  `inference.rs:infer_impl`), `eval_reflection_expr` serves
+  struct, through `ReflectQuery::answer` (`mojito-types`, `param_expr.rs`,
+  the one closed-subject policy the elaborator shares), and as a
+  `ParamKind::Reflect` node (`ParamContext::reflect_query`) for a subject
+  still a parameter; `infer_reflection` types a query read as a value
+  (hooked at the top of `inference.rs:infer_impl`) and records its answer
+  as `SemanticAdjustment::ParamValue` (`record_reflection_value`), which MIR
+  lowers as `Const::Param`; `eval_reflection_expr` serves
   `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
   `r.field_at[i].T`, and `r.field["x"].T` in `comptime_type_operand` and
@@ -1017,7 +1020,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`lane_def_shape_served`). An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
-  (`declared_associated_type`, `native/mono/substitute.rs`).
+  (`declared_associated_type` over `struct_instance`,
+  `native/mono/substitute.rs`).
   `checker/origins/transfer.rs`
   owns the carried source that lets both (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
@@ -1241,7 +1245,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `Specializer::answer_param_constants` and `param_constant`
   (`mono/specializer.rs`) fold it per instance: a length through `eval_ct`,
   a membership or conformance as a `GenericConstraint` through
-  `constraint_holds` (`mono/availability.rs`). The erased oracle evaluates it
+  `constraint_holds` (`mono/availability.rs`). `eval_ct`
+  (`mono/symbolic.rs`) answers a reflection query through
+  `ParamContext::answer_reflections` with `reflection_answer`, which reads
+  the bound struct's fields off `Bindings::struct_shapes`
+  (`struct_instance`, `mono/substitute.rs`) and applies
+  `ReflectQuery::answer`; an unanswerable query
+  (`ParamError::Reflect`) is a `MonoErrorKind::Instantiation` error that
+  `param_constant` propagates. The checker's producer is
+  `record_reflection_value` (`checker/reflection.rs`). The erased oracle evaluates it
   in `const_value` (`backend/vm.rs`) against `erased_parameter_values`.
 - On the cloner, `fold_pack_uses` (`comptime/rewrite.rs`, called from
   `generate_def_spec`) folds a `def` clone's own pack uses — `Ts[k]()` and the

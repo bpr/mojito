@@ -231,10 +231,11 @@ struct Bindings {
     /// Substitution names a public `Tuple` it closes by its specialization,
     /// as the checker names a substituted use.
     tuple_specializations: Rc<HashSet<String>>,
-    /// Each source struct's parameters and unparameterized associated types.
-    /// Substitution solves `C.Element` from them once `C` is bound to an
-    /// instance, where no signature spelled the member for unification.
-    associated_types: Rc<HashMap<String, AssociatedTypes>>,
+    /// Each source struct's parameters, unparameterized associated types,
+    /// and fields. Substitution solves `C.Element` from them once `C` is
+    /// bound to an instance, where no signature spelled the member for
+    /// unification, and a reflection query reads the fields.
+    struct_shapes: Rc<HashMap<String, StructShape>>,
     /// The call-site arity of an unspecialized variadic callee: substitution
     /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
     variadic_arity: Option<usize>,
@@ -277,10 +278,11 @@ impl LayoutOracle {
     }
 }
 
-/// A struct's own parameters and its associated types over them.
-struct AssociatedTypes {
+/// A struct's own parameters, and its associated types and fields over them.
+struct StructShape {
     param_decls: Vec<ParamDecl>,
     members: Vec<(String, Ty)>,
+    fields: Vec<(String, Ty)>,
 }
 
 struct Specializer<'a> {
@@ -295,7 +297,7 @@ struct Specializer<'a> {
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
     tuple_specializations: Rc<HashSet<String>>,
-    associated_types: Rc<HashMap<String, AssociatedTypes>>,
+    struct_shapes: Rc<HashMap<String, StructShape>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,
     /// Each demanded key's position in `instances`.

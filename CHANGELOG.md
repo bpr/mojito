@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A reflection query over a template-served body's parameter
+  (`reflect[T].field_count()`, `is_struct()`, `field_index["x"]()`,
+  `len(field_names())`, `field_names()[i]`, in a runtime position, a
+  runtime `if`, a bound `comptime n` or `comptime r = reflect[T]`, or a
+  `comptime if` condition; `reflect[Self.T]` and `reflect[Self]` in a
+  generic struct's method) now runs, as in the pin, where it failed with
+  "vm backend does not support the built-in or callee 'reflect.field_count'"
+  or a MIR verify error: the checker records it as a parameter constant,
+  which the elaborator answers per instance from the bound struct by the
+  policy the checker applies to a closed subject, now one shared function
+  (`ReflectQuery::answer`). A field the struct lacks fails the instantiation,
+  as at the pin (`assets/ok/reflection_template_served.mojo`,
+  `assets/type_error/reflection_template_unknown_field.mojo`; roadmap R323
+  and R324 file the erased-oracle gap and the builtin `reflect`).
+
 - A local `comptime` binding over a generic `def`'s or a generic struct's
   parameters (`comptime m = N + 1`, `comptime n = Us.length`, `comptime k =
   Self.n + 1`, `comptime U = T`) now runs, as in the pin, where it failed

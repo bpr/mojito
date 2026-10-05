@@ -624,3 +624,55 @@ fn param_apply_is_structural_and_unfolded() {
     assert_eq!(context.size_of(Ty::Int).to_string(), "size_of[Int]()");
     assert_eq!(*context.size_of(Ty::Int).meta(), MetaTy::int());
 }
+
+/// A reflection query the elaborator's oracle answers closes what sits
+/// above it; one the oracle leaves stays a node, and an answer the closed
+/// subject lacks is the instantiation's error.
+#[test]
+fn answered_reflection_closes_its_enclosing_expression() {
+    let context = ParamContext::new();
+    let subject = context.register(ParamId::new("count", 0), "T", MetaTy::Type);
+    let pair = Ty::Struct("Pair".to_string(), Vec::new().into());
+    let fields = [
+        ("left".to_string(), Ty::Int),
+        ("right".to_string(), Ty::Int),
+    ];
+    let mut oracle = |_: &ParamExpr, query: &ReflectQuery| {
+        query
+            .answer(&pair, Some(&fields))
+            .map(Some)
+            .map_err(ParamError::Reflect)
+    };
+
+    let count = context.reflect_query(&subject, ReflectQuery::FieldCount);
+    let two = infix(&context, InfixOp::Eq, &count, &literal(&context, 2));
+    let answered = context
+        .answer_reflections(&two, &mut oracle)
+        .expect("answers");
+    assert_eq!(answered.as_constant(), Some(&CtValue::Bool(true)));
+
+    let names = context.reflect_query(&subject, ReflectQuery::FieldNames);
+    let second = context
+        .list_get(&names, &literal(&context, 1))
+        .expect("element builds");
+    let answered = context
+        .answer_reflections(&second, &mut oracle)
+        .expect("answers");
+    assert_eq!(
+        answered.as_constant(),
+        Some(&CtValue::Str("right".to_string()))
+    );
+
+    let missing = context.reflect_query(&subject, ReflectQuery::FieldIndex("z".to_string()));
+    assert_eq!(
+        context
+            .answer_reflections(&missing, &mut oracle)
+            .map_err(|error| error.to_string()),
+        Err("struct 'Pair' has no field named 'z'".to_string())
+    );
+
+    let kept = context
+        .answer_reflections(&two, &mut |_, _| Ok(None))
+        .expect("rebuilds");
+    assert_eq!(kept, two);
+}

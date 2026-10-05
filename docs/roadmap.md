@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R323**.
+Next free ID: **R325**.
 
 ## Ordered Work
 
@@ -133,24 +133,6 @@ correctness fix to existing behavior is allowed.
   - Keep `def_pack_names`, `generate_spec`'s `type_pack_expansions` (R4,
     R6), and `DefSpecializationRequest::with_variadic`.
   - Depends on R256, R316, and R246.
-  - Model: Fable, Planned.
-
-- [ ] **R267 (P3b) A reflection query over a template-served `def`'s
-  binder reaches MIR without its subject**
-
-  Problem: `return reflect[T].field_count()` in a template-served
-  `def count[T: AnyType]()`, and a `comptime if reflect[T].field_count() ==
-  2:` whose thunk the elaborator below MIR runs, fail with "vm backend does
-  not support the built-in or callee 'reflect.field_count'", where the pin
-  prints the count.
-  - The checker types the query as a `ParamKind::Reflect` node, but MIR
-    lowers the method call as a plain call with no subject type, which
-    neither the VM nor `native::mono` can answer.
-  - `conformance/probes/template_fallback_reflection.mojo`, which printed
-    `2`, `0` before `comptime if` became template-served, now fails this way.
-  - A closed subject folds above MIR in the crossing pass instead.
-  - The bound form (`comptime r = reflect[T]`) is R75's.
-  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R246 (P3b) A `comptime for` over a named collection, a display
@@ -752,6 +734,23 @@ correctness fix to existing behavior is allowed.
   - The elaborator answers both through the oracle that decides a
     `comptime if` (`answer_param_constants`, `mono/specializer.rs`).
   - Entry R10 deletes the oracle and the question with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R323 (P5) The erased oracle cannot answer a reflection query over a
+  type parameter**
+
+  Problem: `return reflect[T].field_count()` in a template-served
+  `def count[T: AnyType]()`, and the same query in a generic struct's method
+  or a `comptime if` condition, print on concrete MIR and stop under
+  `--erased` with "the erased oracle cannot evaluate the parameter constant".
+  - The query reaches MIR as a parameter constant over `T`, which the
+    elaborator answers per instance (`reflection_answer`,
+    `mono/symbolic.rs`); an erased frame carries no type argument to answer
+    it from.
+  - `assets/ok/reflection_template_served.mojo` is the `ERASED_VM_RESIDUE`
+    row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3647,6 +3646,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     replace the builtin.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
+  stdlib struct over parameter attributes**
+
+  Problem: Mojito answers `reflect[T]` queries by built-in rules in the
+  checker (`checker/reflection.rs`), the crossing pass, `comptime/eval.rs`,
+  and the elaborator (`mono/symbolic.rs`), where upstream's `Reflected[T]`
+  (`std/reflection/reflect.mojo`) is a stdlib struct whose methods return
+  parameter attributes its elaborator folds.
+  - `field_count()` is `_field_types_of[T]().length` over
+    `#kgen.struct_field_types`, `is_struct()` is `#kgen.is_struct_type`, and
+    `field_index[name]()` is `#kgen.struct_field_index_by_name`.
+  - The shared policy is one function today (`ReflectQuery::answer`,
+    `param_expr.rs`), so the answers agree; the shape does not.
+  - Closing it means a bundled `Reflected` over intrinsics that lower to
+    `ParamKind::Reflect`, with the built-in rules deleted.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R276 `SIMD` writes its text in the host where upstream's writes it in
   Mojo**

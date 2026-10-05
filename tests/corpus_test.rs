@@ -366,6 +366,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // parameter or a pack's length has no runtime value to stop at.
     "comptime_for_template_served",
     "pack_element_alias_served",
+    // R323, the erased oracle: an erased frame carries no type argument to
+    // answer a reflection query over a type parameter from.
+    "reflection_template_served",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",

@@ -534,7 +534,8 @@ parametric verifier checks its binders and the concrete verifier rejects a
 survivor, and `native::mono` folds it per instance
 (`answer_param_constants`, after the `comptime if`s are decided): a length
 through `eval_ct`, a membership or conformance through the oracle that
-decides a `comptime if`. A clone binds every pack before materialization
+decides a `comptime if`. A reflection query over a parameter crosses the
+same way (below). A clone binds every pack before materialization
 and folds the same queries in the AST (`fold_pack_uses`). A pack element's
 default construction (`Ts[i]()`, `Self.Ts[i]()`) over a symbolic pack is
 `__init__` through the element's `Defaultable` witness, as `T()` is through
@@ -691,7 +692,15 @@ licenses for a plain parameter, a pack element, and a field type alike; a
 proof on another index, after the use, in another loop, or in an `or` proves
 nothing. A reflection body's certificate is incomplete by rule
 (`template_certificate`), so its instances keep the clone check and the
-elaborator's own field facts. A `Reflect` node never crosses the MIR waist.
+elaborator's own field facts. A value read of a query over a parameter
+(`field_count()`, `is_struct()`, `field_index[name]()`, `len(field_names())`,
+`field_names()[i]`) in a template-served body crosses the MIR waist as a
+`Const::Param` over its `Reflect` node, as upstream's `Reflected[T]` methods
+return parameter attributes (`#kgen.struct_field_types`) its elaborator
+folds; `native::mono` answers it per instance from the source struct's
+fields (`eval_ct` through `ParamContext::answer_reflections`), by the one
+policy the checker applies to a closed subject (`ReflectQuery::answer`), and
+a query with no answer fails the instantiation. A field type never crosses.
 
 **Validation is a template producer.** `Compiler::compile_linked` runs
 validation once, on the prepared program that every discovery round then

@@ -364,6 +364,22 @@ impl ParamContext {
         {
             return self.select(elements, index);
         }
+        let index = self.intern(index);
+        if let Some(CtValue::Tuple(values)) = list.as_constant()
+            && let Some(position) = index.as_constant().and_then(fold::integer_value)
+        {
+            let count = values.len();
+            return position
+                .to_i64()
+                .and_then(|position| usize::try_from(position).ok())
+                .and_then(|position| values.get(position))
+                .ok_or_else(|| {
+                    ParamError::Arithmetic(format!(
+                        "parameter list index {position} is out of range for {count} element(s)"
+                    ))
+                })
+                .and_then(|value| self.constant(value.clone()));
+        }
         let MetaTy::ParamList(element) = list.meta() else {
             return Err(ParamError::TypeMismatch {
                 operation: "parameter list element".to_string(),
@@ -371,7 +387,6 @@ impl ParamContext {
                 found: list.meta().to_string(),
             });
         };
-        let index = self.intern(index);
         if !index.meta().is_integer() {
             return Err(ParamError::TypeMismatch {
                 operation: "parameter list element".to_string(),
@@ -541,6 +556,57 @@ impl ParamContext {
                 let args: Vec<ParamExpr> = args
                     .iter()
                     .map(|arg| self.fold(arg))
+                    .collect::<Result<_, _>>()?;
+                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+            }
+            _ => expr.clone(),
+        })
+    }
+
+    /// Rebuild `expr` with every reflection query `oracle` answers replaced
+    /// by its answer, through the folding constructors, so what sits above
+    /// an answered query closes too (`reflect[T].field_count() == 2` to a
+    /// `Bool`, `reflect[T].field_names()[1]` to a string). A query the oracle
+    /// leaves (`Ok(None)`) is rebuilt as it is.
+    pub fn answer_reflections(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut ReflectOracle<'_>,
+    ) -> Result<ParamExpr, ParamError> {
+        Ok(match expr.kind() {
+            ParamKind::Reflect { subject, query } => {
+                let subject = self.answer_reflections(subject, oracle)?;
+                match oracle(&subject, query)? {
+                    Some(answer) => self.constant(answer)?,
+                    None => self.reflect_query(&subject, query.clone()),
+                }
+            }
+            ParamKind::Op { op, operands } => {
+                let operands: Vec<ParamExpr> = operands
+                    .iter()
+                    .map(|operand| self.answer_reflections(operand, oracle))
+                    .collect::<Result<_, _>>()?;
+                self.op(*op, &operands)?
+            }
+            ParamKind::Identical(left, right) => self.identical(
+                &self.answer_reflections(left, oracle)?,
+                &self.answer_reflections(right, oracle)?,
+            ),
+            ParamKind::Select { elements, index } => {
+                self.select(elements.clone(), &self.answer_reflections(index, oracle)?)?
+            }
+            ParamKind::ListGet { list, index } => self.list_get(
+                &self.answer_reflections(list, oracle)?,
+                &self.answer_reflections(index, oracle)?,
+            )?,
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated,
+            } => {
+                let args: Vec<ParamExpr> = args
+                    .iter()
+                    .map(|arg| self.answer_reflections(arg, oracle))
                     .collect::<Result<_, _>>()?;
                 self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
             }
@@ -1949,6 +2015,52 @@ impl ReflectQuery {
             Self::FieldNamed(_) => MetaTy::Type,
         }
     }
+
+    /// The answer for a closed `subject`. `fields` are a struct's fields,
+    /// their types at the subject's arguments; any other type passes `None`
+    /// and answers `is_struct()` alone, `True` (only an MLIR primitive, which
+    /// Mojito never spells, answers `False` at the pin).
+    pub fn answer(
+        &self,
+        subject: &Ty,
+        fields: Option<&[(String, Ty)]>,
+    ) -> Result<CtValue, ReflectError> {
+        let Some(fields) = fields else {
+            return match self {
+                Self::IsStruct => Ok(CtValue::Bool(true)),
+                query => Err(ReflectError::NotStruct {
+                    subject: subject.to_string(),
+                    query: query.to_string(),
+                }),
+            };
+        };
+        let position = |field: &str| {
+            fields
+                .iter()
+                .position(|(declared, _)| declared == field)
+                .ok_or_else(|| ReflectError::NoField {
+                    owner: match subject {
+                        Ty::Struct(name, _) => name.clone(),
+                        other => other.to_string(),
+                    },
+                    field: field.to_string(),
+                })
+        };
+        let field_ty = |(_, ty): &(String, Ty)| CtValue::Type(Box::new(ty.clone()));
+        Ok(match self {
+            Self::IsStruct => CtValue::Bool(true),
+            Self::FieldCount => CtValue::Int(fields.len() as i64),
+            Self::FieldNames => CtValue::Tuple(
+                fields
+                    .iter()
+                    .map(|(declared, _)| CtValue::Str(declared.clone()))
+                    .collect(),
+            ),
+            Self::FieldTypes => CtValue::Tuple(fields.iter().map(field_ty).collect()),
+            Self::FieldIndex(field) => CtValue::Int(position(field)? as i64),
+            Self::FieldNamed(field) => field_ty(&fields[position(field)?]),
+        })
+    }
 }
 
 impl fmt::Display for ReflectQuery {
@@ -1960,6 +2072,33 @@ impl fmt::Display for ReflectQuery {
             Self::FieldTypes => write!(f, "field_types()"),
             Self::FieldIndex(name) => write!(f, "field_index[{name:?}]()"),
             Self::FieldNamed(name) => write!(f, "field[{name:?}].T"),
+        }
+    }
+}
+
+/// What answers a reflection query over a subject at an instance:
+/// `Ok(None)` leaves the query as it is.
+pub type ReflectOracle<'a> =
+    dyn FnMut(&ParamExpr, &ReflectQuery) -> Result<Option<CtValue>, ParamError> + 'a;
+
+/// Why a reflection query over a closed subject has no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReflectError {
+    /// `field_index[name]()` or `field[name]` of a field the struct lacks.
+    NoField { owner: String, field: String },
+    /// A field query of a type that is not a struct.
+    NotStruct { subject: String, query: String },
+}
+
+impl fmt::Display for ReflectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoField { owner, field } => {
+                write!(f, "struct '{owner}' has no field named '{field}'")
+            }
+            Self::NotStruct { subject, query } => {
+                write!(f, "reflect[{subject}].{query} requires a struct type")
+            }
         }
     }
 }
@@ -2109,6 +2248,8 @@ pub enum ParamError {
     Budget {
         limit: usize,
     },
+    /// A reflection query over a closed subject that has no answer.
+    Reflect(ReflectError),
 }
 
 impl fmt::Display for ParamError {
@@ -2134,6 +2275,7 @@ impl fmt::Display for ParamError {
                 f,
                 "parameter expression exceeds the canonicalization budget of {limit} terms"
             ),
+            Self::Reflect(error) => write!(f, "{error}"),
         }
     }
 }

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	504
+# swept-count	505
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -441,6 +441,7 @@ assets/type_error/reference_write_explicit_destroy.mojo	compile-reject	agree	err
 assets/type_error/reflected_field_proof_is_positional.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
 assets/type_error/reflected_field_type_needs_proof.mojo	compile-reject	agree	error: invalid call to '__init__': no candidates found
 assets/type_error/reflection_runtime_query_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/reflection_template_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
 assets/type_error/return_origin_widening_field_view.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
 assets/type_error/return_origin_widening_parameter_field.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(b.items)]' value to 'View[origin_of(b)]'

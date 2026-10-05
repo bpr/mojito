@@ -87,9 +87,13 @@ impl Flatten<'_> {
             ExprKind::Infix(op, a, b) => self.infix_op(e, *op, a, b),
 
             // --- Calls / access ------------------------------------------------
-            // A pack query read as a runtime value is a parameter constant;
-            // its operand is a type, never lowered.
-            ExprKind::Call { .. } | ExprKind::Invoke { .. } | ExprKind::Member { .. }
+            // A pack or reflection query read as a runtime value is a
+            // parameter constant; its operand is a type, never lowered.
+            ExprKind::Call { .. }
+            | ExprKind::Invoke { .. }
+            | ExprKind::Member { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Index { .. }
                 if let Some(value) = self.param_value(e) =>
             {
                 self.param_value_register(e, value)
