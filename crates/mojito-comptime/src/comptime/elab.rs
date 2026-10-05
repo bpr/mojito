@@ -383,27 +383,15 @@ impl Elab<'_> {
             } => {
                 // A variadic struct template's members reference the unbound pack;
                 // keep it verbatim for monomorphization (mirrors def templates).
-                // DType-/struct-valued parameter templates are kept the same way
-                // (a SIMD-keyed method's body crosses as its stub).
+                // DType-/struct-valued parameter templates are kept the same way.
                 if self.is_specializable(stmt) {
-                    let mut template = stmt.clone();
-                    if let StmtKind::Struct { name, methods, .. } = &mut template.kind {
-                        super::synth::stub_simd_keyed_methods(name, methods);
-                    }
-                    out.push(template);
+                    out.push(stmt.clone());
                     return Ok(());
                 }
                 let mut methods = methods
                     .iter()
                     .map(|m| {
                         let mut m = m.clone();
-                        // A SIMD-keyed method (`value: SIMD[_, _]`) checks
-                        // only as a per-call clone with its vector type
-                        // bound; the template body is a trap stub.
-                        if super::synth::is_simd_keyed_method(&m) {
-                            m.body = vec![super::specialize::unspecialized_method_stub(name, &m)];
-                            return Ok(m);
-                        }
                         // A `comptime if` or `comptime for` over the
                         // struct's binders or the method's own stays in its
                         // template, as a generic `def`'s does: the

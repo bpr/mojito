@@ -5,13 +5,12 @@ use super::realization_folds::{
     closed_pack_values, construct_folded_vectors, constructed_element_indices, fold_binder_views,
     fold_vector_values, folded_literals, loop_element_indices, merge_element_constructions,
     realize_lane_comparisons, realize_lane_float_methods, realize_simd_intrinsics,
-    realize_value_shaped_constructions, relocate_packs, simd_binder_values, spread_packs,
-    transferred_element_indices,
+    realize_value_shaped_constructions, relocate_packs, spread_packs, transferred_element_indices,
 };
 use super::{
     BodyDeclaration, BodyParams, BodyRole, BodySite, DerivedBody, ElementIndices,
     InstanceSubstitution, Occurrence, VectorFold, bound_binder, callable_binder,
-    canonical_hash_leaves, clone_origin_binder, element_construction_part, fact_at,
+    clone_origin_binder, element_construction_part, fact_at, inferred_value_binder,
     nested_def_calls, note_realized_callee, origin_binder, push_unique, sig_origin_members,
     sorted_applications, without_struct_origins,
 };
@@ -345,6 +344,9 @@ impl Checker {
             if method.type_params.iter().all(|binder| {
                 origin_binder(binder)
                     || bound_binder(binder)
+                    || (inferred_value_binder(binder)
+                        && matches!(class, TemplateClass::MethodBody(features)
+                            if features.contains(MethodFeatures::VALUE_BINDERS)))
                     || (callable_binder(binder)
                         && matches!(class, TemplateClass::MethodBody(features)
                             if features.contains(MethodFeatures::CALLABLE_BINDERS)))
@@ -353,7 +355,7 @@ impl Checker {
                     method.type_params.iter().any(|binder| binder.name == *name)
                 }));
         // A body the elaborator shaped itself names no binder its clone
-        // keeps: a SIMD-keyed method's stub keeps the wildcard vector binder.
+        // keeps.
         let baked = trace.first_copy_template
             || ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
                 && match class {
@@ -705,16 +707,11 @@ impl Checker {
                     .find(|decl| decl.name().trim_start_matches('*') == name)
             };
             let mut values = Vec::new();
-            let mut views = Vec::new();
             let types = trace
                 .type_bindings
                 .iter()
                 .filter_map(|(name, source)| {
-                    decl_named(name).map(|decl| {
-                        let ty = resolve(source)?;
-                        values.extend(simd_binder_values(decl, &ty, &mut views)?);
-                        Ok((decl.id().clone(), ty))
-                    })
+                    decl_named(name).map(|decl| Ok((decl.id().clone(), resolve(source)?)))
                 })
                 .collect::<Result<_, _>>()?;
             let packs = trace
@@ -732,7 +729,6 @@ impl Checker {
             return Ok(InstanceSubstitution {
                 types,
                 packs,
-                views,
                 values,
                 kept_values: Vec::new(),
                 named_self: None,
@@ -744,7 +740,6 @@ impl Checker {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),
-                views: Vec::new(),
                 values: Vec::new(),
                 kept_values: Vec::new(),
                 named_self: None,
@@ -786,7 +781,6 @@ impl Checker {
         };
         let mut types = TySubst::new();
         let mut packs = HashMap::new();
-        let mut views = Vec::new();
         let mut values = Vec::new();
         let mut kept_values = Vec::new();
         let mut named_self = None;
@@ -881,9 +875,7 @@ impl Checker {
         for decl in own {
             let name = decl.name().trim_start_matches('*');
             if let Some((_, source)) = trace.type_bindings.iter().find(|(bound, _)| bound == name) {
-                let ty = resolve(source)?;
-                values.extend(simd_binder_values(decl, &ty, &mut views)?);
-                types.insert(decl.id().clone(), ty);
+                types.insert(decl.id().clone(), resolve(source)?);
             } else if let Some((_, sources)) =
                 trace.pack_bindings.iter().find(|(bound, _)| bound == name)
             {
@@ -910,7 +902,6 @@ impl Checker {
         Ok(InstanceSubstitution {
             types,
             packs,
-            views,
             values,
             kept_values,
             named_self,
@@ -1007,7 +998,6 @@ impl Checker {
         let InstanceSubstitution {
             types: substitution,
             packs,
-            views,
             values,
             kept_values,
             named_self,
@@ -1015,13 +1005,12 @@ impl Checker {
         let canonical = |ty: Ty| self.instance_names(ty, named_self.as_slice());
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
-                &fold_binder_views(ty, views),
+                ty,
                 substitution,
                 packs,
                 values,
             ))
         };
-        let demands = self.hash_leaf_demands.borrow().len();
         let mut facts = substituted_facts(template, instance, indices, &canonical)?;
         spread_packs(&mut facts, occurrences)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
@@ -1355,11 +1344,6 @@ impl Checker {
         facts
             .operation_adjustments
             .sort_by_key(|(id, _)| position(id));
-        // The template's leaves are closed; a bound builtin or dispatch
-        // realized above recorded the instance's own.
-        let mut leaves = std::mem::take(&mut facts.hash_leaves);
-        leaves.extend(self.hash_leaves_since(demands));
-        facts.hash_leaves = canonical_hash_leaves(leaves);
         Ok(facts)
     }
 
@@ -1912,7 +1896,6 @@ fn substituted_facts(
     InstanceSubstitution {
         types: substitution,
         packs,
-        views,
         values,
         ..
     }: &InstanceSubstitution,
@@ -1921,7 +1904,7 @@ fn substituted_facts(
 ) -> Result<CheckedBodyFacts, &'static str> {
     let substitute = |ty: &Ty| {
         canonical(mojito_types::types::substitute_packs(
-            &fold_binder_views(ty, views),
+            ty,
             substitution,
             packs,
             values,
@@ -1936,7 +1919,7 @@ fn substituted_facts(
             .chain(values.iter().cloned())
             .collect();
         canonical(mojito_types::types::substitute_packs(
-            &fold_binder_views(ty, views),
+            ty,
             substitution,
             packs,
             &values,

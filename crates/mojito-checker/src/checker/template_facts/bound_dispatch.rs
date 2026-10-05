@@ -179,10 +179,7 @@ impl Checker {
                     facts.copy_place_value_uses.sort_by_key(order);
                 }
             }
-            BoundWitness::HashLeaf => {
-                self.record_hash_leaf(&ty);
-                drop_call(facts, id);
-            }
+            BoundWitness::HashLeaf => drop_call(facts, id),
             witness @ BoundWitness::Method { declared, .. } => {
                 // A receiver the call copies is copied only for a witness
                 // that consumes it, as the requirement does.
@@ -470,13 +467,7 @@ impl Checker {
                 .ok_or("a bound builtin's argument has no retained type")?;
             let accepted = match builtin {
                 BoundBuiltin::Update => self.is_hashable(ty),
-                BoundBuiltin::UpdateSimd => {
-                    let vector = crate::checker::builtins::simd_valued_ty(ty);
-                    if vector {
-                        self.record_hash_leaf(ty);
-                    }
-                    vector
-                }
+                BoundBuiltin::UpdateSimd => crate::checker::builtins::simd_valued_ty(ty),
                 BoundBuiltin::Write => self.printable_argument(ty),
                 BoundBuiltin::Finish => false,
             };

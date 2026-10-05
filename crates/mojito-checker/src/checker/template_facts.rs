@@ -93,8 +93,6 @@ pub(super) struct BodyFactBaseline {
     /// How many of those unkeyed entries the body's nested `def` statements
     /// key, which a recipe accounts for (`nested_def_entries`).
     nested_defs: [usize; UNKEYED_STORES],
-    /// The length of the hash-leaf demand log.
-    hash_leaf_demands: usize,
     /// The transferred-origin store as the body found it: what a replay
     /// merges is keyed by owner, so growth is told entry by entry.
     transferred: HashMap<OwnerId, Vec<mojito_types::origin::Origin>>,
@@ -296,12 +294,6 @@ struct InstanceSubstitution {
     types: TySubst,
     /// Each baked type pack's element types.
     packs: HashMap<mojito_types::param_expr::ParamId, Vec<Ty>>,
-    /// Each wildcard vector binder's lane-shaped view (`simd_binder_view`)
-    /// with the closed vector type the clone bakes the binder to, which a
-    /// retained type equal to the whole view takes as it stands
-    /// (`fold_binder_views`): the native `UInt` has no lane form, so
-    /// folding its slots alone would spell it `SIMD[DType.uint64, 1]`.
-    views: Vec<(Ty, Ty)>,
     /// Each folded value binder's value, which a lane dtype or width the
     /// template left open takes (`SIMD[DType.int32, w]`).
     values: Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>,
@@ -765,7 +757,6 @@ impl Checker {
             tables: FactTable::ALL.map(|table| self.span_table(table).entries()),
             unkeyed: self.unkeyed_fact_entries(),
             nested_defs: self.nested_def_entries(body),
-            hash_leaf_demands: self.hash_leaf_demands.borrow().len(),
             transferred: (**self.transferred_origins.borrow()).clone(),
             owner_start: self.next_owner.get(),
         }
@@ -783,13 +774,6 @@ impl Checker {
 /// The generated Tuple accessor a subscript at a literal index selects, one
 /// member per position (`__getitem_param__$k`).
 const TUPLE_ELEMENT_ACCESSOR: &str = "__getitem_param__";
-
-/// Hash leaves deduplicated, in the order of their debug spelling.
-fn canonical_hash_leaves(mut leaves: Vec<Ty>) -> Vec<Ty> {
-    leaves.sort_by_cached_key(|leaf| format!("{leaf:?}"));
-    leaves.dedup();
-    leaves
-}
 
 /// How many fact stores `unkeyed_fact_entries` watches.
 const UNKEYED_STORES: usize = 6;
@@ -1350,6 +1334,19 @@ fn bound_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
         && !binder.infer_only
 }
 
+/// An infer-only scalar value binder of a method's own (`[w: SIMDLength,
+/// //]`, `SIMD[_, _]`'s desugared slots), which a call's arguments solve
+/// and a clone keeps as [`bound_binder`]'s value binders are kept.
+fn inferred_value_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
+    binder.infer_only
+        && matches!(binder.bounds.as_slice(), [bound]
+            if matches!(bound.as_str(), "Int" | "Bool" | "DType" | "SIMDLength"))
+        && binder.origin_mutability.is_none()
+        && binder.value_type.is_none()
+        && binder.callable_bound.is_none()
+        && binder.default.is_none()
+}
+
 /// A binder spelled with a callable right-hand side and nothing else
 /// (`f: def(Int) -> Int`, whose bound the parser spells `<function type>`),
 /// whose declaration decides whether it is a compile-time callable value
@@ -1693,19 +1690,15 @@ struct BodyShape<'a> {
     /// judged lies in: a `break` or `continue` there leaves the runtime
     /// loop, never an unrolled `comptime for`.
     runtime_loops: std::cell::Cell<u32>,
-    /// The hidden dtype and width binders of the method's wildcard vector
-    /// binders (`$simd.dtype`, `$simd.size`), which a lane-shaped type may
-    /// name and every clone folds ([`Self::lane_shaped_simd`]).
-    lane_binders: Vec<String>,
-    /// The `to_bits` reinterpretations admitted over a lane-shaped receiver,
+    /// The `to_bits` reinterpretations admitted over a value-shaped receiver,
     /// each with its receiver occurrence, whose adjustment an instance
     /// records from its substituted result.
     simd_to_bits: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
-    /// The `cast[DType.<name>]()` conversions admitted over a lane-shaped
+    /// The `cast[DType.<name>]()` conversions admitted over a value-shaped
     /// receiver, each with its receiver occurrence, whose adjustment an
     /// instance records from its substituted result.
     simd_casts: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,
-    /// The `.length` reads admitted over a lane-shaped receiver, each with
+    /// The `.length` reads admitted over a value-shaped receiver, each with
     /// its receiver occurrence, whose adjustment an instance records from
     /// the receiver's substituted type.
     simd_lengths: RefCell<Vec<(OccurrenceId, OccurrenceId)>>,

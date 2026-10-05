@@ -2160,11 +2160,11 @@ fn unavailable_member_stub_derives() {
 }
 
 #[test]
-fn simd_keyed_method_stub_derives() {
-    // `AHasher[key]._update_with_simd(mut self, new_data: SIMD[_, _])`
-    // checks only as per-leaf clones; each specialization holds one trap stub
-    // in its place, shared under the same identities: the first copy checked
-    // is its template, and the other keys' copies derive from it.
+fn simd_wildcard_member_is_template_served() {
+    // `AHasher[key]._update_with_simd(mut self, new_data: SIMD[_, _])` is a
+    // generator over its inferred dtype and width: each key's specialization
+    // keeps the member with its own binders, which the elaborator
+    // instantiates per hashed vector type, so no leaf is cloned.
     let source = "from std.hashlib._ahash import AHasher, U256\n\ndef main():\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    a.update(Int(7))\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    b.update(Int(7))\n    print(a^.finish() == b^.finish())\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2176,30 +2176,53 @@ fn simd_keyed_method_stub_derives() {
         );
     }
     let stats = derived.template_stats();
-    let stubs = |names: &[String]| {
-        names
-            .iter()
-            .filter(|name| name.contains("AHasher$") && name.ends_with("._update_with_simd"))
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert_eq!(
-        stubs(&stats.inferred_clones).len(),
-        1,
-        "only the stub's first copy is inferred: {stats:?}"
-    );
+    let leaf_clone = |name: &String| name.contains("._update_with_simd$");
     assert!(
-        stubs(&stats.derived).len() >= 2,
-        "the other keys' stubs derive: {stats:?}"
+        !stats.derived.iter().any(leaf_clone) && !stats.inferred_clones.iter().any(leaf_clone),
+        "no hasher leaf is cloned: {stats:?}"
     );
 }
 
 #[test]
-fn struct_hasher_simd_update_derives() {
-    // A method whose own `H: Hasher` an instance binds to `AHasher` hands it
-    // multi-lane vectors: the template withholds the leaves those bound calls
-    // demanded, so each instance, selecting the struct's own `update` and
-    // `_update_with_simd`, derives without them.
+fn hash_leaf_instantiates_the_hasher_template_per_vector_type() {
+    // A `hash` in a lane-keyed `def` reaches the default hasher's
+    // `_update_with_simd` at each instance's vector type: the elaborator
+    // instantiates the one template there, a four-lane leaf included, and
+    // mints no clone above MIR.
+    let source = "def h[dt: DType, n: Int](v: SIMD[dt, n]) -> UInt64:\n    return hash(v)\n\ndef main():\n    print(h[DType.int32, 4](SIMD[DType.int32, 4](1, 2, 3, 4)))\n    print(h[DType.uint8, 1](UInt8(5)))\n";
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "11760906910753778828\n649810281545677513\n"
+    );
+    assert!(
+        program
+            .mir()
+            .functions
+            .iter()
+            .all(|(name, _)| !name.contains("._update_with_simd$") && !name.starts_with("h$")),
+        "neither the def nor a hasher leaf is cloned above MIR"
+    );
+    let concrete = program.concrete_mir().expect("elaborate");
+    let leaves: Vec<String> = concrete
+        .program
+        .functions
+        .iter()
+        .filter(|(name, _)| name.contains("AHasher$") && name.contains("._update_with_simd$"))
+        .filter_map(|(_, function)| function.param_types.get(1).map(ToString::to_string))
+        .collect();
+    assert!(
+        leaves.iter().any(|leaf| leaf == "SIMD[DType.int32, 4]"),
+        "the four-lane leaf is an instance of the template: {leaves:?}"
+    );
+}
+
+#[test]
+fn struct_hasher_simd_update_is_template_served() {
+    // A method whose own `H: Hasher` a call binds to `AHasher` hands it
+    // multi-lane vectors: the elaborator instantiates the struct's own
+    // `update` and `_update_with_simd` per call, from one template.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n\n    def __init__(out self, value: Int):\n        self.value = value\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher._update_with_simd(SIMD[DType.int32, 4](1, 2, 3, 4))\n        hasher.update(SIMD[DType.uint8, 8](self.value))\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2210,21 +2233,23 @@ fn struct_hasher_simd_update_derives() {
             "True False\n"
         );
     }
+    // The template serves every hasher: no instance of the method is
+    // cloned for either key.
     let stats = derived.template_stats();
-    let instances = stats
-        .derived
-        .iter()
-        .filter(|name| name.starts_with("Tag.__hash__$") && name.contains("AHasher"))
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
-    assert_eq!(instances, 2, "both hasher instances derive: {stats:?}");
+    let clone = |name: &String| name.starts_with("Tag.__hash__$");
+    assert!(
+        !stats.derived.iter().any(clone)
+            && !stats.inferred_clones.iter().any(clone)
+            && !stats.refused.iter().any(|(name, _)| clone(name)),
+        "no hasher instance is cloned: {stats:?}"
+    );
 }
 
 #[test]
-fn struct_hasher_field_update_derives() {
-    // A method whose own `H: Hasher` an instance binds to `AHasher` hands it
-    // a field of `self` and a field of a field: each is borrowed where it
-    // lies, apart from the hasher, so both instances derive.
+fn struct_hasher_field_update_is_template_served() {
+    // A method whose own `H: Hasher` a call binds to `AHasher` hands it a
+    // field of `self` and a field of a field: each is borrowed where it
+    // lies, apart from the hasher, and the template serves both keys.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\n\n@fieldwise_init\nstruct Inner(Copyable, Movable):\n    var lanes: SIMD[DType.uint8, 4]\n\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n    var inner: Inner\n\n    def __init__(out self, value: Int):\n        self.value = value\n        self.inner = Inner(SIMD[DType.uint8, 4](1, 2, 3, 4))\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.value)\n        hasher._update_with_simd(self.inner.lanes)\n\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2235,20 +2260,15 @@ fn struct_hasher_field_update_derives() {
             "True False\n"
         );
     }
+    // The template serves every hasher: no instance of the method is
+    // cloned for either key.
     let stats = derived.template_stats();
-    let instances = stats
-        .derived
-        .iter()
-        .filter(|name| name.starts_with("Tag.__hash__$") && name.contains("AHasher"))
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
-    assert_eq!(instances, 2, "both hasher instances derive: {stats:?}");
+    let clone = |name: &String| name.starts_with("Tag.__hash__$");
     assert!(
-        !stats
-            .refused
-            .iter()
-            .any(|(name, _)| name.starts_with("Tag.__hash__$")),
-        "no hasher instance is refused: {stats:?}"
+        !stats.derived.iter().any(clone)
+            && !stats.inferred_clones.iter().any(clone)
+            && !stats.refused.iter().any(|(name, _)| clone(name)),
+        "no hasher instance is cloned: {stats:?}"
     );
 }
 
@@ -2438,16 +2458,13 @@ fn template_vector_keyed_members_derive() {
             );
         }
     }
-    // The bundled `AHasher`'s own members derive the same way; only the
-    // trap stub standing for its wildcard `_update_with_simd` is inferred.
+    // The bundled `AHasher`'s own members derive the same way.
     let hashed = compile_entry(
         &compiler,
         "def main():\n    print(hash(String(\"hello\")))\n",
     );
     let stats = hashed.template_stats();
-    let own = |name: &String| {
-        name.starts_with("__module$$ahash$AHasher$") && !name.contains("._update_with_simd")
-    };
+    let own = |name: &String| name.starts_with("__module$$ahash$AHasher$");
     assert!(
         stats.derived.iter().any(&own),
         "AHasher's members derive: {stats:?}"
@@ -2591,7 +2608,6 @@ fn discovery_scan_matches_the_checked_arena() {
         let generic = discovery.generic_instantiations().clone();
         let methods = discovery.method_instantiations().clone();
         let structs = discovery.struct_instantiations().to_vec();
-        let leaves = discovery.hash_leaf_types().to_vec();
 
         let checked = discovery.finalize();
         let arena: Vec<_> = checked
@@ -2617,7 +2633,6 @@ fn discovery_scan_matches_the_checked_arena() {
         assert_eq!(&generic, checked.generic_instantiations(), "{benchmark}");
         assert_eq!(&methods, checked.method_instantiations(), "{benchmark}");
         assert_eq!(structs, checked.struct_instantiations(), "{benchmark}");
-        assert_eq!(leaves, checked.hash_leaf_types(), "{benchmark}");
     }
 }
 
@@ -3170,28 +3185,26 @@ fn template_method_generic_calls_derive() {
 #[test]
 fn template_method_vector_hash_leaf_derives() {
     // A bound `__hash__` on a sized scalar or a multi-lane vector instance:
-    // derivation's hashed leaf is the one the instance's clone check accepts.
-    // An instance derives its per-call clone over the hasher. The template
-    // serves the instance itself.
+    // the elaborator instantiates the hasher's leaf at each instance's lane,
+    // so the template serves the instance and its `digest` over the hasher
+    // alike, and no clone is minted.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_vector_hash_leaf.mojo"),
         "5089976597503910097\nTrue True\n",
-        &[("Box.digest", 2)],
+        &[("Box.digest", 0)],
     );
     assert_methods_derive(
         include_str!("../assets/ok/template_method_vector_instance.mojo"),
         "1547189026303444902\n",
-        &[("Box.digest", 1)],
+        &[("Box.digest", 0)],
     );
 }
 
 #[test]
 fn template_method_simd_leaf_derives() {
-    // A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])`: source
-    // validation checks the body with the wildcard parameter viewed as a
-    // lane-shaped vector, and every per-call leaf clone — the fourteen eager
-    // scalars and a demanded `SIMD[DType.uint8, 4]` — folds the dtype and
-    // width the template left open.
+    // A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])` is a
+    // generator over its inferred dtype and width: the template serves every
+    // leaf, so no leaf is cloned.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_simd_leaf.mojo"),
         "12638128926439346813 8559387686524852476\n5808589858502755950 2298681937012504952\n\
@@ -3199,8 +3212,8 @@ fn template_method_simd_leaf_derives() {
          True False\n13725386680924731485 17471\n620445648566982762 12768243554632580026\n\
          10 20 2\n",
         &[
-            ("FoldHasher._update_with_simd", 15),
-            ("PairHasher._update_with_simd", 15),
+            ("FoldHasher._update_with_simd", 0),
+            ("PairHasher._update_with_simd", 0),
         ],
     );
     let program = compile_entry(
@@ -3222,12 +3235,12 @@ fn template_method_simd_leaf_derives() {
 fn template_method_simd_leaf_default_bits_derives() {
     // `value.to_bits()` with its defaulted target over the wildcard vector
     // parameter: the template's target is the unsigned dtype of the lane's
-    // width as a parameter expression, which each leaf clone folds.
+    // width as a parameter expression, which each instance folds.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_simd_leaf_default_bits.mojo"),
         "12638128926439346813 12638149817160282822\n8026467504136239071 12638152016183539244\n\
          559230338672390537\n620445648566982762\n",
-        &[("BitsHasher._update_with_simd", 15)],
+        &[("BitsHasher._update_with_simd", 0)],
     );
 }
 
@@ -3235,12 +3248,12 @@ fn template_method_simd_leaf_default_bits_derives() {
 fn template_method_simd_leaf_default_bits_lanes_derive() {
     // Lanes of a local holding `value.to_bits()` with its defaulted target,
     // each cast before use: a lane is a symbolic-lane scalar in the
-    // template, which each leaf clone folds with the cast's source.
+    // template, which each instance folds with the cast's source.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_simd_leaf_default_bits_lanes.mojo"),
         "12638128926439346813 12638149817160282822\n8026467504136239071 12638152016183539244\n\
          559230338672390537\n620445648566982762\n",
-        &[("LaneBitsHasher._update_with_simd", 15)],
+        &[("LaneBitsHasher._update_with_simd", 0)],
     );
 }
 
@@ -5368,32 +5381,19 @@ fn template_field_of_field_derives() {
 }
 
 #[test]
-fn ctfe_subprogram_hasher_leaves_derive() {
-    // Every compile-time `hash` checks its VM-CTFE subprogram twice (the
-    // typing probe, then the run), and each check mints the hasher leaves
-    // again. They derive from the compilation's validated templates; the
-    // driver's own passes alone derive each leaf only a handful of times.
+fn ctfe_subprogram_hasher_leaves_are_template_served() {
+    // A compile-time `hash` runs the hasher's `_update_with_simd` template
+    // in its VM-CTFE subprogram, its dtype and width read off the leaf, so
+    // neither the subprogram nor the driver clones a leaf.
     let source = include_str!("../assets/ok/comptime_hash.mojo");
     let program = compile_entry(&Compiler::default(), source);
     let stats = program.template_stats();
-    let leaf = "__module$$fnv1a$Fnv1a._update_with_simd$y3:Int";
-    let derived = stats.derived.iter().filter(|name| *name == leaf).count();
-    assert!(derived >= 20, "{leaf} derived {derived} times");
+    let leaf_clone = |name: &String| name.contains("._update_with_simd$");
     assert!(
-        stats
-            .inferred_clones
-            .iter()
-            .all(|name| !name.contains("._update_with_simd$")),
-        "no hasher leaf is inferred: {:?}",
-        stats.inferred_clones
-    );
-    assert!(
-        stats
-            .refused
-            .iter()
-            .all(|(name, _)| !name.contains("._update_with_simd$")),
-        "no hasher leaf is refused: {:?}",
-        stats.refused
+        !stats.derived.iter().any(leaf_clone)
+            && !stats.inferred_clones.iter().any(leaf_clone)
+            && !stats.refused.iter().any(|(name, _)| leaf_clone(name)),
+        "no hasher leaf is cloned: {stats:?}"
     );
     let verified = compile_entry(
         &Compiler::default().with_template_verification(true),

@@ -1483,44 +1483,8 @@ impl Elab<'_> {
                 }
             }
         }
-        // A SIMD-keyed hasher method crosses as its stub plus the eager
-        // per-leaf clones: the subprogram has no discovery loop to mint them.
-        // Each clone is stamped and traced as the driver's elaboration mints
-        // it, so the subprogram's check derives it from its template.
-        let consts = self.top_consts.borrow().clone();
         let first_trace = self.method_traces.borrow().len();
         let mut generated = GeneratedDeclarations::default();
-        for statement in &mut program {
-            let requests = super::synth::hasher_leaf_requests(statement, &self.hash_leaf_types);
-            let module = statement.module.clone();
-            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
-                continue;
-            };
-            let base = super::specialize::PerCallBase {
-                owner: Some(super::specialize::PerCallOwner {
-                    name,
-                    module: module.as_deref(),
-                    template: name,
-                }),
-                ..super::specialize::PerCallBase::default()
-            };
-            let mut clones = Vec::new();
-            for method in methods.iter_mut() {
-                if super::synth::is_simd_keyed_method(method) {
-                    clones.extend(
-                        self.per_call_method_clones(name, method, &requests, &base, &consts),
-                    );
-                    method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
-                }
-            }
-            for clone in &mut clones {
-                let tag = clone_source_tag(module.as_deref(), name, &clone.name);
-                mojito_ast::ast::stamp_source(&mut clone.body, &tag);
-                generated.methods.push((name.clone(), clone.name.clone()));
-            }
-            self.ctfe_clones.set(self.ctfe_clones.get() + clones.len());
-            methods.extend(clones);
-        }
         // Evaluating the aliases registers the vector-keyed specializations
         // they name (`comptime default_hasher = AHasher[...]`); a retained
         // declaration reaches such a clone through the alias (`H: Hasher =

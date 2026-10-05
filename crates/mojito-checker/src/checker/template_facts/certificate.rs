@@ -8,7 +8,6 @@ use super::{
     template_callee,
 };
 use crate::checker::Checker;
-use crate::checker::builtins::simd_wildcard_binder;
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     CheckedBodyFacts, FactTable, IncompleteReason, MethodFeatures, OccurrenceId, TemplateClass,
@@ -273,7 +272,6 @@ impl Checker {
             callable_binders: Vec::new(),
             static_calls: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
-            lane_binders: Vec::new(),
             simd_to_bits: RefCell::new(Vec::new()),
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
@@ -687,18 +685,10 @@ impl Checker {
         // for a minted clone (`TemplateObligation::DeclarationConstraints`).
         // An origin binder and a trait-bounded type binder (`[H: Hasher]`)
         // are kept by every clone and bound symbolically as the template
-        // binds them, so no fact reads either. The wildcard vector binder is
-        // baked by every clone; only source validation sees its body, with
-        // the parameter viewed as a lane-shaped vector (`simd_binder_view`),
-        // and the elaborated program holds a trap stub in its place, which
-        // names nothing the binder stands for.
+        // binds them, so no fact reads either.
         // A scalar or `DType` value binder of the method's own (`[n: Int]`,
         // `[dt: DType]`) is folded by every per-call clone, as a value-keyed
         // `def`'s is; a vector over it (`Scalar[dt]`) is value-shaped.
-        let simd_binders = method.type_params.iter().any(simd_wildcard_binder);
-        let trap_stub = matches!(method.body.as_slice(), [statement]
-            if matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. })
-                if name == "_mojito_abort"));
         // A compile-time callable binder of the method's own is kept by every
         // clone, which the specializer never folds: it names no callable in
         // generic identity (`CALLABLE_BINDERS`).
@@ -713,8 +703,8 @@ impl Checker {
         if !method.type_params.iter().all(|binder| {
             origin_binder(binder)
                 || bound_binder(binder)
+                || value_binders.contains(&binder.name.as_str())
                 || callable_binders.contains(&binder.name.as_str())
-                || ((self.source_validation || trap_stub) && simd_wildcard_binder(binder))
         }) || (mojito_ast::ast::has_body_decorator(&method.decorators) && !is_static)
         {
             return outside(
@@ -880,11 +870,6 @@ impl Checker {
                         .union(MethodFeatures::STATEMENTS)
                         .union(MethodFeatures::BOUND_BINDERS);
                 }
-                if simd_binders {
-                    features = features
-                        .union(MethodFeatures::STATEMENTS)
-                        .union(MethodFeatures::SIMD_BINDERS);
-                }
                 if !value_binders.is_empty() {
                     features = features
                         .union(MethodFeatures::STATEMENTS)
@@ -922,17 +907,6 @@ impl Checker {
             binder_constructions: RefCell::new(Vec::new()),
             type_arguments: RefCell::new(Vec::new()),
             repr_calls: RefCell::new(Vec::new()),
-            lane_binders: method
-                .type_params
-                .iter()
-                .filter(|binder| simd_wildcard_binder(binder))
-                .flat_map(|binder| {
-                    [
-                        format!("{}.dtype", binder.name),
-                        format!("{}.size", binder.name),
-                    ]
-                })
-                .collect(),
             simd_to_bits: RefCell::new(Vec::new()),
             simd_casts: RefCell::new(Vec::new()),
             simd_lengths: RefCell::new(Vec::new()),
@@ -1334,7 +1308,6 @@ fn method_value_binders<'m>(
             matches!(decl, ParamDecl::Value {
                 ty,
                 default: None,
-                infer_only: false,
                 variadic: false,
                 ..
             } if matches!(**ty, Ty::Int | Ty::Bool | Ty::Dtype))

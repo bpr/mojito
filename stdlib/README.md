@@ -114,8 +114,8 @@ only from their authoritative `std` modules.
   self, value: SIMD[_, _])` spelling over `to_bits`/`.length` (a 32-bit-limb
   folded multiply stands in for the 128-bit product; the rotation is spelled
   inline). `Hashable` and `Hasher` are compiler-known traits; the compiler
-  clones `_update_with_simd` per hashed vector type and feeds every leaf as
-  itself (`-0.0` folded), a string's bytes as a `Span[Byte, _]`
+  instantiates the `_update_with_simd` template per hashed vector type and
+  feeds every leaf as itself (`-0.0` folded), a string's bytes as a `Span[Byte, _]`
   (`_update_with_bytes`). The containers (`List`, `Array`, `Set`, `Dict`,
   `Optional`, `Variant`, `Tuple`) conform to `Hashable` conditionally in
   upstream's bodies. Values match the audited head on both backends.

@@ -1155,7 +1155,6 @@ pub struct DiscoveryResult {
     pub generic_instantiations: FactMap<SourceSpan, GenericInstantiation>,
     pub method_instantiations: FactMap<SourceSpan, MethodInstantiation>,
     pub struct_instantiations: FactVec<StructInstantiation>,
-    pub hash_leaf_types: FactVec<Ty>,
     pub call_transfers: FactMap<SourceSpan, Vec<CheckedCallTransfer>>,
     pub implicit_conversions: FactMap<SourceSpan, String>,
     pub implicit_conversion_types: FactMap<SourceSpan, Ty>,
@@ -1207,7 +1206,6 @@ impl DiscoveryResult {
             self.generic_instantiations.into_inner(),
             self.method_instantiations.into_inner(),
             self.struct_instantiations.into_inner(),
-            self.hash_leaf_types.into_inner(),
             self.call_transfers.into_inner(),
             self.implicit_conversions.into_inner(),
             self.implicit_conversion_types.into_inner(),
@@ -1302,10 +1300,6 @@ impl DiscoveryResult {
         &self.struct_instantiations
     }
 
-    pub fn hash_leaf_types(&self) -> &[Ty] {
-        &self.hash_leaf_types
-    }
-
     pub fn expression_type(&self, expression: &Expr) -> Option<&Ty> {
         self.expression_types.get(&expression.source_span())
     }
@@ -1342,10 +1336,6 @@ pub struct CheckedProgram {
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
     struct_instantiations: Vec<StructInstantiation>,
-    /// SIMD leaf types hashed by the program beyond the closed width-1 set
-    /// every hasher gets eagerly: each demands a `_update_with_simd` clone
-    /// on every `Hasher` conformer (the driver feeds them to elaboration).
-    hash_leaf_types: Vec<Ty>,
     /// Caller-substituted loan transfers per call occurrence, keyed by the
     /// call expression's span; MIR lowering installs the implied loans.
     call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
@@ -1637,7 +1627,6 @@ impl CheckedProgram {
         generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
         struct_instantiations: Vec<StructInstantiation>,
-        hash_leaf_types: Vec<Ty>,
         call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
         implicit_conversions: HashMap<SourceSpan, String>,
         implicit_conversion_types: HashMap<SourceSpan, Ty>,
@@ -1730,7 +1719,6 @@ impl CheckedProgram {
             generic_instantiations,
             method_instantiations,
             struct_instantiations,
-            hash_leaf_types,
             call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             implicit_conversion_types,
@@ -1774,12 +1762,6 @@ impl CheckedProgram {
     /// discovery (the driver keeps the closed ones).
     pub fn struct_instantiations(&self) -> &[StructInstantiation] {
         &self.struct_instantiations
-    }
-
-    /// The SIMD leaf types hashed outside the eager width-1 set, each of
-    /// which needs a `_update_with_simd` clone on every hasher.
-    pub fn hash_leaf_types(&self) -> &[Ty] {
-        &self.hash_leaf_types
     }
 
     /// The caller-substituted loan transfers per call occurrence.

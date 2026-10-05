@@ -9,17 +9,14 @@ use super::{
     without_struct_origins,
 };
 use crate::checker::Checker;
-use crate::checker::annotations::{simd_binder_slots, simd_binder_view};
-use crate::checker::builtins::SIMD_WILDCARD_BOUND;
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
     CheckedBodyFacts, FactTable, FoldedLiteral, IncompleteReason, InstanceTrace, OccurrenceId,
     PackElementNode, TypedTable,
 };
-use mojito_common::error::TypeError;
 use mojito_common::timing;
 use mojito_common::token::SyntaxId;
-use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, Ty};
+use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::{HashMap, HashSet};
 
 impl Checker {
@@ -367,13 +364,14 @@ pub(super) fn realize_value_shaped_constructions(
 }
 
 /// The shape of each `to_bits` reinterpretation, `cast`, and `.length` read
-/// the template made over a lane-shaped receiver, which it left unrecorded:
+/// the template made over a value-shaped receiver, which it left unrecorded:
 /// the instance's are its substituted result type's and receiver type's, as
-/// a closed read's are its recorded adjustment's. A reinterpretation's
-/// target must be at least as wide as the instance's lane, and a cast's
-/// lanes must not be `bool`, the constraints `infer_method_call` checks only
-/// on a closed source; an instance that breaks one refuses, and the clone
-/// check reports it. The adjustment
+/// a closed read's are its recorded adjustment's. A slot an instance keeps
+/// open names a binder of its own, as a direct check records it. A
+/// reinterpretation's target must be at least as wide as the instance's
+/// lane, and a cast's lanes must not be `bool`, the constraints
+/// `infer_method_call` checks only on a closed source; an instance that
+/// breaks one refuses, and the clone check reports it. The adjustment
 /// table keeps the body's occurrence order, as a capture writes it.
 pub(super) fn realize_simd_intrinsics(
     template: &CheckedBodyFacts,
@@ -381,51 +379,37 @@ pub(super) fn realize_simd_intrinsics(
     occurrences: &[Occurrence],
 ) -> Result<(), &'static str> {
     use mojito_checked::checked::SemanticAdjustment;
-    let shape = |id: OccurrenceId| {
-        fact_at(&facts.expression_types, id).and_then(mojito_types::types::simd_shape)
+    let slots = |id: OccurrenceId| {
+        fact_at(&facts.expression_types, id).and_then(mojito_types::types::simd_slots)
     };
     let mut realized = Vec::new();
     for (id, receiver) in &template.simd_to_bits {
-        let (dtype, width) = shape(*id)
-            .ok_or("a reinterpretation's lane dtype or width stays open in the instance")?;
-        let (source, _) = shape(*receiver)
-            .ok_or("a reinterpretation's source lane stays open in the instance")?;
-        if dtype.bit_width() < source.bit_width() {
+        let (dtype, width) =
+            slots(*id).ok_or("a reinterpretation's instance result is not a vector")?;
+        let (source, _) =
+            slots(*receiver).ok_or("a reinterpretation's instance source is not a vector")?;
+        if let (Some(dtype), Some(source)) = (dtype.known(), source.known())
+            && dtype.bit_width() < source.bit_width()
+        {
             return Err("a reinterpretation's target is narrower than the instance's lane");
         }
-        realized.push((
-            *id,
-            SemanticAdjustment::SimdToBits {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            },
-        ));
+        realized.push((*id, SemanticAdjustment::SimdToBits { dtype, width }));
     }
     for (id, receiver) in &template.simd_casts {
-        let (dtype, width) =
-            shape(*id).ok_or("a cast's lane dtype or width stays open in the instance")?;
-        let (source, _) =
-            shape(*receiver).ok_or("a cast's source lane stays open in the instance")?;
-        if dtype == mojito_ast::ast::Dtype::Bool || source == mojito_ast::ast::Dtype::Bool {
+        let (dtype, width) = slots(*id).ok_or("a cast's instance result is not a vector")?;
+        let (source, _) = slots(*receiver).ok_or("a cast's instance source is not a vector")?;
+        if [&dtype, &source]
+            .iter()
+            .any(|lane| lane.known() == Some(mojito_ast::ast::Dtype::Bool))
+        {
             return Err("a cast's instance lane is `bool`");
         }
-        realized.push((
-            *id,
-            SemanticAdjustment::SimdCast {
-                dtype: SimdDtype::Known(dtype),
-                width: SimdWidth::Known(width),
-            },
-        ));
+        realized.push((*id, SemanticAdjustment::SimdCast { dtype, width }));
     }
     for (id, receiver) in &template.simd_lengths {
         let (_, width) =
-            shape(*receiver).ok_or("a lane count's receiver width stays open in the instance")?;
-        realized.push((
-            *id,
-            SemanticAdjustment::SimdLength {
-                width: SimdWidth::Known(width),
-            },
-        ));
+            slots(*receiver).ok_or("a lane count's instance receiver is not a vector")?;
+        realized.push((*id, SemanticAdjustment::SimdLength { width }));
     }
     if realized.is_empty() {
         return Ok(());
@@ -565,57 +549,8 @@ pub(super) fn realize_lane_comparisons(
     Ok(())
 }
 
-/// The hidden dtype and width values a clone folds where its template
-/// viewed the wildcard vector binder `decl` as a lane-shaped vector
-/// (`simd_binder_view`): the slots of the closed vector type `ty` the clone
-/// bakes the binder to, with the whole view paired to `ty` in `views`.
-/// Empty for any other binder; an open slot does not resolve.
-pub(super) fn simd_binder_values(
-    decl: &ParamDecl,
-    ty: &Ty,
-    views: &mut Vec<(Ty, Ty)>,
-) -> Result<Vec<(mojito_types::param_expr::ParamId, mojito_types::ct::CtValue)>, TypeError> {
-    use mojito_types::ct::CtValue;
-    let ParamDecl::Type {
-        id, name, bounds, ..
-    } = decl
-    else {
-        return Ok(Vec::new());
-    };
-    if !matches!(bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND) {
-        return Ok(Vec::new());
-    }
-    let (dtype, width) = mojito_types::types::simd_shape(ty).ok_or_else(|| {
-        TypeError::InvariantViolation(format!(
-            "a per-call clone binds the wildcard vector binder '{name}' to '{ty}', which is not \
-             a closed vector"
-        ))
-    })?;
-    let binder = mojito_types::param_expr::ParamRef {
-        id: id.clone(),
-        name: name.as_str().into(),
-    };
-    let view = simd_binder_view(&Ty::Param {
-        binder: binder.clone(),
-        bounds: bounds.clone(),
-        callable_bound: None,
-    })
-    .ok_or_else(|| {
-        TypeError::InvariantViolation(format!(
-            "the wildcard vector binder '{name}' has no lane-shaped view"
-        ))
-    })?;
-    views.push((view, ty.clone()));
-    let (dtype_slot, size_slot) = simd_binder_slots(&binder);
-    Ok(vec![
-        (dtype_slot.id, CtValue::Dtype(dtype)),
-        (size_slot.id, CtValue::Int(width)),
-    ])
-}
-
-/// `ty` with every type equal to a wildcard vector binder's whole view
-/// replaced by the type the clone bakes the binder to, before its lane
-/// slots are folded ([`InstanceSubstitution::views`]).
+/// `ty` with every type equal to the first of a pair in `views` replaced,
+/// whole, by the second.
 pub(super) fn fold_binder_views(ty: &Ty, views: &[(Ty, Ty)]) -> Ty {
     struct Folder<'a>(&'a [(Ty, Ty)]);
 
@@ -1325,7 +1260,7 @@ fn index_indifferent(
             .filter(|(syntax, _)| fixed.contains(syntax))
             .map(|(_, ty)| {
                 mojito_types::types::substitute_packs(
-                    &fold_binder_views(ty, &substitution.views),
+                    ty,
                     &substitution.types,
                     &substitution.packs,
                     &values,

@@ -27,7 +27,7 @@ use mojito_ast::visit::{Visitor, walk_block, walk_expr};
 use mojito_checked::checked::{
     CallThroughEffect, DiscoveryResult, ExplicitDestroyInfo, TransferEffect,
 };
-use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
+use mojito_checked::fact_store::{FactMap, FactSet};
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
 use mojito_types::origin::OwnerId;
@@ -131,13 +131,6 @@ impl CarriedSite<'_> {
             .result
             .struct_instantiations
             .logged(self.record.range(|marks| marks.struct_instantiations))
-    }
-
-    pub fn hash_leaf_types(&self) -> &[mojito_types::types::Ty] {
-        self.carry
-            .result
-            .hash_leaf_types
-            .logged(self.record.range(|marks| marks.hash_leaf_types))
     }
 
     /// The generic instantiations the body recorded, by callee.
@@ -256,7 +249,6 @@ pub struct InternalStores {
     view_result_interiors: FactMap<SourceSpan, Vec<String>>,
     call_parameters: FactMap<SourceSpan, Vec<super::CallParameter>>,
     with_desugars: FactMap<SourceSpan, super::with_stmt::WithDesugar>,
-    hash_leaf_demands: FactVec<super::HashLeafDemand>,
     copyable_reference_result_reads: FactSet<SourceSpan>,
     discarded_reference_results: FactSet<SourceSpan>,
     borrowed_reference_receivers: FactSet<SourceSpan>,
@@ -278,7 +270,6 @@ macro_rules! carried_stores {
             result map generic_instantiations = generic_instantiations;
             result map method_instantiations = method_instantiations;
             result vec struct_instantiations = struct_instantiations;
-            result vec hash_leaf_types = hash_leaf_types;
             result map call_transfers = call_transfers;
             result map implicit_conversions = implicit_conversions;
             result map implicit_conversion_types = implicit_conversion_types;
@@ -324,7 +315,6 @@ macro_rules! carried_stores {
             internal map view_result_interiors = view_result_interiors;
             internal map call_parameters = call_parameters;
             internal map with_desugars = with_desugars;
-            internal vec hash_leaf_demands = hash_leaf_demands;
             internal set copyable_reference_result_reads = copyable_reference_result_reads;
             internal set discarded_reference_results = discarded_reference_results;
             internal set borrowed_reference_receivers = borrowed_reference_receivers;
@@ -483,7 +473,6 @@ macro_rules! define_carry_ops {
                     view_result_interiors: self.view_result_interiors.into_inner(),
                     call_parameters: self.call_parameters.into_inner(),
                     with_desugars: self.with_desugars.into_inner(),
-                    hash_leaf_demands: self.hash_leaf_demands.into_inner(),
                     copyable_reference_result_reads: self.copyable_reference_result_reads.into_inner(),
                     discarded_reference_results: self.discarded_reference_results.into_inner(),
                     borrowed_reference_receivers: self.borrowed_reference_receivers.into_inner(),
@@ -793,7 +782,6 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         generic_instantiations: checker.generic_instantiations.take(),
         method_instantiations: checker.method_instantiations.take(),
         struct_instantiations: checker.struct_instantiations.take(),
-        hash_leaf_types: checker.hash_leaf_types.take(),
         call_transfers: checker.call_transfers.take(),
         implicit_conversions: checker.implicit_conversions.take(),
         implicit_conversion_types: checker.implicit_conversion_types.take(),

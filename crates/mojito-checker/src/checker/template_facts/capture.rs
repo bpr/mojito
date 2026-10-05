@@ -10,13 +10,12 @@ use super::{
 use crate::checker::{Checker, EffectRead};
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::templates::{
-    BoundBuiltin, CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable,
-    IncompleteReason, MethodFeatures, OccurrenceId, TemplateArgumentBoundary,
-    TemplateAugmentedSubscript, TemplateCallContract, TemplateCallResultOrigin,
-    TemplateCallTransfer, TemplateClass, TemplateCoverage, TemplateEffectSource,
-    TemplateInvalidation, TemplateObligation, TemplateOwner, TemplatePlace, TemplateProducer,
-    TemplateReference, TemplateTransferDest, TemplateTransferEffect, TemplateTransferSource,
-    TypedTable, WithForm,
+    CallParameterFact, CheckedBodyFacts, CheckedTemplate, FactTable, IncompleteReason,
+    MethodFeatures, OccurrenceId, TemplateArgumentBoundary, TemplateAugmentedSubscript,
+    TemplateCallContract, TemplateCallResultOrigin, TemplateCallTransfer, TemplateClass,
+    TemplateCoverage, TemplateEffectSource, TemplateInvalidation, TemplateObligation,
+    TemplateOwner, TemplatePlace, TemplateProducer, TemplateReference, TemplateTransferDest,
+    TemplateTransferEffect, TemplateTransferSource, TypedTable, WithForm,
 };
 use mojito_common::timing;
 use mojito_common::token::{SourceSpan, SyntaxId};
@@ -61,27 +60,6 @@ impl Checker {
                         // grammar names them.
                         facts.operators = notes.operators;
                         facts.bound_builtins = notes.bound_builtins;
-                        // A bound hasher update's leaf is the instance's to
-                        // record: at the builtin it realizes again, at a
-                        // struct's own method it records none.
-                        let updates: Vec<OccurrenceId> = facts
-                            .bound_builtins
-                            .iter()
-                            .filter(|(_, builtin)| {
-                                matches!(builtin, BoundBuiltin::Update | BoundBuiltin::UpdateSimd)
-                            })
-                            .map(|(id, _)| *id)
-                            .collect();
-                        if !updates.is_empty() {
-                            let sites = self
-                                .body_occurrences(site.body)
-                                .into_iter()
-                                .filter(|occurrence| updates.contains(&occurrence.id))
-                                .map(|occurrence| occurrence.span)
-                                .collect();
-                            facts.hash_leaves =
-                                self.hash_leaves_outside(baseline.hash_leaf_demands, &sites);
-                        }
                         facts.constructions = notes.constructions;
                         facts.callable_calls = notes.callable_calls;
                         facts.repr_calls = notes.repr_calls;
@@ -890,7 +868,6 @@ impl Checker {
             call_through_reads,
             conversions: self.body_conversions(&occurrences),
             method_instantiations: values(&occurrences, &self.method_instantiations.borrow()),
-            hash_leaves: self.hash_leaves_since(baseline.hash_leaf_demands),
             locals: owner_end - baseline.owner_start,
             occurrences: occurrences
                 .into_iter()

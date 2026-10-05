@@ -707,6 +707,9 @@ impl Checker {
                         ty: only.clone(),
                     });
                 }
+                if only == "SIMDLength" {
+                    self.simd_length_binders.insert(binder_id(decls.len()));
+                }
                 decls.push(ParamDecl::Value {
                     id: binder_id(decls.len()),
                     name: tp.name.clone(),
@@ -1504,10 +1507,7 @@ impl Checker {
                 mojito_ast::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
                 }
-                // The wildcard vector parameter is a lane-shaped vector
-                // inside the body (`simd_binder_view`); its signature keeps
-                // the bare binder.
-                mojito_ast::ast::ParamKind::Regular => simd_binder_view(&pty).unwrap_or(pty),
+                mojito_ast::ast::ParamKind::Regular => pty,
             };
             self.declare_with_mutability(
                 &p.name,
@@ -3223,7 +3223,7 @@ impl Checker {
         // argument types.
         let mut value_solutions = HashMap::new();
         for (pat, act) in patterns.iter().zip(actuals) {
-            solve_value_args(pat, act, &mut value_solutions);
+            solve_value_args(pat, act, &self.simd_length_binders, &mut value_solutions);
         }
         for (pat, act) in patterns.iter().zip(actuals) {
             if let Ty::Param { binder, bounds, .. } = pat

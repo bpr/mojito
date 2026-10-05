@@ -612,8 +612,8 @@ impl Checker {
             ))));
         }
         // Hashable scalar leaves contribute themselves to the
-        // caller-provided hasher's `_update_with_simd` clone for their
-        // own vector type (`-0.0` folded first, as upstream's
+        // caller-provided hasher's `_update_with_simd`, instantiated at
+        // their own vector type (`-0.0` folded first, as upstream's
         // `SIMD.__hash__`). The `mut` argument is a place so its updated
         // state is committed by ordinary call lowering.
         if method == "__hash__"
@@ -622,7 +622,6 @@ impl Checker {
             && param_args.is_empty()
             && builtin_hashable_ty(obj_ty)
         {
-            self.record_hash_leaf(obj_ty);
             let hasher = self.infer(&args[0])?;
             if !self.conforms_to(&hasher, "Hasher") {
                 return Err(TypeError::TraitNotSatisfied {

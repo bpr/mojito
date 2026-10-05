@@ -223,31 +223,53 @@ pub(super) fn solved_value_bindings(
 /// binds to the actual's value argument in the same slot (`Array[T, length]`
 /// against `Array[Int, 3]` solves `length = 3`). First solution wins; a
 /// structural mismatch contributes nothing, exactly like `unify`.
-pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<String, CtValue>) {
+/// `width_binders` are the binders declared `SIMDLength`, the only ones a
+/// vector's width slot solves.
+pub(super) fn solve_value_args(
+    pattern: &Ty,
+    actual: &Ty,
+    width_binders: &HashSet<ParamId>,
+    out: &mut HashMap<String, CtValue>,
+) {
     match (pattern, actual) {
         // A symbolic lane binds to the actual's own dtype (`Scalar[dt]`
         // against `Scalar[DType.int32]` solves `dt`), and a numeric literal
         // binds it at the literal's default type (`kind(3)` solves
         // `DType.int`, `kind(2.5)` `DType.float64`), as upstream materializes
         // it. A `Bool` is no SIMD but converts into `Scalar[DType.bool]`, so
-        // it binds `DType.bool`. The width slot never solves: upstream reads
-        // a dtype off the argument and leaves a width parameter unresolved.
-        (
-            Ty::Simd {
-                dtype: SimdDtype::Expr(lane),
-                ..
-            },
-            _,
-        ) => {
-            let dtype = match actual {
-                Ty::Bool => Some(Dtype::Bool),
-                _ => simd_slots(actual).and_then(|(dtype, _)| dtype.known()),
+        // it binds `DType.bool`. The width slot solves a binder of SIMD's own
+        // width type (`SIMD[dt, w]` with `w: SIMDLength` against a four-lane
+        // vector, a scalar at width one); an `Int` binder there is a
+        // conversion upstream leaves unresolved. A slot the actual leaves
+        // open (the caller's own `SIMD[dt, n]`) binds its expression.
+        (Ty::Simd { dtype, width }, _) => {
+            let actual_slots = match actual {
+                Ty::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
+                _ => simd_slots(actual),
             };
-            if let Some(reference) = lane.as_decl_ref()
-                && let Some(dtype) = dtype
+            let Some((actual_dtype, actual_width)) = actual_slots else {
+                return;
+            };
+            if let SimdDtype::Expr(lane) = dtype
+                && let Some(reference) = lane.as_decl_ref()
             {
-                out.entry(reference.name.to_string())
-                    .or_insert(CtValue::Dtype(dtype));
+                let value = match actual_dtype {
+                    SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+                    SimdDtype::Expr(expr) => expr.require_constant().unwrap_or(CtValue::Expr(expr)),
+                };
+                out.entry(reference.name.to_string()).or_insert(value);
+            }
+            if let SimdWidth::Expr(lanes) = width
+                && let Some(reference) = lanes.as_decl_ref()
+                && width_binders.contains(&reference.id)
+            {
+                let value = match actual_width {
+                    SimdWidth::Known(width) => CtValue::Int(width),
+                    SimdWidth::Expr(expr) => expr
+                        .as_i64()
+                        .map_or_else(|| CtValue::Expr(expr), CtValue::Int),
+                };
+                out.entry(reference.name.to_string()).or_insert(value);
             }
         }
         // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`
@@ -303,16 +325,21 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                                 .or_insert_with(|| value.clone());
                         }
                     }
-                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, out),
+                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, width_binders, out),
                     _ => {}
                 }
             }
         }
         (Ty::Ref(pattern_reference), Ty::Ref(actual_reference)) => {
-            solve_value_args(&pattern_reference.referent, &actual_reference.referent, out);
+            solve_value_args(
+                &pattern_reference.referent,
+                &actual_reference.referent,
+                width_binders,
+                out,
+            );
         }
         (Ty::Ref(pattern_reference), _) => {
-            solve_value_args(&pattern_reference.referent, actual, out);
+            solve_value_args(&pattern_reference.referent, actual, width_binders, out);
         }
         _ => {}
     }

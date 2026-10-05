@@ -7,34 +7,51 @@ pub use mojito_types::types::{
     coerces,
 };
 
-pub use mojito_types::conformance::SIMD_WILDCARD_BOUND;
 pub(super) use mojito_types::conformance::{
     builtin_hashable_ty, is_integer_like, is_numeric, is_numeric_like, is_scalar,
     is_signed_numeric_like, simd_valued_ty,
 };
 pub(super) use mojito_types::types::default_literal;
 
-/// The inferred type parameter a `Hasher`'s wildcard vector parameter
-/// desugars to.
-///
-/// `_update_with_simd(mut self, value: SIMD[_, _])` becomes
-/// `_update_with_simd[$simd: $SIMD](mut self, value: $simd)`, the bound any
-/// SIMD-valued type (the native scalars are width-1 vectors). `$` keeps both
-/// names unspellable in source. The elaborator spells the desugar
-/// (`synth::desugar_simd_keyed_methods`); the checker owns the names, since
-/// it checks the template symbolically and proves the bound.
-pub const SIMD_WILDCARD_PARAM: &str = "$simd";
-
-/// Whether a declaration's binder is the desugared wildcard vector
-/// parameter: infer-only, bounded by [`SIMD_WILDCARD_BOUND`] alone.
-pub(super) fn simd_wildcard_binder(binder: &mojito_ast::ast::TypeParam) -> bool {
-    binder.infer_only && matches!(binder.bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND)
+/// The `Hasher` requirement `_update_with_simd(mut self, value: SIMD[_, _])`
+/// as a call through an `H: Hasher` bound sees it: generic over the
+/// desugared spelling's infer-only dtype and width binders, which the
+/// argument's vector type solves (see [`hasher_simd_update_binders`]).
+pub(super) fn hasher_simd_update_requirement() -> MethodSig {
+    let (dtype, width) = hasher_simd_update_binders();
+    let context = ParamContext::detached();
+    let value = Ty::Simd {
+        dtype: SimdDtype::Expr(context.decl_ref(
+            dtype.id.clone(),
+            &dtype.name,
+            MetaTy::value(Ty::Dtype),
+        )),
+        width: SimdWidth::Expr(context.decl_ref(width.id.clone(), &width.name, MetaTy::int())),
+    };
+    let binder = |binder: ParamRef, ty: Ty| ParamDecl::Value {
+        id: binder.id,
+        name: binder.name.to_string(),
+        ty: Box::new(ty),
+        default: None,
+        callable_default: None,
+        infer_only: true,
+        variadic: false,
+        constraints: Vec::new(),
+    };
+    let mut signature = MethodSig::intrinsic(vec![value], Ty::None);
+    signature.decls = vec![binder(dtype, Ty::Dtype), binder(width, Ty::Int)];
+    signature.self_convention = Some(ArgConvention::Mut);
+    signature
 }
 
-/// Whether `ty` is the wildcard vector binder itself, as the method's
-/// signature and the `Hasher` conformance check see it.
-pub(super) fn simd_wildcard_param(ty: &Ty) -> bool {
-    matches!(ty, Ty::Param { bounds, .. } if matches!(bounds.as_slice(), [bound] if bound == SIMD_WILDCARD_BOUND))
+/// The dtype and `SIMDLength` width binders of
+/// [`hasher_simd_update_requirement`].
+pub(super) fn hasher_simd_update_binders() -> (ParamRef, ParamRef) {
+    let binder = |slot: usize, name: &str| ParamRef {
+        id: ParamId::new("$Hasher._update_with_simd", slot),
+        name: name.into(),
+    };
+    (binder(0, "$dtype_value"), binder(1, "$length_value"))
 }
 
 /// Whether an opaque type parameter carries a bound that promises equality.

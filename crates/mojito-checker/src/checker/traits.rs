@@ -1684,12 +1684,18 @@ impl Checker {
                     })
                 });
                 // `_update_with_simd(mut self, value: SIMD[_, _])`: the vector
-                // parameter is the inferred `$SIMD`-bounded type parameter
+                // parameter is open in both slots, over the inferred binders
                 // the elaborator desugars the wildcard spelling to.
                 let simd_updates = info.methods.get("_update_with_simd").is_some_and(|methods| {
                     methods.iter().any(|method| {
                         method.self_convention == Some(ArgConvention::Mut)
-                            && matches!(method.params.as_slice(), [param] if simd_wildcard_param(param))
+                            && matches!(
+                                method.params.as_slice(),
+                                [Ty::Simd {
+                                    dtype: SimdDtype::Expr(_),
+                                    width: SimdWidth::Expr(_),
+                                }]
+                            )
                             && method.ret == Ty::None
                     })
                 });
@@ -2012,7 +2018,6 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
-                SIMD_WILDCARD_BOUND => simd_valued_ty(ty),
                 "Writable" => {
                     // The discovery check runs before a `t"…"` occurrence's
                     // variadic `TString` specialization exists.  Preserve the
@@ -2150,10 +2155,6 @@ impl Checker {
         let mut traits: Vec<String> = self.traits.keys().cloned().collect();
         traits.sort();
         let named = self.constrained_traits();
-        // Proving a hashable aggregate records its leaves for elaboration;
-        // a table row demands none.
-        let leaf_types = self.hash_leaf_types.take();
-        let leaf_demands = self.hash_leaf_demands.take();
         let structs = self
             .structs
             .iter()
@@ -2172,8 +2173,6 @@ impl Checker {
                 (name.clone(), rows)
             })
             .collect();
-        self.hash_leaf_types.replace(leaf_types);
-        self.hash_leaf_demands.replace(leaf_demands);
         let associated = self
             .structs
             .iter()
@@ -2288,7 +2287,6 @@ impl Checker {
             "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
             | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
             | "Andable" | "Orable" | "Xorable" | "Negatable" => Vec::new(),
-            SIMD_WILDCARD_BOUND => return None,
             _ => always(),
         })
     }
@@ -2427,11 +2425,6 @@ impl Checker {
         reason = "TODO: write! into the buffer instead"
     )]
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        if tr == SIMD_WILDCARD_BOUND {
-            return Some(
-                "expected a SIMD value (a scalar or a `SIMD[dtype, width]` vector)".to_string(),
-            );
-        }
         let Ty::Struct(name, arguments) = ty else {
             return builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'"));
@@ -2965,45 +2958,8 @@ impl Checker {
         match ty {
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
-            _ => {
-                let hashable = builtin_hashable_ty(ty);
-                if hashable {
-                    self.record_hash_leaf(ty);
-                }
-                hashable
-            }
+            _ => builtin_hashable_ty(ty),
         }
-    }
-
-    /// Record a hashed SIMD leaf type outside the eager width-1 set: every
-    /// hasher needs a `_update_with_simd` clone for it, which the driver
-    /// requests from elaboration on the next discovery round.
-    pub(super) fn record_hash_leaf(&self, ty: &Ty) {
-        // A symbolic vector names no clone: the template's instantiations
-        // record their own concrete leaves.
-        if !matches!(ty, Ty::Simd { width, .. } if width.known().is_some_and(|width| width > 1)) {
-            return;
-        }
-        self.hash_leaf_demands
-            .borrow_mut()
-            .push(super::HashLeafDemand {
-                site: self.hash_leaf_site.borrow().clone(),
-                ty: ty.clone(),
-            });
-        let mut recorded = self.hash_leaf_types.borrow_mut();
-        if !recorded.contains(ty) {
-            recorded.push(ty.clone());
-        }
-    }
-
-    /// Run `demand` with every hash leaf it records keyed by the bound
-    /// hasher call at `site`, which an instance binding the hasher to a
-    /// struct realizes without those leaves.
-    pub(super) fn keyed_hash_leaves<R>(&self, site: SourceSpan, demand: impl FnOnce() -> R) -> R {
-        let outer = self.hash_leaf_site.replace(Some(site));
-        let result = demand();
-        *self.hash_leaf_site.borrow_mut() = outer;
-        result
     }
 
     pub(super) fn is_comparable(&self, ty: &Ty) -> bool {
@@ -3190,21 +3146,15 @@ impl Checker {
                     Ty::None,
                     Some(ArgConvention::Mut),
                 )),
-                ("_update_with_simd", 1) => Some((
-                    Ty::Param {
-                        binder: synthetic_binder(SIMD_WILDCARD_PARAM),
-                        bounds: vec![SIMD_WILDCARD_BOUND.to_string()],
-                        callable_bound: None,
-                    },
-                    Ty::None,
-                    Some(ArgConvention::Mut),
-                )),
                 _ => None,
             };
             if let Some((param, ret, convention)) = signature {
                 let mut signature = MethodSig::intrinsic(vec![param], ret);
                 signature.self_convention = convention;
                 methods.push(signature);
+            }
+            if method == "_update_with_simd" && argc == 1 {
+                methods.push(hasher_simd_update_requirement());
             }
             if method == "finish" && argc == 0 {
                 let mut signature = MethodSig::intrinsic(

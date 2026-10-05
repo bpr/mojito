@@ -3,8 +3,7 @@
 
 use super::{
     BodyDeclaration, BodyFactBaseline, BodyParams, BodyReads, BodyRole, BodySite, Occurrence,
-    UNKEYED_STORES, adjustment_derives, canonical_hash_leaves, closed_scalar, rooted_reference,
-    typed_origins,
+    UNKEYED_STORES, adjustment_derives, closed_scalar, rooted_reference, typed_origins,
 };
 use crate::checker::{Checker, EffectRead};
 use mojito_ast::ast::{Expr, ExprKind, Stmt};
@@ -76,9 +75,6 @@ impl Checker {
             .into_iter()
             .map(|store| format!("store:{store}"))
             .collect();
-        if self.symbolic_hash_leaf(baseline) {
-            reasons.push(format!("store:{SYMBOLIC_HASH_LEAVES}"));
-        }
         if self.transfer_residue(reads) {
             reasons.push("effects".to_string());
         }
@@ -171,9 +167,6 @@ impl Checker {
         // has no such range.
         if self.owner_range_split.get() {
             return Err(IncompleteReason::UnkeyedFact("binding identities"));
-        }
-        if self.symbolic_hash_leaf(baseline) {
-            return Err(IncompleteReason::UnkeyedFact(SYMBOLIC_HASH_LEAVES));
         }
         if self.transfer_residue(reads) {
             return Err(IncompleteReason::UnkeyedFact("transfer effects"));
@@ -282,31 +275,6 @@ impl Checker {
         ]
     }
 
-    /// The leaves hashed since the demand log held `start` entries,
-    /// deduplicated and in canonical order, so a template's bundle and an
-    /// instance's compare whatever order their checks demanded them in.
-    pub(super) fn hash_leaves_since(&self, start: usize) -> Vec<Ty> {
-        self.hash_leaves_outside(start, &HashSet::new())
-    }
-
-    /// The leaves hashed since the demand log held `start` entries, as
-    /// [`Checker::hash_leaves_since`] reads them, less those a bound hasher
-    /// call at one of `sites` alone demanded.
-    pub(super) fn hash_leaves_outside(&self, start: usize, sites: &HashSet<SourceSpan>) -> Vec<Ty> {
-        canonical_hash_leaves(
-            self.hash_leaf_demands.borrow()[start..]
-                .iter()
-                .filter(|demand| {
-                    demand
-                        .site
-                        .as_ref()
-                        .is_none_or(|site| !sites.contains(site))
-                })
-                .map(|demand| demand.ty.clone())
-                .collect(),
-        )
-    }
-
     /// The unkeyed stores the body's check grew beyond the entries its
     /// nested `def` statements key, which their recipe carries. The
     /// transferred-origin store is told entry by entry elsewhere.
@@ -323,13 +291,6 @@ impl Checker {
             })
             .map(|(((store, _), _), _)| store)
             .collect()
-    }
-
-    /// Whether the body's check hashed a leaf whose type names a parameter.
-    fn symbolic_hash_leaf(&self, baseline: &BodyFactBaseline) -> bool {
-        self.hash_leaf_demands.borrow()[baseline.hash_leaf_demands..]
-            .iter()
-            .any(|demand| mojito_types::types::is_symbolic(&demand.ty))
     }
 
     /// Whether a table grew outside the body's occurrences during its check,
@@ -358,10 +319,6 @@ impl Checker {
 
 /// The unkeyed store a replayed transfer merges origins into.
 const TRANSFERRED_ORIGINS: &str = "transferred origins";
-
-/// The refusal a body's check that hashed a symbolic leaf names: an instance
-/// could not record that leaf again, since its type is not every instance's.
-const SYMBOLIC_HASH_LEAVES: &str = "symbolic hash leaf types";
 
 /// Whether [`CheckedBodyFacts`] carries a table's entries. Every other table
 /// refuses a body that recorded into it.

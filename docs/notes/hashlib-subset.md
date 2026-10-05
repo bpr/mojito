@@ -13,24 +13,23 @@ spellings, and the container conformances (`conformance/cases.tsv` rows
 and the stdlib spellings are upstream's; the mechanisms underneath are
 Mojito's:
 
-1. **`_update_with_simd(mut self, value: SIMD[_, _])` is a per-type clone
-   family.** The type lattice has only concrete SIMD types, so the
-   elaborator desugars the wildcard parameter to an infer-only type
-   parameter bounded by the hidden `$SIMD` (any SIMD-valued type) and mints
-   one clone per hashed vector type through the ordinary method-clone
-   machinery (`_update_with_simd$y3:Int`). The closed width-1 leaf set is
-   minted eagerly for every `Hasher` conformer — hashing reaches the hasher
-   through erased paths (`hash[T]`, `update(Some[Hashable])`) that record no
-   call site, and the VM-CTFE subprogram has no discovery loop — while wider
-   vectors arrive through the checker's `hash_leaf_types` demand channel.
-   The template body is a trap stub; every backend's leaf dispatch computes
-   the exact clone name (`simd_update_clone_name`), passes the value itself
-   with `-0.0` folded (upstream's `SIMD.__hash__`), and a `Bool` leaf as
-   `Scalar[DType.bool]`. Bodies read lanes with `to_bits[DType.uint64]()`
-   and `.length` (both compiler intrinsics), in `while` loops because
-   `range` is not visible inside `std.hashlib`; pinned Mojo rejects a
-   conformer that names the parameters instead (`[dtype: DType, width:
-   Int]`), so the bundled bodies spell the wildcard.
+1. **`_update_with_simd(mut self, value: SIMD[_, _])` is a generator.**
+   The elaborator desugars the wildcard parameter to upstream's pair of
+   infer-only binders, a `DType` and a `SIMDLength` width over
+   `SIMD[dtype, length]`, which each hashed vector solves. The template
+   checks once with both binders symbolic, and `native::mono` instantiates
+   it at every leaf type it reaches (since 2026-10-05; before that the
+   elaborator minted one clone per vector type, the width-1 set eagerly).
+   A scalar leaf's dispatch selects the instance whose value parameter has
+   the leaf's lane shape, passes the value itself with `-0.0` folded
+   (upstream's `SIMD.__hash__`), and a `Bool` leaf as `Scalar[DType.bool]`;
+   an erased run, compile-time evaluation included, calls the template with
+   the binders read off the value. Bodies read lanes with
+   `to_bits[DType.uint64]()` and `.length` (both compiler intrinsics), in
+   `while` loops because `range` is not visible inside `std.hashlib`. A
+   width binder declared `Int` (`[dtype: DType, width: Int]`) is not
+   inferred, in the pin as in Mojito, so the bundled bodies spell the
+   wildcard.
 2. **`AHasher[key: U256]` is a vector-keyed value specialization.** A
    `comptime U256 = SIMD[DType.uint64, 4]` alias used as a parameter bound
    folds to the parser's value-type spelling; the struct monomorphizes per

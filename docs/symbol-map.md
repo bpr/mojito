@@ -734,17 +734,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
   bind the same way).
 - `checker/generics.rs` owns unification, substitution, and callable/method
-  specialization.
+  specialization; `solve_value_args` solves value binders from argument
+  types, a vector's width slot solving only a binder declared `SIMDLength`
+  (`Checker::simd_length_binders`, recorded by `classify_params`).
 - `checker/declarations.rs` owns parameter classification and method/function
   signature and body checking.
-- `checker/annotations.rs` converts AST annotations into checked `Ty` values;
-  `simd_binder_view` and `simd_binder_slots` give the `Hasher` wildcard
-  vector binder its lane-shaped body view (`declarations.rs:bind_and_check_method`).
+- `checker/annotations.rs` converts AST annotations into checked `Ty` values.
 - `checker/builtins.rs` owns built-in typing/coercion rules and builtin
-  free-function inference (`print`/`len`/`range`/…), and the names of the
-  desugared `Hasher` vector parameter (`SIMD_WILDCARD_PARAM`,
-  `SIMD_WILDCARD_BOUND`, `simd_wildcard_binder`), which the elaborator's
-  desugar imports.
+  free-function inference (`print`/`len`/`range`/…), and the `Hasher`
+  requirement `_update_with_simd` as a call through an `H: Hasher` bound
+  sees it (`hasher_simd_update_requirement`, generic over its dtype and
+  width binders).
 
 ### MIR
 
@@ -1058,9 +1058,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   desugar into its `TString` specialization's construction.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
-  (`desugar_simd_keyed_methods`, spelling the checker's `SIMD_WILDCARD_PARAM`
-  and `SIMD_WILDCARD_BOUND`), the vector-alias bound fold, and the eager
-  per-leaf `_update_with_simd` clone requests (`hasher_leaf_requests`).
+  (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
+  `SIMDLength` binder pair per wildcard parameter of a `def`, method, or
+  trait requirement) and the vector-alias bound fold.
 - `crates/mojito-symbol/src/symbol.rs` owns specialization keys. `mangle`
   returns `Result<String, NonConstantSpecialization>`: `mangle_parts`
   validates the whole key (`specialization_value_is_closed`: no residual or
@@ -1071,9 +1071,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value and skips only a deferred callable-value slot;
   `tuple_specialization_symbol`/`tstring_specialization_symbol` name the
   unspecialized nominal type for elements that are not closed.
-- `crates/mojito-symbol/src/symbol.rs` owns the hasher leaf clone name
-  (`simd_update_clone_name`) every backend's `__hash__` leaf dispatch
-  computes, and the value-specialization demangler
+- A scalar `__hash__` leaf calls its hasher's `_update_with_simd`
+  instance at the leaf's vector type (`mojito_types::types::hash_leaf_ty`):
+  `native::mono`'s `enqueue_hash_leaf_instances` instantiates it, and the
+  VM (`Prog::hash_leaf_update`, which an erased run answers with the
+  template and the lane binders `lane_binders_from_arguments` reads off the
+  argument values) and Pliron (`hash_leaf_update_instance`) select it by
+  the lane shape of its value parameter.
+- `crates/mojito-symbol/src/symbol.rs` owns the value-specialization demangler
   (`demangle_specialization`, which rebuilds every key but a type or
   reflected one, and `unqualified_instance_name`) behind
   `_unqualified_type_name`'s spelling of a minted clone.

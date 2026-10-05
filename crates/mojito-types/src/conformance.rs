@@ -7,10 +7,6 @@
 
 use crate::types::{Ty, default_literal, is_scalar_simd, simd_shape};
 
-/// The hidden bound of the inferred vector parameter a `Hasher`'s wildcard
-/// parameter desugars to: any SIMD-valued type.
-pub const SIMD_WILDCARD_BOUND: &str = "$SIMD";
-
 /// Whether the shape of `ty` alone decides its conformance to the built-in
 /// trait `trait_name`, and how.
 ///
@@ -43,7 +39,6 @@ pub fn leaf_conforms(
             _ => true,
         },
         "Hashable" => builtin_hashable_ty(ty),
-        SIMD_WILDCARD_BOUND => simd_valued_ty(ty),
         "Writable" => !matches!(
             ty,
             Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)

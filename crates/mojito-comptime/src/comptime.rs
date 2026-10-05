@@ -631,8 +631,8 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// Prepare a linked program for source validation and elaboration.
 ///
 /// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
-/// give each conformer the trait defaults it inherits, desugar SIMD-keyed
-/// methods, and fold SIMD alias bounds.
+/// give each conformer the trait defaults it inherits, desugar `SIMD[_, _]`
+/// parameters, and fold SIMD alias bounds.
 ///
 /// These rewrites normalize declarations without selecting a `comptime if`
 /// arm, unrolling a loop, stubbing a template body, or minting a clone, so
@@ -645,7 +645,7 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     synthesize_hashable_hash(&mut program);
     let mut program =
         mojito_checker::checker::expand_trait_defaults(&program).map_err(ComptimeError::Type)?;
-    desugar_simd_keyed_methods(&mut program);
+    desugar_simd_wildcard_parameters(&mut program);
     fold_simd_alias_bounds(&mut program);
     Ok(program)
 }
@@ -704,8 +704,6 @@ pub struct ElaborationInputs<'a> {
     /// whose checked bodies hold a type only an instance can lower: each
     /// keeps its per-instantiation clone.
     pub keyed_methods: &'a [(String, String)],
-    /// Hashed vector types beyond the eager width-1 set.
-    pub hash_leaf_types: &'a [Ty],
     pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
 }
 
@@ -762,7 +760,7 @@ pub struct MethodInstanceTrace {
     /// the source element types written in its signature.
     pub pack_bindings: Vec<(String, Vec<Type>)>,
     /// Whether the clone copies a body the elaborator shaped itself — the
-    /// trap stub of an unavailable or a SIMD-keyed template method, or a `Tuple`
+    /// trap stub of an unavailable template method, or a `Tuple`
     /// specialization's synthesized default constructor: `body` is then that
     /// body's own first statement, and the clone binds nothing.
     pub first_copy_template: bool,
@@ -1070,7 +1068,6 @@ pub fn elaborate_prepared(
         method_requests,
         struct_requests,
         keyed_methods,
-        hash_leaf_types,
         templates,
     } = inputs;
     let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
@@ -1087,16 +1084,6 @@ pub fn elaborate_prepared(
             .entry(request.template().to_string())
             .or_default()
             .push(request.arguments().to_vec());
-    }
-    // Every `Hasher` conformer's `_update_with_simd` is cloned per hashed
-    // vector type: the closed width-1 set eagerly, wider vectors on demand.
-    for statement in program {
-        for request in hasher_leaf_requests(statement, hash_leaf_types) {
-            method_requests_by_owner
-                .entry(request.owner().to_string())
-                .or_default()
-                .push(request);
-        }
     }
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
@@ -1159,7 +1146,6 @@ pub fn elaborate_prepared(
         method_requests: method_requests_by_owner,
         instance_requests,
         keyed_methods: keyed_methods.iter().cloned().collect(),
-        hash_leaf_types: hash_leaf_types.to_vec(),
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         pending_struct_instances: RefCell::new(HashMap::new()),
@@ -1772,10 +1758,8 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
 /// it: every compile-time parameter is a type parameter or an `Int`, `Bool`,
 /// or `DType` value the runtime parameters name only as a lane slot
 /// ([`template_serves_binders`]), and the body holds no form MIR has no
-/// symbolic lane for: a `hash` of a lane value (whose hasher leaf is keyed
-/// by the closed vector type), a
-/// local `comptime` binding (which the cloner's body elaboration evaluates
-/// before the check), a nested `def` or lambda, or an application of one of
+/// symbolic lane for: a local `comptime` binding (which the cloner's body
+/// elaboration evaluates before the check), a nested `def` or lambda, or an application of one of
 /// `whole_structs` (a struct the cloner specializes whole) over one of the
 /// `def`'s own binders.
 fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> bool {
@@ -1817,7 +1801,7 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
                 ExprKind::Lambda { .. } => true,
                 ExprKind::Call {
                     name, param_args, ..
-                } => name == "hash" || self.whole_application(name, param_args),
+                } => self.whole_application(name, param_args),
                 ExprKind::TypeApply { name, args } => self.whole_application(name, args),
                 _ => false,
             };
@@ -2730,9 +2714,6 @@ struct Elab<'a> {
     /// annotations. The compiler independently passes the forward map to the
     /// second checker pass.
     materialized_callables: Vec<(Ty, String)>,
-    /// The checker-demanded hashed vector types beyond the eager width-1
-    /// set; the VM-CTFE subprogram mints the same hasher clones from them.
-    hash_leaf_types: Vec<Ty>,
     /// The compilation's checked templates, which the checks of a VM-CTFE
     /// subprogram derive its traced clones from; absent outside the driver.
     templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
@@ -4095,7 +4076,6 @@ fn elaborate_with_requests(
     def_requests: &[DefSpecializationRequest],
     method_requests: &[MethodSpecializationRequest],
     struct_requests: &[StructInstanceRequest],
-    hash_leaf_types: &[Ty],
 ) -> Result<Elaborated, ComptimeError> {
     elaborate_prepared(
         &prepare(program)?,
@@ -4105,7 +4085,6 @@ fn elaborate_with_requests(
             def_requests,
             method_requests,
             struct_requests,
-            hash_leaf_types,
             ..ElaborationInputs::default()
         },
     )
@@ -4166,7 +4145,6 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
-            &[],
         )
         .expect("materialize checked Tuple specialization")
         .program;
@@ -4204,7 +4182,6 @@ mod tuple_request_tests {
             &[],
             &[],
             &[],
-            &[],
         )
         .expect("materialize contextual Tuple declaration")
         .program;
@@ -4231,7 +4208,6 @@ mod tuple_request_tests {
         let elaborated = elaborate_with_requests(
             parsed,
             &[TupleSpecializationRequest::declaration(outer_elements)],
-            &[],
             &[],
             &[],
             &[],
@@ -4341,7 +4317,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
             .expect("a request on a template-served def must not fail elaboration")
             .program;
 
@@ -4385,7 +4361,7 @@ mod def_request_tests {
             type_params,
         ));
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4412,7 +4388,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -4439,7 +4415,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 

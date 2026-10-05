@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `hash(v)` over a vector whose dtype or width is a binder now runs at every
+  width, in a lane-keyed `def` or a `DType`-keyed struct's method, as in the
+  pin; a vector wider than one lane failed at run time for want of the
+  hasher's `_update_with_simd` clone. The hashers' `_update_with_simd(mut
+  self, value: SIMD[_, _])` is now upstream's generator over an infer-only
+  dtype and `SIMDLength` binder pair, which `native::mono` instantiates at
+  each leaf type it reaches, so no leaf is cloned (Hello World's per-call
+  method clones fall from 75 to 47) and a compile-time `hash` of a vector
+  folds (`assets/ok/lane_keyed_hash.mojo`). A vector argument now solves a
+  `DType` and a `SIMDLength` binder together, and `SIMD[_, _]` is accepted
+  on a `def` and a trait requirement too
+  (`assets/ok/simd_lane_binders_inferred.mojo`); an `Int` width binder stays
+  unresolved, as in the pin
+  (`assets/type_error/simd_int_width_binder_not_inferred.mojo`). A member of
+  a vector- or struct-keyed struct with binders of its own is served by its
+  template, and a method over an `H: Hasher` binder no longer clones per
+  hasher.
+
 - A `DType` float-format query over a binder (`DType.mantissa_width[dt]()`
   and `max_exponent`, `exponent_width`, `exponent_bias`) is served by its
   `def`'s template, as in the pin, where the `def` was cloned per dtype:

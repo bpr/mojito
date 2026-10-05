@@ -1690,10 +1690,10 @@ impl<'a> Specializer<'a> {
                             self.error(Some(owner), "method receiver lacks a MIR type")
                         })?;
                         // A scalar/literal Hashable leaf contributes to the
-                        // hasher through the hasher's compiled
-                        // `_update_with_simd` (a literal through the nominal
-                        // String's `__hash__`); enqueue those instances for
-                        // the lowered leaf dispatch.
+                        // hasher through the hasher's `_update_with_simd`
+                        // instance at the leaf's vector type (a literal
+                        // through the nominal String's `__hash__`); enqueue
+                        // those instances for the lowered leaf dispatch.
                         if method == "__hash__"
                             && args.len() == 1
                             && kwargs.is_empty()
@@ -1726,22 +1726,6 @@ impl<'a> Specializer<'a> {
                         let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
                             continue;
                         };
-                        // An erased `hasher._update_with_simd(x)` (a generic
-                        // `__hash__[H: Hasher]` body now concrete) targets the
-                        // clone for the argument's own vector type: the
-                        // template's body is a stub.
-                        let simd_clone = (resolved.is_none()
-                            && method == "_update_with_simd"
-                            && args.len() == 1
-                            && kwargs.is_empty())
-                        .then(|| function.reg_types.get(&args[0].0))
-                        .flatten()
-                        .filter(|leaf| {
-                            mojito_types::types::simd_shape(leaf).is_some()
-                                || matches!(leaf, Ty::Bool)
-                        })
-                        .map(mojito_symbol::symbol::simd_update_clone_name);
-                        let method: &str = simd_clone.as_deref().unwrap_or(method);
                         // Source methods are declared under the template name;
                         // an instance-named receiver (`List$mono$TInt`) still
                         // resolves against `List.*` and gets its instance

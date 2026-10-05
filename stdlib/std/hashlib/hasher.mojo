@@ -6,9 +6,9 @@
 #   def update(mut self, value: Some[Hashable])
 #   def finish(var self) -> UInt64
 #
-# `_update_with_simd` infers its vector type per call: the compiler clones the
-# method once per hashed scalar/vector type (`to_bits`/`.length` then check
-# concretely), and every scalar leaf reaches it as itself with `-0.0` folded
+# `_update_with_simd` infers its vector's dtype and width per call, as
+# upstream's `SIMD[_, _]` does: one template serves every hashed scalar and
+# vector type, and every scalar leaf reaches it as itself with `-0.0` folded
 # first, as upstream's `SIMD.__hash__`. This docstring-only home lets
 # `from std.hashlib.hasher import Hasher` resolve.
 

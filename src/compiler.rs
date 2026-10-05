@@ -396,9 +396,6 @@ impl Compiler {
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
         let mut template_demand = template_reach::TemplateDemand::new(linked);
-        // Hashed vector types beyond the eager width-1 set: each demands a
-        // `_update_with_simd` clone on every hasher.
-        let mut hash_leaf_requests: Vec<crate::types::Ty> = Vec::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -548,10 +545,6 @@ impl Compiler {
                     Some(_) => {}
                 }
             }
-            if served.request_hash_leaves(checked.result(), &mut hash_leaf_requests) {
-                last_new_callee = String::from("_update_with_simd");
-                grew = true;
-            }
             let mut instances_grew = false;
             // An instance of a struct whose erased method body can reach a
             // compile-time-keyed stub must mint its clones: keeping the
@@ -621,7 +614,6 @@ impl Compiler {
                         method_requests: &method_requests,
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
-                        hash_leaf_types: &hash_leaf_requests,
                         ..elaboration_inputs(&templates_catalog)
                     },
                 )
@@ -780,7 +772,6 @@ struct ServedRequests {
     tstring_elements: Vec<Vec<Ty>>,
     callees: Vec<String>,
     methods: Vec<(String, String)>,
-    hash_leaves: Vec<Ty>,
     instances: Vec<StructInstanceRequest>,
     /// Struct templates one of whose methods mints per-instance clones from
     /// this round on: a body that reached an instance of one names the
@@ -789,23 +780,8 @@ struct ServedRequests {
 }
 
 impl ServedRequests {
-    /// Add the hashed vector types `checked` demands beyond `requests`, and
-    /// say whether any is new.
-    fn request_hash_leaves(&mut self, checked: &DiscoveryResult, requests: &mut Vec<Ty>) -> bool {
-        let new: Vec<Ty> = checked
-            .hash_leaf_types()
-            .iter()
-            .filter(|leaf| !requests.contains(leaf))
-            .cloned()
-            .collect();
-        self.hash_leaves.extend(new.iter().cloned());
-        requests.extend(new.iter().cloned());
-        !new.is_empty()
-    }
-
     /// The body sites whose facts a newly served request would change:
-    /// those that reached a struct application it instantiates, hashed a
-    /// leaf it clones, recorded an instantiation of a callee or method it
+    /// those that reached a struct application it instantiates, recorded an instantiation of a callee or method it
     /// clones, or typed an expression, place, or binding with a tuple or
     /// t-string it materializes. (A rewritten call occurrence changes the
     /// body's syntax hash instead.)
@@ -824,12 +800,8 @@ impl ServedRequests {
                     instances.contains(&(reached.template.as_str(), reached.arguments.as_slice()))
                         || self.keyed_templates.contains(&reached.template)
                 }) || site
-                    .hash_leaf_types()
-                    .iter()
-                    .any(|leaf| self.hash_leaves.contains(leaf))
-                    || site
-                        .instantiated_callees()
-                        .any(|callee| self.callees.iter().any(|served| served == callee))
+                    .instantiated_callees()
+                    .any(|callee| self.callees.iter().any(|served| served == callee))
                     || site.instantiated_methods().any(|(owner, method)| {
                         self.methods.iter().any(|(served_owner, served_method)| {
                             // A request against a closed instance is keyed

@@ -733,6 +733,29 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
+    /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
+    /// `leaf` calls: the instance the elaborator minted at the leaf's vector
+    /// type, else the template itself, whose dtype and width binders an
+    /// erased run reifies from the leaf.
+    fn hash_leaf_update(&self, hasher: &str, leaf: &mojito_types::types::Ty) -> String {
+        let template = format!("{hasher}._update_with_simd");
+        let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(leaf));
+        self.mir
+            .functions
+            .iter()
+            .find(|(fname, function)| {
+                fname
+                    .strip_prefix(&template)
+                    .is_some_and(|rest| rest.starts_with('$'))
+                    && function
+                        .param_types
+                        .get(1)
+                        .and_then(|value| mojito_types::types::simd_shape(peel_references(value)))
+                        == shape
+            })
+            .map_or(template, |(fname, _)| fname.clone())
+    }
+
     /// The instance of `receiver_type.method` a specialized program minted
     /// for `hasher`'s struct (`String.__hash__$mono$T…AHasher…`), when the
     /// program declares no template of that name: the instance whose hasher

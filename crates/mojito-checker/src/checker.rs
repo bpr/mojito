@@ -682,6 +682,10 @@ pub struct Checker {
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
     /// [`MethodSig::nested_origins`].
     nested_origins_read_only_functions: HashSet<String>,
+    /// The value binders declared `SIMDLength`, SIMD's own width type: a
+    /// vector argument's width slot solves one, while an `Int` binder in the
+    /// slot is a conversion the pin leaves unresolved.
+    simd_length_binders: HashSet<mojito_types::param_expr::ParamId>,
     /// Checker-resolved base type name per `$contextual` leading-dot sentinel
     /// (keyed by the sentinel identifier's span); HIR substitutes the name.
     contextual_bases: RefCell<FactMap<SourceSpan, String>>,
@@ -701,15 +705,6 @@ pub struct Checker {
     /// method-call receiver, retained for per-instantiation method-clone
     /// discovery (the driver keeps the closed ones).
     struct_instantiations: RefCell<FactVec<mojito_checked::checked::StructInstantiation>>,
-    /// SIMD leaf types hashed outside the eager width-1 set (multi-lane
-    /// vectors): each needs a `_update_with_simd` clone on every hasher.
-    hash_leaf_types: RefCell<FactVec<Ty>>,
-    /// Every demand `record_hash_leaf` accepted, in order and repeated, so a
-    /// body's capture can tell which leaves its own check hashed even when
-    /// an earlier body recorded them first.
-    hash_leaf_demands: RefCell<FactVec<HashLeafDemand>>,
-    /// The bound hasher call whose check is recording hash leaves, if any.
-    hash_leaf_site: RefCell<Option<SourceSpan>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -1073,14 +1068,12 @@ impl Checker {
             bundled_stdlib_declaration: false,
             overload_targets: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: HashSet::new(),
+            simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
             contextual_bases: RefCell::new(FactMap::default()),
             generic_instantiations: RefCell::new(FactMap::default()),
             call_bindings: RefCell::new(HashMap::new()),
             method_instantiations: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
-            hash_leaf_types: RefCell::new(FactVec::default()),
-            hash_leaf_demands: RefCell::new(FactVec::default()),
-            hash_leaf_site: RefCell::new(None),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
@@ -2867,15 +2860,6 @@ struct CallParameter {
     ty: Ty,
 }
 
-/// One hash-leaf demand: the vector type, and the bound hasher call that
-/// demanded it where one did, which an instance binding the hasher to a
-/// struct realizes without the leaf.
-#[derive(Debug, Clone, PartialEq)]
-struct HashLeafDemand {
-    site: Option<SourceSpan>,
-    ty: Ty,
-}
-
 type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
 
 /// How strictly a storage annotation must bind explicit origin slots.
@@ -3097,10 +3081,7 @@ mod calls;
 
 mod builtins;
 
-pub use builtins::{
-    SIMD_WILDCARD_BOUND, SIMD_WILDCARD_PARAM, builtin_copy_is_value_read,
-    callable_environment_coerces,
-};
+pub use builtins::{builtin_copy_is_value_read, callable_environment_coerces};
 
 mod operators;
 

@@ -989,14 +989,7 @@ impl MethodFeatures {
     /// under every instance, and what the body does with it is argued by the
     /// other features.
     pub const OWNED_PARAMETERS: Self = Self(1 << 35);
-    /// The wildcard vector binder a `Hasher`'s `_update_with_simd(mut self,
-    /// value: SIMD[_, _])` desugars to: source validation checked the body
-    /// with the parameter viewed as a lane-shaped vector whose dtype and
-    /// width are two hidden value binders, and every per-call clone bakes
-    /// the binder to one closed vector type, from which an instance folds
-    /// both slots.
-    pub const SIMD_BINDERS: Self = Self(1 << 36);
-    /// A lane read on a closed or lane-shaped vector: `v.to_bits[dt]()`,
+    /// A lane read on a closed or value-shaped vector: `v.to_bits[dt]()`,
     /// `v.length`, `v[i]`, or a `reduce_*()`. Each selects no callee; the
     /// dtype and width the clone check records at a reinterpretation or a
     /// lane count are the instance's substituted shape, which it records
@@ -1751,13 +1744,13 @@ pub struct CheckedBodyFacts {
     /// dimensions are the same in every instance.
     pub simd_constructions: Vec<(OccurrenceId, (SimdDtype, SimdWidth))>,
     /// The `to_bits` reinterpretations whose result width the template left
-    /// open (a lane-shaped receiver), each with its receiver occurrence. An
+    /// open (a value-shaped receiver), each with its receiver occurrence. An
     /// instance records the `SimdToBits` adjustment from its substituted
     /// result type, and owes that the target is no narrower than its own
     /// lane (`realize_simd_intrinsics`); a closed one stands as recorded.
     pub simd_to_bits: Vec<(OccurrenceId, OccurrenceId)>,
     /// The `cast[DType.<name>]()` conversions whose width the template left
-    /// open (a lane-shaped receiver), each with its receiver occurrence. An
+    /// open (a value-shaped receiver), each with its receiver occurrence. An
     /// instance records the `SimdCast` adjustment from its substituted
     /// result type, and owes that neither lane is `bool`
     /// (`realize_simd_intrinsics`); a closed one stands as recorded.
@@ -1834,7 +1827,7 @@ pub struct CheckedBodyFacts {
     /// Calls of a checker builtin on a bounded parameter (`hasher.update(x)`,
     /// `writer.write(x)`), which select no callee. The template proved each
     /// argument through the bound; an instance owes the same proof at its own
-    /// type, which for a hashed value also records the hash leaf.
+    /// type.
     pub bound_builtins: Vec<(OccurrenceId, BoundBuiltin)>,
     /// Per-call clone requests. A template never records one that survives
     /// realization (`realize_method_call` refuses a callee with binders of
@@ -1904,11 +1897,6 @@ pub struct CheckedBodyFacts {
     /// so an instance inherits it verbatim. A view-returning call's record is
     /// not kept here: installation derives it from `call_result_origins`.
     pub construction_immutable_binders: Vec<(OccurrenceId, Vec<TemplateImmutableBinder>)>,
-    /// The multi-lane vector types the body hashed, deduplicated and in
-    /// canonical order. Each is closed, so an instance records every one
-    /// again, beside those its bound builtins and dispatches record at its
-    /// own types.
-    pub hash_leaves: Vec<Ty>,
     /// How many locals the body declares.
     pub locals: u32,
 }
@@ -2044,7 +2032,6 @@ impl CheckedBodyFacts {
             typed_origins,
             call_result_origins,
             construction_immutable_binders,
-            hash_leaves,
             locals,
         );
         out
@@ -2284,8 +2271,6 @@ impl CheckedBodyFacts {
                 occurrences,
                 folded,
             ),
-            // A leaf names a closed type, not an occurrence.
-            hash_leaves: self.hash_leaves.clone(),
             locals: self.locals,
         }
     }
@@ -2356,7 +2341,6 @@ impl CheckedBodyFacts {
             + self.transferred_origins.len()
             + self.transfer_effects.len()
             + self.transfer_reads.len()
-            + self.hash_leaves.len()
     }
 
     /// The replayed-transfer fields in which this bundle differs from
@@ -2432,7 +2416,7 @@ pub struct InstanceTrace {
     pub residual: Vec<String>,
     /// Whether the template is a body the elaborator shaped itself and copied
     /// into every clone the trace names with its syntax identities: the trap
-    /// stub of an unavailable or a SIMD-keyed member, shared by every
+    /// stub of an unavailable member, shared by every
     /// specialization, or a
     /// `Tuple` specialization's synthesized default constructor, its own in
     /// every discovery round. No check validates it, so the first clone

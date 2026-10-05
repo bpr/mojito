@@ -414,7 +414,6 @@ impl Checker {
     /// directly; any other method resolves through the bound.
     fn infer_hasher_bound_method(&self, site: MethodCallSite<'_>) -> Result<Option<Ty>, TypeError> {
         let MethodCallSite {
-            span,
             object,
             method,
             call,
@@ -426,7 +425,7 @@ impl Checker {
             "update" => {
                 self.check_place(object)?;
                 let tys = self.builtin_args("Hasher.update", 1, args)?;
-                if !self.keyed_hash_leaves(span.clone(), || self.conforms_to(&tys[0], "Hashable")) {
+                if !self.conforms_to(&tys[0], "Hashable") {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "T".to_string(),
                         ty: tys[0].to_string(),
@@ -453,22 +452,6 @@ impl Checker {
                         context: "Hasher._update_with_bytes".to_string(),
                     });
                 }
-                return Ok(Some(Ty::None));
-            }
-            "_update_with_simd" => {
-                self.check_place(object)?;
-                let tys = self.builtin_args("Hasher._update_with_simd", 1, args)?;
-                // The argument's own vector type keys the hasher's clone
-                // (`SIMD[_, _]` infers per call); the runtime dispatch
-                // computes the same clone name from the value.
-                if !simd_valued_ty(&tys[0]) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "SIMD[_, _]".to_string(),
-                        found: tys[0].to_string(),
-                        context: "Hasher._update_with_simd".to_string(),
-                    });
-                }
-                self.keyed_hash_leaves(span.clone(), || self.record_hash_leaf(&tys[0]));
                 return Ok(Some(Ty::None));
             }
             "finish" if args.is_empty() => {

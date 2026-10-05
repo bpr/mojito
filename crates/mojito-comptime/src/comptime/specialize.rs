@@ -1494,7 +1494,6 @@ impl Elab<'_> {
         }
         let mangled = mangle(orig, vals)?;
         let mut specialized_methods = Vec::with_capacity(methods.len());
-        let mut simd_clones = Vec::new();
         let mut call_clones = Vec::new();
         let mut members = Vec::new();
         let leaf_traces = self.method_traces.borrow().len();
@@ -1506,45 +1505,6 @@ impl Elab<'_> {
             let template_body = traced_template_body(method);
             let source_body = method.body.clone();
             let mut method = method.clone();
-            // A SIMD-keyed method (`_update_with_simd(mut self, value:
-            // SIMD[_, _])`) checks only as per-leaf clones, minted here for
-            // this specialization; its template body is the trap stub.
-            if super::synth::is_simd_keyed_method(&method) {
-                let requests = super::synth::hasher_leaf_requests(template, &self.hash_leaf_types);
-                simd_clones.extend(self.per_call_method_clones(
-                    orig,
-                    &method,
-                    &requests,
-                    &PerCallBase {
-                        owner: Some(PerCallOwner {
-                            name: &mangled,
-                            module: template.module.as_deref(),
-                            template: orig,
-                        }),
-                        ..PerCallBase::default()
-                    },
-                    &env,
-                ));
-                // Every specialization holds the same stub, spanned at the
-                // struct so its template stays apart from the leaves'.
-                match method.body.first().map(|first| first.syntax_id) {
-                    Some(parent) => {
-                        method.body =
-                            vec![shared_method_stub(orig, &method, template.span, parent)];
-                        members.push(TracedMember {
-                            first_copy: true,
-                            ..TracedMember::whole(
-                                specialized_methods.len(),
-                                &method.name,
-                                template.span,
-                            )
-                        });
-                    }
-                    None => method.body = vec![unspecialized_method_stub(orig, &method)],
-                }
-                specialized_methods.push(method);
-                continue;
-            }
             // A vector constructed at the method's own lane lowers only in
             // the per-call clones; the instance's template body is the stub.
             if super::synth::constructs_at_own_lane(&method) {
@@ -1600,7 +1560,7 @@ impl Elab<'_> {
             // checker retargets the call to `mangle(method, call values)` on
             // this specialization, and the clone's trace takes the folded
             // values before its own (`restamp_leaf_traces`).
-            if !requests.is_empty() {
+            if !requests.is_empty() && !self.template_serves_method(&mangled, &method) {
                 let source = Method {
                     body: source_body,
                     ..method.clone()
@@ -1624,7 +1584,6 @@ impl Elab<'_> {
         }
         let call_clone_names: Vec<String> =
             call_clones.iter().map(|clone| clone.name.clone()).collect();
-        specialized_methods.extend(simd_clones);
         specialized_methods.extend(call_clones);
         let mut spec = mk(
             StmtKind::Struct {
@@ -3825,9 +3784,8 @@ pub(super) fn template_shell(template: &Stmt) -> Stmt {
 /// The trap stub every specialization of a template method shares:
 /// `unspecialized_method_stub` spanned at `span`, each node identified by an
 /// identity derived from `parent`. An unavailable member's stub is spanned
-/// and derived at the availability clause that folded false; a SIMD-keyed
-/// method's at its struct and its own first statement. Every specialization
-/// thereby holds the same stub, identities and all.
+/// and derived at the availability clause that folded false. Every
+/// specialization thereby holds the same stub, identities and all.
 fn shared_method_stub(
     owner: &str,
     method: &Method,
@@ -3868,7 +3826,7 @@ struct StructTemplate<'a> {
 /// per-element overload (`Tuple.__contains__`) erased.
 ///
 /// A member whose body is a trap stub the specializer shaped itself
-/// (`first_copy`: an unavailable member's, or a SIMD-keyed method's) shares
+/// (`first_copy`: an unavailable member's) shares
 /// it across every specialization, its first checked copy being the
 /// template; it bakes nothing, and `body` is that body's own first
 /// statement.

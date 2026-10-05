@@ -207,27 +207,6 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     }
 }
 
-/// The name of a hasher's `_update_with_simd` clone for one SIMD leaf type
-/// (`_update_with_simd$y3:Int`, `_update_with_simd$y21:SIMD[DType.int32, 2]`).
-///
-/// The declaration `_update_with_simd(mut self, value: SIMD[_, _])` carries
-/// the vector type as an inferred type parameter, so the clone is keyed by the
-/// leaf's own checked type through the ordinary `mangle`; the checker's
-/// retargeting, the elaborator's minting, and every backend's leaf dispatch
-/// agree through this one function.
-pub fn simd_update_clone_name(leaf: &Ty) -> String {
-    // A `Bool` leaf hashes as `Scalar[DType.bool]` (upstream's `Bool.__hash__`
-    // passes `Scalar[.bool](self)`); every other leaf is its own vector type.
-    let leaf = match default_literal(leaf) {
-        Ty::Bool => canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1),
-        other => other,
-    };
-    // A hash leaf is a concrete scalar or vector type, so the key is closed;
-    // a symbolic leaf names no clone and keeps the template's name.
-    mangle("_update_with_simd", &[CtValue::Type(Box::new(leaf))])
-        .unwrap_or_else(|_| "_update_with_simd".to_string())
-}
-
 /// The list `mangle` bakes into a clone's name for a method or struct
 /// instantiation: its specialization values in declaration order.
 ///

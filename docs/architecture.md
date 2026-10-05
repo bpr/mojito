@@ -110,8 +110,7 @@ public compatibility seams for tests and diagnostic tools; that stage-composed
 entry re-checks pre-drop ownership but is non-authoritative for whole-program
 discovery and specialization (a generic body forwarding its own `H` into
 `hash[H](x)` binds the declaration default there, while `Compiler` binds the
-caller's; multi-lane hasher clones exist only through the discovery loop's
-`hash_leaf_types` channel).
+caller's).
 
 The design is an hourglass:
 
@@ -561,12 +560,11 @@ storage.
 **Source validation comes first.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
 clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
-SIMD-keyed method desugar, SIMD alias-bound folding). The checker then
+`SIMD[_, _]` parameter desugar into an infer-only dtype and `SIMDLength`
+binder pair, SIMD alias-bound folding). The checker then
 validates the prepared source (`validate_comptime_templates`,
 `checker/comptime_validation.rs`): every function or method body holding a
-`comptime if`/`comptime for`, a `rebind` over its own parameters, or a
-`Hasher`'s wildcard vector parameter (`SIMD[_, _]`, viewed inside the body
-as a lane-shaped vector) is
+`comptime if`/`comptime for` or a `rebind` over its own parameters is
 checked once with its declaration's parameters left symbolic — each condition typed as a compile-time `Bool`
 (a generic constraint over the parameters in scope, a concrete conformance,
 or a `Bool` value), each arm and loop body in its own scope, no arm assumed
@@ -985,8 +983,9 @@ through `per_call_constructor_target`. A pack binding expands `*args: *Ts`
 to the `$pack[...]` element list inside `specialize_method_clone` exactly as
 a def specialization does, and the template's method body becomes the
 `unspecialized_method_stub` trap when it only elaborates with the struct's
-parameters or its own pack bound, or carries the hasher's desugared
-`SIMD[_, _]` binder.
+parameters or its own pack bound. A member of a vector- or struct-keyed
+specialization that its template serves keeps its own binders and mints no
+clone, as a non-generic struct's method does.
 `specialize_method_clone` bakes
 the clone's *value* bindings into its signature types before its type
 bindings, as a def specialization does, so a value parameter standing in a
@@ -1783,10 +1782,13 @@ a synthesized field-by-field default at elaboration (next to the `copy`
 synthesis). `hash`, `Dict`'s bucketing, and the bundled `AHasher`/`Fnv1a` are
 ordinary stdlib code in `std.hashlib`. The compiler contributes only the leaf:
 a scalar or literal receiver's `__hash__(hasher)` is an intrinsic that
-normalizes the value to one `UInt64` (its unsigned bit pattern, `-0.0` folded
-to `0.0`; a `StringLiteral` materializes to `String` and hashes as that
-struct) and calls the hasher's `_update_with_simd` — a runtime dispatch on the
-VM, a monomorphized call natively — and a constructible type parameter (`H()`
+normalizes the value (`-0.0` folded to `0.0`, a `DType` to its `UInt8` code,
+a `Bool` to `Scalar[DType.bool]`; a `StringLiteral` materializes to `String`
+and hashes as that struct) and calls the hasher's `_update_with_simd`, a
+generator over the leaf's dtype and width that `native::mono` instantiates
+per leaf type and both backends select by the lane shape of its value
+parameter (an erased run calls the template with the binders read off the
+value) — and a constructible type parameter (`H()`
 under a `Hasher`/`Defaultable` bound) is reified at runtime as the bound
 struct's name (`MirInstr::ConstructTypeParam`), bound into a def's frame or a
 struct's value parameters with the declaration default when unsupplied. An

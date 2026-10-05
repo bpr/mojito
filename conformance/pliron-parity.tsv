@@ -225,6 +225,7 @@ assets/ok/lambda_generic_comptime.mojo	main	exe-differential	sanitized
 assets/ok/lambda_hof.mojo	main	exe-differential	sanitized
 assets/ok/lambda_in_control_flow.mojo	main	exe-differential	sanitized
 assets/ok/lane_gather_template_served.mojo	main	exe-differential	sanitized
+assets/ok/lane_keyed_hash.mojo	main	exe-differential	sanitized
 assets/ok/lane_template_served.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
@@ -572,6 +573,7 @@ assets/ok/simd_floordiv_mod.mojo	main	exe-differential	sanitized
 assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_inferred_width_binding.mojo	main	exe-differential	sanitized
 assets/ok/simd_int_wrap_native_int.mojo	main	exe-differential	sanitized
+assets/ok/simd_lane_binders_inferred.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized

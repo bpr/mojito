@@ -55,12 +55,12 @@ impl BodyShape<'_> {
     /// `v.length` (a `Member`), or `v[i]` (an `Index` over a scalar), on a
     /// receiver [`Self::lane_receiver`] admits: a parameter, a `var` local,
     /// a field of `self`, or another lane read, of a closed vector type or a
-    /// lane-shaped one ([`Self::lane_shaped_simd`]).
+    /// value-shaped one.
     ///
     /// Each is a compiler-known operation on `Ty::Simd`: it selects no
     /// callee, converts nothing, and records at most its shape, the
     /// `SimdToBits`, `SimdCast`, or `SimdLength` adjustment, whose slots
-    /// close under the instance as the types do. Over a lane-shaped
+    /// close under the instance as the types do. Over a value-shaped
     /// receiver the instance records its own from the substituted types
     /// (`realize_simd_intrinsics`), checking its source lane. A lane read and a reduction stand
     /// on a receiver whose dtype is closed, so their results are closed, or,
@@ -193,15 +193,14 @@ impl BodyShape<'_> {
     }
 
     /// Whether `expr` is a lane read whose value a `var` local may hold as
-    /// a scalar: its recorded type is a closed vector or a lane-shaped one
+    /// a scalar: its recorded type is a closed one
     /// (`var bits = value.to_bits()`). A lane or a reduction of the local
     /// is a closed scalar only when its dtype is, and one over an open
     /// dtype stands only as a `cast` source ([`Self::lane_read`]).
     pub(super) fn lane_local_value(&self, expr: &Expr) -> bool {
         self.simd_intrinsic(expr)
             && self.facts.is_none_or(|facts| {
-                fact_at(&facts.expression_types, self.occurrence(expr))
-                    .is_some_and(|ty| grammar_scalar(ty) || self.lane_shaped_simd(ty))
+                fact_at(&facts.expression_types, self.occurrence(expr)).is_some_and(grammar_scalar)
             })
     }
 
@@ -311,9 +310,7 @@ impl BodyShape<'_> {
             ExprKind::Member { .. } => *ty == Ty::Int,
             _ => {
                 mojito_types::types::simd_slots(ty).is_some()
-                    && (!mojito_types::types::is_symbolic(ty)
-                        || self.lane_shaped_simd(ty)
-                        || self.value_shaped_scalar(ty))
+                    && (!mojito_types::types::is_symbolic(ty) || self.value_shaped_scalar(ty))
             }
         };
         let adjustment = fact_at(&facts.operation_adjustments, id);
@@ -330,13 +327,10 @@ impl BodyShape<'_> {
             ) => true,
             // A recorded cast stands under every instance only when its
             // source lane is closed too, since a `bool` source refuses; over
-            // a value-shaped or lane-shaped source the instance checks its
-            // own lane.
+            // a value-shaped source the instance checks its own lane.
             (Some(SemanticAdjustment::SimdCast { .. }), ExprKind::Invoke { .. }) => source
                 .is_some_and(|source| {
-                    !mojito_types::types::is_symbolic(source)
-                        || self.value_shaped_scalar(source)
-                        || self.lane_shaped_simd(source)
+                    !mojito_types::types::is_symbolic(source) || self.value_shaped_scalar(source)
                 }),
             (Some(SemanticAdjustment::SimdLength { .. }), ExprKind::Member { .. }) => true,
             _ => false,
@@ -376,7 +370,7 @@ impl BodyShape<'_> {
 
     /// The receiver of a lane read: a parameter, a `var` local, a field of
     /// `self`, or another lane read, whose recorded type is a closed vector
-    /// or a lane-shaped one. With `closed_dtype`, the dtype slot must be
+    /// or a value-shaped one. With `closed_dtype`, the dtype slot must be
     /// closed, so a lane or a reduction of it is a closed scalar. A
     /// `cast_source` receiver is the source of a `cast`, which may be a lane
     /// read over an open dtype ([`Self::lane_read`]).
@@ -399,7 +393,7 @@ impl BodyShape<'_> {
                 };
                 let symbolic = mojito_types::types::is_symbolic(ty);
                 // A native scalar (`Int`, `UInt`, `Float64`) has no lane
-                // reads: a lane-shaped receiver an instance may close to
+                // reads: a value-shaped receiver an instance may close to
                 // one keeps its dtype open, and a closed one with such a
                 // dtype closes to a vector only at a width above one.
                 let vector = match dtype {
@@ -412,8 +406,7 @@ impl BodyShape<'_> {
                     }
                     mojito_types::types::SimdDtype::Expr(_) => false,
                 };
-                (!symbolic || self.lane_shaped_simd(ty) || self.value_shaped_scalar(ty))
-                    && (!closed_dtype || vector)
+                (!symbolic || self.value_shaped_scalar(ty)) && (!closed_dtype || vector)
             })
         })
     }
@@ -435,16 +428,5 @@ impl BodyShape<'_> {
                     )
             })
         })
-    }
-
-    /// A `SIMD` type whose open slots name only the hidden dtype and width
-    /// binders of the method's wildcard vector binders, which every clone
-    /// folds from its baked argument.
-    fn lane_shaped_simd(&self, ty: &Ty) -> bool {
-        let mut named = HashSet::new();
-        mojito_types::types::referenced_parameters(ty, &mut named);
-        matches!(ty, Ty::Simd { .. })
-            && !named.is_empty()
-            && named.iter().all(|name| self.lane_binders.contains(name))
     }
 }

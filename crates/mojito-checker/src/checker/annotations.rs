@@ -289,41 +289,6 @@ pub(super) fn existential_binder(binder: &ParamRef) -> bool {
         .is_some_and(|name| name.starts_with("Some["))
 }
 
-/// The lane-shaped view of the wildcard vector binder inside its method's
-/// body: `SIMD[$simd.dtype, $simd.size]`, its dtype and width two hidden
-/// value binders derived from the binder's identity
-/// ([`simd_binder_slots`]). The signature keeps the bare `Ty::Param`, which
-/// call-site inference, the `Hasher` conformance check, and the per-call
-/// clone names read; only the body sees the vector, whose lane reads
-/// (`to_bits[dt]()`, `.length`, `v[i]`) check symbolically, and a clone's
-/// derivation folds both slots from its baked argument
-/// (`instance_substitution`). `None` for any other type.
-pub(super) fn simd_binder_view(ty: &Ty) -> Option<Ty> {
-    let Ty::Param { binder, .. } = ty else {
-        return None;
-    };
-    if !simd_wildcard_param(ty) {
-        return None;
-    }
-    let (dtype, size) = simd_binder_slots(binder);
-    let context = ParamContext::detached();
-    Some(Ty::Simd {
-        dtype: SimdDtype::Expr(context.decl_ref(dtype.id, &dtype.name, MetaTy::value(Ty::Dtype))),
-        width: SimdWidth::Expr(context.decl_ref(size.id, &size.name, MetaTy::int())),
-    })
-}
-
-/// The hidden dtype and width value binders of a wildcard vector binder,
-/// spelled `$simd.dtype` and `$simd.size` and owned beside the binder
-/// itself, so no declaration's own parameter shares either identity.
-pub(super) fn simd_binder_slots(binder: &ParamRef) -> (ParamRef, ParamRef) {
-    let slot = |suffix: &str, index: usize| ParamRef {
-        id: ParamId::new(&format!("{}$lane", binder.id.owner), index),
-        name: format!("{}.{suffix}", binder.name).into(),
-    };
-    (slot("dtype", 0), slot("size", 1))
-}
-
 /// The reference to the value binder `id` spelled `name`, typed `ty`.
 pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
     ParamContext::detached().decl_ref(

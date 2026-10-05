@@ -498,9 +498,9 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
 
 /// The checked type a runtime Hashable leaf hashes as.
 ///
-/// The key of the hasher's `_update_with_simd` clone (`canonical_simd_ty`
-/// canonicalizes a width-1 `int`/`float64` vector to the native scalar, as the
-/// checker does).
+/// The leaf's vector type, which the hasher's `_update_with_simd` instance is
+/// selected by (`canonical_simd_ty` canonicalizes a width-1 `int`/`float64`
+/// vector to the native scalar, as the checker does).
 pub const fn hash_leaf_ty(value: &Value) -> Option<Ty> {
     Some(match value {
         Value::Int(_) | Value::IntLiteral(_) => Ty::Int,

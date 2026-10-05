@@ -5293,6 +5293,34 @@ fn hashable_conformance_requires_the_hasher_protocol() {
 }
 
 #[test]
+fn vector_argument_infers_dtype_and_simd_length_binders() {
+    // A vector argument solves a `DType` binder and a `SIMDLength` width
+    // binder together, a native scalar as a width-one vector, and a caller's
+    // open `SIMD[dt, n]` forwards its own slots; `SIMD[_, _]` stands for
+    // exactly those two infer-only binders.
+    ok(
+        "def lanes[dt: DType, w: SIMDLength](v: SIMD[dt, w]) -> Int:\n    return w\n\ndef main():\n    var a = lanes(SIMD[DType.int32, 4](1, 2, 3, 4))\n    var b = lanes(Float64(2.5))\n",
+    );
+    ok(
+        "def lanes[dt: DType, w: SIMDLength](v: SIMD[dt, w]) -> Int:\n    return w\n\ndef forward[dt: DType, n: Int](v: SIMD[dt, n]) -> Int:\n    return lanes(v)\n",
+    );
+    check_with_std(
+        "def bits(v: SIMD[_, _]) -> Int:\n    return v.length\n\ndef main():\n    var a = bits(SIMD[DType.uint8, 8](1))\n",
+    )
+    .expect("the wildcard spelling desugars to the inferred binders");
+}
+
+#[test]
+fn int_width_binder_is_not_inferred_from_a_vector() {
+    // SIMD's width parameter is a `SIMDLength`: an `Int` binder in the slot
+    // is a conversion the pin leaves unresolved.
+    assert!(matches!(
+        err("def lanes[dt: DType, n: Int](v: SIMD[dt, n]) -> Int:\n    return n\n\ndef main():\n    var a = lanes(SIMD[DType.int32, 4](1, 2, 3, 4))\n"),
+        TypeError::CannotInferTypeParam { param, .. } if param == "n"
+    ));
+}
+
+#[test]
 fn copyable_bound_permits_copy() {
     // Current Mojo's `Copyable` trait carries a default `copy(self) -> Self`,
     // so `x.copy()` type-checks on an opaque `T: Copyable` (elaboration

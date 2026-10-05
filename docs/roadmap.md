@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R335**.
+Next free ID: **R337**.
 
 ## Ordered Work
 
@@ -164,20 +164,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R290, R267, and R318.
   - Model: Fable, Planned.
 
-- [ ] **R259 (P3c) A hash of a lane value in a lane-keyed `def` keys a
-  clone**
-
-  Problem: `hash(v)` over a vector whose dtype or width is a binder keeps
-  the `def` on the cloner: the hasher's SIMD leaf is demanded by the closed
-  vector type (`record_hash_leaf` skips a symbolic one), and a served
-  template has none to demand.
-  - The elaborator must demand the leaf for each instance's closed vector
-    type, as it enqueues a display instance for `print`.
-  - A `hash` of a width-one lane (`hash(v[0])`) needs no leaf and is served
-    today; the exclusion is syntactic and keeps every `hash(...)` call.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R261 (P3c) A local `comptime` binding in a lane-keyed `def` keys a
   clone**
 
@@ -260,8 +246,9 @@ correctness fix to existing behavior is allowed.
   - A struct keyed on a `DType` or a lane width is already a generator
     (2026-10-05); these are what remain.
   - Their members need a method's own compile-time parameters (R5):
-    `Tuple.__getitem_param__[idx]`, `__contains__[T]`, `Variant.isa[T]`,
-    and `AHasher._update_with_simd(SIMD[_, _])`.
+    `Tuple.__getitem_param__[idx]`, `__contains__[T]`, and `Variant.isa[T]`.
+    A vector- or struct-keyed struct's member its template serves keeps its
+    own binders already (`AHasher._update_with_simd(SIMD[_, _])`).
   - Nearly every `Tuple` member holds a `comptime for` (R305).
   - `native::mono` must bind a struct's pack: `bind_ty_args`
     (`mono/unify.rs`) has no pack case, and `substitute_ty` does not expand
@@ -277,27 +264,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R5 and R305.
   - Model: Fable, Planned.
 
-- [ ] **R308 (P3e) The hasher's `SIMD[_, _]` leaf is minted for every hasher
-  and cloned per call**
-
-  Problem: `Fnv1a._update_with_simd` and `AHasher`'s are cloned for fourteen
-  eager leaf types in every program (`eager_hash_leaf_types`,
-  `hasher_leaf_requests`), and per demanded vector, where the pin's
-  `_update_with_simd(mut self, value: SIMD[_, _])` is one generator with two
-  implicit parameters.
-  - The desugar binds one `$simd: $SIMD` type parameter whose template body
-    never checks, so the body is a trap stub; upstream's shape is a `DType`
-    and a width binder over `SIMD[dt, w]`, which a template serves once both
-    are inferred from the argument (R309).
-  - The scalar `__hash__` leaf dispatch names the clone
-    (`symbol::simd_update_clone_name`) in `native::mono`, the VM, and
-    Pliron (`lower/print.rs`, `lib.rs`, `lower/methods.rs`); each must name
-    the template's instance instead.
-  - CTFE mints its own leaves (`ctfe.rs`), and `AHasher`'s are members of a
-    struct specialized whole (R4).
-  - Depends on R309 and R4.
-  - Model: Fable, Planned.
-
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
 
@@ -311,9 +277,10 @@ correctness fix to existing behavior is allowed.
     the next round, beside what `TemplateReach::method_call`
     (`src/compiler/template_reach.rs`) reads off the checked body at each
     closed call.
-  - A member of a struct specialized whole mints its own per-call clones
-    (`generate_struct_spec`, `generate_value_struct_spec`); a bundled
-    variadic member's body uses the checker's `Variant` operations, which
+  - A member of a variadic struct specialized whole mints its own per-call
+    clones (`generate_struct_spec`); a vector- or struct-keyed one does only
+    where its template does not serve it (`generate_value_struct_spec`). A
+    bundled variadic member's body uses the checker's `Variant` operations, which
     need `T` closed, and a user one mixes a folded pack loop with a
     `comptime if` over its own binder (`assets/ok/variadic_method_type_params.mojo`).
   - When the last class goes, delete `per_call_method_clones`, `PerCallBase`,
@@ -1535,7 +1502,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     compilers already run; the three fixtures that only called `update` were
     respelled that way at the re-pin.
   - A sized scalar or vector now answers `v.__hash__(hasher)` through the
-    checker's builtin hashable-leaf arm (`record_hash_leaf`), so the call
+    checker's builtin hashable-leaf arm (`method_calls/resolution.rs`), so the call
     side the rename needs exists; `Hasher.update` itself is still the
     checker's intrinsic, not a real `SIMD.__hash__` body.
   - Upstream also replaced the pointer-and-length `hash()` overload with
@@ -1700,22 +1667,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Pinned by `conformance/probes/inferred_binder_through_conversion.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R309 A vector argument does not infer both a `DType` and a width
-  binder**
-
-  Problem: `total(SIMD[DType.int32, 4](1, 2, 3, 4))` for `def total[dt:
-  DType, w: SIMDLength](v: SIMD[dt, w])` reports "cannot infer type
-  parameter 'w' of 'total' from the arguments", and a method of that shape
-  finds no matching overload; the pin infers both and runs it, `Float64` as
-  a width-one vector included.
-  - A width binder alone over a fixed dtype (`SIMD[DType.int32, w]`) is
-    inferred, as is a `DType` binder alone over `Scalar[dt]`.
-  - Upstream's `SIMD[_, _]` parameter is this shape with both binders
-    implicit, so the hasher's leaf waits on it (R308).
-  - Found while landing R5 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 
@@ -3532,21 +3483,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R194 A free `def` parameter typed `SIMD[_, _]` is rejected, though
-  the pin accepts it**
-
-  Problem: `def bits(value: SIMD[_, _])` runs upstream, while Mojito rejects
-  the parameter with "not a valid SIMD element type: a non-DType argument".
-  - Pinned by `conformance/probes/simd_wildcard_to_bits_default.mojo`.
-  - The `SIMD[_, _]` desugar (`synth.rs:desugar_simd_keyed_methods`) runs
-    over struct methods only, where the `Hasher` protocol needs it.
-  - A free `def` keeps the wildcard spelling and resolves it as an
-    annotation.
-  - Found while probing the defaulted `to_bits()`.
-  - Ledger name: `wildcard-vector-parameter-on-a-def`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R195 A `Pointer` type argument spelling a local's uninitialized
   interior origin is accepted, though the pin rejects it as a use**
 
@@ -3784,6 +3720,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A self-hosted `SIMD` would move the typing, the constraints, and the
     lowering choice into source, and `LaneMask` would shrink to the known
     mask.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R336 `SIMDLength` is `Int` in Mojito, told apart only where a width
+  binder is inferred**
+
+  Problem: upstream declares `SIMD[dtype: DType, length: SIMDLength]`, so a
+  vector argument solves a `w: SIMDLength` binder and leaves an `n: Int` one
+  unresolved; Mojito types both as `Int` and records the `SIMDLength`
+  binders in a checker side table (`Checker::simd_length_binders`) that
+  only the solver reads.
+  - Behavior matches the pin today: `SIMD[_, _]`'s width binder, a declared
+    `w: SIMDLength`, and the `H: Hasher` requirement's width solve, and an
+    `Int` binder in the slot is rejected
+    (`assets/type_error/simd_int_width_binder_not_inferred.mojo`).
+  - Upstream's shape is a distinct `SIMDLength` type with an implicit
+    conversion from `Int`, so the declaration, not a side table, carries it.
+  - Found while landing R259 (2026-10-05).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -4282,6 +4236,22 @@ residue found inside a task moves to the task that owns its fix.
   - The `simd-infix-comparison` divergence waits on it: withdrawing the
     infix spelling leaves `x.ne(y)` as the only ordered comparison on a
     scalar.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R335 The native `Int` and `Float64` have no lane reductions, even as a
+  `Scalar[dt]` instance**
+
+  Problem: `v.reduce_add()` in `def total[dt: DType](v: Scalar[dt])` fails at
+  run time with "vm backend does not support methods on Float64 yet" for
+  `total(Float64(2.5))` (and on `Int` for `total(Int(3))`), and
+  `Float64(2.5).reduce_add()` is rejected outright; the pin runs both.
+  - Upstream's `Float64` is `Scalar[DType.float64]`, a width-one `SIMD`
+    with every lane method, and its `Int` converts to `Scalar[DType.int]`.
+    Mojito canonicalizes both width-one vectors to the native scalars, which
+    `runtime::simd_method` and the checker's SIMD receiver arms skip.
+  - A sized scalar (`Float32(1.5)`) at the same binder runs.
+  - Found while landing R259 (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

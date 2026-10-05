@@ -37,11 +37,14 @@ impl Specializer<'_> {
     }
 
     /// Enqueue the instances a lowered scalar `__hash__(hasher)` leaf calls:
-    /// the hasher's `_update_with_simd`, for a string-literal receiver the
-    /// nominal String's `__hash__` bound to that hasher (the VM materializes
-    /// the literal and dispatches the same way), and for a Variant receiver
-    /// the `__hash__` of every nominal alternative (the lowered tag switch
-    /// dispatches whichever is active).
+    /// for a scalar or vector receiver, the hasher's `_update_with_simd`
+    /// instantiated at the leaf's own vector type (`hash_leaf_ty`), its
+    /// dtype and width binders solved from that type as a call's argument
+    /// solves them. A string-literal
+    /// receiver reaches the hasher through the nominal String's `__hash__`
+    /// bound to it (the VM materializes the literal and dispatches the same
+    /// way), and a Variant receiver through the `__hash__` of every nominal
+    /// alternative (the lowered tag switch dispatches whichever is active).
     pub(super) fn enqueue_hash_leaf_instances(
         &mut self,
         owner: &str,
@@ -56,16 +59,19 @@ impl Specializer<'_> {
         if !matches!(hasher_ty, Ty::Struct(..)) {
             return Ok(());
         }
-        // A scalar/vector leaf calls the hasher's clone for its own vector
-        // type; a literal/Variant receiver reaches the hasher through the
-        // nominal `__hash__` bodies enqueued below.
         if mojito_types::types::simd_shape(receiver).is_some()
             || matches!(receiver, Ty::Bool | Ty::Dtype)
         {
-            let clone = mojito_symbol::symbol::simd_update_clone_name(
-                &mojito_types::types::hash_leaf_ty(receiver),
-            );
-            self.enqueue_nominal_method_instance(owner, &hasher_ty, &clone, 1, &[])?;
+            let leaf = mojito_types::types::hash_leaf_ty(receiver);
+            self.nominal_method_instance(
+                owner,
+                &hasher_ty,
+                "_update_with_simd",
+                1,
+                &[],
+                std::slice::from_ref(&leaf),
+            )?;
+            return Ok(());
         }
         if matches!(receiver, Ty::StringLiteral) {
             let string = Ty::Struct(
@@ -110,70 +116,8 @@ impl Specializer<'_> {
         argc: usize,
         method_bindings: &[Ty],
     ) -> Result<(), MonoError> {
-        let Ty::Struct(name, arguments) = receiver else {
-            return Ok(());
-        };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
-            nominal_template(name),
-            method,
-            None,
-            argc,
-        );
-        if !self.functions.contains_key(target.as_str()) {
-            return Ok(());
-        }
-        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
-            return Ok(());
-        };
-        let mut bindings = self.base_bindings();
-        let mut owner_covered = 0;
-        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
-            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
-                self.error(
-                    Some(owner),
-                    format!("monomorphizing receiver for `{target}`: {e}"),
-                )
-            })?;
-            if nominal_template(name) != name.as_str() {
-                bindings.self_instance =
-                    Some((nominal_template(name).to_string(), receiver.clone()));
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-            }
-        }
-        let own_binders: Vec<ParamRef> = declaration
-            .param_decls
-            .iter()
-            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
-            .map(ParamDecl::binder)
-            .filter(|binder| !bindings.types.contains_key(binder))
-            .collect();
-        for (binder, ty) in own_binders.into_iter().zip(method_bindings) {
-            bindings.types.insert(binder, ty.clone());
-        }
-        for decl in &declaration.param_decls {
-            if let ParamDecl::Type { .. } = decl
-                && !bindings.types.contains_key(&decl.binder())
-            {
-                bindings.types.insert(decl.binder(), Ty::StringLiteral);
-            }
-        }
-        for ty in &declaration.param_types {
-            if let Ty::Param { binder, .. } = ty
-                && !bindings.types.contains_key(binder)
-            {
-                bindings.types.insert(binder.clone(), Ty::StringLiteral);
-            }
-        }
-        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
-        arguments.drain(..owner_covered);
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
-        self.enqueue(&target, bindings, arguments)?;
-        Ok(())
+        self.nominal_method_instance(owner, receiver, method, argc, method_bindings, &[])
+            .map(drop)
     }
 
     /// Enqueue the `write_to` instance a lowered `print` of a nominal struct
@@ -503,6 +447,89 @@ impl Specializer<'_> {
                 .first()
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
+    }
+
+    /// The instance one nominal method reached by a lowered intrinsic
+    /// names, enqueued (see [`Self::enqueue_nominal_method_instance`]):
+    /// `argument_types`, when given, solve the method's own binders as a
+    /// call's arguments would before any remaining type parameter takes
+    /// the builtin string. `None` when the receiver declares no such method.
+    fn nominal_method_instance(
+        &mut self,
+        owner: &str,
+        receiver: &Ty,
+        method: &str,
+        argc: usize,
+        method_bindings: &[Ty],
+        argument_types: &[Ty],
+    ) -> Result<Option<String>, MonoError> {
+        let Ty::Struct(name, arguments) = receiver else {
+            return Ok(None);
+        };
+        let target = mojito_symbol::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            method,
+            None,
+            argc,
+        );
+        if !self.functions.contains_key(target.as_str()) {
+            return Ok(None);
+        }
+        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
+            return Ok(None);
+        };
+        let mut bindings = self.base_bindings();
+        let mut owner_covered = 0;
+        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
+            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+                self.error(
+                    Some(owner),
+                    format!("monomorphizing receiver for `{target}`: {e}"),
+                )
+            })?;
+            if nominal_template(name) != name.as_str() {
+                bindings.self_instance =
+                    Some((nominal_template(name).to_string(), receiver.clone()));
+                owner_covered =
+                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            }
+        }
+        let own_binders: Vec<ParamRef> = declaration
+            .param_decls
+            .iter()
+            .filter(|decl| matches!(decl, ParamDecl::Type { .. }))
+            .map(ParamDecl::binder)
+            .filter(|binder| !bindings.types.contains_key(binder))
+            .collect();
+        for (binder, ty) in own_binders.into_iter().zip(method_bindings) {
+            bindings.types.insert(binder, ty.clone());
+        }
+        for (pattern, actual) in declaration.param_types.iter().zip(argument_types) {
+            unify(pattern, actual, &mut bindings)
+                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        }
+        for decl in &declaration.param_decls {
+            if let ParamDecl::Type { .. } = decl
+                && !bindings.types.contains_key(&decl.binder())
+            {
+                bindings.types.insert(decl.binder(), Ty::StringLiteral);
+            }
+        }
+        for ty in &declaration.param_types {
+            if let Ty::Param { binder, .. } = ty
+                && !bindings.types.contains_key(binder)
+            {
+                bindings.types.insert(binder.clone(), Ty::StringLiteral);
+            }
+        }
+        let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
+        arguments.drain(..owner_covered);
+        push_sugar_arguments(declaration, &bindings, &mut arguments);
+        self.enqueue(&target, bindings, arguments).map(Some)
     }
 }
 

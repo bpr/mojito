@@ -133,6 +133,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
             is_symbolic(v)
         }
         Ty::Ref(v) => is_symbolic(&v.referent),
+        Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         Ty::Func {
             params,
             ret,

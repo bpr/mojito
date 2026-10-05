@@ -428,7 +428,7 @@ impl VmBackend {
             match (method, args.len()) {
                 // Hashable scalar leaf: contribute the value itself (`-0.0`
                 // folded, as upstream's `SIMD.__hash__`) to the caller-owned
-                // hasher through its `_update_with_simd` clone for the leaf's
+                // hasher through its `_update_with_simd` instance at the leaf's
                 // own vector type.
                 ("__hash__", 1) => {
                     // A string literal hashes as the nominal `String` it
@@ -483,18 +483,19 @@ impl VmBackend {
                             crate::runtime::type_name(&recv)
                         ))
                     })?;
-                    let fname = format!(
-                        "{name}.{}",
-                        mojito_symbol::symbol::simd_update_clone_name(&leaf)
-                    );
+                    let fname = prog.hash_leaf_update(name, &leaf);
                     let fidx = prog.index_of(&fname).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: Hasher implementation has no '{fname}'"
                         ))
                     })?;
-                    let contribution = crate::runtime::hash_leaf_value(recv.clone());
-                    let (_, variables) =
-                        self.call_frame(prog, fidx, vec![hasher, contribution], &[])?;
+                    let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv.clone())];
+                    let value_params = lane_binders_from_arguments(
+                        &prog.mir.functions[fidx].1.param_types,
+                        &arguments,
+                        &[],
+                    );
+                    let (_, variables) = self.call_frame(prog, fidx, arguments, &value_params)?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
                     self.store_at_call_place(prog, frame_id, place, updated, regs, vars)?;
                     return Ok(Value::None);
@@ -652,26 +653,7 @@ impl VmBackend {
             Value::Struct { name, .. } => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");
-                // An erased `hasher._update_with_simd(x)` (a generic
-                // `__hash__[H: Hasher]` body) targets the clone for the
-                // argument's own vector type: the template body is a stub.
-                let simd_clone = (resolved.is_none()
-                    && method == "_update_with_simd"
-                    && args.len() == 1
-                    && kwargs.is_empty())
-                .then(|| crate::runtime::hash_leaf_ty(&args[0]))
-                .flatten()
-                .map(|leaf| {
-                    format!(
-                        "{name}.{}",
-                        mojito_symbol::symbol::simd_update_clone_name(&leaf)
-                    )
-                })
-                .filter(|clone| prog.index_of(clone).is_some());
-                let fname = match simd_clone {
-                    Some(clone) => clone,
-                    None => prog.runtime_method_name(name, method, resolved, method_argc),
-                };
+                let fname = prog.runtime_method_name(name, method, resolved, method_argc);
                 let fidx = prog.index_of(&fname).ok_or_else(|| {
                     RuntimeError::Unsupported(format!("vm: unknown method '{fname}'"))
                 })?;
@@ -784,6 +766,11 @@ impl VmBackend {
                         reify_value_parameters(&signature.param_decls, &supplied)
                     })
                     .unwrap_or_default();
+                let mut value_params = value_params;
+                let solved =
+                    lane_binders_from_arguments(&function.param_types, &call_args, &value_params);
+                value_params.retain(|(name, _)| solved.iter().all(|(binder, _)| binder != name));
+                value_params.extend(solved);
                 let (ret, mut frame_vars, returned_frame_id) = self
                     .call_synchronously_with_references(
                         prog,
@@ -874,4 +861,46 @@ fn kwargs_collector_struct(prog: &Prog, element: Option<&Ty>) -> String {
         }
         _ => KWARGS_COLLECTOR.to_string(),
     }
+}
+
+/// The dtype and width binders an erased call solves from its argument
+/// values where a parameter's type is a vector over them (`SIMD[dt, w]`),
+/// as the elaborator solves them from the argument types. A template frame
+/// reads them; a binder `supplied` a value keeps it.
+fn lane_binders_from_arguments(
+    parameter_types: &[Ty],
+    arguments: &[Value],
+    supplied: &[(String, Value)],
+) -> Vec<(String, Value)> {
+    let mut solved: Vec<(String, Value)> = Vec::new();
+    for (ty, argument) in parameter_types.iter().zip(arguments) {
+        let Ty::Simd { dtype, width } = peel_references(ty) else {
+            continue;
+        };
+        let Some((lane, lanes)) = crate::runtime::hash_leaf_ty(argument).and_then(|ty| {
+            mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(&ty))
+        }) else {
+            continue;
+        };
+        let dtype = match dtype {
+            mojito_types::types::SimdDtype::Expr(expr) => Some(expr),
+            mojito_types::types::SimdDtype::Known(_) => None,
+        };
+        let width = match width {
+            mojito_types::types::SimdWidth::Expr(expr) => Some(expr),
+            mojito_types::types::SimdWidth::Known(_) => None,
+        };
+        let slots = [(dtype, Value::Dtype(lane)), (width, Value::Int(lanes))];
+        for (slot, value) in slots {
+            if let Some(reference) = slot.and_then(mojito_types::param_expr::ParamExpr::as_decl_ref)
+                && !supplied
+                    .iter()
+                    .chain(&solved)
+                    .any(|(name, value)| **name == *reference.name && *value != Value::None)
+            {
+                solved.push((reference.name.to_string(), value));
+            }
+        }
+    }
+    solved
 }

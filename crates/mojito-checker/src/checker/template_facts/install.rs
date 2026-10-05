@@ -385,9 +385,6 @@ impl Checker {
                 .entry(callee.clone())
                 .or_default();
         }
-        for leaf in &facts.hash_leaves {
-            self.record_hash_leaf(leaf);
-        }
         // The residue goes on the body's own frame, which publishes it under
         // the body's key when it is popped, as an inferred body's would be.
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {

@@ -1967,7 +1967,7 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
 /// spellings); everything else is a `Ty::Simd`.
 ///
 /// Every phase that names a SIMD leaf type (checker annotations, the VM's
-/// runtime leaf classification, the hasher clone names) agrees through this
+/// runtime leaf classification, the hasher's leaf instances) agrees through this
 /// one function.
 pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
     match (dtype, width) {
@@ -2022,12 +2022,15 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
     })
 }
 
-/// The type a Hashable builtin leaf contributes to its hasher as: a `DType`
-/// hashes its code as a `UInt8` (upstream's `DType.__hash__`); every other
+/// The type a Hashable builtin leaf contributes to its hasher as.
+///
+/// A `DType` hashes its code as a `UInt8` (upstream's `DType.__hash__`), a
+/// `Bool` as `Scalar[DType.bool]` (upstream's `Bool.__hash__`); every other
 /// leaf hashes as itself.
 pub fn hash_leaf_ty(ty: &Ty) -> Ty {
     match ty {
         Ty::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
+        Ty::Bool => canonical_simd_ty(Dtype::Bool, 1),
         other => other.clone(),
     }
 }

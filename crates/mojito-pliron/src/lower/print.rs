@@ -160,8 +160,8 @@ impl FnLowering<'_> {
     /// Contribute one scalar/literal Hashable leaf to a caller-owned hasher —
     /// the VM's non-struct `__hash__` intrinsic. A scalar or vector leaf
     /// passes itself (`-0.0` folded to `0.0`, as upstream's `SIMD.__hash__`)
-    /// to the hasher's compiled `_update_with_simd` clone for the leaf's own
-    /// vector type; a string literal materializes as a nominal `String` and
+    /// to the hasher's `_update_with_simd` instance at the leaf's own vector
+    /// type; a string literal materializes as a nominal `String` and
     /// dispatches to that struct's `__hash__` instance bound to the hasher.
     pub(super) fn lower_hash_leaf(
         &mut self,
@@ -219,13 +219,7 @@ impl FnLowering<'_> {
         {
             return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
         }
-        let clone = format!(
-            "{hasher_name}.{}",
-            mojito_symbol::symbol::simd_update_clone_name(&mojito_types::types::hash_leaf_ty(
-                receiver
-            ))
-        );
-        let target = self.unique_hash_instance(dest, &hasher_name, &clone, false)?;
+        let target = self.hash_leaf_update_instance(dest, &hasher_name, receiver)?;
         let Some(expected) = self.signatures[&target].params.get(1).cloned() else {
             return Err(self.unsupported_reg(format!("`{target}` takes no leaf"), dest));
         };
@@ -269,6 +263,35 @@ impl FnLowering<'_> {
             _ => self.arg_value(ctx, recv, &expected, false, dest)?,
         };
         self.emit_bound_call(ctx, dest, &target, vec![hasher_ptr, operand])
+    }
+
+    /// The `hasher`'s `_update_with_simd` instance the elaborator minted at
+    /// the vector type the leaf `receiver` hashes as: the one whose value
+    /// parameter has that lane shape.
+    fn hash_leaf_update_instance(
+        &self,
+        dest: Reg,
+        hasher_name: &str,
+        receiver: &Ty,
+    ) -> Result<String, PlironError> {
+        let template = format!("{hasher_name}._update_with_simd");
+        let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(receiver));
+        self.signatures
+            .iter()
+            .find(|(fname, signature)| {
+                fname
+                    .strip_prefix(&template)
+                    .is_some_and(|rest| rest.starts_with('$'))
+                    && shape.is_some()
+                    && signature.params.get(1).and_then(lane_shape) == shape
+            })
+            .map(|(fname, _)| fname.clone())
+            .ok_or_else(|| {
+                self.unsupported_reg(
+                    format!("hashing a `{receiver}` leaf without a compiled `{template}` instance"),
+                    dest,
+                )
+            })
     }
 
     /// The unique compiled instance named `prefix` or one of its `$`-suffixed
@@ -1109,5 +1132,19 @@ impl FnLowering<'_> {
         let (data, len) = self.format_scalar(ctx, scalar, load.get_result(ctx), dest)?;
         self.append_string_pair(ctx, writer, data, len, dest);
         Ok(())
+    }
+}
+
+/// The `(dtype, width)` lane shape a lowered parameter of a vector type
+/// has, `None` for any other.
+fn lane_shape(ty: &LowerTy) -> Option<(Dtype, i64)> {
+    match ty {
+        LowerTy::Scalar(ScalarTy::Int) => Some((Dtype::Int, 1)),
+        LowerTy::Scalar(ScalarTy::UInt) => Some((Dtype::UInt64, 1)),
+        LowerTy::Scalar(ScalarTy::Float64) => Some((Dtype::Float64, 1)),
+        LowerTy::Scalar(ScalarTy::Bool) => Some((Dtype::Bool, 1)),
+        LowerTy::Scalar(ScalarTy::Sized(dtype)) => Some((*dtype, 1)),
+        LowerTy::Aggregate { ty, .. } => mojito_types::types::simd_shape(ty),
+        LowerTy::Scalar(ScalarTy::Ptr | ScalarTy::Dtype) | LowerTy::ZeroSized => None,
     }
 }
