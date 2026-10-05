@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method keyed on a type pack of its own (`def take[*Ts: Writable](self,
+  *a: *Ts)`) is served by its template, as in the pin: its body is
+  elaborated with the pack open, a `comptime for` or `comptime if` over the
+  pack kept for the elaborator, and each call instantiates the template from
+  its solved pack instead of minting a per-call clone, on a plain struct and
+  on a generic struct's instance alike, a method spreading its pack into
+  another included (`assets/ok/pack_method_template_served.mojo`; roadmap
+  R307). A member of a struct specialized whole still clones (R310).
+
 - A method call in MIR carries the position of a whole type pack spread into
   the method's collector (`Sink().take(*args)`; textual MIR 1.24,
   `call.method`'s `spread`), as a `def` call has since 1.17: the verifier
@@ -392,6 +401,12 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- A pack element's `.copy()` in a served pack-keyed body (`var x =
+  a[i].copy()` under `comptime for i in range(Ts.length)`) calls the
+  element's `copy`, where it read the element without copying and the VM
+  stopped on a double free of a `String` element
+  (`assets/ok/pack_element_copy_served.mojo`).
 
 - Programs the VM used to run only through its erased path now run on
   concrete MIR, as the first full gate since the VM switched found: a

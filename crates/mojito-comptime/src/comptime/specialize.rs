@@ -757,10 +757,9 @@ impl Elab<'_> {
     /// lowers, and is not keyed by what its checked body holds or reaches
     /// (the driver's `keyed_methods`, a compile-time-keyed stub among them).
     /// The elaborator instantiates its MIR per call, the method's own
-    /// binders bound from the call. A pack-keyed method still clones.
+    /// binders, a type pack among them, bound from the call.
     pub(super) fn template_serves_method(&self, owner: &str, method: &Method) -> bool {
-        template_serves_calls(method)
-            && !is_unspecialized_method_stub(&method.body)
+        !is_unspecialized_method_stub(&method.body)
             && !holds_instance_construct(&method.body)
             && !self
                 .keyed_methods
@@ -2727,7 +2726,7 @@ impl Elab<'_> {
             // A method the template serves is instantiated per call by the
             // elaborator from its MIR, its own binders bound with the
             // struct's.
-            let served = !keyed.contains(&method.name) && template_serves_calls(method);
+            let served = !keyed.contains(&method.name);
             clones.extend(
                 (!served)
                     .then(|| {
@@ -3671,15 +3670,6 @@ fn keyed_methods(
         })
         .map(|method| method.name.clone())
         .collect()
-}
-
-/// Whether a method's calls can be served by its template at all, whatever
-/// its body holds: a method keyed on a type pack of its own clones per call.
-fn template_serves_calls(method: &Method) -> bool {
-    !method
-        .type_params
-        .iter()
-        .any(|parameter| parameter.name.starts_with('*'))
 }
 
 /// The [`super::method_owner`] keys of the struct methods in `program`

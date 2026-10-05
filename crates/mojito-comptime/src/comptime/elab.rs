@@ -387,18 +387,9 @@ impl Elab<'_> {
                         // struct's binders or the method's own stays in its
                         // template, as a generic `def`'s does: the
                         // elaborator below MIR decides it per instance and
-                        // per call. A method keyed on a pack of its own
-                        // still clones per call.
-                        let own_binders: &[TypeParam] = if m
-                            .type_params
-                            .iter()
-                            .any(|parameter| parameter.name.starts_with('*'))
-                        {
-                            &[]
-                        } else {
-                            &m.type_params
-                        };
-                        let body = self.def_body(type_params, own_binders, &m.params, &m.body, env);
+                        // per call.
+                        let body =
+                            self.def_body(type_params, &m.type_params, &m.params, &m.body, env);
                         m.body = match body {
                             Ok(body) => body,
                             // A method whose body only elaborates with the

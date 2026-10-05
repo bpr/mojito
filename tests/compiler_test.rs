@@ -485,11 +485,11 @@ fn view_temporary_argument_conflicts_with_a_later_source_mutation() {
 }
 
 #[test]
-fn generic_methods_specialize_per_call_on_every_struct() {
-    // A method-level type parameter on an ordinary generic instance folds
-    // its `comptime if` per call (the clone bakes the instance's argument
-    // before the call's), and a method-level pack on a non-generic struct
-    // is inferred from the overflow arguments and expanded in its clone.
+fn generic_methods_instantiate_per_call_on_every_struct() {
+    // A method-level type parameter on an ordinary generic instance decides
+    // its `comptime if` per call, the instance's argument bound beside the
+    // call's, and a method-level pack on a non-generic struct is inferred
+    // from the overflow arguments and its loop unrolled per call.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -1431,6 +1431,35 @@ fn template_pack_instances_are_template_served() {
             expected
         );
     }
+}
+
+#[test]
+fn pack_keyed_method_is_template_served() {
+    // A method keyed on a type pack of its own, on a plain struct and on a
+    // generic struct's instance, serves every call from its template: the
+    // forwarded pack binds the callee's, and no per-call clone is minted.
+    use mojito::census::CloneClass;
+    let source = "struct Box[T: Writable & Copyable & Deinitable]:\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def show[*Ts: Writable](self, *a: *Ts):\n        print(self.v, Ts.length)\n        comptime for i in range(Ts.length):\n            print(a[i])\n\nstruct Sink:\n    def __init__(out self):\n        pass\n\n    def take[*Ts: Writable](self, *a: *Ts):\n        comptime for i in range(a.__len__()):\n            print(a[i])\n\n    def relay[*Ts: Writable](self, *a: *Ts):\n        self.take(*a)\n\ndef main():\n    Box[Int](5).show(1, \"x\")\n    Sink().relay(2, \"two\")\n";
+    let compiler = Compiler::default();
+    let baseline = compiler
+        .compile_unlinked(CENSUS_BASELINE)
+        .expect("compile")
+        .instantiation_census();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    let census = program.instantiation_census();
+    for name in ["show", "take", "relay"] {
+        assert!(!census.cloned.minted(name), "{name}: {census:?}");
+    }
+    assert_eq!(
+        census.cloned.count(CloneClass::PerCallMethod)
+            - baseline.cloned.count(CloneClass::PerCallMethod),
+        0,
+        "{census:?}"
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "5 2\n1\nx\n2\ntwo\n"
+    );
 }
 
 #[test]

@@ -673,8 +673,10 @@ branch for the class is deleted, and so is its certificate class.
   World's `method_per_call` reads 75 (the 14 `Fnv1a` leaves, `AHasher`'s 14,
   and 47 unrolled members of the variadic specializations) beside
   `struct_dtype_vector 8` and `struct_variadic 128`, its total unchanged at
-  211. What still clones per call is R307 (a pack of its own), R308 (the
-  hasher's leaf), and R310 (a body only a clone serves, a member of a
+  211. A method keyed on a type pack of its own followed with R307:
+  `assets/ok/pack_forwarding_method.mojo` and the bundled
+  `FormatStruct.params` read 75 too. What still clones per call is R308
+  (the hasher's leaf), and R310 (a body only a clone serves, a member of a
   struct specialized whole).
 
 One mixed-feature probe is carried through every P3 step, so migrations that

@@ -306,23 +306,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R5 and R305.
   - Model: Fable, Planned.
 
-- [ ] **R307 (P3e) A method keyed on a type pack of its own is cloned per
-  call**
-
-  Problem: `def take[*Ts: Writable](self, *a: *Ts)` mints a per-call AST
-  clone for each element list, where every other method with compile-time
-  parameters of its own is served by its template.
-  - The elaborator excludes a method with a variadic binder of its own
-    (`template_serves_calls`, `comptime/specialize.rs`), and its template
-    body is still elaborated without its binders open (`comptime/elab.rs`).
-  - The served pack-keyed `def`'s forms carry over: `bind_pack` for the
-    receiver call, the template's `comptime for` over the collector, and
-    the spread `MethodCall`, whose position MIR already carries.
-  - `assets/ok/pack_forwarding_method.mojo` and the `pack_method_*` fixtures
-    are the bodies that wait.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R308 (P3e) The hasher's `SIMD[_, _]` leaf is minted for every hasher
   and cloned per call**
 

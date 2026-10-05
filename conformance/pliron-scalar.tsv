@@ -344,6 +344,7 @@ assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_alias_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_alias_string_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_binding_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_copy_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_default_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_read_borrowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_rebind.mojo	-	ineligible	no-scalar-entry-shape
@@ -352,6 +353,7 @@ assets/ok/pack_forwarding_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_forwarding_print.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_index_named_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_length_runtime_position.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_method_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_beside_keyed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_bounds.mojo	-	ineligible	no-scalar-entry-shape

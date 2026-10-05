@@ -945,8 +945,10 @@ which the elaborator keeps in the template (`Elab::def_body`) and decides per
 call. The driver reads what such a body reaches at each closed call
 (`TemplateReach::method_call`).
 
-A method keeps per-call AST clones only where its template cannot serve:
-it is keyed on a type pack of its own, its body reaches a compile-time-keyed
+A method keyed on a type pack of its own is served the same way: its
+template body opens the pack (`Elab::def_body`), and the call's solved pack
+binds it below MIR. A method keeps per-call AST clones only where its
+template cannot serve: its body reaches a compile-time-keyed
 stub (`per_call_stubs` and the elaborator's stub-reaching walk, reported to
 the driver as `Elaborated::stub_reaching_methods` and keyed the next round),
 holds a nested `def` or a lambda, or applies a tuple or a struct specialized

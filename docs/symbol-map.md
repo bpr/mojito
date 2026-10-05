@@ -1001,8 +1001,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry, and a method with compile-time
-  parameters of its own mints no per-call clone unless it is keyed or
-  `template_serves_calls` refuses it (a type pack of its own);
+  parameters of its own, a type pack among them, mints no per-call clone
+  unless it is keyed;
   `template_serves_method` says the same for a non-generic struct's method,
   judged on its elaborated body, whose `comptime if`/`comptime for` over its
   own binders stays in the template (`Elab::def_body`). `per_call_stubs`

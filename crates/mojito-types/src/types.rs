@@ -2303,6 +2303,7 @@ pub const fn builtin_copy_is_value_read(ty: &Ty) -> bool {
         Ty::Struct(..)
             | Ty::Param { .. }
             | Ty::Assoc { .. }
+            | Ty::Dependent(_)
             | Ty::Ref(_)
             | Ty::SelfType
             | Ty::Func { .. }
