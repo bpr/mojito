@@ -164,20 +164,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R290, R267, and R318.
   - Model: Fable, Planned.
 
-- [ ] **R293 (P3c) An annotated vector binding at a symbolic width rejects
-  its literal initializer**
-
-  Problem: `var v: SIMD[DType.int32, n] = 7` in `def h[n: Int]` fails with
-  "invalid checked program: … binding of Int to a slot of type
-  SIMD[DType.int32, n]"; the pin prints `16` for `h[2]` after `v += 1`.
-  - The same binding at a `comptime for` index (`SIMD[DType.int32, i]`)
-    fails the same way; the pin prints `24` for `range(1, 3)`.
-  - Cause to confirm: the checker records the literal-to-vector conversion
-    (a splat) only at a known width, so MIR binds the bare `Int`.
-  - `var v = SIMD[DType.int32, n](7)` already runs.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R257 (P3c) A lane gather at a symbolic width keys a clone**
 
   Problem: `v.shuffle[...]()`, `v.slice[w, offset=o]()`, and `v.join(w)` in

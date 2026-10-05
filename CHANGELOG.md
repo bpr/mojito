@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An annotated vector binding at a symbolic width or dtype with a numeric
+  literal initializer (`var v: SIMD[DType.int32, n] = 7` in `def h[n: Int]`,
+  or at a `comptime for` index) now runs, as in the pin, where it failed
+  with "binding of Int to a slot of type SIMD[DType.int32, n]": the checker
+  records the literal's materialization at the symbolic vector type, which
+  each instance splats at its own width; a literal argument to such a
+  parameter runs too (`assets/ok/simd_symbolic_width_literal_binding.mojo`).
+
 - A `comptime if` whose condition applies a function inside a
   template-served `comptime for` (`comptime if is_even(i):` in `comptime for
   i in range(n)`) now runs, as in the pin, where it failed with "binds 2 of

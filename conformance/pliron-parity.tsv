@@ -584,6 +584,7 @@ assets/ok/simd_shifts_masked.mojo	main	exe-differential	sanitized
 assets/ok/simd_shuffle.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_surface.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_hooks.mojo	main	exe-differential	sanitized
+assets/ok/simd_symbolic_width_literal_binding.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_default_symbolic.mojo	main	exe-differential	sanitized
 assets/ok/simd_wide_widths.mojo	main	exe-differential	sanitized

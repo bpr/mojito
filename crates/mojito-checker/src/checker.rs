@@ -1988,13 +1988,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let scalar_boundary = matches!(from, Ty::IntLiteral | Ty::FloatLiteral)
             && (matches!(to, Ty::Int | Ty::UInt | Ty::Float64)
-                || matches!(
-                    to,
-                    Ty::Simd {
-                        width: SimdWidth::Known(_),
-                        ..
-                    }
-                ));
+                || matches!(to, Ty::Simd { width, .. } if !width.is_inferred()));
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
                 && !self.literal_value_fits_target(&value, to)
@@ -2076,20 +2070,12 @@ impl Checker {
     fn literal_value_fits_target(&self, value: &CtValue, target: &Ty) -> bool {
         // A literal's fit into a symbolic lane is the instantiation's to check.
         match (value, target) {
-            (
-                CtValue::IntLiteral(_),
-                Ty::Simd {
-                    dtype,
-                    width: SimdWidth::Known(_),
-                },
-            ) => dtype.licenses(int_literal_materializes_to_dtype),
-            (
-                CtValue::FloatLiteral(_),
-                Ty::Simd {
-                    dtype,
-                    width: SimdWidth::Known(_),
-                },
-            ) => dtype.licenses(Dtype::is_float),
+            (CtValue::IntLiteral(_), Ty::Simd { dtype, width }) if !width.is_inferred() => {
+                dtype.licenses(int_literal_materializes_to_dtype)
+            }
+            (CtValue::FloatLiteral(_), Ty::Simd { dtype, width }) if !width.is_inferred() => {
+                dtype.licenses(Dtype::is_float)
+            }
             (value, Ty::Int | Ty::UInt | Ty::Float64) => {
                 value.clone().materialize_as(target).is_some()
             }
