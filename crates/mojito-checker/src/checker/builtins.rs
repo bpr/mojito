@@ -415,6 +415,23 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
     }
 }
 
+/// The common element of a display's two elements ([`common_elem`]), where a
+/// string literal beside the nominal `String` joins it.
+pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
+    match (a, b) {
+        (Ty::StringLiteral, string) | (string, Ty::StringLiteral) if is_nominal_string(string) => {
+            Some(string.clone())
+        }
+        _ => common_elem(a, b),
+    }
+}
+
+/// Whether `ty` is the nominal `String`.
+pub(super) fn is_nominal_string(ty: &Ty) -> bool {
+    matches!(ty, Ty::Struct(name, args)
+        if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
+}
+
 /// The common type of two numeric operands, coercing literals as needed, or
 /// `None` if they can't be unified (e.g. two different concrete types).
 /// The common type of a ternary's two branches: unify numerics (widening

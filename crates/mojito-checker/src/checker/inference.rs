@@ -1120,6 +1120,11 @@ impl Checker {
                 method,
                 MethodCallArguments::ordinary(args, kwargs),
             ),
+            ExprKind::Index { object, index }
+                if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
+            {
+                element
+            }
             ExprKind::Index { object, index } => {
                 // A subscript base that is itself a reference result
                 // (`v[List[Int]][0]` on the self-hosted `Variant`) is borrowed
@@ -2254,23 +2259,83 @@ impl Checker {
         }
     }
 
+    /// A subscript of a list display in a compile-time position
+    /// (`[10, 20, 30][n]`, a named list folded to its display): the element
+    /// the parameter expression `list[index]` denotes, which the elaborator
+    /// folds per instance, as the pin reads a compile-time list. `None` for
+    /// any other subscript, or one either operand of which is not a
+    /// parameter expression.
+    fn comptime_display_subscript(
+        &self,
+        expr: &Expr,
+        object: &Expr,
+        index: &Expr,
+    ) -> Option<Result<Ty, TypeError>> {
+        let ExprKind::ListLit(values) = &object.kind else {
+            return None;
+        };
+        if self.comptime_positions.get() == 0 || values.is_empty() {
+            return None;
+        }
+        let element = self.infer_list_elem(values).ok()?;
+        let elements = values
+            .iter()
+            .map(|value| {
+                self.eval_associated_ct(value, &HashMap::new())
+                    .ok()?
+                    .materialize_as(&element)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let list = self.param_context.constant(CtValue::List(elements)).ok()?;
+        let index = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(index).ok()?
+        };
+        let value = self
+            .param_context
+            .list_get(&list, &index)
+            .map_err(param_error);
+        Some(value.map(|value| {
+            self.operation_adjustments.borrow_mut().insert(
+                expr.source_span(),
+                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+            );
+            self.expression_types
+                .borrow_mut()
+                .insert(expr.source_span(), element.clone());
+            element
+        }))
+    }
+
     pub(super) fn infer_list_elem(&self, elems: &[Expr]) -> Result<Ty, TypeError> {
         let mut acc: Option<Ty> = None;
         for e in elems {
             let ty = self.infer(e)?;
             acc = Some(match acc {
                 None => ty,
-                Some(cur) => common_elem(&cur, &ty).ok_or_else(|| TypeError::TypeMismatch {
-                    expected: cur.to_string(),
-                    found: ty.to_string(),
-                    context: "list element".to_string(),
-                })?,
+                Some(cur) => {
+                    common_display_element(&cur, &ty).ok_or_else(|| TypeError::TypeMismatch {
+                        expected: cur.to_string(),
+                        found: ty.to_string(),
+                        context: "list element".to_string(),
+                    })?
+                }
             });
         }
         // A non-empty literal always sets `acc`; empty is handled by the caller.
         let element = acc.ok_or_else(|| {
             TypeError::InvariantViolation("empty list reached non-empty inference".to_string())
         })?;
+        // A string literal beside a `String` converts to it, as the pin
+        // infers `[name(n), "z"]`.
+        if is_nominal_string(&element) {
+            for value in elems {
+                if self.infer(value)? == Ty::StringLiteral {
+                    self.nominal_string_wrap(value.source_span())?;
+                }
+            }
+            return Ok(element);
+        }
         // A string element materializes the nominal `String`, as upstream's
         // non-materializable `StringLiteral` does in every runtime display.
         if element == Ty::StringLiteral {

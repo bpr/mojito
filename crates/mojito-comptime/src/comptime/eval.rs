@@ -601,6 +601,14 @@ impl Elab<'_> {
                     None if ty == Ty::Bool => CtValue::Bool(false),
                     None => CtValue::IntLiteral(0.into()),
                 };
+                // A construction converts between the numeric types
+                // (`Float64(n)`, `Int(x)`), as the pin's initializers do.
+                let value = match (value, &ty) {
+                    (CtValue::Int(value), Ty::Float64) => CtValue::Float((value as f64).to_bits()),
+                    (CtValue::UInt(value), Ty::Float64) => CtValue::Float((value as f64).to_bits()),
+                    (CtValue::Float(bits), Ty::Int) => CtValue::Int(f64::from_bits(bits) as i64),
+                    (value, _) => value,
+                };
                 value.clone().materialize_as(&ty).ok_or_else(|| {
                     ComptimeError::NotComptime(format!(
                         "'{name}({value})' is not a compile-time value"

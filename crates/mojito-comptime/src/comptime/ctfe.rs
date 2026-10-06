@@ -21,6 +21,7 @@ impl Elab<'_> {
             &self.served_packs,
             &self.served_lanes,
             &self.served_structs,
+            &self.scalar_reads,
         )
     }
 

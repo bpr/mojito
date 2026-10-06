@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` display over a generic body's parameters may now call a
+  `def` returning a scalar, compute a float, or subscript a compile-time
+  list (`[twice(n), n]`, `[Float64(n) * 0.5]`, `[SQUARES[n]]`), and the
+  template serves it, as the pin evaluates it per instance; the `def` is no
+  longer cloned, and a generic struct's method spelling such a loop no
+  longer stops with "unspecialized type-keyed method". A list display
+  mixing `String` and string-literal elements (`[label(n), "z"]`) is now a
+  list of `String`, where it failed with "type mismatch for list element".
 - A local `comptime` alias of a display binding over a generic body's
   parameters (`comptime A = L` after `comptime L = [n, n * 2]`) is now
   another name of that binding, as at the pin: `comptime for x in A`, `A[0]`

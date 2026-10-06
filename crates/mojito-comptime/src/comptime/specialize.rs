@@ -261,7 +261,7 @@ impl Elab<'_> {
                 out.push(template_stub(&stmt, "unspecialized type-pack function"));
             } else if retained
                 && self.comptime_generics.contains(&template_name)
-                && comptime_keyed_declaration(&stmt)
+                && comptime_keyed_declaration(&stmt, &self.scalar_reads)
             {
                 // A compile-time-keyed template with a deferred call stands
                 // in the same way: until the checker's request is served, or

@@ -3127,7 +3127,7 @@ fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
 }
 
 /// Whether `iter` is a collection display of scalar `element`s a loop binder
-/// takes (`Int`, `Bool`, `String`), which the elaborator evaluates per
+/// takes (`Int`, `Bool`, `Float64`, `String`), which the elaborator evaluates per
 /// instance when the check does not close it.
 fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
     let display = match &iter.kind {
@@ -3136,7 +3136,7 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
         _ => false,
     };
     display
-        && (matches!(element, Ty::Int | Ty::Bool)
+        && (matches!(element, Ty::Int | Ty::Bool | Ty::Float64)
             || matches!(element, Ty::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
 }

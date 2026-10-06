@@ -124,21 +124,20 @@ impl Elab<'_> {
             }
             // The iterable is a compile-time position: a named collection
             // is its literal display there, which the check closes into the
-            // loop header's sequence.
+            // loop header's sequence, as is one a display's element
+            // subscripts (`[L[n], n]`).
             StmtKind::ComptimeFor { iter, body, .. } => {
-                let collection = match &iter.kind {
-                    ExprKind::Identifier(name) if !shadowed.contains(name) => {
-                        env.get(name).filter(|value| value.is_runtime_collection())
-                    }
-                    _ => None,
-                };
-                match collection {
-                    Some(value) => {
-                        let mut literal = lit_result(value, iter.span)?;
-                        literal.source.clone_from(&iter.source);
-                        literal.syntax_id = iter.syntax_id;
-                        *iter = literal;
-                    }
+                if matches!(iter.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)) {
+                    let mut subscripts = SubscriptedCollections {
+                        env,
+                        shadowed,
+                        folded: Ok(()),
+                    };
+                    mojito_ast::visit::walk_expr_mut(&mut subscripts, iter);
+                    subscripts.folded?;
+                }
+                match named_collection(iter, env, shadowed) {
+                    Some(value) => *iter = collection_literal(value, iter)?,
                     None => self.cross_expr(iter, env, shadowed)?,
                 }
                 self.cross_block(body, env, shadowed)
@@ -502,6 +501,50 @@ impl Elab<'_> {
 
 /// Upstream's rejection of an implicit runtime use of a compile-time
 /// collection.
+/// The closed collection `expr` names, unless a runtime local shadows it.
+fn named_collection<'a>(
+    expr: &Expr,
+    env: &'a HashMap<String, CtValue>,
+    shadowed: &HashSet<String>,
+) -> Option<&'a CtValue> {
+    match &expr.kind {
+        ExprKind::Identifier(name) if !shadowed.contains(name) => {
+            env.get(name).filter(|value| value.is_runtime_collection())
+        }
+        _ => None,
+    }
+}
+
+/// The literal display of a collection `value`, standing where `named` did.
+fn collection_literal(value: &CtValue, named: &Expr) -> Result<Expr, ComptimeError> {
+    let mut literal = lit_result(value, named.span)?;
+    literal.source.clone_from(&named.source);
+    literal.syntax_id = named.syntax_id;
+    Ok(literal)
+}
+
+/// Folds each closed collection a compile-time display subscripts to its
+/// literal display.
+struct SubscriptedCollections<'a> {
+    env: &'a HashMap<String, CtValue>,
+    shadowed: &'a HashSet<String>,
+    folded: Result<(), ComptimeError>,
+}
+
+impl mojito_ast::visit::MutVisitor for SubscriptedCollections<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        let ExprKind::Index { object, .. } = &mut expr.kind else {
+            return;
+        };
+        if let Some(value) = named_collection(object, self.env, self.shadowed) {
+            match collection_literal(value, object) {
+                Ok(literal) => **object = literal,
+                Err(error) => self.folded = Err(error),
+            }
+        }
+    }
+}
+
 fn not_implicitly_copyable(value: &CtValue) -> ComptimeError {
     ComptimeError::Crossing(format!(
         "cannot materialize comptime value of type '{}' to runtime because it is not \

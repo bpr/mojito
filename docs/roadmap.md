@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R401**.
+Next free ID: **R403**.
 
 ## Ordered Work
 
@@ -152,21 +152,23 @@ correctness fix to existing behavior is allowed.
   - Depends on R363.
   - Model: Opus, Not Planned.
 
-- [ ] **R363 (P3b) A `comptime for` display whose element applies a
-  function, subscripts a value, or computes a float keys a clone**
+- [ ] **R401 (P3b) A `comptime for` display element of a struct type, or one
+  that calls a raising `def` or a method, keys a clone**
 
-  Problem: `comptime for x in [twice(n), n]:` in `def f[n: Int]()` is
-  unrolled in the AST on a clone, where `[n * 2, n]` is served by the
+  Problem: `comptime for p in [mk(n), P(1)]:` in `def f[n: Int]()` is
+  unrolled in the AST on a clone, where `[twice(n), n]` is served by the
   template.
-  - The cloner decides before the check, from syntax alone, and a call or a
-    subscript does not show a scalar type (`scalar_shaped`, `comptime.rs`).
-  - The check and MIR already serve any display of `Int`, `Bool`, or
-    `String` elements: the thunk lifted for the display runs the call.
-  - A float element computed from a binder (`[n * 0.5]`) also needs the
-    check to mint a `Float64` binder for an evaluated display
-    (`evaluated_display`, `checker/comptime_validation.rs`).
-  - Found while landing R246 (2026-10-06).
-  - Depends on nothing.
+  - The cloner decides before the check, from the module's declarations
+    (`ScalarReads`, `comptime.rs`): a callee must be a module `def` every
+    declaration of which returns an `Int`, `Bool`, `String`, or `Float64`
+    and does not raise.
+  - A loop variable is a binder MIR carries, so a struct element waits on
+    R367; a raising callee, a method (`x.f()`), and a callee reached
+    through a module name (`m.f(n)`) only need the predicate to see them.
+  - Each clone runs a CTFE call through a whole-program check, about 35
+    seconds for a two-element display in a debug build (R198).
+  - Found while landing R363 (2026-10-06).
+  - Depends on R367.
   - Model: Opus, Not Planned.
 
 - [ ] **R364 (P3) MIR cannot construct a reflected field type, so a loop
@@ -2446,6 +2448,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     clone.
   - The same loop in a plain `def` runs, unrolled in the AST.
   - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R402 A plain `def`'s `comptime for` over struct elements built by a
+  call is rejected**
+
+  Problem: `comptime for p in [mk(3), P(1)]:` in a non-generic `def` fails
+  with "VM CTFE failed for 'mk': ... 'comptime for' over elements of type
+  'P' in a generic body", where the pin prints each element.
+  - The CTFE program for `mk(3)` still holds the enclosing loop, not yet
+    unrolled, and its check rejects a loop variable that is no binder
+    (`check_comptime_for`, `checker/comptime_validation.rs`).
+  - The same loop in a generic `def` runs, on a clone.
+  - Probe: `[mk(3), P(1)]` over `@fieldwise_init struct P` with
+    `def mk(n: Int) -> P`.
+  - Found while landing R363 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

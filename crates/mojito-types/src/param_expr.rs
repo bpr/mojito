@@ -365,7 +365,7 @@ impl ParamContext {
             return self.select(elements, index);
         }
         let index = self.intern(index);
-        if let Some(CtValue::Tuple(values)) = list.as_constant()
+        if let Some(CtValue::Tuple(values) | CtValue::List(values)) = list.as_constant()
             && let Some(position) = index.as_constant().and_then(fold::integer_value)
         {
             let count = values.len();
@@ -413,7 +413,20 @@ impl ParamContext {
             }
             _ => {}
         }
-        let MetaTy::ParamList(element) = list.meta() else {
+        // A constant list of one kind of value read at an index still a
+        // parameter (`[10, 20, 30][n]`) keeps the residual node, which folds
+        // once the index is bound.
+        let element = match list.meta() {
+            MetaTy::ParamList(element) => Some(element.clone()),
+            MetaTy::Tuple(members) | MetaTy::List(members) => members
+                .split_first()
+                .filter(|(first, rest)| {
+                    first.as_value().is_some() && rest.iter().all(|member| member == *first)
+                })
+                .map(|(first, _)| Box::new(first.clone())),
+            _ => None,
+        };
+        let Some(element) = element else {
             return Err(ParamError::TypeMismatch {
                 operation: "parameter list element".to_string(),
                 expected: "a parameter list".to_string(),
@@ -434,8 +447,7 @@ impl ParamContext {
                 "parameter list index {position} is negative"
             )));
         }
-        let meta = (**element).clone();
-        Ok(self.make(meta, ParamKind::ListGet { list, index }))
+        Ok(self.make(*element, ParamKind::ListGet { list, index }))
     }
 
     /// The bound index of a [`ParamKind::ListTabulate`] element.

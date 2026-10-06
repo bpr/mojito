@@ -983,6 +983,7 @@ pub fn elaborate_prepared(
         served_packs: served_pack_defs(program),
         served_lanes: served_lane_defs(program),
         served_structs: served_variadic_structs(program),
+        scalar_reads: ScalarReads::of(program),
         comptime_generics: collect_comptime_generic_templates(program),
         dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
@@ -1308,6 +1309,8 @@ pub(super) struct LoopNames<'a> {
     /// `comptime` constant, or a local `comptime` binding of a literal
     /// display.
     pub(super) collection: &'a dyn Fn(&str) -> bool,
+    /// The module's scalar-valued declarations ([`ScalarReads`]).
+    pub(super) scalars: &'a ScalarReads,
 }
 
 /// The names a generic `def` body open as a template gives the loops it
@@ -1319,6 +1322,61 @@ pub(super) struct TemplateLoopNames {
     pub(super) value_packs: HashSet<String>,
     pub(super) reflected: ReflectedLists,
     pub(super) displays: HashSet<String>,
+}
+
+/// The module declarations a compile-time display's element reads a scalar
+/// through ([`scalar_shaped`]): a `def` every declaration of which returns
+/// an `Int`, `Bool`, `String`, or `Float64` and does not raise, and a module
+/// `comptime` list display of literals of one kind. A call of the first and
+/// a subscript of the second show the type a loop binder takes, as a scalar
+/// construction (`Float64(n)`) does unless the module declares its name.
+#[derive(Default, Clone)]
+pub(super) struct ScalarReads {
+    functions: HashSet<String>,
+    lists: HashSet<String>,
+    declared: HashSet<String>,
+}
+
+impl ScalarReads {
+    pub(super) fn of(program: &[Stmt]) -> Self {
+        let mut reads = Self::default();
+        let mut other = HashSet::new();
+        for statement in program {
+            match &statement.kind {
+                StmtKind::Def {
+                    name, raises, ret, ..
+                } => {
+                    reads.declared.insert(name.clone());
+                    if !raises && ret.as_ref().is_some_and(scalar_type) {
+                        reads.functions.insert(name.clone());
+                    } else {
+                        other.insert(name.clone());
+                    }
+                }
+                StmtKind::Struct { name, .. } => {
+                    reads.declared.insert(name.clone());
+                }
+                StmtKind::Comptime {
+                    name,
+                    type_params,
+                    value,
+                    ..
+                } if type_params.is_empty() && literal_list(value) => {
+                    reads.lists.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        reads.functions.retain(|name| !other.contains(name));
+        reads
+    }
+
+    /// Whether a call of `name` returns a scalar a loop binder takes.
+    fn call(&self, name: &str) -> bool {
+        self.functions.contains(name)
+            || mojito_symbol::symbol::is_stdlib_string_struct(name)
+            || (!self.declared.contains(name) && matches!(name, "Int" | "Bool" | "Float64"))
+    }
 }
 
 /// The names a `def` body binds to a reflected list, by its query:
@@ -1463,15 +1521,16 @@ pub(super) fn comptime_for_is_template_served(
             !args.is_empty()
                 && args.iter().all(|bound| {
                     parameter_shaped(bound, packs)
-                        || display_read_shaped(bound, packs, names.displays)
+                        || display_read_shaped(bound, packs, names.displays, names.scalars)
                 })
         }
         ExprKind::ListLit(items) => {
             (!items.is_empty() && items.iter().all(literal_element))
-                || evaluated_display_shaped(iter, packs, names.displays)
+                || evaluated_display_shaped(iter, packs, names.displays, names.scalars)
         }
         ExprKind::BraceLit(entries) => {
-            literal_entries(entries) || evaluated_display_shaped(iter, packs, names.displays)
+            literal_entries(entries)
+                || evaluated_display_shaped(iter, packs, names.displays, names.scalars)
         }
         ExprKind::Identifier(name) => {
             names.value_packs.contains(name)
@@ -1502,7 +1561,7 @@ pub(super) fn comptime_for_is_template_served(
                         || parameter_shaped(value, packs)
                         || element
                         || names.displays.contains(name)
-                        || display_read_shaped(value, packs, names.displays)))
+                        || display_read_shaped(value, packs, names.displays, names.scalars)))
                     && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
             }
             StmtKind::Comptime { .. } => true,
@@ -1638,21 +1697,33 @@ fn reflection_count(expression: &Expr) -> bool {
 }
 
 /// Whether `expression` is spelled as a scalar a loop binder takes (`Int`,
-/// `Bool`, `String`) over the binders: a literal, a name, a `Self.` member,
-/// a pack length ([`pack_length`]), an element or the length of one of the
-/// body's display bindings (`L[0]`, `len(L)`), or an arithmetic, comparison,
-/// or boolean operator over those. Any other call or subscript, a float, or
-/// a nested display does not show its type.
-fn scalar_shaped(expression: &Expr, packs: &HashSet<String>, displays: &HashSet<String>) -> bool {
-    let shaped = |operand: &Expr| scalar_shaped(operand, packs, displays);
+/// `Bool`, `String`, `Float64`) over the binders: a literal, a name, a
+/// `Self.` member, a pack length ([`pack_length`]), an element or the length
+/// of one of the body's display bindings (`L[0]`, `len(L)`), an element of
+/// a module list of scalars or a call of a `def` returning one
+/// ([`ScalarReads`]), or an arithmetic, comparison, or boolean operator over
+/// those. Any other call or subscript, or a nested display, does not show
+/// its type.
+fn scalar_shaped(
+    expression: &Expr,
+    packs: &HashSet<String>,
+    displays: &HashSet<String>,
+    scalars: &ScalarReads,
+) -> bool {
+    let shaped = |operand: &Expr| scalar_shaped(operand, packs, displays, scalars);
     let display = |operand: &Expr| matches!(&operand.kind, ExprKind::Identifier(name) if displays.contains(name));
+    let list = |operand: &Expr| matches!(&operand.kind, ExprKind::Identifier(name) if scalars.lists.contains(name));
     match &expression.kind {
-        ExprKind::Int(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::Identifier(_) => true,
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Identifier(_) => true,
         ExprKind::Member { object, .. } => {
             matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
                 || pack_length(expression, packs)
         }
-        ExprKind::Index { object, index } => display(object) && shaped(index),
+        ExprKind::Index { object, index } => (display(object) || list(object)) && shaped(index),
         ExprKind::Call {
             name,
             param_args,
@@ -1661,6 +1732,18 @@ fn scalar_shaped(expression: &Expr, packs: &HashSet<String>, displays: &HashSet<
         } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
             matches!(args.as_slice(), [measured] if display(measured))
                 || pack_length(expression, packs)
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if scalars.call(name) => {
+            param_args
+                .iter()
+                .all(|argument| scalar_parameter_argument(argument, &shaped))
+                && args.iter().all(shaped)
+                && kwargs.iter().all(|argument| shaped(&argument.value))
         }
         ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
         ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Not, inner) => shaped(inner),
@@ -1698,8 +1781,9 @@ fn evaluated_display_shaped(
     expression: &Expr,
     packs: &HashSet<String>,
     displays: &HashSet<String>,
+    scalars: &ScalarReads,
 ) -> bool {
-    let shaped = |item: &Expr| scalar_shaped(item, packs, displays);
+    let shaped = |item: &Expr| scalar_shaped(item, packs, displays, scalars);
     match &expression.kind {
         ExprKind::ListLit(items) => !items.is_empty() && items.iter().all(shaped),
         ExprKind::BraceLit(entries) => {
@@ -1719,8 +1803,10 @@ fn display_read_shaped(
     expression: &Expr,
     packs: &HashSet<String>,
     displays: &HashSet<String>,
+    scalars: &ScalarReads,
 ) -> bool {
-    elab::expression_names_any(expression, displays) && scalar_shaped(expression, packs, displays)
+    elab::expression_names_any(expression, displays)
+        && scalar_shaped(expression, packs, displays, scalars)
 }
 
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
@@ -1732,6 +1818,42 @@ fn literal_element(expression: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a compile-time argument is a type or a value `shaped` accepts.
+fn scalar_parameter_argument(argument: &ParamArg, shaped: &dyn Fn(&Expr) -> bool) -> bool {
+    match argument {
+        ParamArg::Type(_) => true,
+        ParamArg::Value(value) => shaped(value),
+        ParamArg::Named { value, .. } => scalar_parameter_argument(value, shaped),
+    }
+}
+
+/// Whether a declared type is a scalar a loop binder takes.
+fn scalar_type(ty: &Type) -> bool {
+    match ty {
+        Type::Int | Type::Bool | Type::Float64 => true,
+        Type::Named(name, args) => {
+            args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expression` is a list display of literals of one kind, numbers
+/// counting as one.
+fn literal_list(expression: &Expr) -> bool {
+    let ExprKind::ListLit(items) = &expression.kind else {
+        return false;
+    };
+    let kind = |item: &Expr| match &item.kind {
+        ExprKind::Str(_) => 0,
+        ExprKind::Bool(_) => 1,
+        _ => 2,
+    };
+    !items.is_empty()
+        && items.iter().all(literal_element)
+        && items.iter().all(|item| kind(item) == kind(&items[0]))
 }
 
 /// Whether a brace display is a set or dictionary of literals.
@@ -1837,11 +1959,12 @@ fn def_body_keys_specialization(
     params: &[FnParam],
     owner: &str,
     body: &[Stmt],
+    scalars: &ScalarReads,
 ) -> bool {
     let packs = def_pack_names(type_params, params);
     let value_packs = def_value_pack_names(type_params, owner);
     let bound = def_bound_names(type_params, params, body);
-    let displays = served_display_bindings(&packs, body);
+    let displays = served_display_bindings(&packs, scalars, body);
     let reflected = ReflectedLists::of(body);
     let names = LoopNames {
         packs: &packs,
@@ -1849,6 +1972,7 @@ fn def_body_keys_specialization(
         reflected: &reflected,
         displays: &displays,
         collection: &|name| !bound.contains(name),
+        scalars,
     };
     block_has_unkept_comptime_for(body, &names)
         || reflected.materialized_in(body)
@@ -1920,14 +2044,18 @@ pub(super) fn def_value_pack_names(type_params: &[TypeParam], owner: &str) -> Ha
 /// with the binders symbolic and gives it no runtime form; MIR lifts it, and
 /// each compile-time expression that reads it, as a function the elaborator
 /// below MIR runs per instance.
-pub(super) fn served_display_bindings(packs: &HashSet<String>, body: &[Stmt]) -> HashSet<String> {
+pub(super) fn served_display_bindings(
+    packs: &HashSet<String>,
+    scalars: &ScalarReads,
+    body: &[Stmt],
+) -> HashSet<String> {
     let bindings = mojito_ast::visit::display_bindings(body);
     let mut served: HashSet<String> = bindings.keys().cloned().collect();
     // A display that reads an unserved one is unserved too.
     loop {
         let kept: HashSet<String> = served
             .iter()
-            .filter(|name| evaluated_display_shaped(&bindings[*name], packs, &served))
+            .filter(|name| evaluated_display_shaped(&bindings[*name], packs, &served, scalars))
             .cloned()
             .collect();
         if kept.len() == served.len() {
@@ -2167,6 +2295,7 @@ fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) ->
 fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
     let mut spreads: HashMap<String, Vec<String>> = HashMap::new();
     let mut cloned: HashSet<String> = HashSet::new();
+    let scalars = ScalarReads::of(program);
     for statement in program {
         let StmtKind::Def { name, .. } = &statement.kind else {
             continue;
@@ -2174,7 +2303,7 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
         if !variadic_keyed_declaration(statement) {
             continue;
         }
-        match pack_def_shape_served(statement) {
+        match pack_def_shape_served(statement, &scalars) {
             Some(callees) => spreads.entry(name.clone()).or_default().extend(callees),
             None => {
                 cloned.insert(name.clone());
@@ -2214,6 +2343,7 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
 fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     let served_structs = served_variadic_structs(program);
+    let scalars = ScalarReads::of(program);
     // The structs the cloner still specializes whole (R4): one applied over
     // a lane binder has no instance a served body could name.
     let whole_structs: HashSet<&str> = program
@@ -2225,6 +2355,7 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
                     &HashSet::new(),
                     &HashSet::new(),
                     &served_structs,
+                    &scalars,
                 )
         })
         .filter_map(|statement| match &statement.kind {
@@ -2433,7 +2564,7 @@ fn lane_def_shape_served(statement: &Stmt, whole_structs: &HashSet<&str>) -> boo
 /// such a body once, with the collector a pack of the symbolic `Ts` and each
 /// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
 /// pack from the call.
-fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
+fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<String>> {
     let StmtKind::Def {
         name,
         type_params,
@@ -2446,7 +2577,7 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
     };
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, params, name)
-        && !def_body_keys_specialization(type_params, params, name, body)
+        && !def_body_keys_specialization(type_params, params, name, body, scalars)
         && value_packs_read_as_parameters(type_params, name, body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
@@ -3134,6 +3265,7 @@ fn is_specializable_declaration(
     served_packs: &HashSet<String>,
     served_lanes: &HashSet<String>,
     served_structs: &HashSet<String>,
+    scalars: &ScalarReads,
 ) -> bool {
     match &statement.kind {
         StmtKind::Def {
@@ -3144,7 +3276,7 @@ fn is_specializable_declaration(
             ..
         } => {
             !type_params.is_empty()
-                && (def_body_keys_specialization(type_params, params, name, body)
+                && (def_body_keys_specialization(type_params, params, name, body, scalars)
                     // A type pack keys a clone per call unless the template
                     // serves the body (`pack_def_template_served`).
                     || (type_params
@@ -3213,6 +3345,8 @@ struct Elab<'a> {
     /// The variadic structs the template serves
     /// ([`served_variadic_structs`]).
     served_structs: HashSet<String>,
+    /// The module's scalar-valued declarations ([`ScalarReads`]).
+    scalar_reads: ScalarReads,
     /// The subset of `specializable` specialized only for its compile-time
     /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
     /// A call that omits a parameter consults the checker-recorded
@@ -3772,11 +3906,17 @@ fn collect_specializable<'a>(
     let served_packs = served_pack_defs(program);
     let served_lanes = served_lane_defs(program);
     let served_structs = served_variadic_structs(program);
+    let scalars = ScalarReads::of(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s, &served_packs, &served_lanes, &served_structs)
-                || bound_generics.contains(name))
+            && (is_specializable_declaration(
+                s,
+                &served_packs,
+                &served_lanes,
+                &served_structs,
+                &scalars,
+            ) || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
@@ -3810,10 +3950,11 @@ fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
         }
     }
     let served_packs = served_pack_defs(program);
+    let scalars = ScalarReads::of(program);
     families.retain(|_, declarations| {
         declarations.len() > 1
             && declarations.iter().any(|s| {
-                comptime_keyed_declaration(s)
+                comptime_keyed_declaration(s, &scalars)
                     || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
                     || dtype_keyed_declaration(s)
             })
@@ -3903,7 +4044,7 @@ fn dtype_keyed_declaration(statement: &Stmt) -> bool {
 /// Whether a top-level `def` is specializable only because its body holds
 /// compile-time control flow or a `rebind` over its own parameters — the
 /// compile-time-keyed class's per-declaration predicate.
-fn comptime_keyed_declaration(statement: &Stmt) -> bool {
+fn comptime_keyed_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
     let StmtKind::Def {
         name,
         type_params,
@@ -3914,7 +4055,7 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
     else {
         return false;
     };
-    def_body_keys_specialization(type_params, params, name, body)
+    def_body_keys_specialization(type_params, params, name, body, scalars)
         && admits_comptime_keying(statement)
         && type_params
             .iter()
@@ -3926,8 +4067,13 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
 /// with the enclosing clone (roadmap: nested definitions over compile-time
 /// parameters).
 pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
-    is_specializable_declaration(statement, &HashSet::new(), &HashSet::new(), &HashSet::new())
-        || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
+    is_specializable_declaration(
+        statement,
+        &HashSet::new(),
+        &HashSet::new(),
+        &HashSet::new(),
+        &ScalarReads::default(),
+    ) || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
             if !type_params.is_empty()
                 && (block_has_comptime(body)
                     || type_params.iter().any(|parameter| parameter.name.starts_with('*'))))
@@ -4122,6 +4268,7 @@ fn collect_dtype_generic_templates(program: &[Stmt]) -> HashSet<String> {
 fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let families = collect_overload_families(program);
     let def_counts = def_name_counts(program);
+    let scalars = ScalarReads::of(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -4131,7 +4278,7 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
             // A unique name joins on its own declaration; an overloaded name
             // joins as a family, whose members the request path tells apart.
             let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
-                && comptime_keyed_declaration(statement);
+                && comptime_keyed_declaration(statement, &scalars);
             admitted.then(|| name.clone())
         })
         .collect()
@@ -4149,6 +4296,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     let served_packs = served_pack_defs(program);
     let served_lanes = served_lane_defs(program);
+    let scalars = ScalarReads::of(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -4166,6 +4314,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
                 &served_packs,
                 &served_lanes,
                 &HashSet::new(),
+                &scalars,
             ) || def_counts[name.as_str()] != 1
             {
                 return None;
@@ -4354,6 +4503,7 @@ impl<'a> Elab<'a> {
                 &self.served_packs,
                 &self.served_lanes,
                 &self.served_structs,
+                &self.scalar_reads,
             )
     }
 
