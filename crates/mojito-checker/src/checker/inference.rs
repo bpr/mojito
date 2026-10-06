@@ -2366,11 +2366,22 @@ impl Checker {
         } else {
             None
         };
-        self.operation_adjustments.borrow_mut().insert(
+        // A re-inference of the same display keeps the owner a
+        // temporary-receiver materialization already minted on it.
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        let materialized = match adjustments.get(&span) {
+            Some(mojito_checked::checked::SemanticAdjustment::ConstructCollection {
+                materialized,
+                ..
+            }) => *materialized,
+            _ => None,
+        };
+        adjustments.insert(
             span,
             mojito_checked::checked::SemanticAdjustment::ConstructCollection {
                 target: target.clone(),
                 insert,
+                materialized,
             },
         );
     }

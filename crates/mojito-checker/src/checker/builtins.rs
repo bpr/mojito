@@ -416,11 +416,17 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
 }
 
 /// The common element of a display's two elements ([`common_elem`]), where a
-/// string literal beside the nominal `String` joins it.
+/// string literal beside the nominal `String` joins it, and two aggregates
+/// that differ only in which elements are still literals join their
+/// materialized form (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
 pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
     match (a, b) {
         (Ty::StringLiteral, string) | (string, Ty::StringLiteral) if is_nominal_string(string) => {
             Some(string.clone())
+        }
+        (Ty::Struct(..), Ty::Struct(..)) if a != b => {
+            let materialized = mojito_types::types::default_literal(a);
+            (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
         }
         _ => common_elem(a, b),
     }

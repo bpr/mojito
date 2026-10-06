@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` over tuple- or struct-valued elements in a generic `def`
+  (`comptime for p in PAIRS:` over `comptime PAIRS = [(1, 2), (3, 4)]`) now
+  runs its body once per element, as at the pin, where it was rejected with
+  "'comptime for' over elements of type 'Tuple[Int, Int]' in a generic
+  body". A tuple display subscripted as a temporary (`(1, 2)[0]`) now reads
+  its element, where it stopped with "reference binding to a non-place
+  expression". A display mixing tuples that differ only in which elements
+  are literals (`[(1, 2), (3, n)]`) is a list of their materialized tuple.
+  Compile-time construction of a struct no longer pulls in a user `def`
+  whose name matches a callable parameter of a library body.
 - A method of a generic struct over a value parameter (`struct S[n: Int]`)
   holding a `comptime for` the template does not serve (a struct-valued
   display, a body `comptime m: Int = ...`) now runs, as at the pin, where

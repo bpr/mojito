@@ -208,6 +208,7 @@ impl BodyShape<'_> {
                         mojito_checked::checked::SemanticAdjustment::ConstructCollection {
                             insert: Some(_),
                             target,
+                            ..
                         }
                     ) if fact_at(&facts.expression_types, id) == Some(target)
                 )

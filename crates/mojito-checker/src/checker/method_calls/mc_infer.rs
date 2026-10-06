@@ -92,6 +92,17 @@ impl Checker {
             return result;
         }
         let obj_ty = self.infer(object)?;
+        // A tuple display received as a temporary holds its elements
+        // materialized, as a binding of it does: `(1, 2)[0]` reads a
+        // `Tuple[Int, Int]`.
+        let obj_ty = match mojito_types::types::default_literal(&obj_ty) {
+            materialized
+                if matches!(object.kind, ExprKind::TupleLit(_)) && materialized != obj_ty =>
+            {
+                self.infer_with_expected(object, &materialized, true)?
+            }
+            _ => obj_ty,
+        };
         // An element of an unbound pack dispatches through its bounds.
         let obj_ty = self.opaque_element(&obj_ty).unwrap_or(obj_ty);
         // `Int.__mlir_index__()` is upstream's identity conversion to the

@@ -272,6 +272,29 @@ impl CtValue {
         matches!(self, Self::List(_) | Self::Dict { .. } | Self::Set { .. })
     }
 
+    /// Whether this value is a runtime collection ([`Self::is_runtime_collection`])
+    /// whose iteration yields scalars a `comptime for` binder holds: an
+    /// `Int`, a `Float64`, a `Bool`, or a `String` (a dictionary yields its
+    /// keys).
+    pub fn is_scalar_collection(&self) -> bool {
+        let scalar = |value: &Self| {
+            matches!(
+                value,
+                Self::Int(_)
+                    | Self::IntLiteral(_)
+                    | Self::Float(_)
+                    | Self::FloatLiteral(_)
+                    | Self::Bool(_)
+                    | Self::Str(_)
+            )
+        };
+        match self {
+            Self::List(elements) | Self::Set { elements, .. } => elements.iter().all(scalar),
+            Self::Dict { entries, .. } => entries.iter().all(|(key, _)| scalar(key)),
+            _ => false,
+        }
+    }
+
     /// The spelling of the runtime type an un-annotated binding of this value
     /// has (upstream's wording in the materialization diagnostic: a list is
     /// `Array[T, Int(n)]`), or `None` for a compile-time-only value.

@@ -310,13 +310,18 @@ pub fn derive_adjustment(
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which
         // substitution keeps; only its arguments substitute.
-        SemanticAdjustment::ConstructCollection { target, insert } => {
+        SemanticAdjustment::ConstructCollection {
+            target,
+            insert,
+            materialized,
+        } => {
             let realized = substitute(target);
             matches!((target, &realized), (Ty::Struct(template, _), Ty::Struct(instance, _))
                 if template == instance)
             .then(|| SemanticAdjustment::ConstructCollection {
                 target: realized,
                 insert: insert.clone(),
+                materialized: *materialized,
             })
         }
         // A type name is one type's spelling: the instance re-renders it from

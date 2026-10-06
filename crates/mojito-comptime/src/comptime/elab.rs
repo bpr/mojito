@@ -1263,7 +1263,7 @@ impl Elab<'_> {
             reflected: &reflected,
             displays: &displays,
             collection: &|name| {
-                !binders.contains(name) && env.get(name).is_some_and(CtValue::is_runtime_collection)
+                !binders.contains(name) && env.get(name).is_some_and(CtValue::is_scalar_collection)
             },
             scalars: &self.scalar_reads,
         };

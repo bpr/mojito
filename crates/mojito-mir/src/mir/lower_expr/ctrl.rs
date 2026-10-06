@@ -217,6 +217,7 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::ConstructCollection {
                     target,
                     insert,
+                    ..
                 } => Some((target, insert)),
                 _ => None,
             })

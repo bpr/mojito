@@ -439,7 +439,7 @@ pub(super) fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<S
             for condition in where_clauses {
                 collect_vm_ctfe_expr_calls(condition, calls);
             }
-            collect_vm_ctfe_block_calls(body, calls);
+            collect_vm_ctfe_body_calls(type_params, params, body, calls);
         }
         StmtKind::Struct {
             decorators: declaration_decorators,
@@ -492,7 +492,12 @@ pub(super) fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<S
                 for condition in &method.where_clauses {
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
-                collect_vm_ctfe_block_calls(&method.body, calls);
+                collect_vm_ctfe_body_calls(
+                    &method.type_params,
+                    &method.params,
+                    &method.body,
+                    calls,
+                );
             }
         }
         StmtKind::Trait {
@@ -516,7 +521,7 @@ pub(super) fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<S
                     collect_vm_ctfe_expr_calls(condition, calls);
                 }
                 if let Some(body) = &method.default_body {
-                    collect_vm_ctfe_block_calls(body, calls);
+                    collect_vm_ctfe_body_calls(&method.type_params, &method.params, body, calls);
                 }
             }
             for member in comptime_members {
@@ -534,4 +539,24 @@ pub(super) fn collect_vm_ctfe_stmt_calls(statement: &Stmt, calls: &mut HashSet<S
         | StmtKind::Break
         | StmtKind::Continue => {}
     }
+}
+
+/// The free callees a declaration's body names: a call of one of its own
+/// parameters (`f(x)` over a callable `f`) names no declaration.
+fn collect_vm_ctfe_body_calls(
+    type_params: &[TypeParam],
+    params: &[FnParam],
+    body: &[Stmt],
+    calls: &mut HashSet<String>,
+) {
+    let mut body_calls = HashSet::new();
+    collect_vm_ctfe_block_calls(body, &mut body_calls);
+    for name in type_params
+        .iter()
+        .map(|parameter| &parameter.name)
+        .chain(params.iter().map(|parameter| &parameter.name))
+    {
+        body_calls.remove(name);
+    }
+    calls.extend(body_calls);
 }

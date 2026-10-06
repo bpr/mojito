@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R405**.
+Next free ID: **R407**.
 
 ## Ordered Work
 
@@ -152,6 +152,23 @@ correctness fix to existing behavior is allowed.
   - The static-method callee itself is R401's "a method".
   - Found while landing R400 (2026-10-06).
   - Depends on R401.
+  - Model: Opus, Not Planned.
+
+- [ ] **R405 (P3b) A `comptime for` over tuple- or struct-valued elements
+  in a generic `def` is unrolled in the AST**
+
+  Problem: `comptime for p in PAIRS:` over `comptime PAIRS = [(1, 2), (3,
+  4)]` in `def f[n: Int]()` runs, but the elaborator copies the body once
+  per element into the template, where Mojo keeps one loop in its IR.
+  - A loop binder MIR carries holds an `Int`, a `Float64`, a `Bool`, or a
+    `String` (`check_comptime_for`, `checker/comptime_validation.rs`), so
+    the elaborator keeps only a collection of those
+    (`CtValue::is_scalar_collection`).
+  - Serving the loop needs a binder that holds a tuple or a struct value
+    and a MIR constant that materializes one.
+  - R401's struct element waits on this, not on the landed R367.
+  - Found while landing R367 (2026-10-06).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R401 (P3b) A `comptime for` display element of a struct type, or one
@@ -1238,6 +1255,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The reflection crossing folds `r.field_names()[i]` to its element, so
     only a written literal reaches this.
   - Probe: `conformance/probes/list_literal_subscript.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R406 A subscript of a call result handed to `print` stops at run
+  time**
+
+  Problem: `print(mk()[0])` over `def mk() -> Tuple[Int, Int]` (or `->
+  List[Int]`) prints `1` at the pin and stops in Mojito with "reference
+  binding to a non-place expression".
+  - `var x = mk()[0]` and `print(mk()[0] + 1)` run, so only a subscript
+    result forwarded by reference to `print` reaches the failure.
+  - A tuple display subscripted as a temporary (`(1, 2)[0]`) runs: the
+    display's `ConstructCollection` carries its materialized owner.
+  - Found while landing R367 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2433,23 +2464,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     loop works, so the AST unroller (`Elab::unroll_comptime_for`) loses the
     alias's binding for a call position.
   - Found while planning R246 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R367 A `comptime for` over tuple- or struct-valued elements in a
-  generic `def` is rejected**
-
-  Problem: `comptime PAIRS = [(1, 2), (3, 4)]` then `comptime for p in
-  PAIRS:` in `def f[n: Int]()` fails with "'comptime for' over elements of
-  type 'Tuple[Int, Int]' in a generic body", where the pin runs the body
-  once per pair.
-  - A loop variable is a binder MIR carries, and a binder holds an `Int`, a
-    `Float64`, a `Bool`, or a `String` (`check_comptime_for`,
-    `checker/comptime_validation.rs`).
-  - A display of such elements written in the header still runs, on a
-    clone.
-  - The same loop in a plain `def` runs, unrolled in the AST.
-  - Found while landing R246 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

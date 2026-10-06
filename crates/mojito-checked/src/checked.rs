@@ -918,6 +918,10 @@ pub enum SemanticAdjustment {
     ConstructCollection {
         target: Ty,
         insert: Option<String>,
+        /// The same display as a temporary receiver of a `ref self` method
+        /// (`(1, 2)[0]`): it is also a materialized borrow source (see
+        /// `MaterializeBorrowSource`), and one span carries one adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// A fixed-size list display resolved to `Array`'s variadic literal
     /// constructor. MIR lowers this as one nominal constructor call carrying
@@ -2968,6 +2972,10 @@ pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> boo
             SemanticAdjustment::BorrowViewResult {
                 materialized: Some(_),
                 ..
+            }
+            | SemanticAdjustment::ConstructCollection {
+                materialized: Some(_),
+                ..
             } => Some(true),
             _ => None,
         })
@@ -2989,6 +2997,10 @@ pub fn materialized_borrow_owner(
             ..
         }
         | SemanticAdjustment::BorrowViewResult {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::ConstructCollection {
             materialized: Some(owner),
             ..
         } => Some(*owner),
