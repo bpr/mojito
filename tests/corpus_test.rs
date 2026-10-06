@@ -351,13 +351,11 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "template_value_shaped_operations",
     // R286, the erased oracle: a pack's length is its collector's runtime
     // arity, and an unread `var` collector or a collector-less call has none.
-    "comptime_local_over_binder",
     "pack_length_runtime_position",
     // R295, the erased oracle: an erased frame leaves a pack's reified
     // spellings unbound, so it has no element to construct `Ts[i]()` from
     // (R286 stops a collector-less pack's loop first).
     "pack_element_binding_served",
-    "pack_element_default_construction",
     // R292, the erased oracle: a kept `comptime for` runs its index as a
     // runtime value, so a vector at the index's width has no known width.
     "comptime_for_index_typed_local",
@@ -367,7 +365,6 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R301, the erased oracle: a kept `comptime for` bounded by a value
     // parameter or a pack's length has no runtime value to stop at.
     "comptime_for_template_served",
-    "pack_element_alias_served",
     // R323, the erased oracle: an erased frame carries no type argument to
     // answer a reflection query over a type parameter from.
     "reflection_template_served",

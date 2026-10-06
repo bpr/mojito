@@ -671,10 +671,19 @@ verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
 uniquely named `DType`- or lane-keyed `def` whose body holds no other form
 is a bound generic served by its template (`served_lane_defs`). A struct
-keyed on a `DType` or on a lane width is an ordinary generic struct, a
-generator: the executable check types its members with the binder symbolic,
-its template crosses MIR, and `native::mono` mints each instance. A method
-with a lane binder of its own is a generator too, instantiated per call.
+keyed on a `DType`, a lane width, a vector value, or a struct-typed value is
+an ordinary generic struct, a generator: the executable check types its
+members with the binder symbolic, its template crosses MIR, and
+`native::mono` mints each instance, folding a read of a closed vector or
+struct binder to a `Const::Value` and a field of a struct-typed one
+(`ParamKind::Field`) to its constant. The elaborator freezes a computed
+struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
+which the checker reads as the frozen value. A variadic struct the
+template serves (`served_variadic_structs`: its source names no struct
+still specialized whole) is a generator too, `native::mono` binding its
+pack per instance; `Tuple`, `TString`, `Variant`, and the variadic structs
+over them are still specialized whole. A method with a lane binder of its
+own is a generator too, instantiated per call.
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
 parameter — a `def`'s type parameter, or `Self` in a generic struct's method —

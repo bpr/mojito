@@ -1970,6 +1970,11 @@ impl Flatten<'_> {
                 if self.is_slice_descriptor(object) || self.is_dtype_constant(e) {
                     return None;
                 }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                    && let Some(place) = self.receiver_value_parameter_place(field)
+                {
+                    return Some(place);
+                }
                 let mut p = self.try_place(object)?;
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
                     p.project(Proj::Field(field.clone()), ty);

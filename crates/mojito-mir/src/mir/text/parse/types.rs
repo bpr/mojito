@@ -764,6 +764,14 @@ impl Decoder {
                     let built = self.context.list_get(&list, &index);
                     self.built(value, built)
                 }
+                "param_field" => {
+                    let base = self.req(value, fields, "base", Self::param_expr)?;
+                    let name = self.req(value, fields, "name", Self::symbol)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    self.unknown(fields, &["base", "name", "type"]);
+                    let built = self.context.field(&base, &name, meta);
+                    self.built(value, built)
+                }
                 "param_reflect" => {
                     let subject = self.req(value, fields, "subject", Self::param_expr)?;
                     let query_value = self.required(value, fields, "query")?;

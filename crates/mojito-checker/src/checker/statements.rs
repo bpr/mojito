@@ -83,8 +83,7 @@ impl Checker {
             if self.source_validation {
                 self.register_module_alias(statement)?;
             }
-            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
-            else {
+            let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
             self.check_struct_shell(&declaration)?;
@@ -171,8 +170,7 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.types");
         for statement in stmts {
-            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
-            else {
+            let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
             self.check_struct_types(&declaration)?;
@@ -180,8 +178,7 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.signatures");
         for statement in stmts {
-            let Some(declaration) = struct_declaration(statement, self.validation_shell(statement))
-            else {
+            let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
             self.check_struct_method_signatures(&declaration)?;
@@ -193,14 +190,6 @@ impl Checker {
         let result = self.check_block(stmts, None, false);
         drop(phase);
         result
-    }
-
-    /// Whether source validation registers a struct statement as a template
-    /// shell: one that checks only per specialization.
-    fn validation_shell(&self, statement: &Stmt) -> bool {
-        self.source_validation
-            && matches!(&statement.kind, StmtKind::Struct { type_params, .. }
-                if struct_valued_template(type_params, &|bound| self.declared_structs.contains(bound)))
     }
 
     /// Register a module-level `comptime` alias declaration — a generic
@@ -1739,7 +1728,7 @@ impl Checker {
                     associated,
                     methods,
                     fieldwise_init: *fieldwise_init,
-                    template_shell: *template_shell || self.validation_shell(stmt),
+                    template_shell: *template_shell,
                     decorators,
                 };
                 if self.predeclared_structs.remove(name) {

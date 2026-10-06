@@ -1589,6 +1589,7 @@ fn tuple_specialization_ct_expr_is_closed(
             // A signature slot is bound by the contract that holds it.
             ParamKind::IndexRef { .. }
             | ParamKind::Op { .. }
+            | ParamKind::Field { .. }
             | ParamKind::Identical(..)
             | ParamKind::Conforms { .. }
             | ParamKind::Trivial { .. } => true,

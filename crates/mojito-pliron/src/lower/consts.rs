@@ -62,7 +62,168 @@ impl FnLowering<'_> {
                 format!("parameter constant `{value}` reached native lowering"),
                 dest,
             )),
+            MirConst::Value(value) => self.lower_parameter_value(ctx, dest, value),
         }
+    }
+
+    /// A closed vector or struct parameter value (`Self.key`, `Self.e`): a
+    /// vector built lane by lane as its explicit construction is, a struct
+    /// fieldwise into fresh storage as its fieldwise constructor is.
+    fn lower_parameter_value(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: &mojito_types::ct::CtValue,
+    ) -> Result<(), PlironError> {
+        use mojito_types::ct::CtValue;
+        match value {
+            CtValue::Simd { dtype, lanes } => {
+                let lanes = self.parameter_lanes(ctx, *dtype, lanes, dest)?;
+                if let [lane] = lanes.as_slice() {
+                    self.reg_values.insert(dest.0, *lane);
+                    return Ok(());
+                }
+                let vector_ty = self.simd_vector_ty(ctx, *dtype, lanes.len());
+                let poison = PoisonOp::new(ctx, vector_ty);
+                self.append(ctx, poison.get_operation(), Some(dest));
+                let mut vector = poison.get_result(ctx);
+                for (index, lane) in lanes.iter().enumerate() {
+                    let position = self.int_constant(ctx, index as i64);
+                    let insert = InsertElementOp::new(ctx, vector, *lane, position);
+                    self.append(ctx, insert.get_operation(), Some(dest));
+                    vector = insert.get_result(ctx);
+                }
+                self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector);
+                Ok(())
+            }
+            CtValue::Struct { name, .. } => {
+                let ty = Ty::Struct(name.clone(), Vec::new().into());
+                let LowerTy::Aggregate { layout, .. } =
+                    lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?
+                else {
+                    return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
+                };
+                let storage = self.entry_alloca(ctx, layout.size, layout.align);
+                self.store_parameter_value(ctx, storage, value, dest)?;
+                self.reg_values.insert(dest.0, storage);
+                Ok(())
+            }
+            _ => Err(self.unsupported_reg(
+                format!("parameter value `{value}` reached native lowering"),
+                dest,
+            )),
+        }
+    }
+
+    /// Store a frozen struct value's fields at `address`, field by field at
+    /// the struct's layout offsets.
+    fn store_parameter_value(
+        &mut self,
+        ctx: &mut Context,
+        address: Value,
+        value: &mojito_types::ct::CtValue,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        use mojito_types::ct::CtValue;
+        let CtValue::Struct { name, fields } = value else {
+            return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
+        };
+        let Some(decl) = self.struct_decls.get(name.as_str()) else {
+            return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
+        };
+        let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, ty)| ty.clone()).collect();
+        let composed = self.struct_layout_of(&field_tys, dest)?;
+        for (((_, field), field_ty), offset) in fields.iter().zip(&field_tys).zip(&composed.offsets)
+        {
+            let field_address = if *offset == 0 {
+                address
+            } else {
+                self.gep_byte(ctx, address, *offset, dest)
+            };
+            if matches!(field, CtValue::Struct { .. }) {
+                self.store_parameter_value(ctx, field_address, field, dest)?;
+                continue;
+            }
+            let LowerTy::Scalar(scalar) =
+                lower_ty(self.name, field_ty, &self.layout, self.reg_span(dest))?
+            else {
+                return Err(self.unsupported_reg(
+                    format!("parameter value field `{field}` of `{name}`"),
+                    dest,
+                ));
+            };
+            let constant = self.parameter_scalar(ctx, field, scalar, dest)?;
+            let store = StoreOp::new(ctx, constant, field_address);
+            self.append(ctx, store.get_operation(), Some(dest));
+        }
+        Ok(())
+    }
+
+    /// One closed scalar of a parameter value at its storage type.
+    fn parameter_scalar(
+        &mut self,
+        ctx: &mut Context,
+        value: &mojito_types::ct::CtValue,
+        scalar: ScalarTy,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        use mojito_types::ct::CtValue;
+        match value {
+            CtValue::Int(value) => {
+                self.materialize_pending(ctx, &PendingLiteral::Int((*value).into()), scalar, dest)
+            }
+            CtValue::UInt(value) => {
+                self.materialize_pending(ctx, &PendingLiteral::Int((*value).into()), scalar, dest)
+            }
+            CtValue::IntLiteral(value) => {
+                self.materialize_pending(ctx, &PendingLiteral::Int(value.clone()), scalar, dest)
+            }
+            CtValue::Float(bits) => self.materialize_pending(
+                ctx,
+                &PendingLiteral::Float(f64::from_bits(*bits).into()),
+                scalar,
+                dest,
+            ),
+            CtValue::FloatLiteral(value) => {
+                self.materialize_pending(ctx, &PendingLiteral::Float(value.clone()), scalar, dest)
+            }
+            CtValue::Bool(value) => Ok(self.bool_constant(ctx, *value)),
+            CtValue::Dtype(dtype) => Ok(self.dtype_constant(ctx, *dtype)),
+            CtValue::Simd { dtype, lanes } if lanes.len() == 1 => self
+                .parameter_lanes(ctx, *dtype, lanes, dest)
+                .map(|lanes| lanes[0]),
+            other => Err(self.unsupported_reg(format!("parameter value `{other}`"), dest)),
+        }
+    }
+
+    /// The lanes of a closed vector parameter value at its dtype.
+    fn parameter_lanes(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        lanes: &[mojito_types::ct::CtLane],
+        dest: Reg,
+    ) -> Result<Vec<Value>, PlironError> {
+        use mojito_types::ct::CtLane;
+        let target = ScalarTy::of_dtype(dtype);
+        lanes
+            .iter()
+            .map(|lane| match lane {
+                CtLane::Int(lane) => self.materialize_pending(
+                    ctx,
+                    &PendingLiteral::Int((*lane).into()),
+                    target,
+                    dest,
+                ),
+                CtLane::Float(bits) => self.materialize_pending(
+                    ctx,
+                    &PendingLiteral::Float(f64::from_bits(*bits).into()),
+                    target,
+                    dest,
+                ),
+                CtLane::Bool(lane) => Ok(self.bool_constant(ctx, *lane)),
+            })
+            .collect()
     }
 
     pub(super) fn lower_materialize(

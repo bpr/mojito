@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R337**.
+Next free ID: **R340**.
 
 ## Ordered Work
 
@@ -236,32 +236,41 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R4 (P3d) A vector-keyed, struct-valued, or variadic struct is
-  specialized whole in the AST**
+- [ ] **R4 (P3d) `Tuple`, `TString`, `Variant`, and the variadic structs
+  over them are specialized whole in the AST**
 
-  Problem: `Tuple`, `TString`, `Variant`, a user variadic struct,
-  `AHasher[key: U256]`, and a struct keyed on a struct-typed value are
-  re-declared per instance by the cloner, from requests the driver derives
-  and applications the elaborator finds syntactically.
-  - A struct keyed on a `DType` or a lane width is already a generator
-    (2026-10-05); these are what remain.
-  - Their members need a method's own compile-time parameters (R5):
-    `Tuple.__getitem_param__[idx]`, `__contains__[T]`, and `Variant.isa[T]`.
-    A vector- or struct-keyed struct's member its template serves keeps its
-    own binders already (`AHasher._update_with_simd(SIMD[_, _])`).
-  - Nearly every `Tuple` member holds a `comptime for` (R305).
-  - `native::mono` must bind a struct's pack: `bind_ty_args`
-    (`mono/unify.rs`) has no pack case, and `substitute_ty` does not expand
-    a spread inside a field's `__RuntimeTuple[*Self.Ts]`.
-  - The erased oracle and CTFE's AST route must run a variadic generator,
-    with the pack's elements reified on the instance.
-  - `Tuple`'s synthesized `reverse` and `concat` and its value twins
-    (`__getitem_param_value__$k`) have no upstream counterpart: the pin
-    writes the transforms in source over type-list operations.
+  Problem: the cloner re-declares `Tuple`, `TString`, `Variant`, and every
+  variadic struct whose source names one of them per instance, from
+  requests the driver derives, where the pin elaborates each as an ordinary
+  struct generator.
+  - A struct keyed on a `DType`, a lane width, a vector value, or a
+    struct-typed value is a generator, and so is a variadic struct over none
+    of these (2026-10-05); `served_variadic_structs` (`comptime.rs`) is the
+    gate that leaves with this entry.
+  - Serving `Tuple` gets Hello World through the executable check once a
+    conformance assumes its `where` clause for the pack field: a `*Ts`
+    element must ask `ConformsPack` in `is_copyable_under_assumption`, and
+    `ImplicitlyCopyable` needs the same assumption.
+  - The MIR verifier must then admit the enclosing struct's binders in a
+    method's callable contract (`consume_elements`' `Self.Ts[index]`,
+    `validate_dependent_bindings`).
+  - Ownership stops next: `Tuple.__init__()` writes `self.storage[i] =
+    Self.Ts[i]()` in a kept `comptime for`, which reads as a use of
+    uninitialized storage; the pin marks the storage initialized first
+    (R161).
+  - `native::mono`'s `substitute_ty` must expand a spread in a field's
+    `__RuntimeTuple[*Self.Ts]`, in `Ty::Struct` arguments, and in
+    `Ty::Variant`, as `expand_pack_spread` does.
+  - `Tuple`'s synthesized `reverse` and `concat` (R209) and its value twins
+    (`__getitem_param_value__$k`) have no upstream counterpart.
+  - A served `Variant.isa[T]` needs a symbolic alternative index in
+    `MakeVariant`, `VariantIs`, `VariantGet`, and `Proj::Variant`
+    (upstream's `_get_type_index`), failing the instantiation at a
+    non-member `T`.
   - The `Tuple` and `TString` request types, `variadic_struct_requests`,
-    and `pending_struct_instances` leave the driver and elaborator with
-    them.
-  - Depends on R5 and R305.
+    the driver's tuple requests, and Pliron's `Tuple$t` drop tests leave
+    with them.
+  - Depends on R161 and R209.
   - Model: Fable, Planned.
 
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
@@ -2235,6 +2244,35 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `DType.<name>` spelling, a binder, or a type's `dtype`, not a value's.
   - A value's `dtype` is its type's lane slot, which the checker already
     records for a runtime read (`SemanticAdjustment::DtypeConstant`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R337 A computed value argument in a bracket is rejected**
+
+  Problem: `W[fib(6)]()` for `struct W[n: Int]`, or `g[fib(6)]()` for `def
+  g[n: Int]()`, prints `8` at the pin, while Mojito reports "not a
+  compile-time Int constant: not an associated comptime expression".
+  - `eval_associated_ct` (`checker/constraints.rs`) has no arm for a call;
+    a module constant over the same call (`comptime N = fib(6)`) folds
+    before the check and works.
+  - The pin keeps such an application symbolic through the check
+    (`ParamKind::Apply`), so it is no frozen literal; a struct-typed
+    argument is frozen to its fieldwise construction
+    (`Elab::freeze_struct_value_arguments`), which a scalar one should not
+    copy.
+  - Found while landing R4's struct-valued half (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R338 A static call through a `comptime` alias of a generic struct is
+  rejected**
+
+  Problem: `comptime W3 = W[3]` then `W3.total()`, a `@staticmethod` of
+  `struct W[n: Int]`, prints `3` at the pin, while Mojito reports "function
+  types as compile-time values".
+  - The receiver reaches `infer` as a `TypeValue`, which has no
+    expression type; a construction through the alias (`W3()`) works.
+  - Found while landing R4's vector-keyed half (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4236,6 +4274,18 @@ residue found inside a task moves to the task that owns its fix.
   - The `simd-infix-comparison` divergence waits on it: withdrawing the
     infix spelling leaves `x.ne(y)` as the only ordered comparison on a
     scalar.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R339 A scalar has no `__int__` method**
+
+  Problem: `v.reduce_add().__int__()` on a `SIMD[DType.int32, n]` prints
+  at the pin, while Mojito reports "type 'Int32' has no method '__int__'".
+  - `Int(x)` converts the same scalar, through the conversion built-in,
+    not a method (`checker/builtins.rs`).
+  - Upstream's scalar is a width-1 `SIMD`, whose `Intable` conformance is
+    an ordinary method.
+  - Found while landing R4's struct-valued half (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

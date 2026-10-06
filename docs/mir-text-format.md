@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.26
+# Mojito Textual MIR Format, Version 1.27
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.26 is implemented end to end for inspection and loading: canonical
+Version 1.27 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.26
+mojito-mir 1.27
 ```
 
-The writer emits 1.26. The reader accepts 1.0 through 1.26; *Schema 1.0*
+The writer emits 1.27. The reader accepts 1.0 through 1.27; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -197,6 +197,16 @@ Minor version 24 carries a whole pack spread into a method's collector: a
 `args` of the caller's collector (`Sink().take(*args)`). The elaborator
 replaces it with the bound pack's element places, so elaborated MIR records
 `absent`. An older artifact reads as recording no spread.
+
+Minor version 27 adds the constant `value(ct-value)`, a closed vector- or
+struct-typed parameter value read as a runtime value (`Self.key` of an
+`AHasher[key: U256]` instance, `Self.e` of a `Tagged[e: Extent]` one): the
+elaborator folds a binder read to it, the VM materializes it, and native
+lowering builds the vector or the fieldwise struct. It adds the parameter
+expression `param_field { base, name, type }`, a field of a struct-typed
+parameter value that is still a parameter (`Self.e.rows`), which folds once
+its base is constant. A 1.26 consumer rejects both spellings, which is the
+intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -403,10 +413,12 @@ record.
 
 `Const` is one of `int(sint)`, `float(bits_hex)`,
 `int_literal(decimal)`, `float_literal(exact)`, `bool(true|false)`,
-`string(string)`, `function(symbol)`, `none`, or `param(param-expr)` (schema
+`string(string)`, `function(symbol)`, `none`, `param(param-expr)` (schema
 1.20), a parameter expression read as a runtime value — a pack's
 `length`, membership, or conformance — which a generator carries, the
-elaborator folds per instance, and concrete MIR never holds. Concrete `float` stores the
+elaborator folds per instance, and concrete MIR never holds, or
+`value(ct-value)` (schema 1.27), a closed `ct_simd` or `ct_struct`
+parameter value read at runtime. Concrete `float` stores the
 exact IEEE-754 binary64 bits as 16 lowercase hex digits. `IntLiteral` uses
 arbitrary-precision decimal. `FloatLiteral` uses its canonical exact spelling
 and may never round through host `f64`: `-0.0` for negative zero, `{n}.0` for
@@ -448,13 +460,15 @@ param_trivial   { lifecycle, subject }
 param_type_shape(type)
 param_select    { elements: [type...], index }
 param_list_get  { list, index }
+param_field     { base, name: symbol, type: meta }
 param_reflect   { subject, query }
 param_pack_query { pack, query }
 param_apply     { function: "symbol", type: meta, args: [param-expr...], evaluated: option<ct-value> }
 ```
 
 `param_list_get` is an element of a parameter list that is still a parameter
-(a pack element), `param_reflect` a reflection query over a symbolic subject
+(a pack element), `param_field` a field of a struct-typed parameter value
+that is still a parameter (schema 1.27), `param_reflect` a reflection query over a symbolic subject
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
 `field_index["name"]()`, `field["name"].T`), and `param_apply` a compile-time
 application of a callable symbol, never folded, whose `evaluated` holds the
@@ -692,7 +706,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.26
+mojito-mir 1.27
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

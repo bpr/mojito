@@ -8,6 +8,31 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct keyed on a vector value (`AHasher[key: U256]`) or on a
+  struct-typed value (`Tagged[e: Extent]`) is now a generator, as in the
+  pin: its members are checked once with the value symbolic and
+  `native::mono` mints each instance, where the cloner re-declared the
+  struct per value. A closed vector or struct parameter read at run time is
+  a parameter-value constant (MIR schema 1.27), and a field of a
+  struct-typed value is a parameter expression, so `comptime if
+  Self.e.cols > 2`, `return Self.e.rows`, and `SIMD[DType.int32,
+  Self.e.rows]` all fold per instance (`SIMD` of such a width failed to
+  check before). A `def` takes a struct-typed value parameter too
+  (`rows_of[e: Extent]`), and a computed argument (`Extent.square(4)`) is
+  frozen to its fieldwise construction before the check
+  (`assets/ok/struct_generator_struct_value.mojo`,
+  `assets/ok/struct_generator_vector_value.mojo`); a field the value's type
+  lacks is rejected where the generator reads it
+  (`assets/type_error/struct_value_param_missing_field.mojo`). Hello World
+  clones no vector-keyed struct (`struct_dtype_vector` falls from 8 to 0).
+  A variadic struct whose source names no `Tuple`, `TString`, or `Variant`
+  (`struct Row[*Ts]`) is a generator too, its pack bound per instance;
+  `Tuple`, `TString`, `Variant`, and the variadic structs over them are
+  still specialized whole (`docs/roadmap.md` R4). The erased oracle now
+  reifies a struct's pack, a type argument's value arguments, and a
+  constructor's own solved parameters, so three fixtures it could not run
+  now agree.
+
 - `hash(v)` over a vector whose dtype or width is a binder now runs at every
   width, in a lane-keyed `def` or a `DType`-keyed struct's method, as in the
   pin; a vector wider than one lane failed at run time for want of the

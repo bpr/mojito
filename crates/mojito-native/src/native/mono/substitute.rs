@@ -272,6 +272,17 @@ pub(super) fn substitute_value_parameter_reads(
                     dest: *dest,
                     k: constant,
                 };
+            } else if let MirInstr::LoadPlace { dest, place } = instruction
+                && let Some(value) = var_names
+                    .get(place.root as usize)
+                    .and_then(|name| locals.get(name))
+                && let Some(constant) = projected_parameter_constant(value, &place.proj)
+            {
+                // A field of a struct-typed value parameter (`e.rows`).
+                *instruction = MirInstr::Const {
+                    dest: *dest,
+                    k: constant,
+                };
             } else if let MirInstr::Try {
                 body,
                 handler,
@@ -1002,8 +1013,33 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
             Some(Const::Function(value.clone()))
         }
         CtValue::Str(value) => Some(Const::Str(value.clone())),
+        value @ (CtValue::Simd { .. } | CtValue::Struct { .. }) => {
+            Some(Const::Value(value.clone()))
+        }
         _ => None,
     }
+}
+
+/// The constant a chain of field projections selects out of a struct-typed
+/// parameter value, `None` unless every step names a field of a closed
+/// struct value.
+fn projected_parameter_constant(
+    value: &CtValue,
+    projections: &[mojito_mir::mir::Proj],
+) -> Option<Const> {
+    let value =
+        projections
+            .iter()
+            .try_fold(value, |value, projection| match (projection, value) {
+                (mojito_mir::mir::Proj::Field(field), CtValue::Struct { fields, .. }) => fields
+                    .iter()
+                    .find(|(name, _)| name == field)
+                    .map(|(_, value)| value),
+                _ => None,
+            })?;
+    (!projections.is_empty())
+        .then(|| value_parameter_constant(value, None))
+        .flatten()
 }
 
 /// Every read of a value parameter's slot folds to its bound constant, so

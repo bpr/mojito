@@ -2372,6 +2372,17 @@ impl Flatten<'_> {
     /// as the expression `Self.n` there does. `None` when the frame has no
     /// receiver or `n` is not one of its value parameters.
     fn receiver_value_parameter_read(&mut self, name: &str, site: &SourceSpan) -> Option<Reg> {
+        let place = self.receiver_value_parameter_place(name)?;
+        let ty = place.ty.clone()?;
+        let dest = self.fresh_typed(site.clone(), Some(place.root), ty);
+        self.emit(MirInstr::LoadPlace { dest, place });
+        Some(dest)
+    }
+
+    /// The place `Self.n` names: the projection `self.n` of the receiver,
+    /// or of a static method's receiver-less `self` slot. `None` when `n` is
+    /// not one of the enclosing struct's value parameters.
+    fn receiver_value_parameter_place(&mut self, name: &str) -> Option<MirPlace> {
         let ty = self
             .receiver_value_parameters
             .iter()
@@ -2381,10 +2392,8 @@ impl Flatten<'_> {
             self.intern_static_self()?;
         }
         let mut place = self.resolved_place("self");
-        place.project(Proj::Field(name.to_string()), ty.clone());
-        let dest = self.fresh_typed(site.clone(), Some(place.root), ty);
-        self.emit(MirInstr::LoadPlace { dest, place });
-        Some(dest)
+        place.project(Proj::Field(name.to_string()), ty);
+        Some(place)
     }
 
     /// The receiver-less `self` slot of a static method of a
@@ -3269,6 +3278,11 @@ fn close_register_types(
                             // expression; report rather than reconstruct.
                             Const::Function(_) => None,
                             Const::Param(value) => value.meta().as_value().cloned(),
+                            Const::Value(value) => {
+                                mojito_types::param_expr::MetaTy::of_value(value)
+                                    .as_value()
+                                    .cloned()
+                            }
                         };
                         Some((dest, ty))
                     }

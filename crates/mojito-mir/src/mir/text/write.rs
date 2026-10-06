@@ -1931,6 +1931,7 @@ fn const_value(value: &Const) -> String {
         Const::Dtype(v) => positional("dtype", v.name()),
         Const::None => "none".into(),
         Const::Param(v) => positional("param", &param_expr(v)),
+        Const::Value(v) => positional("value", &ct_value(v)),
     }
 }
 fn checked_const(value: &CheckedConst) -> String {
@@ -2050,6 +2051,10 @@ fn param_expr(value: &ParamExpr) -> String {
         ParamKind::ListGet { list, index } => record(
             "param_list_get",
             &[("list", param_expr(list)), ("index", param_expr(index))],
+        ),
+        ParamKind::Field { base, name } => record(
+            "param_field",
+            &[("base", param_expr(base)), ("name", symbol(name)), meta],
         ),
         ParamKind::Reflect { subject, query } => record(
             "param_reflect",

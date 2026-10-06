@@ -258,8 +258,45 @@ pub(super) fn bind_ty_args(
     args: &[TyArg],
     bindings: &mut Bindings,
 ) -> Result<(), String> {
+    // A struct keyed on its lone pack applied element by element
+    // (`Row[Int, Bool]`) binds the pack to every element.
+    if let [decl @ ParamDecl::Type { variadic: true, .. }] = decls
+        && !matches!(args, [TyArg::Ty(Ty::RuntimePack(_)) | TyArg::Val(_)])
+    {
+        let elements = args
+            .iter()
+            .filter_map(|argument| match argument {
+                TyArg::Ty(ty) => Some(Ok(ty.clone())),
+                TyArg::Origin(_) => None,
+                TyArg::Val(_) => Some(Err(format!(
+                    "argument for `{}` has the wrong parameter kind",
+                    decl.name()
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        bind_pack(&decl.binder(), elements, bindings);
+        return Ok(());
+    }
     for (decl, arg) in decls.iter().zip(args) {
         match (decl, arg) {
+            // A pack bound whole: its element tuple, or the runtime pack a
+            // forwarding application spells.
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                let elements = elements
+                    .iter()
+                    .map(|element| match element {
+                        CtValue::Type(ty) => Ok((**ty).clone()),
+                        other => Err(format!(
+                            "element `{other}` of the pack `{}` is not a type",
+                            decl.name()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                bind_pack(&decl.binder(), elements, bindings);
+            }
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements))) => {
+                bind_pack(&decl.binder(), elements.clone(), bindings);
+            }
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => bind_type(&decl.binder(), ty, bindings)?,
             (ParamDecl::Value { .. }, TyArg::Val(value)) => {
                 bind_value(&decl.binder(), value, bindings)?;

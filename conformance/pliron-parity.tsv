@@ -626,6 +626,8 @@ assets/ok/string_span_methods.mojo	main	exe-differential	sanitized
 assets/ok/string_view_equality.mojo	main	exe-differential	sanitized
 assets/ok/stropping.mojo	main	exe-differential	sanitized
 assets/ok/struct_generator_lane_symbolic_width.mojo	main	exe-differential	sanitized
+assets/ok/struct_generator_struct_value.mojo	main	exe-differential	sanitized
+assets/ok/struct_generator_vector_value.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized

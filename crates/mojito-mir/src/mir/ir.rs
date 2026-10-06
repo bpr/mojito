@@ -714,6 +714,12 @@ pub enum Const {
     /// a symbolic attribute. A generator carries it and the elaborator folds
     /// it under the instance's bindings; concrete MIR has none.
     Param(mojito_types::param_expr::ParamExpr),
+    /// A closed vector- or struct-typed parameter value read as a runtime
+    /// value (`Self.key` of an `AHasher[key: U256]` instance): upstream's
+    /// `kgen.param.constant` over a constant attribute. The elaborator folds
+    /// a binder read to it; it holds only a `CtValue::Simd` or a
+    /// `CtValue::Struct` of such values and scalars.
+    Value(mojito_types::ct::CtValue),
 }
 
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.

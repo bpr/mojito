@@ -2042,9 +2042,13 @@ impl<'a> Specializer<'a> {
                             k: constant,
                         };
                     }
+                    // A projection below a struct-typed parameter value
+                    // (`Self.e.rows`) folds through the bound value's fields.
                     MirInstr::LoadPlace { dest, place }
-                        if place.proj.len() == 1
-                            && matches!(&place.proj[0], mojito_mir::mir::Proj::Field(_)) =>
+                        if !place.proj.is_empty()
+                            && place.proj.iter().all(|projection| {
+                                matches!(projection, mojito_mir::mir::Proj::Field(_))
+                            }) =>
                     {
                         let mojito_mir::mir::Proj::Field(field) = &place.proj[0] else {
                             continue;
@@ -2052,7 +2056,25 @@ impl<'a> Specializer<'a> {
                         let Some(receiver) = function.var_tys.get(&place.root) else {
                             continue;
                         };
-                        let Some(constant) = self.value_param_constant(receiver, field) else {
+                        let Some(constant) = place.proj[1..]
+                            .iter()
+                            .try_fold(
+                                self.value_param_constant(receiver, field),
+                                |constant, projection| {
+                                    let (
+                                        mojito_mir::mir::Proj::Field(field),
+                                        Some(Const::Value(CtValue::Struct { fields, .. })),
+                                    ) = (projection, constant)
+                                    else {
+                                        return None;
+                                    };
+                                    Some(fields.iter().find(|(name, _)| name == field).and_then(
+                                        |(_, value)| value_parameter_constant(value, None),
+                                    ))
+                                },
+                            )
+                            .flatten()
+                        else {
                             continue;
                         };
                         *instruction = MirInstr::Const {

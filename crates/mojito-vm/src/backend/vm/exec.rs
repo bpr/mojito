@@ -185,7 +185,12 @@ impl VmBackend {
                 let bound = match self.bound_type_parameter(prog, function, frame_id, vars, &slot) {
                     Some(reference @ Value::Ref { .. }) => {
                         match self.read_reference(&reference, frame_id, vars)? {
-                            Value::Struct { name, .. } => Some(Value::Str(name)),
+                            Value::Struct {
+                                name, value_params, ..
+                            } if value_params.is_empty() => Some(Value::Str(name)),
+                            Value::Struct {
+                                name, value_params, ..
+                            } => Some(super::type_token(&name, value_params)),
                             _ => None,
                         }
                     }
@@ -203,6 +208,13 @@ impl VmBackend {
                         })
                         .and_then(|index| spellings.get(index).cloned()),
                     (Some(_), _) => None,
+                };
+                // A type token carries the instance's value arguments.
+                let (bound, token_params) = match bound {
+                    Some(Value::Struct {
+                        name, value_params, ..
+                    }) => (Some(Value::Str(name)), value_params),
+                    bound => (bound, Vec::new()),
                 };
                 let Some(Value::Str(type_name)) = bound else {
                     return Err(RuntimeError::Unsupported(format!(
@@ -244,13 +256,36 @@ impl VmBackend {
                     "Float64" => Value::Float64(0.0),
                     "StringLiteral" => Value::Str(String::new()),
                     "NoneType" => Value::None,
-                    _ => self.call_named(
-                        prog,
-                        &type_name,
-                        Vec::new(),
-                        Vec::new(),
-                        &CallTypes::default(),
-                    )?,
+                    _ => {
+                        let param_vals: Vec<Option<Value>> = prog
+                            .structs
+                            .get(&type_name)
+                            .map(|definition| {
+                                definition
+                                    .param_decls
+                                    .iter()
+                                    .map(|declaration| {
+                                        token_params
+                                            .iter()
+                                            .find(|(name, _)| {
+                                                name == declaration.name().trim_start_matches('*')
+                                            })
+                                            .map(|(_, value)| value.clone())
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        self.call_named(
+                            prog,
+                            &type_name,
+                            Vec::new(),
+                            Vec::new(),
+                            &CallTypes {
+                                param_vals: &param_vals,
+                                ..CallTypes::default()
+                            },
+                        )?
+                    }
                 };
             }
             // Only the erased oracle runs a template: its values carry no
@@ -570,16 +605,38 @@ impl VmBackend {
                         })
                     })
                     .flatten();
-                let static_receiver = prog
-                    .index_of(&func.0)
-                    .map(|callee| {
-                        self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
-                    })
-                    .unwrap_or_default();
+                // A constructor's own compile-time parameters the checker
+                // solved, declared after its struct's, bind in its frame as a
+                // method's do; the struct's reify on the instance.
+                let static_receiver = if let Some(definition) = constructed {
+                    constructor_index
+                        .and_then(|index| prog.sigs.get(&prog.mir.functions[index].0))
+                        .and_then(|signature| {
+                            signature.param_decls.get(definition.param_decls.len()..)
+                        })
+                        .filter(|own| !own.is_empty() && !instantiated_args.is_empty())
+                        .map(|own| {
+                            let supplied = self.supplied_parameter_arguments(
+                                prog,
+                                caller,
+                                own,
+                                &[],
+                                instantiated_args,
+                            );
+                            reify_value_parameters(prog, own, &supplied)
+                        })
+                        .unwrap_or_default()
+                } else {
+                    prog.index_of(&func.0)
+                        .map(|callee| {
+                            self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
+                        })
+                        .unwrap_or_default()
+                };
                 let mut runtime_value_params = prog
                     .sigs
                     .get(&func.0)
-                    .map(|signature| reify_value_parameters(&signature.param_decls, &pvals))
+                    .map(|signature| reify_value_parameters(prog, &signature.param_decls, &pvals))
                     .unwrap_or_default();
                 runtime_value_params.extend(static_receiver.iter().cloned());
                 let result = if let Some(idx) = writeback {
@@ -740,7 +797,7 @@ impl VmBackend {
                             param_arg_regs,
                         );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
-                        reify_value_parameters(&signature.param_decls, &supplied)
+                        reify_value_parameters(prog, &signature.param_decls, &supplied)
                     })
                     .unwrap_or_default();
                 let mut reference_inputs: Vec<(usize, Value)> = Vec::new();

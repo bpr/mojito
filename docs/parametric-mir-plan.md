@@ -660,9 +660,17 @@ branch for the class is deleted, and so is its certificate class.
   receiver's reified binders. Hello World's census reads
   `struct_dtype_vector 22` (was 43, all `AHasher` now) and
   `template_method_struct_lane.mojo`'s `def_dtype_vector 0` (was 5). The
-  vector-keyed, struct-valued, and variadic structs remain on the cloner
-  (R4), behind a method's own compile-time parameters (R5) and a method
-  holding compile-time control flow.
+  second step landed the same day for a struct keyed on a vector value
+  (`AHasher[key: U256]`) or on a struct-typed value (`Tagged[e: Extent]`):
+  a closed binder read is a parameter-value constant (`Const::Value`, schema
+  1.27), a field of a struct-typed value a `ParamKind::Field` node, and the
+  elaborator freezes a computed struct argument to its fieldwise
+  construction. A variadic struct whose source names no struct still
+  specialized whole followed (`served_variadic_structs`), `native::mono`
+  binding its pack per instance. Hello World reads `struct_dtype_vector 0`
+  and total 175; its `struct_variadic 128` is `Tuple`, `TString`, `Variant`,
+  and the bundled variadic structs over them, which stay on the cloner
+  (R4).
 - **P3e.** Three steps: a method's own compile-time parameters, nested
   definitions and their captures, and clones minted during CTFE. The first
   landed 2026-10-05: a method with compile-time parameters of its own is a

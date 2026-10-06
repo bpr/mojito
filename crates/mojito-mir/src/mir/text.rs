@@ -168,7 +168,7 @@ pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 26;
+pub const VERSION_MINOR: u16 = 27;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -435,6 +435,7 @@ pub const fn constant_spelling(constant: &Const) -> &'static str {
         Const::Dtype(_) => "dtype",
         Const::None => "none",
         Const::Param(_) => "param",
+        Const::Value(_) => "value",
     }
 }
 

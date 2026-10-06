@@ -4,6 +4,14 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// A construction's compile-time arguments: the struct's, aligned with its
+/// declarations, and the constructor's own the call solved, by name.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ConstructorParameters<'a> {
+    pub(super) param_vals: &'a [Option<Value>],
+    pub(super) own: &'a [(String, Value)],
+}
+
 impl VmBackend {
     /// Apply a binary operator, dispatching to a user struct's **dunder** when an
     /// operand is a struct (operator overloading): `a OP b` → `a.__op__(b)` for a
@@ -309,8 +317,9 @@ impl VmBackend {
         target: Option<&str>,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
-        param_vals: &[Option<Value>],
+        parameters: ConstructorParameters<'_>,
     ) -> Result<Value, RuntimeError> {
+        let ConstructorParameters { param_vals, own } = parameters;
         let def = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: constructed struct '{name}' is missing from MIR"
@@ -321,7 +330,7 @@ impl VmBackend {
             .iter()
             .map(|(f, ty)| (f.clone(), uninitialized_field(ty)))
             .collect();
-        let mut value_params = reify_value_parameters(&def.param_decls, param_vals);
+        let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
         // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
         // produces its argument's exact type; when the call site supplied no
         // parameter arguments (a generic template body cannot), inherit the
@@ -365,7 +374,7 @@ impl VmBackend {
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
-        let constructor_params: Vec<_> = prog
+        let mut constructor_params: Vec<_> = prog
             .sigs
             .get(&constructor)
             .into_iter()
@@ -377,6 +386,9 @@ impl VmBackend {
                     .map(|value| (declaration.name().to_string(), value))
             })
             .collect();
+        // The constructor's own compile-time parameters the call solved
+        // (`__init__[T, //, F: def() -> T]`).
+        constructor_params.extend(own.iter().cloned());
         let (_, frame_vars) = self.call_frame(prog, fidx, bound, &constructor_params)?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
@@ -644,7 +656,7 @@ impl VmBackend {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
         })?;
         let def = &prog.structs[name];
-        let mut value_params = reify_value_parameters(&def.param_decls, param_vals);
+        let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
         // Copy construction produces the source's exact type; inherit its
         // reified parameters when the call site supplied none.
         if value_params

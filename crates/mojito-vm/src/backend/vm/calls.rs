@@ -121,6 +121,7 @@ pub(super) fn bind_args(
 
 /// Build a struct instance (fieldwise), coercing each argument to its field type.
 pub(super) fn construct(
+    prog: &Prog,
     def: &StructDef,
     name: &str,
     args: Vec<Value>,
@@ -148,7 +149,7 @@ pub(super) fn construct(
     // pair each declared value parameter with its supplied comptime `Int` argument.
     // Explicit `Name[...](...)` supplies every parameter positionally, so the decls
     // align with `param_vals`.
-    let value_params = reify_value_parameters(&def.param_decls, param_vals);
+    let value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
     Ok(Value::Struct {
         name: name.to_string(),
         fields,

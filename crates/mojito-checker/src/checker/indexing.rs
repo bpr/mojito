@@ -2147,11 +2147,11 @@ impl Checker {
                     .insert(object.source_span(), self_ty.clone());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
-                // A vector-typed value parameter (`AHasher[key: U256]`) reads
-                // as its declared vector and a `DType` one as a `DType`; the
-                // scalar kinds read as `Int`.
+                // A vector-, struct-, or `DType`-typed value parameter
+                // (`AHasher[key: U256]`, `Tagged[e: Extent]`) reads as its
+                // declared type; the scalar kinds read as `Int`.
                 Some(ParamDecl::Value { ty, .. })
-                    if matches!(**ty, Ty::Simd { .. } | Ty::Dtype) =>
+                    if matches!(**ty, Ty::Simd { .. } | Ty::Struct(..) | Ty::Dtype) =>
                 {
                     Ok((**ty).clone())
                 }

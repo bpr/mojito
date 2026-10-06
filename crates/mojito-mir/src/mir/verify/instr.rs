@@ -86,9 +86,39 @@ pub(super) fn verify_instruction(
         MirInstr::Call { .. } | MirInstr::MethodCall { .. } | MirInstr::CallIndirect { .. } => {
             verify_call_instruction(&cx, instruction, errors);
         }
+        // A parameter value constant is a closed vector, or a struct of
+        // such values and scalars.
+        MirInstr::Const {
+            k: crate::mir::Const::Value(value),
+            ..
+        } if !closed_parameter_value(value) => errors.push(format!(
+            "{}: parameter value constant `{value}` is not a closed vector or struct",
+            cx.prefix
+        )),
         _ => {}
     }
     verify_effect_instruction(&cx, instruction, errors);
+}
+
+/// Whether a `Const::Value` payload is one a backend materializes: a vector,
+/// or a struct whose fields are scalars, vectors, or such structs.
+fn closed_parameter_value(value: &CtValue) -> bool {
+    match value {
+        CtValue::Simd { .. } => true,
+        CtValue::Struct { fields, .. } => fields.iter().all(|(_, field)| {
+            matches!(
+                field,
+                CtValue::Int(_)
+                    | CtValue::UInt(_)
+                    | CtValue::Float(_)
+                    | CtValue::IntLiteral(_)
+                    | CtValue::FloatLiteral(_)
+                    | CtValue::Bool(_)
+                    | CtValue::Dtype(_)
+            ) || closed_parameter_value(field)
+        }),
+        _ => false,
+    }
 }
 
 /// A raising site in a nonraising function must sit under a handler; a `try`

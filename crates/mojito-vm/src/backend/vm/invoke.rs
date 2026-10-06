@@ -268,8 +268,14 @@ impl VmBackend {
         collector: &str,
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
-        let mut dict =
-            self.construct_via_init(prog, collector, None, Vec::new(), Vec::new(), &[])?;
+        let mut dict = self.construct_via_init(
+            prog,
+            collector,
+            None,
+            Vec::new(),
+            Vec::new(),
+            ConstructorParameters::default(),
+        )?;
         let fname = prog.overload_name(&format!("{collector}.__setitem__"), 2);
         let fidx = prog.index_of(&fname).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
@@ -763,7 +769,7 @@ impl VmBackend {
                             instantiated,
                         );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
-                        reify_value_parameters(&signature.param_decls, &supplied)
+                        reify_value_parameters(prog, &signature.param_decls, &supplied)
                     })
                     .unwrap_or_default();
                 let mut value_params = value_params;

@@ -343,7 +343,12 @@ impl Elab<'_> {
             } => {
                 // A comptime-dependent generic template can't be elaborated now (its
                 // parameter value is unknown); keep it verbatim for monomorphization.
-                if is_specializable_declaration(stmt, &self.served_packs, &self.served_lanes) {
+                if is_specializable_declaration(
+                    stmt,
+                    &self.served_packs,
+                    &self.served_lanes,
+                    &HashSet::new(),
+                ) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -679,11 +684,6 @@ impl Elab<'_> {
             if let Some(ty) = scalar_type_name(name) {
                 return Ok(ty);
             }
-            // A minted vector-keyed specialization named by an alias fold
-            // (`TypeValue(Named("AHasher$v…"))`) is its own identity.
-            if self.pending_struct_instances.borrow().contains_key(name) {
-                return Ok(Ty::Struct(name.to_string(), Vec::new().into()));
-            }
             // A nested t-string's specialization, minted beside the one
             // whose storage names it (`tstring_storage_elements`).
             if mojito_symbol::symbol::specialization_template(name)
@@ -808,49 +808,7 @@ impl Elab<'_> {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // A fully concrete application of a vector-keyed value template
-        // (`AHasher[SIMD[DType.uint64, 4](0)]`) names its specialization:
-        // one identity — the mangled clone — for the checker's default fill,
-        // `ConstructTypeParam`, and monomorphization alike.
-        if self.simd_keyed_struct_template(name)
-            && let Some(values) = tyargs
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Val(value)
-                        if !matches!(
-                            value,
-                            CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-                        ) =>
-                    {
-                        Some(value.clone())
-                    }
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-            && !values.is_empty()
-        {
-            let mangled = mangle(name, &values)?;
-            self.pending_struct_instances
-                .borrow_mut()
-                .entry(mangled.clone())
-                .or_insert_with(|| (name.to_string(), values));
-            return Ok(Ty::Struct(mangled, Vec::new().into()));
-        }
         Ok(Ty::Struct(name.to_string(), tyargs.into()))
-    }
-
-    /// Whether `name` is a specializable struct keyed by a vector-typed value
-    /// parameter (`AHasher[key: U256]`).
-    pub(super) fn simd_keyed_struct_template(&self, name: &str) -> bool {
-        self.specializable.get(name).is_some_and(|template| {
-            matches!(&template.kind, StmtKind::Struct { type_params, .. }
-            if type_params.iter().any(|parameter| {
-                parameter.value_type.as_ref().is_some_and(|source| {
-                    matches!(source, Type::Named(applied, args)
-                        if applied == "SIMD" && simd_source_dims(args).is_some())
-                })
-            }))
-        })
     }
 
     pub(super) fn associated_value(

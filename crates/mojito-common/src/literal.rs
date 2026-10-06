@@ -183,6 +183,12 @@ impl From<u64> for IntLiteral {
     }
 }
 
+impl From<i128> for IntLiteral {
+    fn from(value: i128) -> Self {
+        Self(value.into())
+    }
+}
+
 impl From<usize> for IntLiteral {
     fn from(value: usize) -> Self {
         Self(value.into())

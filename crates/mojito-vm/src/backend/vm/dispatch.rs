@@ -254,7 +254,14 @@ impl VmBackend {
         if let Some(target) = target
             && constructors.next().is_none()
         {
-            return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new(), &[]);
+            return self.construct_via_init(
+                prog,
+                &name,
+                Some(&target),
+                arguments,
+                Vec::new(),
+                ConstructorParameters::default(),
+            );
         }
         self.call_named(prog, &name, arguments, Vec::new(), &CallTypes::default())
     }
@@ -319,7 +326,10 @@ impl VmBackend {
                 Some(name),
                 args,
                 kwargs,
-                param_vals,
+                ConstructorParameters {
+                    param_vals,
+                    own: static_receiver,
+                },
             );
         }
         match name {
@@ -621,7 +631,10 @@ impl VmBackend {
                         clone.as_deref(),
                         args,
                         kwargs,
-                        param_vals,
+                        ConstructorParameters {
+                            param_vals,
+                            own: static_receiver,
+                        },
                     );
                 }
                 if !kwargs.is_empty() {
@@ -633,10 +646,13 @@ impl VmBackend {
                         clone.as_deref(),
                         args,
                         Vec::new(),
-                        param_vals,
+                        ConstructorParameters {
+                            param_vals,
+                            own: static_receiver,
+                        },
                     )
                 } else {
-                    construct(&prog.structs[name], name, args, param_vals)
+                    construct(prog, &prog.structs[name], name, args, param_vals)
                 }
             }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
@@ -682,7 +698,7 @@ impl VmBackend {
                     // Reify the function's value parameters (`doubled[21]()`): pair
                     // each declared value parameter with its supplied comptime arg.
                     let mut value_params: Vec<(String, Value)> = match prog.sigs.get(name) {
-                        Some(sig) => reify_value_parameters(&sig.param_decls, param_vals),
+                        Some(sig) => reify_value_parameters(prog, &sig.param_decls, param_vals),
                         None => Vec::new(),
                     };
                     value_params.extend(static_receiver.iter().cloned());

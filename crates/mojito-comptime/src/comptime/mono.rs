@@ -499,6 +499,87 @@ impl Elab<'_> {
     /// parameter (no pack, value, or callable-bounded parameter and no
     /// retained origin binder), and the struct is not a specialization
     /// template of its own.
+    /// Freeze each computed argument of a struct-typed value parameter of
+    /// the generator `name`, a struct or a uniquely named `def`
+    /// (`Tagged[Extent.square(4)]`), into the fieldwise
+    /// construction of its compile-time value (`Tagged[Extent(4, 4)]`), the
+    /// form the checker reads as a frozen struct value. An argument over a
+    /// binder, which has no value yet, is left as written.
+    pub(super) fn freeze_struct_value_arguments(
+        &self,
+        name: &str,
+        arguments: &mut [ParamArg],
+        consts: &HashMap<String, CtValue>,
+    ) {
+        let computed = |argument: &ParamArg| match argument {
+            ParamArg::Value(expression) => matches!(
+                expression.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            ),
+            ParamArg::Named { value, .. } => matches!(&**value, ParamArg::Value(expression)
+                if matches!(expression.kind, ExprKind::Call { .. } | ExprKind::MethodCall { .. })),
+            ParamArg::Type(_) => false,
+        };
+        if !arguments.iter().any(computed) {
+            return;
+        }
+        let type_params = if let Some(info) = self.structs.get(name) {
+            info.source_params
+        } else {
+            let mut defs = self
+                .program
+                .iter()
+                .filter_map(|statement| match &statement.kind {
+                    StmtKind::Def {
+                        name: declared,
+                        type_params,
+                        ..
+                    } if declared == name => Some(type_params.as_slice()),
+                    _ => None,
+                });
+            match (defs.next(), defs.next()) {
+                (Some(type_params), None) => type_params,
+                _ => return,
+            }
+        };
+        let struct_valued = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if self.structs.contains_key(only));
+        if !type_params.iter().any(struct_valued) {
+            return;
+        }
+        let explicit: Vec<&TypeParam> = type_params
+            .iter()
+            .filter(|parameter| {
+                !parameter.infer_only
+                    && !matches!(parameter.bounds.as_slice(),
+                        [only] if only == "Origin" || only == "OriginSet")
+            })
+            .collect();
+        for (index, argument) in arguments.iter_mut().enumerate() {
+            let (parameter, expression) = match argument {
+                ParamArg::Value(expression) => (explicit.get(index).copied(), expression),
+                ParamArg::Named { name, value } => match &mut **value {
+                    ParamArg::Value(expression) => (
+                        explicit
+                            .iter()
+                            .copied()
+                            .find(|parameter| parameter.name == *name),
+                        expression,
+                    ),
+                    _ => continue,
+                },
+                ParamArg::Type(_) => continue,
+            };
+            if !parameter.is_some_and(struct_valued) {
+                continue;
+            }
+            if let Ok(value @ CtValue::Struct { .. }) = self.eval(expression, consts)
+                && let Some(frozen) = value.materialize(expression.span)
+            {
+                *expression = frozen;
+            }
+        }
+    }
+
     pub(super) fn instance_template(&self, name: &str) -> bool {
         if self.specializable.contains_key(name) {
             return false;
@@ -617,6 +698,8 @@ impl Elab<'_> {
                     arguments.clear();
                 } else if self.instance_template(name) {
                     self.request_instance(name, arguments, consts, mono);
+                } else {
+                    self.freeze_struct_value_arguments(name, arguments, consts);
                 }
                 Ok(())
             }
@@ -833,6 +916,8 @@ impl Elab<'_> {
                     // A static call through an explicit instance
                     // (`Box[Int].filled(7)`) mints that instance's clones.
                     self.request_instance(name, args, consts, mono);
+                } else {
+                    self.freeze_struct_value_arguments(name, args, consts);
                 }
                 Ok(())
             }
@@ -881,6 +966,7 @@ impl Elab<'_> {
                         self.request_instance(name, param_args, consts, mono);
                     }
                 }
+                self.freeze_struct_value_arguments(name, param_args, consts);
                 // A checker-selected scalar `range(...)`: the construction of
                 // the range-family struct at its dtype, as the pin's
                 // `range[dtype: DType, //]` overloads return it.
@@ -1369,18 +1455,9 @@ impl Elab<'_> {
         };
         let decls = classify_ct_params(type_params, name);
         let [ParamDecl::Type { variadic: true, .. }] = decls.as_slice() else {
-            if decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
-            {
-                return Err(ComptimeError::NotComptime(format!(
-                    "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
-                )));
-            }
-            // A value-parameter struct (`Buf[n, dt]`, `Tagged[layout]`)
-            // resolves each declaration in order, retained binders skipped —
-            // mirroring the def path's shape.
-            return self.resolve_value_struct_spec_args(name, type_params, param_args, consts);
+            return Err(ComptimeError::NotComptime(format!(
+                "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
+            )));
         };
         if param_args.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -1395,93 +1472,6 @@ impl Elab<'_> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(vec![CtValue::Tuple(types)])
-    }
-
-    /// Resolve a value-parameter struct application (`DType`, struct-typed,
-    /// and scalar value declarations; Origin/`mut` binders retained).
-    fn resolve_value_struct_spec_args(
-        &self,
-        name: &str,
-        type_params: &[TypeParam],
-        param_args: &[ParamArg],
-        consts: &HashMap<String, CtValue>,
-    ) -> Result<Vec<CtValue>, ComptimeError> {
-        // Retained Origin/`mut` binders take no explicit argument at a struct
-        // application (the checker infers them on the specialization), so the
-        // positional distribution runs against the evaluated parameters only.
-        let evaluated: Vec<TypeParam> = type_params
-            .iter()
-            .filter(|parameter| !retained_specialization_param(parameter, type_params))
-            .cloned()
-            .collect();
-        // The checker accepts (and erases) explicit origin arguments on
-        // type-generic structs; a value-parameterized specialization has no
-        // origin slot in its baked argument list, so a surplus argument next
-        // to a declared origin parameter gets a targeted diagnostic instead
-        // of a misaligned positional binding.
-        let explicit = |parameter: &TypeParam| !parameter.infer_only;
-        if param_args.len() > evaluated.iter().filter(|p| explicit(p)).count()
-            && type_params.iter().any(|parameter| {
-                explicit(parameter)
-                    && matches!(parameter.bounds.as_slice(),
-                        [only] if only == "Origin" || only == "OriginSet")
-            })
-        {
-            return Err(ComptimeError::NotComptime(format!(
-                "generic '{name}': explicit origin arguments are not supported on a \
-                 value-parameterized struct specialization; omit the origin slots"
-            )));
-        }
-        let bound = bind_spec_param_args(&evaluated, param_args, name)?;
-        let mut vals = Vec::new();
-        let mut environment = consts.clone();
-        for (parameter, arguments) in evaluated.iter().zip(bound) {
-            let decl = classify_ct_param_with(parameter, type_params, name, &|bound| {
-                self.structs.contains_key(bound)
-            })
-            .ok_or_else(|| {
-                ComptimeError::NotComptime(format!(
-                    "generic '{name}': parameter '{}' has no compile-time classification",
-                    parameter.name
-                ))
-            })?;
-            if matches!(decl, ParamDecl::Type { .. }) {
-                return Err(ComptimeError::NotComptime(format!(
-                    "generic '{name}': mixing type parameters with DType/struct \
-                     value parameters is not supported yet (parameter '{}')",
-                    parameter.name
-                )));
-            }
-            let value = if let Some(argument) = arguments.first() {
-                self.resolve_ct_arg(&decl, argument, &environment)?
-            } else {
-                let (ParamDecl::Value { ty, .. }, Some(default)) = (&decl, &parameter.default)
-                else {
-                    return Err(ComptimeError::Arity(format!(
-                        "generic '{name}' requires compile-time parameter '{}'",
-                        parameter.name
-                    )));
-                };
-                let evaluated = self.eval(default, &environment).map_err(|_| {
-                    ComptimeError::NotComptime(format!(
-                        "cannot evaluate default for parameter '{}'",
-                        parameter.name
-                    ))
-                })?;
-                materialize_ct_value(evaluated.clone(), ty).ok_or_else(|| {
-                    ComptimeError::NotComptime(format!(
-                        "default for parameter '{}' expects {ty}, got {evaluated}",
-                        parameter.name
-                    ))
-                })?
-            };
-            environment.insert(
-                decl.name().trim_start_matches('*').to_string(),
-                value.clone(),
-            );
-            vals.push(value);
-        }
-        Ok(vals)
     }
 
     /// Resolve a variadic-struct application when it is ready for concrete

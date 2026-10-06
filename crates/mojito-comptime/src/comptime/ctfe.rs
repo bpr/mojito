@@ -14,14 +14,13 @@ const CTFE_PROBE: &str = "$ctfe$probe";
 const CTFE_PROBE_RESULT: &str = "$ctfe$result";
 
 impl Elab<'_> {
-    /// Registry-aware specializability: recognizes struct-typed value
-    /// parameters through the collected struct set.
+    /// Specializability under this elaboration's served `def` sets.
     pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
-        is_specializable_declaration_in(
+        is_specializable_declaration(
             statement,
-            &|name| self.structs.contains_key(name),
             &self.served_packs,
             &self.served_lanes,
+            &self.served_structs,
         )
     }
 
@@ -108,12 +107,10 @@ impl Elab<'_> {
         // The ordinary checker validates retained nominal method/default bodies
         // even when the CTFE entry does not invoke them. Seed their actual free
         // callees rather than retaining every `$`-qualified linked symbol.
-        // A vector-keyed template crosses as its minted clones (`AHasher`
-        // for `default_hasher`), whose bodies are the template's.
         for statement in self.program {
             if matches!(&statement.kind, StmtKind::Trait { .. })
-                || matches!(&statement.kind, StmtKind::Struct { name, .. }
-                    if !self.is_specializable(statement) || self.simd_keyed_struct_template(name))
+                || (matches!(&statement.kind, StmtKind::Struct { .. })
+                    && !self.is_specializable(statement))
             {
                 let mut calls = HashSet::new();
                 collect_vm_ctfe_stmt_calls(statement, &mut calls);
@@ -386,18 +383,12 @@ impl Elab<'_> {
             })?;
         // The bound hasher types must also construct purely.
         for argument in param_args {
-            if let Ok(Ty::Struct(struct_name, _)) = self.param_arg_type(argument, scope) {
-                let template = self
-                    .pending_struct_instances
-                    .borrow()
-                    .get(&struct_name)
-                    .map(|(orig, _)| orig.clone())
-                    .unwrap_or(struct_name);
-                if !self.vm_ctfe_safe_struct_ctors(&template, &mut visiting, &mut needed) {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "'{template}' is not safe for VM-backed compile-time execution"
-                    )));
-                }
+            if let Ok(Ty::Struct(template, _)) = self.param_arg_type(argument, scope)
+                && !self.vm_ctfe_safe_struct_ctors(&template, &mut visiting, &mut needed)
+            {
+                return Err(ComptimeError::NotComptime(format!(
+                    "'{template}' is not safe for VM-backed compile-time execution"
+                )));
             }
         }
         let expr = |kind: ExprKind| Expr {
@@ -689,12 +680,8 @@ impl Elab<'_> {
             return true;
         }
         let safe = self.program.iter().all(|stmt| match &stmt.kind {
-            // A vector-keyed template (`AHasher[key: U256]`) crosses as its
-            // clones, whose constructors are the template's.
             StmtKind::Struct { name, methods, .. }
-                if name == struct_name
-                    && (!self.is_specializable(stmt)
-                        || self.simd_keyed_struct_template(struct_name)) =>
+                if name == struct_name && !self.is_specializable(stmt) =>
             {
                 methods
                     .iter()
@@ -1326,14 +1313,10 @@ impl Elab<'_> {
             return true;
         }
         let safe = self.program.iter().all(|stmt| match &stmt.kind {
-            StmtKind::Struct { name, methods, .. }
-                if !self.is_specializable(stmt) || self.simd_keyed_struct_template(name) =>
-            {
-                methods
-                    .iter()
-                    .filter(|candidate| candidate.name == method)
-                    .all(|candidate| self.vm_ctfe_safe_block(&candidate.body, visiting, needed))
-            }
+            StmtKind::Struct { methods, .. } if !self.is_specializable(stmt) => methods
+                .iter()
+                .filter(|candidate| candidate.name == method)
+                .all(|candidate| self.vm_ctfe_safe_block(&candidate.body, visiting, needed)),
             _ => true,
         });
         visiting.remove(&guard);
@@ -1484,49 +1467,8 @@ impl Elab<'_> {
             }
         }
         let first_trace = self.method_traces.borrow().len();
-        let mut generated = GeneratedDeclarations::default();
-        // Evaluating the aliases registers the vector-keyed specializations
-        // they name (`comptime default_hasher = AHasher[...]`); a retained
-        // declaration reaches such a clone through the alias (`H: Hasher =
-        // default_hasher`), so the clone crosses too — the template itself is
-        // a monomorphizer input excluded above.
+        let generated = GeneratedDeclarations::default();
         let type_aliases = self.vm_ctfe_type_aliases();
-        let pending: Vec<(String, Vec<CtValue>)> = self
-            .pending_struct_instances
-            .borrow()
-            .values()
-            .cloned()
-            .collect();
-        for (orig, vals) in pending {
-            let Ok(spec) = self.generate_value_struct_spec(&orig, &vals) else {
-                continue;
-            };
-            if let StmtKind::Struct { name, methods, .. } = &spec.kind {
-                generated.structs.push(name.clone());
-                self.ctfe_clones.set(self.ctfe_clones.get() + methods.len());
-            }
-            // The clone sits where its template was declared, so a retained
-            // declaration that names it resolves in order at the boundary.
-            let template_position = self
-                .program
-                .iter()
-                .position(|statement| {
-                    matches!(&statement.kind, StmtKind::Struct { name, .. } if *name == orig)
-                })
-                .unwrap_or(usize::MAX);
-            let original_index = |statement: &Stmt| {
-                self.program.iter().position(|original| {
-                    original.span == statement.span && original.module == statement.module
-                })
-            };
-            let insert_at = program
-                .iter()
-                .position(|statement| {
-                    original_index(statement).is_some_and(|index| index > template_position)
-                })
-                .unwrap_or(program.len());
-            program.insert(insert_at, spec);
-        }
         if !type_aliases.is_empty() {
             let subs = |alias: &str| type_aliases.get(alias).cloned();
             for statement in &mut program {

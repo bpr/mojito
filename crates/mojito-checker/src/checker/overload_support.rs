@@ -575,7 +575,7 @@ pub(super) fn dependent_index_accessor_family(
 /// The declaration view of a struct statement. `shell` marks a template
 /// that checks only per specialization as a shell — source validation's
 /// counterpart of the elaborator's own shell marking.
-pub(super) fn struct_declaration(stmt: &Stmt, shell: bool) -> Option<StructDeclaration<'_>> {
+pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
     let StmtKind::Struct {
         name,
         type_params,
@@ -605,7 +605,7 @@ pub(super) fn struct_declaration(stmt: &Stmt, shell: bool) -> Option<StructDecla
         associated,
         methods,
         fieldwise_init: *fieldwise_init,
-        template_shell: *template_shell || shell,
+        template_shell: *template_shell,
         decorators,
     })
 }

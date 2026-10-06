@@ -427,6 +427,60 @@ fn const_param_round_trips() {
     assert_reprints(&program);
 }
 
+/// A closed vector or struct parameter value reprints as its `ct_*` value,
+/// and a field of a symbolic struct parameter as a `param_field` node.
+#[test]
+fn const_value_and_param_field_round_trip() {
+    let extent = Ty::Struct("Extent".into(), Vec::new().into());
+    let base = ParamContext::detached().decl_ref(
+        test_binder("e").id,
+        "e",
+        mojito_types::param_expr::MetaTy::value(extent.clone()),
+    );
+    let rows = ParamContext::detached()
+        .field(&base, "rows", mojito_types::param_expr::MetaTy::int())
+        .unwrap();
+    let instrs = vec![
+        MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Value(CtValue::Simd {
+                dtype: Dtype::UInt64,
+                lanes: vec![
+                    mojito_types::ct::CtLane::Int(1),
+                    mojito_types::ct::CtLane::Int(2),
+                ],
+            }),
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: Const::Value(CtValue::Struct {
+                name: "Extent".into(),
+                fields: vec![
+                    ("rows".into(), CtValue::Int(2)),
+                    ("cols".into(), CtValue::Int(3)),
+                ],
+            }),
+        },
+        MirInstr::Const {
+            dest: Reg(2),
+            k: Const::Param(rows),
+        },
+    ];
+    let vector = Ty::Simd {
+        dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt64),
+        width: mojito_types::types::SimdWidth::Known(2),
+    };
+    let program = program_with(vec![(
+        "consts".into(),
+        function_with(vec![vector, extent, Ty::Int], instrs),
+    )]);
+    let text = write::program(&program);
+    assert!(text.contains("value(ct_simd"));
+    assert!(text.contains("value(ct_struct"));
+    assert!(text.contains("param(param_field"));
+    assert_reprints(&program);
+}
+
 #[test]
 fn unknown_value_grammar_tags_are_diagnosed() {
     assert!(

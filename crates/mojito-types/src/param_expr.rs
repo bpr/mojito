@@ -405,6 +405,47 @@ impl ParamContext {
         Ok(self.make(meta, ParamKind::ListGet { list, index }))
     }
 
+    /// A field of a struct-typed parameter value (`Self.e.rows`): upstream's
+    /// struct extract on a parameter attribute. A constant base folds to its
+    /// field; `meta` is the field's declared type.
+    pub fn field(
+        &self,
+        base: &ParamExpr,
+        name: &str,
+        meta: MetaTy,
+    ) -> Result<ParamExpr, ParamError> {
+        if let Some(value) = base.as_constant() {
+            let CtValue::Struct {
+                name: owner,
+                fields,
+            } = value
+            else {
+                return Err(ParamError::TypeMismatch {
+                    operation: format!("field `{name}`"),
+                    expected: "a struct value".to_string(),
+                    found: value.to_string(),
+                });
+            };
+            let field = fields
+                .iter()
+                .find(|(field, _)| field == name)
+                .ok_or_else(|| ParamError::TypeMismatch {
+                    operation: format!("field `{name}`"),
+                    expected: format!("a field of `{owner}`"),
+                    found: name.to_string(),
+                })?;
+            return self.constant(field.1.clone());
+        }
+        let base = self.intern(base);
+        Ok(self.make(
+            meta,
+            ParamKind::Field {
+                base,
+                name: name.to_string(),
+            },
+        ))
+    }
+
     /// One of today's bound-pack constraint leaves, carried for the checker's
     /// concrete tuple/pack logic to resolve. It adds no symbolic pack support.
     pub fn pack_query(&self, pack: &ParamRef, query: PackQuery) -> ParamExpr {
@@ -558,6 +599,9 @@ impl ParamContext {
             ParamKind::ListGet { list, index } => {
                 self.list_get(&self.fold(list)?, &self.fold(index)?)?
             }
+            ParamKind::Field { base, name } => {
+                self.field(&self.fold(base)?, name, expr.meta().clone())?
+            }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.fold(subject)?, query.clone())
             }
@@ -676,6 +720,13 @@ impl ParamContext {
                 return self.list_get(
                     &self.answer_queries(list, answer)?,
                     &self.answer_queries(index, answer)?,
+                );
+            }
+            ParamKind::Field { base, name } => {
+                return self.field(
+                    &self.answer_queries(base, answer)?,
+                    name,
+                    expr.meta().clone(),
                 );
             }
             ParamKind::Apply {
@@ -1095,6 +1146,11 @@ impl ParamContext {
                 &self.replace_at(list, bindings, depth, memo)?,
                 &self.replace_at(index, bindings, depth, memo)?,
             )?,
+            ParamKind::Field { base, name } => self.field(
+                &self.replace_at(base, bindings, depth, memo)?,
+                name,
+                expr.meta().clone(),
+            )?,
             ParamKind::Reflect { subject, query } => self.reflect_query(
                 &self.replace_at(subject, bindings, depth, memo)?,
                 query.clone(),
@@ -1190,6 +1246,9 @@ impl ParamContext {
                 &self.shift(list, cutoff, by)?,
                 &self.shift(index, cutoff, by)?,
             )?,
+            ParamKind::Field { base, name } => {
+                self.field(&self.shift(base, cutoff, by)?, name, expr.meta().clone())?
+            }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
             }
@@ -1418,7 +1477,8 @@ impl ParamExpr {
             }
             ParamKind::Conforms { subject, .. }
             | ParamKind::Trivial { subject, .. }
-            | ParamKind::Reflect { subject, .. } => {
+            | ParamKind::Reflect { subject, .. }
+            | ParamKind::Field { base: subject, .. } => {
                 subject.visit(visitor);
             }
             ParamKind::Select { index, .. } => index.visit(visitor),
@@ -1476,6 +1536,7 @@ impl ParamExpr {
             ParamKind::PackQuery { .. } => 11,
             ParamKind::Apply { .. } => 12,
             ParamKind::Hole { .. } => 13,
+            ParamKind::Field { .. } => 14,
         }
     }
 }
@@ -1603,6 +1664,9 @@ pub enum ParamKind {
     /// `param_list.get`: one element of a parameter list that is still a
     /// parameter. A constant list is a [`Self::Select`] instead.
     ListGet { list: ParamExpr, index: ParamExpr },
+    /// A field of a struct-typed parameter value that is still a parameter
+    /// (`Self.e.rows`); a constant base is folded instead.
+    Field { base: ParamExpr, name: String },
     /// A query on the reflection of a type that is still a parameter
     /// (`reflect[T].field_count()`). The checker answers a closed subject
     /// from its struct table before building a node; a node whose subject
@@ -2943,6 +3007,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write!(f, "][{index}]")
         }
         ParamKind::ListGet { list, index } => write!(f, "{list}[{index}]"),
+        ParamKind::Field { base, name } => write!(f, "{base}.{name}"),
         ParamKind::Reflect { subject, query } => write!(f, "reflect[{subject}].{query}"),
         ParamKind::PackQuery { pack, query } => match query {
             PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),

@@ -32,6 +32,9 @@ impl Specializer<'_> {
             CtValue::UInt(v) => Some(Const::Int(*v as i64)),
             CtValue::Bool(v) => Some(Const::Bool(*v)),
             CtValue::Dtype(v) => Some(Const::Dtype(*v)),
+            value @ (CtValue::Simd { .. } | CtValue::Struct { .. }) => {
+                Some(Const::Value(value.clone()))
+            }
             _ => None,
         }
     }

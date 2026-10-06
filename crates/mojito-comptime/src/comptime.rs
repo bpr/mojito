@@ -1136,6 +1136,7 @@ pub fn elaborate_prepared(
         pack_generics,
         served_packs: served_pack_defs(program),
         served_lanes: served_lane_defs(program),
+        served_structs: served_variadic_structs(program),
         comptime_generics: collect_comptime_generic_templates(program),
         dtype_generics: collect_dtype_generic_templates(program),
         overload_families: collect_overload_families(program),
@@ -1148,7 +1149,6 @@ pub fn elaborate_prepared(
         keyed_methods: keyed_methods.iter().cloned().collect(),
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
-        pending_struct_instances: RefCell::new(HashMap::new()),
         per_call_clones: RefCell::new(HashSet::new()),
         nested_clones: Cell::new(0),
         ctfe_clones: Cell::new(0),
@@ -1457,7 +1457,15 @@ pub(super) fn comptime_for_is_template_served(
     packs: &HashSet<String>,
 ) -> bool {
     fn pack_length(expression: &Expr, packs: &HashSet<String>) -> bool {
-        let names_pack = |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if packs.contains(name));
+        // A `def`'s pack is named bare, an enclosing struct's as `Self.Ts`.
+        let names_pack = |expression: &Expr| match &expression.kind {
+            ExprKind::Identifier(name) => packs.contains(name),
+            ExprKind::Member { object, field } => {
+                matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                    && packs.contains(&format!("Self.{field}"))
+            }
+            _ => false,
+        };
         match &expression.kind {
             ExprKind::Call {
                 name,
@@ -1714,24 +1722,18 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
 /// name stays a template family, since overload selection is the checker's.
 fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
-    let struct_names: HashSet<&str> = program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
+    let served_structs = served_variadic_structs(program);
     // The structs the cloner still specializes whole (R4): one applied over
     // a lane binder has no instance a served body could name.
     let whole_structs: HashSet<&str> = program
         .iter()
         .filter(|statement| {
             matches!(&statement.kind, StmtKind::Struct { .. })
-                && is_specializable_declaration_in(
+                && is_specializable_declaration(
                     statement,
-                    &|bound| struct_names.contains(bound),
                     &HashSet::new(),
                     &HashSet::new(),
+                    &served_structs,
                 )
         })
         .filter_map(|statement| match &statement.kind {
@@ -1751,6 +1753,97 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
                 && lane_def_shape_served(statement, &whole_structs))
             .then(|| name.clone())
         })
+        .collect()
+}
+
+/// The variadic structs whose template serves them: each one whose source
+/// names no struct still specialized whole (`Tuple`, `TString`, `Variant`,
+/// and every variadic struct not served itself, to a fixpoint) and builds
+/// no tuple display or t-string, whose types those structs carry. The check
+/// types such a struct once with its pack symbolic, and `native::mono` binds
+/// the pack per instance.
+fn served_variadic_structs(program: &[Stmt]) -> HashSet<String> {
+    struct Finder<'a> {
+        whole: &'a HashSet<&'a str>,
+        own: &'a str,
+        found: bool,
+    }
+
+    impl Finder<'_> {
+        fn names_whole(&self, name: &str) -> bool {
+            name != self.own && self.whole.contains(name)
+        }
+    }
+
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(name, _) = ty {
+                self.found |= self.names_whole(name);
+            }
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.found |= match &expr.kind {
+                ExprKind::Identifier(name)
+                | ExprKind::Call { name, .. }
+                | ExprKind::TypeApply { name, .. } => self.names_whole(name),
+                ExprKind::TupleLit(_) | ExprKind::TString { .. } => true,
+                _ => false,
+            };
+        }
+    }
+
+    let variadic: Vec<(&str, &Stmt)> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct {
+                name, type_params, ..
+            } if type_params
+                .iter()
+                .any(|parameter| parameter.name.starts_with('*')) =>
+            {
+                Some((name.as_str(), statement))
+            }
+            _ => None,
+        })
+        .collect();
+    let compiler_known = [
+        mojito_types::types::TUPLE_TYPE_NAME,
+        mojito_types::types::TSTRING_TYPE_NAME,
+        "Variant",
+    ];
+    let mut whole: HashSet<&str> = variadic.iter().map(|(name, _)| *name).collect();
+    loop {
+        let served: Vec<&str> = variadic
+            .iter()
+            .filter(|(name, statement)| {
+                let local = name
+                    .strip_prefix("__module$")
+                    .map_or(*name, |rest| rest.rsplit('$').next().unwrap_or(rest));
+                whole.contains(name) && !compiler_known.contains(&local) && {
+                    let mut finder = Finder {
+                        whole: &whole,
+                        own: name,
+                        found: false,
+                    };
+                    mojito_ast::visit::walk_stmt(&mut finder, statement);
+                    !finder.found
+                }
+            })
+            .map(|(name, _)| *name)
+            .collect();
+        if served.is_empty() {
+            break;
+        }
+        for name in served {
+            whole.remove(name);
+        }
+    }
+    variadic
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !whole.contains(name))
+        .map(str::to_string)
         .collect()
 }
 
@@ -2577,18 +2670,7 @@ fn is_specializable_declaration(
     statement: &Stmt,
     served_packs: &HashSet<String>,
     served_lanes: &HashSet<String>,
-) -> bool {
-    is_specializable_declaration_in(statement, &|_| false, served_packs, served_lanes)
-}
-
-/// The registry-aware form: `is_value_struct` recognizes a single bound that
-/// names a struct (a struct-typed value parameter such as `[e: Extent]`),
-/// which — like a `DType` parameter — forces per-application monomorphization.
-fn is_specializable_declaration_in(
-    statement: &Stmt,
-    is_value_struct: &dyn Fn(&str) -> bool,
-    served_packs: &HashSet<String>,
-    served_lanes: &HashSet<String>,
+    served_structs: &HashSet<String>,
 ) -> bool {
     match &statement.kind {
         StmtKind::Def {
@@ -2616,20 +2698,16 @@ fn is_specializable_declaration_in(
                         || def_uses_layout_dependent_param(statement))
                         && !served_lanes.contains(name)))
         }
-        StmtKind::Struct { type_params, .. } => {
+        // A variadic struct is specialized whole per application unless the
+        // template serves it (`served_variadic_structs`); a value- or
+        // type-keyed one is a generator its template serves.
+        StmtKind::Struct {
+            name, type_params, ..
+        } => {
             type_params
                 .iter()
                 .any(|parameter| parameter.name.starts_with('*'))
-                // Struct- and vector-typed value parameters only execute
-                // concretely, so the struct monomorphizes per application. A
-                // `DType` or lane-width parameter is a generator's binder the
-                // template serves: the elaborator closes it per instance.
-                || type_params.iter().any(|parameter| {
-                    matches!(parameter.bounds.as_slice(), [only] if is_value_struct(only))
-                        || parameter.value_type.as_ref().is_some_and(|source| {
-                            matches!(ct_param_source_type(source), Some(Ty::Simd { .. }))
-                        })
-                })
+                && !served_structs.contains(name)
         }
         _ => false,
     }
@@ -2669,6 +2747,9 @@ struct Elab<'a> {
     /// The `DType`- or lane-keyed `def`s the template serves
     /// ([`served_lane_defs`]).
     served_lanes: HashSet<String>,
+    /// The variadic structs the template serves
+    /// ([`served_variadic_structs`]).
+    served_structs: HashSet<String>,
     /// The subset of `specializable` specialized only for its compile-time
     /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
     /// A call that omits a parameter consults the checker-recorded
@@ -2719,12 +2800,6 @@ struct Elab<'a> {
     templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
     /// What those checks derived and inferred.
     ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
-    /// Fully concrete applications of vector-keyed value templates named by
-    /// compile-time type expressions (`comptime default_hasher =
-    /// AHasher[SIMD[DType.uint64, 4](0)]`), by mangled clone name: each is
-    /// one specialization identity for every consumer, and monomorphization
-    /// mints them alongside the call-site applications.
-    pending_struct_instances: RefCell<HashMap<String, (String, Vec<CtValue>)>>,
     /// Per-call method clones minted on a non-generic struct, as (owner,
     /// clone name). They carry no receiver type, so source stamping names
     /// them here rather than by `Method::self_ty`.
@@ -3249,24 +3324,14 @@ fn collect_specializable<'a>(
     program: &'a [Stmt],
     bound_generics: &HashSet<String>,
 ) -> HashMap<String, &'a Stmt> {
-    let struct_names: HashSet<&str> = program
-        .iter()
-        .filter_map(|s| match &s.kind {
-            StmtKind::Struct { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
     let served_packs = served_pack_defs(program);
     let served_lanes = served_lane_defs(program);
+    let served_structs = served_variadic_structs(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration_in(
-                s,
-                &|bound| struct_names.contains(bound),
-                &served_packs,
-                &served_lanes,
-            ) || bound_generics.contains(name))
+            && (is_specializable_declaration(s, &served_packs, &served_lanes, &served_structs)
+                || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
@@ -3415,7 +3480,7 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
 /// with the enclosing clone (roadmap: nested definitions over compile-time
 /// parameters).
 pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
-    is_specializable_declaration(statement, &HashSet::new(), &HashSet::new())
+    is_specializable_declaration(statement, &HashSet::new(), &HashSet::new(), &HashSet::new())
         || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
             if !type_params.is_empty()
                 && (block_has_comptime(body)
@@ -3650,8 +3715,12 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
             let StmtKind::Def { params, .. } = &statement.kind else {
                 return None;
             };
-            if is_specializable_declaration(statement, &served_packs, &served_lanes)
-                || def_counts[name.as_str()] != 1
+            if is_specializable_declaration(
+                statement,
+                &served_packs,
+                &served_lanes,
+                &HashSet::new(),
+            ) || def_counts[name.as_str()] != 1
             {
                 return None;
             }
@@ -3834,7 +3903,12 @@ impl<'a> Elab<'a> {
             return false;
         };
         self.overload_families.contains_key(name)
-            && !is_specializable_declaration(statement, &self.served_packs, &self.served_lanes)
+            && !is_specializable_declaration(
+                statement,
+                &self.served_packs,
+                &self.served_lanes,
+                &self.served_structs,
+            )
     }
 
     /// Whether `name` is an overloaded template family: a call to it

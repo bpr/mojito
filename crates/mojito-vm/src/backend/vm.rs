@@ -947,11 +947,57 @@ fn reified_type_spelling(ty: &Ty) -> Option<String> {
     })
 }
 
+/// The erased frame's reification of a type argument: its spelling, or,
+/// for a struct instance over value arguments (`AHasher[key]`), a type token
+/// — a fieldless `Value::Struct` whose `value_params` carry them — so a
+/// construction of the binder (`H()`) builds the instance at its arguments.
+fn reified_type_value(prog: &Prog, ty: &Ty) -> Option<Value> {
+    let Ty::Struct(name, arguments) = ty else {
+        return reified_type_spelling(ty).map(Value::Str);
+    };
+    let value_params: Vec<(String, Value)> = prog
+        .structs
+        .get(name)
+        .map(|definition| {
+            definition
+                .param_decls
+                .iter()
+                .zip(arguments.iter())
+                .filter_map(|(declaration, argument)| match (declaration, argument) {
+                    (ParamDecl::Value { name, ty, .. }, TyArg::Val(value)) => Some((
+                        name.trim_start_matches('*').to_string(),
+                        crate::runtime::coerce_checked(
+                            ct_value_as_runtime(value.clone())?,
+                            ty.as_ref(),
+                        ),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(if value_params.is_empty() {
+        Value::Str(name.clone())
+    } else {
+        type_token(name, value_params)
+    })
+}
+
+/// A reified struct type over value arguments (see [`reified_type_value`]).
+fn type_token(name: &str, value_params: Vec<(String, Value)>) -> Value {
+    Value::Struct {
+        name: name.to_string(),
+        fields: Vec::new(),
+        value_params,
+    }
+}
+
 /// Reify generic value parameters in declaration order. Missing source
 /// arguments are filled from checked scalar/callable defaults; callable aliases
 /// can therefore reuse an earlier runtime closure without ever converting its
 /// capture payload into `CtValue`.
 fn reify_value_parameters(
+    prog: &Prog,
     declarations: &[ParamDecl],
     supplied: &[Option<Value>],
 ) -> Vec<(String, Value)> {
@@ -967,9 +1013,9 @@ fn reify_value_parameters(
                     return None;
                 };
                 let value = match resolved.get(index).cloned().flatten() {
-                    Some(value @ (Value::Str(_) | Value::Tuple(_))) => value,
+                    Some(value @ (Value::Str(_) | Value::Tuple(_) | Value::Struct { .. })) => value,
                     _ if constructible_type_parameter(declaration) => match default.as_deref() {
-                        Some(Ty::Struct(struct_name, _)) => Value::Str(struct_name.clone()),
+                        Some(default @ Ty::Struct(..)) => reified_type_value(prog, default)?,
                         _ => return None,
                     },
                     _ => return None,
@@ -1033,6 +1079,38 @@ fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
                 .map(runtime_value_as_ct)
                 .collect::<Option<Vec<_>>>()?,
         ),
+        Value::Simd { dtype, lanes } => CtValue::Simd {
+            dtype: *dtype,
+            lanes: match lanes {
+                crate::runtime::SimdLanes::Int(lanes) => lanes
+                    .iter()
+                    .copied()
+                    .map(mojito_types::ct::CtLane::Int)
+                    .collect(),
+                crate::runtime::SimdLanes::Float(lanes) => lanes
+                    .iter()
+                    .map(|lane| mojito_types::ct::CtLane::Float(lane.to_bits()))
+                    .collect(),
+                crate::runtime::SimdLanes::Bool(lanes) => lanes
+                    .iter()
+                    .copied()
+                    .map(mojito_types::ct::CtLane::Bool)
+                    .collect(),
+            },
+        },
+        // A type token compares by its spelling, as every reified type does.
+        Value::Struct {
+            name,
+            fields,
+            value_params,
+        } if fields.is_empty() && !value_params.is_empty() => CtValue::Str(name.clone()),
+        Value::Struct { name, fields, .. } => CtValue::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| Some((field.clone(), runtime_value_as_ct(value)?)))
+                .collect::<Option<Vec<_>>>()?,
+        },
         _ => return None,
     })
 }
@@ -1110,8 +1188,15 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .collect::<Option<Vec<_>>>()?,
         ),
         CtValue::Dtype(dtype) => Value::Dtype(dtype),
-        CtValue::Struct { .. }
-        | CtValue::Dict { .. }
+        CtValue::Struct { name, fields } => Value::Struct {
+            name,
+            fields: fields
+                .into_iter()
+                .map(|(field, value)| Some((field, ct_value_as_runtime(value)?)))
+                .collect::<Option<Vec<_>>>()?,
+            value_params: Vec::new(),
+        },
+        CtValue::Dict { .. }
         | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Reflected(_)
@@ -1251,7 +1336,23 @@ fn comptime_branch_holds(
             _ => None,
         },
         // A type parameter reifies as its type's spelling, so a type operand
-        // compares by the same spelling.
+        // compares by the same spelling; an element of a reified pack
+        // (`Self.Ts[i]`) is its element's spelling.
+        ConstraintOperand::Type(Ty::Dependent(dependent)) => {
+            let (list, index) = dependent.pack_element()?;
+            let pack = list.as_decl_ref()?;
+            let CtValue::Tuple(elements) = named.get(pack.name.trim_start_matches('*'))? else {
+                return None;
+            };
+            let index =
+                mojito_types::param_expr::fold::integer_value(&index.evaluate_named(&named).ok()?)?
+                    .to_i64()?;
+            match elements.get(usize::try_from(index).ok()?)? {
+                CtValue::Type(ty) => reified_type_spelling(ty).map(CtValue::Str),
+                spelling @ CtValue::Str(_) => Some(spelling.clone()),
+                _ => None,
+            }
+        }
         ConstraintOperand::Type(ty) => reified_type_spelling(ty).map(CtValue::Str),
     };
     let compare = |op, left, right| {
@@ -1351,15 +1452,17 @@ fn resolve_value_parameter_slots(
         } = declaration
         else {
             // A reified type argument passes through as the bound type's
-            // name. The declaration's own bounds do not gate it: a
-            // constructor may default-construct `Self.T` under a
-            // `where conforms_to(Self.T, Defaultable)` clause on an
+            // name (a type token, for an instance over value arguments; a
+            // pack, as its elements' names). The declaration's own bounds do
+            // not gate it: a constructor may default-construct `Self.T`
+            // under a `where conforms_to(Self.T, Defaultable)` clause on an
             // `AnyType` binder (current Array's nullary `__init__`).
-            resolved[index] = supplied
-                .get(index)
-                .cloned()
-                .flatten()
-                .filter(|value| matches!(value, Value::Str(_)));
+            resolved[index] = supplied.get(index).cloned().flatten().filter(|value| {
+                matches!(
+                    value,
+                    Value::Str(_) | Value::Tuple(_) | Value::Struct { .. }
+                )
+            });
             continue;
         };
         let value = supplied
@@ -1535,8 +1638,14 @@ fn align_parameter_arguments(
     declarations: &[ParamDecl],
     arguments: Vec<(Option<String>, Option<Value>)>,
 ) -> Vec<Option<Value>> {
-    let value_pack =
-        |index: usize| matches!(declarations[index], ParamDecl::Value { variadic: true, .. });
+    // A pack, of values or of types (its elements reified by spelling),
+    // collects every positional argument from its position on.
+    let value_pack = |index: usize| {
+        matches!(
+            declarations[index],
+            ParamDecl::Value { variadic: true, .. } | ParamDecl::Type { variadic: true, .. }
+        )
+    };
     let mut aligned: Vec<Option<Value>> = (0..declarations.len())
         .map(|index| value_pack(index).then(|| Value::Tuple(Vec::new())))
         .collect();
@@ -1621,7 +1730,7 @@ impl VmBackend {
                             &binder.name,
                         )
                         .or_else(|| caller.comptime_binding(&binder.name))?,
-                    ty => Value::Str(reified_type_spelling(ty)?),
+                    ty => reified_type_value(prog, ty)?,
                 };
                 Some((name.clone(), value))
             })
@@ -1722,8 +1831,8 @@ impl VmBackend {
         {
             match argument {
                 TyArg::Ty(ty) if slot.is_none() => {
-                    if let Some(spelling) = reified_type_spelling(ty) {
-                        *slot = Some(Value::Str(spelling));
+                    if let Some(value) = reified_type_value(prog, ty) {
+                        *slot = Some(value);
                     } else if let Ty::Param { binder, .. } = ty {
                         // A binder of the caller's own forwards the type the
                         // caller's frame reified for it.
@@ -1779,9 +1888,50 @@ impl VmBackend {
             return supplied;
         };
         supplied.resize(supplied.len().max(declarations.len()), None);
+        let spelling =
+            |ty: &Ty| Value::Str(reified_type_spelling(ty).unwrap_or_else(|| ty.to_string()));
+        // A pack is its elements' spellings, read off the checked type
+        // whatever the call's own arguments reified: the type binds it whole,
+        // or, keyed on the pack alone, element by element.
+        if let [ParamDecl::Type { variadic: true, .. }] = declarations
+            && !matches!(
+                &arguments[..],
+                [TyArg::Val(_) | TyArg::Ty(Ty::RuntimePack(_))]
+            )
+        {
+            supplied[0] = Some(Value::Tuple(
+                arguments
+                    .iter()
+                    .filter_map(|argument| match argument {
+                        TyArg::Ty(ty) => Some(spelling(ty)),
+                        _ => None,
+                    })
+                    .collect(),
+            ));
+            return supplied;
+        }
         for ((slot, declaration), argument) in
             supplied.iter_mut().zip(declarations).zip(arguments.iter())
         {
+            match (declaration, argument) {
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
+                    *slot = Some(Value::Tuple(
+                        elements
+                            .iter()
+                            .map(|element| match element {
+                                CtValue::Type(ty) => spelling(ty),
+                                _ => Value::None,
+                            })
+                            .collect(),
+                    ));
+                    continue;
+                }
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements))) => {
+                    *slot = Some(Value::Tuple(elements.iter().map(spelling).collect()));
+                    continue;
+                }
+                _ => {}
+            }
             let (
                 None,
                 ParamDecl::Type {
@@ -1802,7 +1952,7 @@ impl VmBackend {
                         &binder.name,
                     )
                     .or_else(|| caller.comptime_binding(&binder.name)),
-                ty => reified_type_spelling(ty).map(Value::Str),
+                ty => reified_type_value(prog, ty),
             };
         }
         supplied
@@ -1897,7 +2047,13 @@ impl VmBackend {
                     .iter()
                     .position(|candidate| candidate == parameter)?;
                 match &variables[slot] {
-                    Value::Struct { name, .. } => Some(Value::Str(name.clone())),
+                    Value::Struct {
+                        name, value_params, ..
+                    } => Some(if value_params.is_empty() {
+                        Value::Str(name.clone())
+                    } else {
+                        type_token(name, value_params.clone())
+                    }),
                     reference @ Value::Ref { .. } => Some(reference.clone()),
                     _ => None,
                 }
@@ -2275,6 +2431,11 @@ fn const_value(
         Const::Function(name) => Value::Function(name.clone()),
         Const::Dtype(dtype) => Value::Dtype(*dtype),
         Const::None => Value::None,
+        Const::Value(value) => ct_value_as_runtime(value.clone()).ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "no runtime value for the parameter value `{value}`"
+            ))
+        })?,
         Const::Param(expr) => expr
             .evaluate_named(&erased_parameter_values(function, variables, comptime))
             .ok()
@@ -2484,3 +2645,4 @@ use dispatch::CallTypes;
 mod invoke;
 mod libc;
 mod values;
+use values::ConstructorParameters;

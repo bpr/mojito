@@ -558,6 +558,7 @@ impl Decoder {
                 "function" => self.symbol(inner).map(Const::Function),
                 "dtype" => self.dtype(inner).map(Const::Dtype),
                 "param" => self.param_expr(inner).map(Const::Param),
+                "value" => self.ct_value(inner).map(Const::Value),
                 other => {
                     self.error(value.span, format!("unknown constant `{other}`"));
                     None

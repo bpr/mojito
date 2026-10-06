@@ -339,26 +339,6 @@ impl Checker {
             },
             decls.clone(),
         );
-        // A variadic struct template is compiled by compile-time specialization
-        // (each instantiation is a concrete struct); the unspecialized template
-        // has pack-dependent members and cannot be checked erased, so the
-        // executable check sees only the elaborator's template shell of one.
-        // Source validation registers the template itself, its pack symbolic.
-        if !declaration.template_shell
-            && !self.source_validation
-            && decls.iter().any(|decl| {
-                matches!(
-                    decl,
-                    ParamDecl::Type { variadic: true, .. }
-                        | ParamDecl::Value { variadic: true, .. }
-                )
-            })
-        {
-            return Err(TypeError::Unsupported(format!(
-                "variadic struct '{name}' is compiled by compile-time specialization; instantiate it with explicit compile-time arguments (e.g. `{name}[Int, Bool](...)`) instead of checking the template"
-            )));
-        }
-
         // A generated public-Tuple implementation has erased its source pack
         // declaration, but its materialized `element_types` member retains the
         // concrete pack. Recover that checked identity before resolving `Self`

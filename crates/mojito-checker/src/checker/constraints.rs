@@ -364,6 +364,47 @@ impl Checker {
                     })?;
                 Ok(CtValue::Simd { dtype, lanes })
             }
+            // The fieldwise construction of a non-generic struct from
+            // compile-time values (`Extent(2, 3)`) is a frozen struct value,
+            // the form a struct-typed parameter argument takes (the
+            // elaborator materializes any other construction to it).
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty()
+                && kwargs.is_empty()
+                && let Some(info) = self.structs.get(name)
+                && info.fieldwise_init
+                && info.decls.is_empty()
+                && args.len() == info.declared_field_names.len() =>
+            {
+                let fields = info
+                    .declared_field_names
+                    .iter()
+                    .zip(args)
+                    .map(|(field, argument)| {
+                        let value = self.eval_associated_ct(argument, associated)?;
+                        let value = match info.fields.iter().find(|(name, _)| name == field) {
+                            Some((_, ty)) => {
+                                let rendered = value.to_string();
+                                value.materialize_as(ty).ok_or_else(|| {
+                                    TypeError::NotComptime(format!(
+                                        "field '{field}' of '{name}' expects {ty}, got {rendered}"
+                                    ))
+                                })?
+                            }
+                            None => value,
+                        };
+                        Ok((field.clone(), value))
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                Ok(CtValue::Struct {
+                    name: name.clone(),
+                    fields,
+                })
+            }
             // A type application whose bracket argument parses as runtime
             // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
             // parse split for a single non-scalar argument).
@@ -406,6 +447,10 @@ impl Checker {
                         return Err(error);
                     }
                     return Err(TypeError::UnknownSelfParam(field.clone()));
+                }
+                // A field of a struct-typed parameter value (`Self.e.rows`).
+                if let Some(projection) = self.struct_value_field(object, field) {
+                    return projection.map(ParamExpr::into_value);
                 }
                 Err(TypeError::NotComptime(
                     "unsupported associated comptime member access".to_string(),
@@ -816,6 +861,12 @@ impl Checker {
                     &self.compile_dependent_ct_expr(right)?,
                 )
                 .map_err(param_error),
+            // A field of a struct-typed parameter value (`Self.e.rows`).
+            ExprKind::Member { object, field }
+                if let Some(projection) = self.struct_value_field(object, field) =>
+            {
+                projection
+            }
             // `reflect[T].field_count()`: a constant for a struct subject, a
             // query node for a symbolic one.
             _ => match self.eval_reflection_expr(expr)? {
@@ -826,6 +877,36 @@ impl Checker {
                 )),
             },
         }
+    }
+
+    /// The projection of `field` out of `object` when `object` compiles to a
+    /// struct-typed parameter value declaring that field: upstream's struct
+    /// extract on a parameter attribute, folded when the value is closed.
+    fn struct_value_field(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let base = self.compile_dependent_ct_expr(object).ok()?;
+        let Some(Ty::Struct(owner, _)) = base.meta().as_value() else {
+            return None;
+        };
+        let field_ty = self
+            .structs
+            .get(owner)?
+            .fields
+            .iter()
+            .find(|(name, _)| name == field)
+            .map(|(_, ty)| ty.clone())?;
+        Some(
+            self.param_context
+                .field(
+                    &base,
+                    field,
+                    mojito_types::param_expr::MetaTy::value(field_ty),
+                )
+                .map_err(param_error),
+        )
     }
 
     /// The length query of a pack that is still a parameter, when `expr`
@@ -1648,7 +1729,8 @@ impl Checker {
                 _,
                 _,
             )
-            | ExprKind::Prefix(PrefixOp::Neg, _) => match self.compile_dependent_ct_expr(expr) {
+            | ExprKind::Prefix(PrefixOp::Neg, _)
+            | ExprKind::Member { .. } => match self.compile_dependent_ct_expr(expr) {
                 Ok(expression) => match expression.as_constant() {
                     Some(value) => ConstraintOperand::Value(value.clone()),
                     None => ConstraintOperand::Expr(expression),

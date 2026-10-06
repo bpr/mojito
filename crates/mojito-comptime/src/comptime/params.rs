@@ -56,37 +56,6 @@ pub(super) fn spec_type_param_substitution(decl: &ParamDecl, value: &CtValue) ->
     source_type_from_ty(ty)
 }
 
-/// The registry-aware form of [`classify_ct_param`]: a single bound naming a
-/// struct classifies as a struct-typed **value** parameter.
-pub(super) fn classify_ct_param_with(
-    tp: &TypeParam,
-    siblings: &[TypeParam],
-    owner: &str,
-    is_value_struct: &dyn Fn(&str) -> bool,
-) -> Option<ParamDecl> {
-    if let [only] = tp.bounds.as_slice()
-        && !retained_specialization_param(tp, siblings)
-        && tp.value_type.is_none()
-        && ct_value_param_type(only).is_none()
-        && is_value_struct(only)
-    {
-        return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings, owner),
-            name: tp.name.clone(),
-            ty: Box::new(Ty::Struct(only.clone(), Vec::new().into())),
-            default: tp
-                .default
-                .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
-            callable_default: None,
-            infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
-            constraints: Vec::new(),
-        });
-    }
-    classify_ct_param(tp, siblings, owner)
-}
-
 /// Classify one of `owner`'s source parameters that participates in
 /// compile-time evaluation; `None` means specialization retains it
 /// symbolically (see [`retained_specialization_param`]).

@@ -433,7 +433,7 @@ impl VmBackend {
                         param_arg_regs,
                     );
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
-                    reify_value_parameters(&signature.param_decls, &supplied)
+                    reify_value_parameters(prog, &signature.param_decls, &supplied)
                 })
                 .unwrap_or_default();
             if let Some(receiver) = nominal_receiver {
@@ -643,7 +643,7 @@ impl VmBackend {
                         instantiated_args,
                     );
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
-                    reify_value_parameters(&signature.param_decls, &supplied)
+                    reify_value_parameters(prog, &signature.param_decls, &supplied)
                 })
                 .unwrap_or_default();
             return self
@@ -711,7 +711,7 @@ impl VmBackend {
                     param_arg_regs,
                     instantiated_args,
                 );
-                reify_value_parameters(&signature.param_decls, &supplied)
+                reify_value_parameters(prog, &signature.param_decls, &supplied)
             })
             .unwrap_or_default();
         value_params.extend(self.static_receiver_binding(

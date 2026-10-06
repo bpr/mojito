@@ -332,12 +332,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   generic constraint, a concrete `conforms_to`, or a `Bool` value),
   `check_comptime_for` checks a loop body under its element type,
   `bind_local_comptime` binds function-local `comptime` aliases and
-  compile-time-only values, `struct_valued_template` and `validates_body`
-  draw the per-instantiation boundary (struct-value template shells; a
-  body keyed on the `Hasher` wildcard vector binder is validated), and
-  `value_keyed_struct` names a struct keyed on a vector value,
-  every member of which is validated, with no verdict where it cannot be
-  typed, as is the body `value_keyed_def` names (a `def` keyed on a
+  compile-time-only values, `validates_body` draws the per-instantiation
+  boundary (a body keyed on the `Hasher` wildcard vector binder is
+  validated), and the body `value_keyed_def` names is validated, with no
+  verdict where it cannot be typed (a `def` keyed on a
   `DType` binder or using a parameter as a lane width, which the executable
   pass checks again as a bound generic when `comptime.rs`'s
   `served_lane_defs` serves it and the elaborator clones per call otherwise
@@ -594,12 +592,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
   and `MethodInstanceTrace`, recorded by `generate_instance_clones`, by
   `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone
-  (except those `generate_value_struct_spec` mints for a checker request
-  on the value specialization, which are untraced),
-  and by `generate_struct_spec` and `generate_value_struct_spec`
-  (`trace_struct_members`, each `TracedMember` with the index or element
-  type it baked) for a member of a struct specialized whole, the
-  latter completing its per-call leaves' traces (`restamp_leaf_traces`);
+  and by `generate_struct_spec` (`trace_struct_members`, each
+  `TracedMember` with the index or element type it baked) for a member of a
+  struct specialized whole;
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
@@ -1236,6 +1231,49 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   pack's length; `erased_parameter_values` (`backend/vm.rs`) gives the
   erased frame each pack's arity, from the collector or the call's recorded
   elements.
+
+## Struct generators (P3d, 2026-10-05)
+
+- A struct keyed on a `DType`, a lane width, a vector value, or a
+  struct-typed value is no template the cloner keeps:
+  `is_specializable_declaration` (`comptime.rs`) admits only a variadic
+  struct, and `served_variadic_structs` (a fixpoint over the variadic
+  structs whose source names none still specialized whole, builds no tuple
+  display, and writes no t-string; `Tuple`, `TString`, and `Variant` are
+  always whole) exempts the rest; `Elab::served_structs` carries the set.
+- A read of a closed vector or struct binder folds to `Const::Value(CtValue)`
+  (`mir/ir.rs`, text `value(...)`, schema 1.27): `Specializer::value_param_constant`
+  (`mono/instances.rs`) and `value_parameter_constant`
+  (`mono/substitute.rs`) build it, the field-projection loads folding through
+  the bound value (`substitute_value_parameter_reads`'s
+  `projected_parameter_constant`, and the `LoadPlace` arm of the specializer's
+  rewrite); `closed_parameter_value` (`verify/instr.rs`) admits it; the VM
+  materializes it through `ct_value_as_runtime` (`backend/vm.rs`) and Pliron
+  through `lower_parameter_value` (`lower/consts.rs`).
+- `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
+  (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
+  `param_field`), built by `Checker::struct_value_field`
+  (`checker/constraints.rs`) for `compile_dependent_ct_expr`,
+  `eval_associated_ct`, and a `SIMD` width spelled `Self.e.rows`
+  (`simd_width`, `type_resolution.rs`); `infer_member` (`indexing.rs`)
+  types `Self.e` at its declared struct, and a method receiver's place for
+  it is `Flatten::receiver_value_parameter_place` (`mir.rs`).
+- `eval_associated_ct` freezes a fieldwise construction of a non-generic
+  struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
+  `Elab::freeze_struct_value_arguments` (`comptime/mono.rs`) rewrites any
+  other struct-typed argument of a struct or a uniquely named `def` to that
+  construction, evaluated by CTFE.
+- `bind_ty_args` (`mono/unify.rs`) binds a struct's pack element by element,
+  whole (`CtValue::Tuple`), or forwarded (`Ty::RuntimePack`) through
+  `bind_pack`.
+- The erased oracle reifies a struct instance over value arguments as a
+  type token (`reified_type_value`/`type_token`, `backend/vm.rs`), a fieldless
+  `Value::Struct` that `ConstructTypeParam` constructs at its arguments;
+  `align_parameter_arguments` collects a type pack's arguments and
+  `constructed_parameter_arguments` reads a pack off the checked result
+  type; a constructor's own solved parameters reach its frame as
+  `ConstructorParameters::own` (`backend/vm/values.rs`); a `comptime if`
+  over a pack element reads its spelling (`comptime_branch_holds`).
 
 ## The parameter constant (2026-10-04)
 

@@ -1330,3 +1330,36 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
     assert!(arg_places.iter().all(Option::is_none));
     assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::Bool));
 }
+
+#[test]
+fn a_struct_pack_binds_element_by_element_or_whole() {
+    let pack = ParamDecl::Type {
+        id: mojito_types::param_expr::ParamId::new("$test:Row", 0),
+        name: "*Ts".to_string(),
+        bounds: Vec::new(),
+        callable_bound: None,
+        default: None,
+        infer_only: false,
+        variadic: true,
+        constraints: Vec::new(),
+    };
+    let elements = vec![Ty::Int, Ty::Bool, Ty::Float64];
+    let expected = CtValue::Tuple(
+        elements
+            .iter()
+            .map(|element| CtValue::Type(Box::new(element.clone())))
+            .collect(),
+    );
+    let elementwise: Vec<TyArg> = elements.iter().cloned().map(TyArg::Ty).collect();
+    let whole = vec![TyArg::Val(expected.clone())];
+    let forwarded = vec![TyArg::Ty(Ty::RuntimePack(elements.clone()))];
+    for arguments in [elementwise, whole, forwarded] {
+        let mut bindings = Bindings::default();
+        bind_ty_args(std::slice::from_ref(&pack), &arguments, &mut bindings).unwrap();
+        assert_eq!(bindings.values.get(&pack.binder()), Some(&expected));
+        assert_eq!(
+            bindings.types.get(&pack.binder()),
+            Some(&Ty::RuntimePack(elements.clone()))
+        );
+    }
+}

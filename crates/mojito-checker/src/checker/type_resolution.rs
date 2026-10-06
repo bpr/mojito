@@ -2891,6 +2891,31 @@ impl Checker {
             {
                 value
             }
+            // `Self.e.rows`, a field of a struct-typed value parameter,
+            // parses as an associated member of the parameter.
+            mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
+                if args.is_empty()
+                    && let SourceType::SelfParam(param) = &**base =>
+            {
+                let span = mojito_common::token::Span::default();
+                let expr = |kind| Expr {
+                    kind,
+                    span,
+                    source: None,
+                    syntax_id: mojito_common::token::SyntaxId::fresh(),
+                };
+                let parameter = expr(ExprKind::Member {
+                    object: Box::new(expr(ExprKind::Identifier("Self".to_string()))),
+                    field: param.clone(),
+                });
+                self.eval_associated_ct(
+                    &expr(ExprKind::Member {
+                        object: Box::new(parameter),
+                        field: name.clone(),
+                    }),
+                    &HashMap::new(),
+                )?
+            }
             // A lowercase name parses as a type argument: the enclosing
             // struct's own value parameter spelled bare, or `Self.<field>`.
             mojito_ast::ast::ParamArg::Type(ty) => {
