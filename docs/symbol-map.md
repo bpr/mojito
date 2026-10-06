@@ -1248,7 +1248,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `record_lifted_applications`, which `into_carry` runs to record
   `SemanticAdjustment::ComptimeApplication` beside the expression's own
   operation. The arena builder gives such an expression inside an
-  annotation a node (`type_applications`, `checked.rs`).
+  annotation a node (`type_applications`, `checked.rs`). A call of a plain
+  module `def` over `Int` and `Bool` arguments is instead the application
+  of the `def` itself (`Checker::called_application`, tried first by
+  `lifted_application` and alone in a signature or a field type):
+  `applicable_functions` (`checker/comptime_validation.rs`, run by
+  `check_program` and `ConformanceOracle::from_program`) collects the
+  callees before any declaration is checked, `solve_applied_args`
+  (`checker/generics.rs`, from `solve_value_args`) solves a value parameter
+  through one, and `ComptimeThunks::request_applications` lifts nothing
+  for it.
   `ComptimeThunks::request_applications` (`mir.rs`, from `lower_fn_nested`
   and the nested-`def` lowering once the body is lowered) lifts each named
   function over the narrowest recorded scope (`enter_scope`) that declares
@@ -1535,7 +1544,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `native::mono`: `InstanceState`, `Specializer::drain`,
   `demand_application` (the demand edge: materialize every pending instance,
   verify the output as the fragment, refuse an effectful callee, burn fuel,
-  run, freeze, cache by instance name; a demand on an `Active` instance is
+  run, freeze, cache by instance name and runtime arguments; the arguments
+  past the callee's compile-time parameters are its runtime ones, for a
+  `def` the check applied by name; a demand on an `Active` instance is
   the parameter-domain cycle), `resolve_applications` over a branch
   condition, `demand_layout` and `LayoutOracle` (`Bindings::layout`, read by
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and

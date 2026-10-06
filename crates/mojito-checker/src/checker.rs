@@ -596,6 +596,12 @@ pub struct Checker {
     /// compiles to no parameter expression is lifted as a function
     /// ([`Self::lifted_application`]).
     lifting_positions: std::rc::Rc<std::cell::Cell<usize>>,
+    /// The module functions a compile-time call applies by name, each with
+    /// its parameter types and its result
+    /// ([`comptime_validation::applicable_functions`]): known before any
+    /// declaration is checked, since a field type or a signature may call
+    /// one declared below it.
+    applicable_functions: HashMap<String, (Vec<Ty>, Ty)>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
     /// The application each lifted expression of the executable check
@@ -1063,6 +1069,7 @@ impl Checker {
             local_comptime_displays: vec![HashMap::new()],
             comptime_binding_owners: HashSet::new(),
             lifting_positions: std::rc::Rc::default(),
+            applicable_functions: HashMap::new(),
             lifted_applications: RefCell::new(Vec::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),

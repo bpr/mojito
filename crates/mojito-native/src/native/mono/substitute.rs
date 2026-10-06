@@ -776,6 +776,7 @@ pub(super) fn struct_instance<'b>(
         generic_templates: Rc::clone(&bindings.generic_templates),
         struct_shapes: Rc::clone(&bindings.struct_shapes),
         self_instance: Some((template.clone(), ty.clone())),
+        applications: bindings.applications.clone(),
         ..Bindings::default()
     };
     bind_ty_args(&shape.param_decls, struct_args, &mut instance).map_err(|construct| {

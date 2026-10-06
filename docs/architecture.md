@@ -546,7 +546,20 @@ declares its binders, and reads the expression as that application wherever
 it denotes one (`Flatten::comptime_application`). The checked arena holds a
 node for such an expression inside an annotation, which has none otherwise
 (`type_applications`, `checked.rs`). A closed one in a plain `def`
-(`g[h(3)]()`) is lifted the same way, over no binder. The
+(`g[h(3)]()`) is lifted the same way, over no binder. A call of a plain
+module `def` over `Int` and `Bool` arguments lifts nothing: it is the
+application of that `def` to the parameter expressions of its arguments
+(`Checker::called_application`, over the `applicable_functions` collected
+before any declaration is checked), as the pin's call node is. It names no
+declaration's binders, so a signature and a struct field type take it, a
+caller that binds the parameters spells the same value (`h(2)` for `h(n)`),
+and inference solves a parameter through it argument by argument
+(`solve_applied_args`, `checker/generics.rs`). `native::mono` runs the
+function on the argument values (`Specializer::demand_application`, whose
+trailing arguments are the callee's runtime parameters), closes the
+instance's values before it answers nested applications
+(`Specializer::applied`), and demands the applications a struct instance's
+field types carry (`discover_structs`). The
 cloner serves a display binding by syntax alone
 (`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
 keeps the clone only where a type or parameter argument is the display

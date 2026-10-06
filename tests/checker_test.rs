@@ -1874,6 +1874,42 @@ fn layout_query_simd_widths_keep_application_identity() {
 }
 
 #[test]
+fn called_function_in_a_signature_keeps_application_identity() {
+    let prefix = "def h(n: Int) -> Int:\n    return n * 2\n\n\
+        def make[n: Int]() -> SIMD[DType.int32, h(n)]:\n    return SIMD[DType.int32, h(n)](7)\n\n\
+        def total[n: Int](v: SIMD[DType.int32, h(n)]) -> Int:\n    return n\n\n\
+        struct Wrap[n: Int]:\n    var v: SIMD[DType.int32, later(Self.n)]\n\n\
+        \x20   def __init__(out self):\n        self.v = 3\n\n\
+        def later(n: Int) -> Int:\n    return n * 2\n\n";
+    ok(&format!(
+        "{prefix}def main():\n    var v: SIMD[DType.int32, h(2)] = make[2]()\n    \
+         var explicit = total[2](v)\n    var inferred = total(v)\n    \
+         var w = Wrap[2]()\n    var field: SIMD[DType.int32, later(2)] = w.v\n"
+    ));
+    let computed = err(&format!(
+        "{prefix}def main():\n    var v: SIMD[DType.int32, 4] = make[2]()\n"
+    ));
+    assert!(
+        matches!(computed, TypeError::TypeMismatch { expected, found, .. }
+            if expected == "SIMD[DType.int32, 4]" && found == "SIMD[DType.int32, h(2)]")
+    );
+    let argument = err(&format!(
+        "{prefix}def main():\n    var result = total[2](SIMD[DType.int32, 4](3))\n"
+    ));
+    assert!(
+        matches!(argument, TypeError::TypeMismatch { expected, found, .. }
+            if expected == "SIMD[DType.int32, h(2)]" && found == "SIMD[DType.int32, 4]")
+    );
+    // A width the function does not spell leaves the parameter unsolved.
+    assert!(
+        check_source(&format!(
+            "{prefix}def main():\n    var result = total(SIMD[DType.int32, 4](3))\n"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
 fn rejects_non_power_of_two_width() {
     let e = err("var v: SIMD[DType.int32, 3] = SIMD[DType.int32, 3](1, 2, 3)\n");
     assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {e:?}");

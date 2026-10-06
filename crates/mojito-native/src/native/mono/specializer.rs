@@ -185,6 +185,7 @@ impl<'a> Specializer<'a> {
         Bindings {
             generic_templates: Rc::clone(&self.generic_templates),
             struct_shapes: Rc::clone(&self.struct_shapes),
+            applications: Some(Rc::clone(&self.applications)),
             ..Bindings::default()
         }
     }
@@ -696,8 +697,14 @@ impl<'a> Specializer<'a> {
         if !pending {
             return Ok(expr.clone());
         }
+        // The instance's values close what sits between two applications
+        // (`h(L[i])` at the index), so that it folds once the inner one is
+        // answered.
+        let context = ParamContext::detached();
+        let closed = context.replace(expr, &ct_bindings(bindings));
+        let expr = closed.as_ref().unwrap_or(expr);
         let mut failure = None;
-        let answered = ParamContext::detached().answer_applications(expr, &mut |function, args| {
+        let answered = context.answer_applications(expr, &mut |function, args| {
             if failure.is_some() || !self.declarations.contains_key(function) {
                 return Ok(None);
             }
@@ -715,9 +722,11 @@ impl<'a> Specializer<'a> {
     /// Evaluate the application of `function` to `args` under `bindings` by
     /// demanding its instance: the instance and every pending instance are
     /// materialized now, the completed output is verified as the fragment the
-    /// VM runs, and the frozen result is cached by the instance's name. A
-    /// demand on an instance being materialized is a cycle in the parameter
-    /// domain.
+    /// VM runs, and the frozen result is cached by the instance's name. The
+    /// arguments past the function's compile-time parameters are the values
+    /// of its runtime ones (`h(n)`, a `def` the check applied by name), which
+    /// the call passes and the cache keys beside the name. A demand on an
+    /// instance being materialized is a cycle in the parameter domain.
     fn demand_application(
         &mut self,
         template: &str,
@@ -731,26 +740,41 @@ impl<'a> Specializer<'a> {
                 format!("compile-time application of `{function}`, which has no MIR declaration"),
             )
         })?;
-        if declaration.param_decls.len() != args.len() {
+        let parameters = declaration.param_decls.len() + declaration.param_types.len();
+        if parameters != args.len() {
             return Err(self.error(
                 Some(template),
                 format!(
-                    "compile-time application of `{function}` binds {} of its {} parameters",
+                    "compile-time application of `{function}` binds {} of its {parameters} \
+                     parameters",
                     args.len(),
-                    declaration.param_decls.len()
                 ),
             ));
         }
+        let (args, called) = args.split_at(declaration.param_decls.len());
+        let unresolved = |what: &str, arg: &ParamExpr| {
+            self.error(
+                Some(template),
+                format!("compile-time application `{function}` reads {what} `{arg}`"),
+            )
+        };
+        // A function the check applied by its own name takes the values of
+        // its arguments as a call does.
+        let called = called
+            .iter()
+            .map(|arg| {
+                match arg.kind() {
+                    ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
+                    _ => eval_ct(arg, bindings).ok(),
+                }
+                .ok_or_else(|| unresolved("an unresolved value", arg))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut instance_bindings = self.base_bindings();
         let mut arguments = Vec::new();
         for (decl, arg) in declaration.param_decls.iter().zip(args) {
             let binder = decl.binder();
-            let unresolved = |what: &str| {
-                self.error(
-                    Some(template),
-                    format!("compile-time application `{function}` reads {what} `{arg}`"),
-                )
-            };
+            let unresolved = |what: &str| unresolved(what, arg);
             match decl {
                 ParamDecl::Type { .. } => {
                     let ty = match arg.kind() {
@@ -775,7 +799,13 @@ impl<'a> Specializer<'a> {
             }
         }
         let name = self.enqueue(function, instance_bindings, arguments)?;
-        if let Some(value) = self.evaluations.get(&name) {
+        let evaluation = if called.is_empty() {
+            name.clone()
+        } else {
+            let called: Vec<String> = called.iter().map(ToString::to_string).collect();
+            format!("{name}({})", called.join(", "))
+        };
+        if let Some(value) = self.evaluations.get(&evaluation) {
             return Ok(value.clone());
         }
         let index = self
@@ -869,9 +899,11 @@ impl<'a> Specializer<'a> {
                 "compile-time execution exceeded the VM CTFE fuel quota".to_string(),
             )
         })?;
-        let (value, remaining) = self
-            .vm
-            .call_concrete(&fragment, &name, Vec::new(), self.fuel)
+        let (value, remaining) = called
+            .iter()
+            .map(mojito_vm::crossing::ct_to_vm)
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|called| self.vm.call_concrete(&fragment, &name, called, self.fuel))
             .map_err(|error| {
                 self.error(
                     Some(template),
@@ -885,7 +917,7 @@ impl<'a> Specializer<'a> {
                 format!("VM CTFE failed for '{name}': {error}"),
             )
         })?;
-        self.evaluations.insert(name, value.clone());
+        self.evaluations.insert(evaluation, value.clone());
         Ok(value)
     }
 
@@ -2362,10 +2394,21 @@ impl<'a> Specializer<'a> {
                     Ty::Struct(name.clone(), arguments.clone()),
                 ));
             }
+            // A field type may apply a function to the struct's parameters
+            // (`SIMD[dt, h(Self.n)]`): the application is demanded as a
+            // body's is, and the fields are substituted again.
             let mut declaration = template.clone();
-            for (_, field) in &mut declaration.fields {
-                *field = substitute_ty(field, &bindings)?;
-            }
+            declaration.fields = loop {
+                self.applications.pending.borrow_mut().clear();
+                let fields = template
+                    .fields
+                    .iter()
+                    .map(|(field, ty)| Ok((field.clone(), substitute_ty(ty, &bindings)?)))
+                    .collect::<Result<Vec<_>, MonoError>>();
+                if !self.answer_pending(owner, &bindings)? {
+                    break fields?;
+                }
+            };
             declaration.name = name;
             declaration.param_decls.clear();
             declaration.associated_types.clear();

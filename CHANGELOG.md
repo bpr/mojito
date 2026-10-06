@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A signature or a struct field type can now apply a function to a
+  compile-time parameter, as it can at the pin: `def make[n: Int]() ->
+  SIMD[DType.int32, h(n)]`, a parameter `v: SIMD[DType.int32, h(n)]`, and
+  the field `var v: SIMD[DType.int32, h(Self.n)]` of `struct Wrap[n: Int]`
+  were rejected with "not a compile-time Int constant". A call of a plain
+  module `def` over `Int` and `Bool` arguments is now the application of
+  that `def` itself, the same value wherever it is spelled, so a body that
+  spells the call again names it, a caller spells it by the argument (`var
+  v: SIMD[DType.int32, h(2)] = make[2]()`), another generic body spells it
+  over its own parameter, and a call infers the parameter from it
+  (`total(v)`). The elaborator runs the function per instance. A
+  diagnostic spells such a type as written (`SIMD[DType.int32, h(n)]`),
+  and the call is not the value it computes: `make[2]()` is no
+  `SIMD[DType.int32, 4]`.
 - A type or a parameter argument can now compute an `Int` or a `Bool` from a
   generic body's parameters by a call, a comparison, a boolean operator, or
   a conditional, as it can at the pin: `g[h(n)]()`, `flag[n > 2]()`,

@@ -1418,10 +1418,13 @@ impl ComptimeThunks {
             else {
                 continue;
             };
-            if self
-                .requests
-                .iter()
-                .any(|request| request.name == *function)
+            // A call the check applied by the callee's own name lifts
+            // nothing.
+            if !function.starts_with("$comptime$")
+                || self
+                    .requests
+                    .iter()
+                    .any(|request| request.name == *function)
             {
                 continue;
             }

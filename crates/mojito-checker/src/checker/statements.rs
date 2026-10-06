@@ -13,6 +13,8 @@ impl Checker {
         self.overload_sets = mojito_symbol::symbol::OverloadSets::scan(stmts);
         self.method_binder_owners =
             mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
+        self.applicable_functions =
+            super::comptime_validation::applicable_functions(stmts, &self.overload_sets);
         self.declared_structs
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),

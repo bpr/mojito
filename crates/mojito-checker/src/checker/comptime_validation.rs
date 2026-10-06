@@ -82,6 +82,56 @@ pub(super) struct ForwardedPack {
     pub(super) owned: bool,
 }
 
+/// The module functions a compile-time call applies by name
+/// ([`Checker::called_application`]), each with its parameter types and its
+/// result: a `def` that is not generic, overloaded, or raising, takes `imm`
+/// `Int` and `Bool` parameters without defaults, and returns an `Int` or a
+/// `Bool`.
+pub(super) fn applicable_functions(
+    stmts: &[Stmt],
+    overloads: &mojito_symbol::symbol::OverloadSets,
+) -> HashMap<String, (Vec<Ty>, Ty)> {
+    let scalar = |ty: &SourceType| match ty {
+        SourceType::Int => Some(Ty::Int),
+        SourceType::Bool => Some(Ty::Bool),
+        _ => None,
+    };
+    stmts
+        .iter()
+        .filter_map(|statement| {
+            let StmtKind::Def {
+                name,
+                type_params,
+                params,
+                captures: None,
+                raises: false,
+                ret: Some(ret),
+                where_clauses,
+                ..
+            } = &statement.kind
+            else {
+                return None;
+            };
+            if !(type_params.is_empty() && where_clauses.is_empty())
+                || overloads.function_is_overloaded(name, params.len())
+            {
+                return None;
+            }
+            let params = params
+                .iter()
+                .map(|param| {
+                    (param.kind == mojito_ast::ast::ParamKind::Regular
+                        && param.default.is_none()
+                        && matches!(param.convention, None | Some(ArgConvention::Imm)))
+                    .then(|| scalar(&param.ty))
+                    .flatten()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some((name.clone(), (params, scalar(ret)?)))
+        })
+        .collect()
+}
+
 impl Checker {
     /// Check the method bodies of a struct that hold compile-time control
     /// flow, each with `self` bound at the struct's own parameters, and every
@@ -624,23 +674,29 @@ impl Checker {
     }
 
     /// The parameter expression of a compile-time `Int` or `Bool`
-    /// expression of a body that compiles to none (`h(L[0])`, `n > 2`,
+    /// expression that compiles to none (`h(L[0])`, `n > 2`,
     /// `min(L[0], L[1])`), written in a type or a parameter argument or
-    /// bound by a local `comptime`: the application of the function MIR
-    /// lifts for it, named here, to the binders it reads
-    /// (`SemanticAdjustment::ComptimeApplication`, [`Self::binders_read`]).
-    /// The expression reads compile-time bindings alone. Source validation
-    /// lifts one that names a binder or a local binding, and leaves a
-    /// closed one to the elaborator.
+    /// bound by a local `comptime`.
     ///
-    /// Two occurrences of one expression over the same bindings denote one
-    /// application, as the pin identifies them by structure, and it is not
-    /// the value it computes: `h(n)` is not `n * 2`. `None` for any other
-    /// expression.
+    /// A call of a module function is the application of that function to
+    /// what its arguments denote ([`Self::called_application`]), wherever
+    /// it is spelled: a signature, a field type, or a body. Any other
+    /// expression of a body is the application of the function MIR lifts
+    /// for it, named here, to the binders it reads
+    /// (`SemanticAdjustment::ComptimeApplication`, [`Self::binders_read`]).
+    /// Such an expression reads compile-time bindings alone. Source
+    /// validation lifts one that names a binder or a local binding, and
+    /// leaves a closed one to the elaborator.
+    ///
+    /// Two occurrences of one lifted expression over the same bindings
+    /// denote one application, as the pin identifies them by structure, and
+    /// it is not the value it computes: `h(n)` is not `n * 2`. `None` for
+    /// any other expression.
     pub(super) fn lifted_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        // A signature has no body to lift the function from.
+        let called = self.called_application(expr);
+        // A signature or a field type has no body to lift a function from.
         if self.scopes.len() < 2 {
-            return None;
+            return called;
         }
         let names = names_read(expr);
         let symbolic = names.iter().any(|name| {
@@ -648,18 +704,10 @@ impl Checker {
                 || self.binding_scope(name).is_some_and(|scope| scope > 0)
                 || self.value_parameter_in_scope(name).is_some()
         });
-        if (!symbolic && self.source_validation) || !self.reads_compile_time_alone(expr) {
+        if called.is_none()
+            && ((!symbolic && self.source_validation) || !self.reads_compile_time_alone(expr))
+        {
             return None;
-        }
-        // The function is over the binders the expression reads, so that it
-        // is one function under a `comptime for` and outside it.
-        let mut binders = self.binders_in_scope();
-        if let Some(read) = self.binders_read(expr, &names) {
-            binders.retain(|binder| {
-                binder
-                    .as_decl_ref()
-                    .is_some_and(|reference| read.contains(&reference.id))
-            });
         }
         // The expression's own arguments are typed where they stand.
         let lifting = self.lifting_positions.replace(0);
@@ -673,6 +721,86 @@ impl Checker {
             Ty::Bool => Ty::Bool,
             _ => return None,
         };
+        let application = match called {
+            Some(application) => application,
+            None => self.named_application(expr, &names, ty)?,
+        };
+        if !self.source_validation {
+            self.lifted_expressions
+                .borrow_mut()
+                .insert(expr.source_span(), application.clone());
+        }
+        Some(application)
+    }
+
+    /// The application a call of a module function denotes when every
+    /// argument is a compile-time `Int` or `Bool` (`h(n)`, `h(Self.n + 1)`,
+    /// `h(h(2))`): the function applied to the parameter expressions of its
+    /// arguments, as the pin's call node is. It names no declaration's
+    /// binders, so a caller that binds them spells the same value
+    /// (`h(2)` for `h(n)` at `n = 2`), and the elaborator runs the function
+    /// on the argument values. `None` for a callee that is no such function
+    /// ([`applicable_functions`]), a keyword or an omitted argument, or an
+    /// argument that denotes no parameter expression.
+    fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        // A local of the name shadows the module function.
+        if !(param_args.is_empty() && kwargs.is_empty())
+            || self.binding_scope(name).is_some_and(|scope| scope > 0)
+        {
+            return None;
+        }
+        let (params, ret) = self.applicable_functions.get(name)?;
+        if params.len() != args.len() {
+            return None;
+        }
+        let arguments = args
+            .iter()
+            .zip(params)
+            .map(|(arg, param)| {
+                let _lifting = self.lifting_position();
+                let argument = self.compile_dependent_ct_expr(arg).ok()?;
+                // A literal argument is the value the parameter holds, so
+                // that `h(2)` is `h(n)` at `n = 2`.
+                let argument = match argument.as_constant() {
+                    Some(value) => self
+                        .param_context
+                        .constant(value.clone().materialize_as(param)?)
+                        .ok()?,
+                    None => argument,
+                };
+                (argument.meta().as_value() == Some(param)).then_some(argument)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(self.param_context.apply(
+            name,
+            &arguments,
+            mojito_types::param_expr::MetaTy::value(ret.clone()),
+        ))
+    }
+
+    /// The application of the function MIR lifts for `expr`, an expression
+    /// of a body of type `ty` that reads `names`: one function per
+    /// expression over the same binders and bindings.
+    fn named_application(&self, expr: &Expr, names: &[String], ty: Ty) -> Option<ParamExpr> {
+        // The function is over the binders the expression reads, so that it
+        // is one function under a `comptime for` and outside it.
+        let mut binders = self.binders_in_scope();
+        if let Some(read) = self.binders_read(expr, names) {
+            binders.retain(|binder| {
+                binder
+                    .as_decl_ref()
+                    .is_some_and(|reference| read.contains(&reference.id))
+            });
+        }
         let bindings: Vec<_> = names.iter().map(|name| self.lookup_owner(name)).collect();
         let validated = self.source_validation;
         let known = self
@@ -686,7 +814,7 @@ impl Checker {
                     && known.bindings == bindings
             })
             .map(|known| known.application.clone());
-        let application = known.or_else(|| {
+        known.or_else(|| {
             // An identity of its own names the function, as a binding's
             // names its display's; the empty owner keeps the name apart
             // from one MIR gives a function it lifts itself.
@@ -710,13 +838,7 @@ impl Checker {
                     application: application.clone(),
                 });
             Some(application)
-        })?;
-        if !validated {
-            self.lifted_expressions
-                .borrow_mut()
-                .insert(expr.source_span(), application.clone());
-        }
-        Some(application)
+        })
     }
 
     /// The binders `expr` reads through the `names` it spells: each binder

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R391**.
+Next free ID: **R396**.
 
 ## Ordered Work
 
@@ -135,24 +135,27 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R384 (P3) A signature or a struct field type that applies a
-  function to a parameter is rejected**
+- [ ] **R391 (P3) A signature or a struct field type that applies a
+  generic function or a method to a parameter is rejected**
 
-  Problem: `def make[n: Int]() -> SIMD[DType.int32, h(n)]:` and the field
-  `var v: SIMD[DType.int32, h(Self.n)]` of `struct Wrap[n: Int]` are
-  rejected with "not a compile-time Int constant: not an associated comptime
-  expression", where the pin runs both.
-  - Inside a body the check names a function for such an expression and MIR
-    lifts it from the body that spells it (`Checker::lifted_application`,
-    `checker/comptime_validation.rs`; `ComptimeThunks::request_applications`,
-    `mir.rs`).
-  - A signature or a field has no body to lift the function from, so the
-    check leaves the expression uncompiled there.
-  - The function would have to be lifted with the declaration, over the
-    declaration's own binders, and a body spelling the same expression
-    would have to name that one function.
-  - Found while landing an application in a type or a parameter argument
-    (2026-10-06).
+  Problem: `def gen[n: Int]() -> SIMD[DType.int32, twice[n]()]:` for `def
+  twice[k: Int]() -> Int` is rejected with "not a compile-time Int constant:
+  not an associated comptime expression", where the pin runs it.
+  - A call of a plain module `def` over `Int` and `Bool` arguments is the
+    application of that `def` wherever it is spelled
+    (`Checker::called_application`, `checker/comptime_validation.rs`), so a
+    signature and a field type take it.
+  - Any other call is still a function MIR lifts from the body that spells
+    it, and a signature or a field has no body.
+  - The shapes left out are a generic callee, an overloaded one, a method or
+    a static method, a callee with a default, a keyword, a `var` or a
+    `raises`, and a result or a parameter that is neither `Int` nor `Bool`
+    (`applicable_functions`).
+  - `not (n == 9)` and `n if n > 2 else h(n)` are rejected in a signature
+    too. The parameter domain has both operators, and the check compiles
+    neither.
+  - In a body each of these is lifted whole, so it is a different value
+    from the same call spelled in another declaration.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -436,6 +439,23 @@ correctness fix to existing behavior is allowed.
   - A value binder works, because the nested body reads it as a captured
     slot.
   - Found while landing R62 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R392 (P3e) A nested `def` whose signature names its enclosing
+  `def`'s value binder fails MIR verification**
+
+  Problem: `def inner() -> SIMD[DType.int32, n * 2]` inside `def outer[n:
+  Int]()` fails with "MIR function 'outer$inner' return type names parameter
+  `n` of `outer` that no enclosing declaration binds", while the pin runs
+  it.
+  - A body that only reads `n` as a value runs, because the nested body
+    reads it as a captured slot.
+  - A type over the binder is not a captured slot: the nested function's
+    scope declares no enclosing function's binders (`Scope::of_function`,
+    `verify/scope.rs`).
+  - `h(n)` in the nested signature fails the same way.
+  - Found while landing a function applied in a signature (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -813,16 +833,17 @@ correctness fix to existing behavior is allowed.
 
   Problem: `var a = SIMD[DType.int32, h(n)](1)` in a template-served `def
   f[n: Int]()` prints on concrete MIR and stops under `--erased` with "a
-  SIMD instruction over the symbolic slots `SIMD[DType.int32,
-  $comptime$$…(2)]` reached the VM".
+  SIMD instruction over the symbolic slots `SIMD[DType.int32, h(2)]` reached
+  the VM".
   - The width is the application of a function the elaborator demands and
     runs per instance (`Specializer::applied`, `mono/specializer.rs`), and
     an erased frame runs no such function.
   - A parameter argument alone (`g[h(n)]()`) runs erased, since the body
     computes the value where it stands.
-  - `assets/ok/comptime_application_argument.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
+  - `assets/ok/comptime_application_argument.mojo` and
+    `assets/ok/comptime_call_signature.mojo` are the `ERASED_VM_RESIDUE`
+    rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2305,6 +2326,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R393 A `def` cannot call a `def` declared below it**
+
+  Problem: `def a() -> Int: return b(2)` above `def b(n: Int) -> Int` stops
+  with "Undefined variable 'b'", where the pin runs it.
+  - Module functions are declared in source order, each as its body is
+    checked (`check_block`, `checker/statements.rs`).
+  - A signature or a field type that applies a function declared below it
+    already runs, since the functions a compile-time call applies are
+    collected before any declaration (`applicable_functions`,
+    `checker/comptime_validation.rs`).
+  - Found while landing a function applied in a signature (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R394 A requirement with its own value parameter cannot be called
+  through a bound**
+
+  Problem: `x.mk[4]()` in `def use[T: Maker](x: T)`, for `def mk[n:
+  Int](self) -> SIMD[DType.int32, n * 2]: ...` in `trait Maker`, fails with
+  "MIR function 'use' register r2 names parameter `n` of `Maker.mk` that no
+  enclosing declaration binds", where the pin runs it.
+  - The call on the conformer itself (`M().mk[2]()`) runs.
+  - The result type through the bound keeps the requirement's binder
+    instead of the call's argument.
+  - Found while landing a function applied in a signature (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R128 A `Tuple` over a type parameter needs no evidence the
   parameter is `Movable`**
 
@@ -2534,6 +2583,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R395 A struct's `Bool` parameter read as a value is typed `Int`**
+
+  Problem: `def on(self) -> Bool: return Self.b` in `struct Flag[b: Bool]`
+  is rejected with "type mismatch for return: expected Bool, found Int",
+  where the pin prints `True`.
+  - `self.x = 1 if Self.b else 0` passes the check and runs on the VM. The
+    native backend rejects it with "Op has different operand types".
+  - A `Bool` parameter of a `def` read the same way is a `Bool`.
+  - Found while landing a function applied in a signature (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R386 A parameter argument that computes a `String` or a float from
   a parameter is rejected**
 
@@ -2572,15 +2633,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R388 A type over a lifted application is spelled by its function's
   name in a diagnostic**
 
-  Problem: `var a: SIMD[DType.int32, h(n)] = SIMD[DType.int32, n * 2](1)` in
-  `def f[n: Int]()` is rejected with "expected SIMD[DType.int32,
-  $comptime$$2016(n)], found SIMD[DType.int32, 2 * n]", where the pin
-  spells the expected type `SIMD[.int32, h(n)]`.
+  Problem: `var a: SIMD[DType.int32, twice[n]()] = SIMD[DType.int32, n *
+  2](1)` in `def f[n: Int]()`, for `def twice[k: Int]() -> Int`, is rejected
+  with "expected SIMD[DType.int32, $comptime$$2017(n)], found
+  SIMD[DType.int32, 2 * n]", where the pin spells the expected type
+  `SIMD[.int32, twice[n]()]`.
   - Both compilers reject the program. Only the spelling differs.
   - The application names the function MIR lifts, not the expression it
     computes (`Checker::lifted_application`,
     `checker/comptime_validation.rs`).
-  - `assets/type_error/comptime_application_identity.mojo` is the fixture.
+  - A call of a plain module `def` is spelled as written (`h(n)`), since it
+    is the application of that `def`.
   - Found while landing an application in a type or a parameter argument
     (2026-10-06).
   - Depends on nothing.

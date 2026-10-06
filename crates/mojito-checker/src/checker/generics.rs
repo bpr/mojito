@@ -302,6 +302,9 @@ pub(super) fn solve_value_args(
                 };
                 out.entry(reference.name.to_string()).or_insert(value);
             }
+            if let (SimdWidth::Expr(lanes), SimdWidth::Expr(actual)) = (width, &actual_width) {
+                solve_applied_args(lanes, actual, out);
+            }
             if let SimdWidth::Expr(lanes) = width
                 && let Some(reference) = lanes.as_decl_ref()
                 && width_binders.contains(&reference.id)
@@ -366,6 +369,8 @@ pub(super) fn solve_value_args(
                         if let Some(reference) = expr.as_decl_ref() {
                             out.entry(reference.name.to_string())
                                 .or_insert_with(|| value.clone());
+                        } else if let CtValue::Expr(actual) = value {
+                            solve_applied_args(expr, actual, out);
                         }
                     }
                     (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, width_binders, out),
@@ -597,6 +602,40 @@ fn substitute_origin(
                 .collect(),
         ),
         _ => origin.clone(),
+    }
+}
+
+/// Solve value parameters from the arguments of one function's application
+/// (`h(n)` against `h(2)` solves `n = 2`), as the pin unifies a call in the
+/// parameter domain argument by argument. First solution wins; any other
+/// pair of expressions contributes nothing.
+fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap<String, CtValue>) {
+    let (
+        ParamKind::Apply { function, args, .. },
+        ParamKind::Apply {
+            function: applied,
+            args: actuals,
+            ..
+        },
+    ) = (pattern.kind(), actual.kind())
+    else {
+        return;
+    };
+    if function != applied || args.len() != actuals.len() {
+        return;
+    }
+    for (arg, actual) in args.iter().zip(actuals) {
+        match arg.as_decl_ref() {
+            Some(reference) => {
+                out.entry(reference.name.to_string()).or_insert_with(|| {
+                    actual
+                        .as_constant()
+                        .cloned()
+                        .unwrap_or_else(|| CtValue::Expr(actual.clone()))
+                });
+            }
+            None => solve_applied_args(arg, actual, out),
+        }
     }
 }
 

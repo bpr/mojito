@@ -10,6 +10,11 @@ impl ConformanceOracle {
     /// conformances are resolved.
     pub fn from_program(stmts: &[Stmt]) -> Result<Self, TypeError> {
         let mut checker = Checker::new();
+        // A field type may apply a module function to a parameter.
+        checker.applicable_functions = super::comptime_validation::applicable_functions(
+            stmts,
+            &mojito_symbol::symbol::OverloadSets::scan(stmts),
+        );
 
         // Refinement is the only trait fact needed by `conforms_to`. Register
         // every name first so the oracle is independent of body checking and
