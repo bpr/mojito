@@ -325,11 +325,7 @@ impl VmBackend {
                 "vm: constructed struct '{name}' is missing from MIR"
             ))
         })?;
-        let fields = def
-            .fields
-            .iter()
-            .map(|(f, ty)| (f.clone(), uninitialized_field(ty)))
-            .collect();
+        let fields = uninitialized_fields(&def.fields);
         let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
         // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
         // produces its argument's exact type; when the call site supplied no
@@ -391,6 +387,19 @@ impl VmBackend {
         constructor_params.extend(own.iter().cloned());
         let (_, frame_vars) = self.call_frame(prog, fidx, bound, &constructor_params)?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
+    }
+
+    /// The unwritten skeleton of the struct `name`, as an initializer's
+    /// receiver enters with: the storage a named result marked initialized
+    /// whole has before pointer writes fill it. `None` for a struct MIR does
+    /// not declare.
+    pub(super) fn uninitialized_struct(prog: &Prog, name: &str) -> Option<Value> {
+        let def = prog.structs.get(name)?;
+        Some(Value::Struct {
+            name: name.to_string(),
+            fields: uninitialized_fields(&def.fields),
+            value_params: reify_value_parameters(prog, &def.param_decls, &[]),
+        })
     }
 
     /// `input()` under [`Self::set_input_override`]: append the prompt to the
@@ -936,6 +945,14 @@ impl VmBackend {
         }
         Ok(allocation)
     }
+}
+
+/// One placeholder per declared field ([`uninitialized_field`]).
+fn uninitialized_fields(fields: &[(String, Ty)]) -> Vec<(String, Value)> {
+    fields
+        .iter()
+        .map(|(field, ty)| (field.clone(), uninitialized_field(ty)))
+        .collect()
 }
 
 /// The placeholder an `out self` skeleton holds for a field of type `ty`

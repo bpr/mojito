@@ -199,6 +199,34 @@ impl Elab<'_> {
             *expr = literal;
             return Ok(());
         }
+        // The length of a `TypeList` binding in a runtime position
+        // (`tl.length`, `len(tl)`) folds to its count where it stands.
+        let measured = match &expr.kind {
+            ExprKind::Member { object, field } if field == "length" => Some(&**object),
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+                match args.as_slice() {
+                    [list] => Some(list),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(ExprKind::Identifier(list)) = measured.map(|list| &list.kind)
+            && let Some(value @ CtValue::Struct { name, .. }) = binding(list)
+            && name == "TypeList"
+            && let Some(elements) = value.typelist_elements()
+        {
+            let mut literal = lit_result(&CtValue::Int(elements.len() as i64), expr.span)?;
+            literal.source.clone_from(&expr.source);
+            literal.syntax_id = expr.syntax_id;
+            *expr = literal;
+            return Ok(());
+        }
         match &mut expr.kind {
             // `materialize[X]()`: the literal form of a binding, or of a
             // compile-time expression over the bindings (`names[i]`). An

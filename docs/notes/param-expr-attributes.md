@@ -374,8 +374,16 @@ prerequisite. The KGEN definitions consulted are `KGENAttrs.td`,
 `ParameterEvaluator.h`, `ParameterReplacer.h`, and `UnifiedFolding.h`.
 
 `param_list.get` is landed (`ParamKind::ListGet`, built by
-`ParamContext::list_get`); see *Pack elements* below. Hooks left for adjacent
-work: `param_list.{size, concat, reduce, tabulate}`; the residual
+`ParamContext::list_get`); see *Pack elements* below. `param_list.tabulate`
+and `param_list.concat` are landed too (`ParamKind::ListTabulate`,
+`ParamKind::ListConcat`): `TypeList.reverse()` is upstream's tabulation of
+the list's length whose element `i` is `list[length - 1 - i]`, its index the
+one slot of the tabulation's own binder (`IndexRef { depth: 0, index: 0 }`),
+and a `param_list.get` over either folds through it. The length of a list is
+its count, a pack's length query, or the sum of a concatenation's, so no
+`param_list.size` node exists. Hooks left for adjacent work:
+`param_list.reduce`, and the per-element queries (`all`, `any`, `contains`)
+over a computed list; the residual
 discharge API for the by-value `rebind` gap; the four-outcome unifier
 (`solve_value_args` binds a direct reference and leaves any other residual as
 an equation) for variadic-constructor inference.

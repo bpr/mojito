@@ -1671,7 +1671,8 @@ impl Checker {
             self.resolve_use_params(name, decls, param_args, &use_params, &arg_tys)?;
         let values = Self::value_argument_environment(decls, &tyargs);
         let resolve = |ty: &Ty| {
-            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
+            let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
         self.record_pack_element_conversions(decls, &tyargs, &use_params, &arg_tys, &arg_exprs)?;

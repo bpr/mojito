@@ -313,6 +313,15 @@ pub(super) fn bind_ty_args(
     Ok(())
 }
 
+/// Whether a spread over the struct `pattern` names the same declaration
+/// as `actual`, named `instance`: one template, or the public `Tuple`
+/// against a specialization of it.
+fn spreads_into(pattern: &str, instance: &str, actual: &Ty) -> bool {
+    nominal_template(pattern) == nominal_template(instance)
+        || (pattern == mojito_types::types::TUPLE_TYPE_NAME
+            && mojito_types::types::tuple_elements(actual).is_some())
+}
+
 pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
     match pattern {
         Ty::Param { binder, .. } => bind_type(binder, actual, bindings),
@@ -345,6 +354,46 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         Ty::Struct(pn, pa) => match actual {
             Ty::Struct(an, _) if nominal_template(pn) == nominal_template(an) && pa.is_empty() => {
                 Ok(())
+            }
+            // A spread of a list computed from packs solves nothing: it
+            // closes once the packs it reads are bound.
+            Ty::Struct(an, _)
+                if spreads_into(pn, an, actual)
+                    && mojito_types::types::list_spread_argument(pa).is_some() =>
+            {
+                Ok(())
+            }
+            // A spread of a pack binds it to the actual's whole element
+            // list, unless the call's recorded arguments already did.
+            Ty::Struct(an, aa)
+                if spreads_into(pn, an, actual)
+                    && let Some(Ty::Param { binder, .. }) =
+                        mojito_types::types::pack_spread_argument(pa) =>
+            {
+                let elements = match aa.as_slice() {
+                    [TyArg::Val(CtValue::Tuple(values))] => values
+                        .iter()
+                        .map(|value| match value {
+                            CtValue::Type(ty) => Some((**ty).clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>(),
+                    arguments => arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => Some(ty.clone()),
+                            TyArg::Val(_) | TyArg::Origin(_) => None,
+                        })
+                        .collect(),
+                };
+                match elements {
+                    Some(elements) if !bindings.types.contains_key(binder) => {
+                        bind_pack(binder, elements, bindings);
+                        Ok(())
+                    }
+                    Some(_) => Ok(()),
+                    None => Err(format!("expected `{pattern}`, found `{actual}`")),
+                }
             }
             Ty::Struct(an, aa)
                 if nominal_template(pn) == nominal_template(an) && pa.len() == aa.len() =>

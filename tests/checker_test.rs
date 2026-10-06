@@ -2777,14 +2777,14 @@ fn accepts_tuple_constructors_and_structural_operations() {
 
 #[test]
 fn consuming_tuple_transforms_copy_only_implicitly_copyable_places() {
-    ok(
+    ok_std(
         "def main():\n    var pair = Tuple(1, 2)\n    var suffix = Tuple(3)\n    var reversed = pair.reverse()\n    var joined = pair.concat(suffix)\n    print(pair, suffix, reversed, joined)\n",
     );
 
     let source = "@fieldwise_init\nstruct Token(Movable, Deinitable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair.reverse()\n    print(reversed[0].id)\n";
-    assert!(matches!(err(source), TypeError::NonCopyable { .. }));
+    assert!(matches!(err_std(source), TypeError::NonCopyable { .. }));
 
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Token(Movable, Deinitable):\n    var id: Int\n\ndef main():\n    var pair = Tuple(Token(1), Token(2))\n    var reversed = pair^.reverse()\n    print(reversed[0].id)\n",
     );
 }

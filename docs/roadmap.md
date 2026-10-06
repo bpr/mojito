@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R343**.
+Next free ID: **R357**.
 
 ## Ordered Work
 
@@ -790,6 +790,21 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R347 (P3d) A static call on a `Tuple` type over a pack still open
+  finds no method**
+
+  Problem: `return Tuple[*Ts].__len__()` in `def plain_len[*Ts:
+  Movable](t: Tuple[*Ts])` stops with "type 'Tuple[…]' has no method
+  '__len__'", where the pin answers the length.
+  - `Tuple[*Ts.reverse()].__len__()` and
+    `Tuple[*TypeList._concat[Self.Ts.values, OtherTs.values]()].__len__()`
+    stop the same way.
+  - An instance member on such a tuple runs: `t^.reverse()`, `other[0]`.
+  - A `Tuple` type over an open pack has no declaration to serve a static
+    member until `Tuple` is a generator.
+  - Depends on R4.
+  - Model: Fable, Planned.
+
 ### Native Backend
 
 Track: `native`.
@@ -913,6 +928,32 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R352 A pointer whose origin was cast reads the origin's place, not
+  its pointee**
+
+  Problem: `var p = Pointer(to=b).unsafe_origin_cast[origin_of(a)]()` then
+  `print(p[])` prints `a`'s value in Mojito, where the pin prints `b`'s.
+  - `pointer_deref_place` (`crates/mojito-mir/src/mir.rs`) substitutes the
+    loan's place for the pointer's target.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R355 A view element moved by `Tuple.reverse` or `Tuple.concat`
+  loses its loan on the storage it views**
+
+  Problem: `var t = Tuple(StringSpan(s), 1)` then `var r = t.reverse()` and
+  `print(r[0], r[1])` stops in the VM with "use after Pointer deallocation",
+  where the pin prints `1 hello`.
+  - The result carries no loan on `s`, so `s` is destroyed at its own last
+    use, before the result is read.
+  - The transforms write their named result through pointers, which records
+    no origin for the caller to keep.
+  - Before the transforms were declared in Mojo the same program was
+    rejected with a type mismatch on the result.
+  - Reading `t[0]` without a transform prints.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R20 A value live after a region is never destroyed when the region
   raises out of the function**
@@ -1488,6 +1529,39 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     for a value copied out of `Optional.value()`'s reference result.
   - Passing the same value straight to `print` works only because a view
     argument stays in its register (`bind_temporary_argument`).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R351 A named `out` result of a type parameter is reported abandoned**
+
+  Problem: `def make[T: Defaultable & Movable](out result: T): result =
+  T()` stops with "'result' abandoned without being explicitly destroyed",
+  where the pin prints the default value.
+  - The result is returned, so it owes no destruction in the callee.
+  - A named result of a concrete type runs, on a function and on a method.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R353 A `Pointer` to a tuple element does not bind at the tuple's
+  annotated origin**
+
+  Problem: `var p: Pointer[Int, origin_of(t)] = Pointer(to=t[0])` stops with
+  "type mismatch for variable 'p'", naming two origins that print alike,
+  where the pin prints the element.
+  - The pointer's origin is the element's place, which the annotation's
+    origin of the whole tuple should admit.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R354 A `deinit self` method reading a `Tuple` field's element beside
+  a second `deinit` parameter traps in the VM**
+
+  Problem: `def swap(deinit self, deinit other: Box2) -> Int: return
+  self.t[0].id + other.t[1].id`, `t` a `Tuple[Token, Token]` of non-copyable
+  elements, stops with "invalid reference projection Field("storage") on
+  <moved>", where the pin prints `5`.
+  - Each receiver's field is destroyed at its last use, and the element
+    read reaches the storage after that.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -2104,6 +2178,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The parser's `brace_literal` and `comptime/elab.rs` are the two sites.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R344 `rebind` cannot change a `Pointer`'s origin**
+
+  Problem: `rebind[Pointer[String, origin_of(a)]](Pointer(to=b))` stops
+  with "type mismatch for rebind: the input type does not match the result
+  type", naming two origins, where the pin accepts it.
+  - Upstream's `Tuple.reverse` and `Tuple.concat` retype their source
+    pointers this way.
+  - `checker/rebind.rs` compares the closed types whole, origins included.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
@@ -2939,6 +3024,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R345 A list computed from packs still open answers only its length
+  and its elements**
+
+  Problem: `Self.Ts.reverse().all_conforms_to[Copyable]()` in a variadic
+  struct's method stops with "TypeList.all_conforms_to over the computed
+  list … whose packs are still parameters".
+  - `all`, `any`, and `contains` over such a list are rejected the same way.
+  - Over a closed list (`TypeList.of[…]().reverse()`) each of them folds.
+  - Upstream's `slice`, `splat`, `map`, `filter_idx`, and `reduce` have no
+    spelling in Mojito at all.
+  - The lever is a pack query over a list expression rather than over a
+    pack binder (`ParamKind::PackQuery`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R348 A spread of a computed list binds only `Tuple`**
+
+  Problem: `Holder[*Self.Ts.reverse()]()` over a user variadic struct stops
+  with "call spread outside a specialized type pack", where the pin prints
+  `3` for the flipped holder's length.
+  - `Tuple[*Self.Ts.reverse()]` and
+    `Tuple[*TypeList._concat[A.values, B.values]()]` resolve.
+  - A `Variant[*Ts.reverse()]` is unspelled the same way.
+  - Probe: a `Holder[*Ts: Movable]` whose method returns
+    `Holder[*Self.Ts.reverse()]()`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -3603,6 +3716,39 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R349 Two packs in one parameter list are accepted**
+
+  Problem: `def joined_len[*As: Movable, *Bs: Movable](a: Tuple[*As], b:
+  Tuple[*Bs])` runs in Mojito, where the pin stops with "cannot have two
+  '*' markers in the same parameter list".
+  - A method's own pack beside its struct's pack is legal at the pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R350 `deinit` on a parameter that is not of `Self` type is accepted**
+
+  Problem: `def take(self, deinit other: Lin)` on a struct other than `Lin`
+  is accepted in Mojito, where the pin stops with "'deinit' must only be
+  applied to arguments of Self type".
+  - `Tuple.concat`'s `deinit other: Tuple[*OtherTs]` is the legal shape:
+    another instance of the same struct.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R356 A generic `def` returning a concatenation of its own pack with
+  itself is accepted**
+
+  Problem: `def doubled[*Ts: ImplicitlyCopyable](t: Tuple[*Ts]) ->
+  Tuple[*TypeList._concat[Ts.values, Ts.values]()]: return t.concat(t)` runs
+  in Mojito, where the pin stops with "cannot implicitly convert
+  'Tuple[*#kgen.param_list.concat(Ts.values, Ts.values)]' value to" the same
+  spelling.
+  - Mojito closes both lists to one canonical concatenation, so the result
+    and the annotation are one type.
+  - `flip`'s `Tuple[*Ts.reverse()]` result is accepted by both.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -3811,6 +3957,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R346 The discovery check types `Tuple`'s dunders and teardowns in
+  Rust though `tuple.mojo` declares them**
+
+  Problem: `infer_tuple_method`
+  (`checker/method_calls/builtin_types.rs`) still types `__len__`,
+  `__contains__`, the six comparisons, `consume_elements`, and `deinit_with`
+  from the element list for a `Tuple` no specialization serves yet.
+  - `reverse` and `concat` are typed against the declaration's shell
+    (`infer_tuple_member`), and the same path can answer the rest.
+  - The Rust arms answer first, so removing one moves its member to the
+    declaration.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
 ### Grow The CPU Standard Library *(demand-first)*
 
 Track: `stdlib`.
@@ -3981,20 +4141,27 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R209 `Tuple.reverse` and `Tuple.concat` are typed in Rust instead
-  of declared in Mojo**
+- [ ] **R343 `Tuple.reverse` and `Tuple.concat` move each element by a
+  transfer out of the private storage where upstream moves it through a
+  pointer**
 
-  Problem: both are typed in Rust from the element list
-  (`checker/method_calls/builtin_types.rs`), not declared in
-  `std/builtin/tuple.mojo`, while upstream writes both in Mojo over
-  `Self.Ts.reverse()` and `TypeList._concat`.
-  - The nominal declaration answers a Tuple method call first, and this
-    surface serves only what it does not declare.
-  - Mojito has no spelling for the upstream pack operations, so porting
-    waits on type-level pack algebra.
-  - Pinned by
-    `checker_test::accepts_tuple_constructors_and_structural_operations`.
-  - Depends on nothing.
+  Problem: both are declared in `std/builtin/tuple.mojo` with upstream's
+  signatures, but their bodies write
+  `Pointer(to=result[i]).unsafe_write(self.storage[k]^)`, where upstream
+  writes `Pointer(to=result[i]).unsafe_write_move_from(rebind[Pointer[
+  type_of(result[i]), origin_of(self)]](Pointer(to=self[k])))`.
+  - A move out through a pointer is untracked, and the compiler destroys the
+    `__RuntimeTuple` storage, so the element would be destroyed twice.
+  - `concat` retypes the destination place instead of the source pointer:
+    `rebind[Self.Ts[i]](result[i])`.
+  - `concat` reads its length as `Self.Ts.length` where upstream calls
+    `Self.__len__()`.
+  - The loop headers read `Self.Ts.length` and `OtherTs.length` where
+    upstream reads `type_of(result).__len__()` and
+    `type_of(other).__len__()`.
+  - Pinned by `assets/ok/tuple_reverse_concat.mojo`.
+  - Depends on R341 (the storage model and `unsafe_write_move_from`), R134
+    (`type_of`), R340 (`Self.__len__()` in a header), and R344.
   - Model: Fable, Planned.
 
 - [ ] **R210 A lambda parameter annotated `String` reports an unknown

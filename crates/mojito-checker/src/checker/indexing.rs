@@ -2188,6 +2188,18 @@ impl Checker {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::Int);
         }
+        // The length of a `TypeList` value, or of a list computed from
+        // packs, is the `Int` its elements fix.
+        if field == "length"
+            && let Some(list) = self.type_list_operand(object)?
+        {
+            let value = self.param_context.list_length(&list).map_err(param_error)?;
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+            );
+            return Ok(Ty::Int);
+        }
         let obj_ty = self.infer(object)?;
         // Projecting a field through a reference-returning expression borrows
         // that referent for the projection; it does not first create an owned

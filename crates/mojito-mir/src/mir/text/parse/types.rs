@@ -34,9 +34,14 @@ impl Decoder {
                 "variadic_pack" => Ty::VariadicPack(Box::new(self.ty(inner)?)),
                 "variant" => Ty::Variant(self.types(inner)),
                 // A type-valued parameter expression; it folds back to the
-                // type it denotes when the text spelled a closed one.
+                // type it denotes when the text spelled a closed one. A list
+                // of types computed from packs is the spread a struct type's
+                // one argument holds.
                 "dependent_parameter" => {
                     let expr = self.param_expr(inner)?;
+                    if *expr.meta() == MetaTy::type_list() {
+                        return Some(Ty::Dependent(DependentType::Parameter(expr)));
+                    }
                     if *expr.meta() != MetaTy::Type {
                         self.error(
                             value.span,
@@ -762,6 +767,25 @@ impl Decoder {
                     let index = self.req(value, fields, "index", Self::param_expr)?;
                     self.unknown(fields, &["list", "index"]);
                     let built = self.context.list_get(&list, &index);
+                    self.built(value, built)
+                }
+                "param_list_tabulate" => {
+                    let count = self.req(value, fields, "count", Self::param_expr)?;
+                    let element = self.req(value, fields, "element", Self::param_expr)?;
+                    self.unknown(fields, &["count", "element"]);
+                    let built = self.context.list_tabulate(&count, &element);
+                    self.built(value, built)
+                }
+                "param_list_concat" => {
+                    let lists_value = self.required(value, fields, "lists")?;
+                    let lists: Vec<ParamExpr> = self
+                        .list(lists_value)
+                        .ok()?
+                        .iter()
+                        .map(|list| self.param_expr(list))
+                        .collect::<Option<_>>()?;
+                    self.unknown(fields, &["lists"]);
+                    let built = self.context.list_concat(&lists);
                     self.built(value, built)
                 }
                 "param_field" => {

@@ -68,7 +68,6 @@ impl Checker {
             args,
             kwargs,
             param_args,
-            parameterized_syntax,
             ..
         } = call;
         // `__mlir_op.`...`(...)` names no value: the one admitted operation
@@ -125,24 +124,34 @@ impl Checker {
             return Ok(ty);
         }
         let mut availability_failure = None;
-        let resolved = match self.resolve_receiver_method(site, &mut availability_failure)? {
-            Ok(Some(resolved)) => resolved,
-            Ok(None) => return self.infer_unresolved_method(site),
-            Err(OverloadSelect::NoMatch) => {
-                return Err(TypeError::BadCall {
-                    func: method.to_string(),
-                    reason: availability_failure.unwrap_or_else(|| {
-                        "no overload matches the supplied arguments".to_string()
-                    }),
-                });
-            }
-            Err(OverloadSelect::Ambiguous) => {
-                return Err(TypeError::BadCall {
-                    func: method.to_string(),
-                    reason: "ambiguous overloaded method call".to_string(),
-                });
-            }
-        };
+        let selection = self.resolve_receiver_method(site, &mut availability_failure)?;
+        match selected_method(method, selection, availability_failure)? {
+            Some(resolved) => self.infer_selected_method_call(site, resolved),
+            None => self.infer_unresolved_method(site),
+        }
+    }
+
+    /// Type a call of the method `resolved` selected for the receiver at
+    /// `site`: its clone when one serves the call, and otherwise the
+    /// signature's effects, receiver and argument contracts, and result.
+    pub(super) fn infer_selected_method_call(
+        &self,
+        site: MethodCallSite<'_>,
+        resolved: MethodCallResolution,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallSite {
+            span,
+            object,
+            method,
+            call,
+            obj_ty,
+        } = site;
+        let MethodCallArguments {
+            args,
+            kwargs,
+            parameterized_syntax,
+            ..
+        } = call;
         if let Some(ty) = self.retarget_to_method_clone(site, &resolved)? {
             return Ok(ty);
         }
@@ -160,7 +169,7 @@ impl Checker {
             self.record_call_effect(span.clone(), error.clone());
             self.require_error(format!("call to raising method '{method}'"), error.clone())?;
         }
-        let selected_target = resolved.lowered_name.clone().or_else(|| match &obj_ty {
+        let selected_target = resolved.lowered_name.clone().or_else(|| match obj_ty {
             Ty::Struct(name, _) if self.structs.contains_key(name) => {
                 Some(format!("{name}.{method}"))
             }
@@ -203,5 +212,26 @@ impl Checker {
             },
             |reference| *reference.referent,
         ))
+    }
+}
+
+/// The one signature a method selection settled on, `None` when the receiver
+/// declares no method of the name, or why no candidate serves the call.
+pub(super) fn selected_method(
+    method: &str,
+    selection: Result<Option<MethodCallResolution>, OverloadSelect>,
+    availability_failure: Option<String>,
+) -> Result<Option<MethodCallResolution>, TypeError> {
+    match selection {
+        Ok(resolved) => Ok(resolved),
+        Err(OverloadSelect::NoMatch) => Err(TypeError::BadCall {
+            func: method.to_string(),
+            reason: availability_failure
+                .unwrap_or_else(|| "no overload matches the supplied arguments".to_string()),
+        }),
+        Err(OverloadSelect::Ambiguous) => Err(TypeError::BadCall {
+            func: method.to_string(),
+            reason: "ambiguous overloaded method call".to_string(),
+        }),
     }
 }

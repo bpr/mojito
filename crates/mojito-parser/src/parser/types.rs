@@ -366,6 +366,27 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// as a type when the parameter is a type one). Anything else is a value.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
+        // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
+        // type node, or of any other type-list expression
+        // (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
+        if matches!(self.peek_token()?, Some(Token::Star)) {
+            let start = self.peek_start();
+            self.next_token()?; // consume '*'
+            if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
+                return Ok(ParamArg::Type(Type::Named(format!("*{name}"), Vec::new())));
+            }
+            let operand = self.parse_expression(Precedence::Lowest)?;
+            return Ok(match &operand.kind {
+                ExprKind::Identifier(name) => {
+                    ParamArg::Type(Type::Named(format!("*{name}"), Vec::new()))
+                }
+                ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
+                    ParamArg::Type(Type::SelfParam(format!("*{field}")))
+                }
+                _ => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
+            });
+        }
         if self.peek_starts_type()? {
             let start = self.peek_start();
             let ty = self.parse_type()?;
@@ -387,6 +408,37 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         self.parse_expression_from(atom, Precedence::Lowest)?,
                     ));
                 }
+            }
+            // A `Self`-rooted chain an operator continues (`Self.Ts.length -
+            // 1 - i`) is the first atom of a value expression.
+            if !matches!(
+                self.peek_token()?,
+                Some(Token::Comma | Token::RBracket | Token::Dot | Token::LParen) | None
+            ) && let Some(atom) = self.rematerialize_self_param_chain(&ty, start)
+            {
+                return Ok(ParamArg::Value(
+                    self.parse_expression_from(atom, Precedence::Lowest)?,
+                ));
+            }
+            // `Self.Ts.values` is the struct pack's element list, a value
+            // like a `def`'s own `Ts.values`, not an associated type.
+            if let Type::Assoc { base, name, args } = &ty
+                && let Type::SelfParam(pack) = &**base
+                && name == "values"
+                && args.is_empty()
+            {
+                let span = (start, self.last_span.1);
+                let member = |object: Expr, field: &str| {
+                    Expr::new(
+                        ExprKind::Member {
+                            object: Box::new(object),
+                            field: field.to_string(),
+                        },
+                        span,
+                    )
+                };
+                let owner = Expr::new(ExprKind::Identifier("Self".to_string()), span);
+                return Ok(ParamArg::Value(member(member(owner, pack), "values")));
             }
             // A projection chained off the qualified struct binder
             // (`Self.o._get_owned_interior[...]` in an origin slot) is a value

@@ -867,6 +867,23 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         }
     };
     match ty {
+        // A spread of a list computed from packs closes over the bound
+        // pack, to its elements once every length in it is known.
+        Ty::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
+            let context = ParamContext::detached();
+            context
+                .type_list(elements.to_vec())
+                .and_then(|bound| {
+                    let mut bindings = ParamBindings::new();
+                    bindings.bind_name(pack, bound);
+                    context.replace(list, &bindings)
+                })
+                .and_then(|list| spread_arguments(name, &list))
+                .map_or_else(
+                    |_| ty.clone(),
+                    |arguments| Ty::Struct(name.clone(), arguments.into()),
+                )
+        }
         Ty::Struct(name, arguments) => {
             let spread = pack_spread_argument(arguments)
                 .is_some_and(|spread| spreads(std::slice::from_ref(spread)));
@@ -908,6 +925,51 @@ pub fn pack_spread_argument(arguments: &[TyArg]) -> Option<&Ty> {
         [TyArg::Ty(pack)] => pack_spread(std::slice::from_ref(pack)),
         _ => None,
     }
+}
+
+/// The list a type spreads, when it is one computed from packs still open.
+///
+/// `*Ts.reverse()` and `*TypeList._concat[..]()` are such lists; a pack
+/// itself is [`pack_spread`]'s.
+pub fn list_spread(ty: &Ty) -> Option<&ParamExpr> {
+    match ty {
+        Ty::Dependent(list) if matches!(list.expr().meta(), MetaTy::ParamList(_)) => {
+            Some(list.expr())
+        }
+        _ => None,
+    }
+}
+
+/// [`list_spread`] over a type-argument list.
+pub fn list_spread_argument(arguments: &[TyArg]) -> Option<&ParamExpr> {
+    match arguments {
+        [TyArg::Ty(list)] => list_spread(list),
+        _ => None,
+    }
+}
+
+/// The argument list a spread of `list` gives the struct `name`.
+///
+/// Its elements once every length in it is known, element by element or as
+/// one bound list as [`expand_pack_spread`] spells a pack, and the spread
+/// itself while a length is open.
+pub fn spread_arguments(name: &str, list: &ParamExpr) -> Result<Vec<TyArg>, ParamError> {
+    let Some(elements) = ParamContext::detached().list_elements(list)? else {
+        return Ok(vec![TyArg::Ty(Ty::Dependent(DependentType::Parameter(
+            list.clone(),
+        )))]);
+    };
+    let types = elements.into_iter().map(|element| match element.kind() {
+        ParamKind::TypeShape(ty) => (**ty).clone(),
+        _ => DependentType::resolve(element),
+    });
+    Ok(if binds_pack_elementwise(name) {
+        types.map(TyArg::Ty).collect()
+    } else {
+        vec![TyArg::Val(CtValue::Tuple(
+            types.map(Box::new).map(CtValue::Type).collect(),
+        ))]
+    })
 }
 
 /// Whether a struct spells its bound pack element by element: the public
@@ -3098,6 +3160,14 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             },
         },
         Ty::Struct(_, arguments) if arguments.is_closed() && !rewrite.visits_closed() => ty.clone(),
+        // A spread list closes into its elements once the rewrite knows
+        // every length in it.
+        Ty::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
+            Ty::Struct(
+                name.clone(),
+                arguments.reusing(spread_arguments(name, &rewrite.expr(list)?)?),
+            )
+        }
         Ty::Struct(name, arguments) => Ty::Struct(
             name.clone(),
             arguments.reusing(rewrite_tyargs(arguments, rewrite)?),

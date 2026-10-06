@@ -312,6 +312,14 @@ impl Elab<'_> {
             if self.struct_template(&template_name) && mono.retained.contains(&template_name) {
                 out.push(template_shell(&stmt));
             }
+            // The public `Tuple`'s declaration always survives as a shell
+            // under its private name, for the members a call reaches before
+            // a specialization serves its receiver.
+            if template_name == mojito_types::types::TUPLE_TYPE_NAME
+                && self.struct_template(&template_name)
+            {
+                out.push(tuple_declaration_shell(&stmt));
+            }
             // A comptime-class template either specialized or is a dead
             // generic, dropped either way. A bound-generic template always
             // survives, so its body keeps the abstract pre-check whether or
@@ -360,9 +368,6 @@ impl Elab<'_> {
             }
             if let Some(mut specs) = generated {
                 specs.reverse();
-                if template_name == "Tuple" {
-                    specs = self.order_tuple_specializations(specs)?;
-                }
                 out.extend(specs);
             }
         }
@@ -873,107 +878,6 @@ impl Elab<'_> {
             mono.generated.entry(job.orig).or_default().push(spec);
         }
         Ok(())
-    }
-
-    /// Order concrete Tuple declarations by the ordinary method-signature and
-    /// constructor dependencies introduced for the transforms actually used by
-    /// the checked program. The generic worklist's blanket reversal handles a
-    /// newly discovered callee, but all checked Tuple result types are seeded up
-    /// front, so that incidental queue order is not a dependency relation.
-    pub(super) fn order_tuple_specializations(
-        &self,
-        specs: Vec<Stmt>,
-    ) -> Result<Vec<Stmt>, ComptimeError> {
-        fn visit(
-            name: &str,
-            dependencies: &HashMap<String, Vec<String>>,
-            visiting: &mut HashSet<String>,
-            emitted: &mut HashSet<String>,
-            order: &mut Vec<String>,
-        ) -> Result<(), ComptimeError> {
-            if emitted.contains(name) {
-                return Ok(());
-            }
-            if !visiting.insert(name.to_string()) {
-                return Err(ComptimeError::NotComptime(format!(
-                    "checked Tuple transforms create a cyclic declaration dependency involving '{name}'"
-                )));
-            }
-            if let Some(required) = dependencies.get(name) {
-                for dependency in required {
-                    visit(dependency, dependencies, visiting, emitted, order)?;
-                }
-            }
-            visiting.remove(name);
-            emitted.insert(name.to_string());
-            order.push(name.to_string());
-            Ok(())
-        }
-
-        let baseline = specs
-            .iter()
-            .map(|statement| match &statement.kind {
-                StmtKind::Struct { name, .. } => Ok(name.clone()),
-                _ => Err(ComptimeError::NotComptime(
-                    "Tuple specialization produced a non-struct declaration".to_string(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let declared = baseline.iter().cloned().collect::<HashSet<_>>();
-        let mut dependencies = HashMap::<String, Vec<String>>::new();
-        let mut add_dependency = |receiver: &str, dependency: String| {
-            if dependency != receiver && declared.contains(&dependency) {
-                let entries = dependencies.entry(receiver.to_string()).or_default();
-                if !entries.contains(&dependency) {
-                    entries.push(dependency);
-                }
-            }
-        };
-        for (left, transforms) in &self.tuple_transforms {
-            let receiver = tuple_specialization_symbol(left);
-            for transform in transforms {
-                match transform {
-                    TupleTransformRequest::Reverse => {
-                        // Generated Tuple identities are predeclared before any
-                        // specialization members are checked.  A reverse method's
-                        // result annotation and constructor can therefore name the
-                        // reverse specialization before its full declaration.  Do
-                        // not manufacture a hard ordering edge here: requesting
-                        // reverse in both directions is a valid two-node cycle.
-                    }
-                    TupleTransformRequest::Concat(right) => {
-                        add_dependency(&receiver, tuple_specialization_symbol(right));
-                        let mut result = left.clone();
-                        result.extend(right.iter().cloned());
-                        add_dependency(&receiver, tuple_specialization_symbol(&result));
-                    }
-                }
-            }
-        }
-
-        let mut order = Vec::with_capacity(baseline.len());
-        let mut visiting = HashSet::new();
-        let mut emitted = HashSet::new();
-        for name in &baseline {
-            visit(name, &dependencies, &mut visiting, &mut emitted, &mut order)?;
-        }
-        let mut by_name = specs
-            .into_iter()
-            .map(|statement| {
-                let StmtKind::Struct { name, .. } = &statement.kind else {
-                    unreachable!("validated Tuple specialization shape")
-                };
-                (name.clone(), statement)
-            })
-            .collect::<HashMap<_, _>>();
-        Ok(order
-            .into_iter()
-            .map(|name| {
-                by_name
-                    .remove(&name)
-                    .expect("topological Tuple name came from generated declarations")
-            })
-            .collect())
     }
 
     /// Declaration-based specialization core shared by top-level and lexical
@@ -1529,6 +1433,15 @@ impl Elab<'_> {
         let mut elaborated_methods = Vec::with_capacity(methods.len());
         let mut members = Vec::new();
         for method in methods {
+            // The declared transforms are instantiated where a checked call
+            // asks for them. `reverse` on every specialization would close
+            // the set of tuple types under reversal, and `concat` would add
+            // a member no call reaches to each.
+            if orig == "Tuple"
+                && !self.tuple_transform_is_demanded(method, vals, &semantic_types)?
+            {
+                continue;
+            }
             let template_body = traced_template_body(method);
             let mut method = method.clone();
             // An Int-indexed accessor unrolls per element below, as does any
@@ -1964,13 +1877,6 @@ impl Elab<'_> {
             }
             elaborated_methods.push(method);
         }
-        if orig == "Tuple" {
-            self.append_tuple_transform_methods(
-                &mut elaborated_methods,
-                &semantic_types,
-                template.span,
-            );
-        }
         let mangled = mangle(orig, vals)?;
         let mut spec = mk(
             StmtKind::Struct {
@@ -2047,85 +1953,31 @@ impl Elab<'_> {
         Ok(spec)
     }
 
-    /// Emit closed-world, fully concrete Tuple transforms as ordinary methods.
-    /// The discovery checker has already recorded every result Tuple type. No
-    /// dependent pack transform survives into checking or MIR, and execution is
-    /// normal constructor/method dispatch rather than a VM tuple intrinsic.
-    pub(super) fn append_tuple_transform_methods(
+    /// Whether the `Tuple` specialization at `vals` keeps `method`: every
+    /// member but the two transforms, `reverse` where a checked call
+    /// reverses a tuple of `elements`, and `concat` where a checked call on
+    /// the specialization requests an instance of it.
+    fn tuple_transform_is_demanded(
         &self,
-        methods: &mut Vec<mojito_ast::ast::Method>,
-        left: &[Ty],
-        span: Span,
-    ) {
-        let Some((_, transforms)) = self
-            .tuple_transforms
-            .iter()
-            .find(|(elements, _)| elements == left)
-        else {
-            return;
-        };
-        for transform in transforms {
-            match transform {
-                TupleTransformRequest::Reverse => {
-                    let reversed = left.iter().rev().cloned().collect::<Vec<_>>();
-                    if !self
-                        .tuple_universe
+        method: &mojito_ast::ast::Method,
+        vals: &[CtValue],
+        elements: &[Ty],
+    ) -> Result<bool, ComptimeError> {
+        Ok(match method.name.as_str() {
+            "reverse" => self
+                .reversed_tuples
+                .iter()
+                .any(|reversed| reversed == elements),
+            "concat" => self
+                .method_requests
+                .get(&mangle("Tuple", vals)?)
+                .is_some_and(|requests| {
+                    requests
                         .iter()
-                        .any(|elements| elements == &reversed)
-                    {
-                        continue;
-                    }
-                    let target = tuple_specialization_symbol(&reversed);
-                    let arguments = (0..left.len())
-                        .rev()
-                        .map(|index| tuple_storage_element("self", index, true, span))
-                        .collect();
-                    methods.push(tuple_transform_method(
-                        "reverse",
-                        Some(ArgConvention::Deinit),
-                        Vec::new(),
-                        target,
-                        arguments,
-                        span,
-                    ));
-                }
-                TupleTransformRequest::Concat(right) => {
-                    let mut result = left.to_vec();
-                    result.extend(right.iter().cloned());
-                    if !self
-                        .tuple_universe
-                        .iter()
-                        .any(|elements| elements == &result)
-                    {
-                        continue;
-                    }
-                    let right_symbol = tuple_specialization_symbol(right);
-                    let target = tuple_specialization_symbol(&result);
-                    let mut arguments = (0..left.len())
-                        .map(|index| tuple_storage_element("self", index, true, span))
-                        .collect::<Vec<_>>();
-                    arguments.extend(
-                        (0..right.len())
-                            .map(|index| tuple_storage_element("other", index, true, span)),
-                    );
-                    methods.push(tuple_transform_method(
-                        "concat",
-                        Some(ArgConvention::Deinit),
-                        vec![FnParam {
-                            name: "other".to_string(),
-                            ty: Type::Named(right_symbol, Vec::new()),
-                            default: None,
-                            kind: ParamKind::Regular,
-                            convention: Some(ArgConvention::Deinit),
-                            origin: None,
-                        }],
-                        target,
-                        arguments,
-                        span,
-                    ));
-                }
-            }
-        }
+                        .any(|request| request.selects(method, "Tuple", &self.method_binder_owners))
+                }),
+            _ => true,
+        })
     }
 
     /// Fold the pack-valued `conforms_to(Ts.values, Trait)` atoms used by
@@ -3123,11 +2975,28 @@ impl Elab<'_> {
                     }
                     return Ok(());
                 }
-                for argument in arguments {
-                    if let ParamArg::Type(inner) = argument {
-                        self.fold_pack_index_annotation(inner, binding, elements, env)?;
+                let mut folded = Vec::with_capacity(arguments.len());
+                for mut argument in std::mem::take(arguments) {
+                    match &mut argument {
+                        ParamArg::Type(inner) => {
+                            self.fold_pack_index_annotation(inner, binding, elements, env)?;
+                            folded.push(argument);
+                        }
+                        // A spread of a list computed from the pack
+                        // (`*Self.Ts.reverse()`) is that list's elements.
+                        ParamArg::Value(Expr {
+                            kind: ExprKind::Spread(operand),
+                            span,
+                            ..
+                        }) => folded.extend(expand_spread_argument(
+                            (**operand).clone(),
+                            *span,
+                            &|name| (name == binding).then(|| elements.to_vec()),
+                        )),
+                        ParamArg::Value(_) | ParamArg::Named { .. } => folded.push(argument),
                     }
                 }
+                *arguments = folded;
                 Ok(())
             }
             Type::Assoc { base, .. } => {
@@ -3472,6 +3341,16 @@ pub(super) fn template_shell(template: &Stmt) -> Stmt {
             method.body.clear();
         }
         *template_shell = true;
+    }
+    shell
+}
+
+/// The public `Tuple` template's shell under
+/// [`mojito_symbol::symbol::TUPLE_DECLARATION_SHELL`].
+fn tuple_declaration_shell(template: &Stmt) -> Stmt {
+    let mut shell = template_shell(template);
+    if let StmtKind::Struct { name, .. } = &mut shell.kind {
+        *name = mojito_symbol::symbol::TUPLE_DECLARATION_SHELL.to_string();
     }
     shell
 }

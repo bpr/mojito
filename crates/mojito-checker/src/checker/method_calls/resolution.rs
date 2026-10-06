@@ -60,22 +60,82 @@ impl Checker {
                 return self.infer_field_invocation(span.clone(), object, &field_ty, args, kwargs);
             }
         }
-        // The public Tuple's structural surface (`reverse`, `concat`,
-        // the consuming teardowns) is typed from the element list
-        // rather than declared in `std/builtin/tuple.mojo`, whose
-        // upstream bodies need type-level pack algebra Mojito has no
-        // spelling for yet (`docs/roadmap.md` §4, *Variadic packs and
-        // tuples*). The nominal declaration answers first; this
-        // serves what it does not declare.
+        // A public Tuple no specialization serves yet, or a member its
+        // specialization was not asked to keep.
         if let Some(elements) = tuple_elements(obj_ty) {
             reject_kwargs(kwargs)?;
             let elements = elements.into_iter().cloned().collect::<Vec<_>>();
-            return self.infer_tuple_method(span, object, method, &elements, call);
+            return self.infer_tuple_member(site, &elements);
         }
         Err(TypeError::NoSuchMethod {
             object_type: obj_ty.to_string(),
             method: method.to_string(),
         })
+    }
+
+    /// Type a member call on a public Tuple of `elements` that no
+    /// specialization answers: the structural surface
+    /// ([`Self::infer_tuple_method`]) first, and what it does not serve from
+    /// the member `std/builtin/tuple.mojo` declares, resolved against the
+    /// declaration's shell with its pack bound to `elements`.
+    pub(super) fn infer_tuple_member(
+        &self,
+        site: MethodCallSite<'_>,
+        elements: &[Ty],
+    ) -> Result<Ty, TypeError> {
+        let MethodCallSite {
+            span,
+            object,
+            method,
+            call,
+            ..
+        } = site;
+        let shell = mojito_symbol::symbol::TUPLE_DECLARATION_SHELL;
+        let structural = self.infer_tuple_method(span, object, method, elements, call);
+        if !matches!(structural, Err(TypeError::NoSuchMethod { .. }))
+            || !self.structs.contains_key(shell)
+        {
+            return structural;
+        }
+        // A receiver spreading a pack still open, or a list computed from
+        // one, binds the declaration's pack to that spread whole.
+        let pack = match elements {
+            [spread]
+                if mojito_types::types::pack_spread(elements).is_some()
+                    || mojito_types::types::list_spread(spread).is_some() =>
+            {
+                TyArg::Ty(spread.clone())
+            }
+            _ => TyArg::Val(CtValue::Tuple(
+                elements
+                    .iter()
+                    .cloned()
+                    .map(Box::new)
+                    .map(CtValue::Type)
+                    .collect(),
+            )),
+        };
+        let mut availability_failure = None;
+        let selection =
+            self.resolve_struct_method(site, shell, &[pack], &mut availability_failure)?;
+        let Some(resolved) =
+            super::mc_infer::selected_method(method, selection, availability_failure)?
+        else {
+            return structural;
+        };
+        let result = self.infer_selected_method_call(site, resolved)?;
+        // The instance a member with parameters of its own asks for belongs
+        // to the receiver's specialization, which the next round mints.
+        if let Some(instantiation) = self.method_instantiations.borrow_mut().get_mut(span)
+            && instantiation.owner == mojito_types::types::TUPLE_TYPE_NAME
+            && elements
+                .iter()
+                .all(|element| !mojito_types::types::is_symbolic(element))
+        {
+            instantiation.owner = mojito_symbol::symbol::tuple_specialization_symbol(elements);
+            instantiation.owner_arguments = Vec::new();
+        }
+        Ok(self.canonicalize_public_tuple_types(result))
     }
 
     /// A generic method's resolved compile-time arguments, and a concrete
@@ -310,7 +370,14 @@ impl Checker {
                     self_convention: sig.self_convention,
                     return_type: clone_origins.substitute(&self.close_pack_elements(
                         self.close_method_values(
-                            substitute(&substitute_at(&sig.ret, info, targs), &method_subst),
+                            substitute(
+                                &super::super::generics::expand_solved_packs(
+                                    &substitute_at(&sig.ret, info, targs),
+                                    &sig.decls,
+                                    &method_arguments,
+                                ),
+                                &method_subst,
+                            ),
                             &sig.decls,
                             &method_arguments,
                         ),

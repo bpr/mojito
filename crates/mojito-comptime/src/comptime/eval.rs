@@ -232,6 +232,11 @@ impl Elab<'_> {
             {
                 match self.eval(object, scope)? {
                     CtValue::Reflected(ty) => self.eval_reflection_method(&ty, method, scope),
+                    // `tl.reverse()`: the list's elements, last first.
+                    receiver if method == "reverse" && receiver.typelist_elements().is_some() => {
+                        let elements = receiver.typelist_elements().expect("guarded");
+                        Ok(make_typelist(elements.iter().rev().cloned().collect()))
+                    }
                     // `DType`'s `Bool` queries fold from the dtype table.
                     CtValue::Dtype(dtype) if let Some(answer) = dtype.predicate(method) => {
                         Ok(CtValue::Bool(answer))
@@ -283,6 +288,40 @@ impl Elab<'_> {
                     && field == "of"
                 {
                     return self.eval_typelist_of(param_args, scope);
+                }
+                // `TypeList._concat[A.values, B.values]()`: the operands'
+                // elements in order.
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")
+                    && field == "_concat"
+                {
+                    let mut elements = Vec::new();
+                    for argument in param_args {
+                        let ParamArg::Value(values) = argument else {
+                            return Err(ComptimeError::NotComptime(
+                                "TypeList._concat takes the '.values' of type lists".to_string(),
+                            ));
+                        };
+                        let operand = match pack_values_projection(values) {
+                            Some(pack) => scope.get(pack).cloned().ok_or_else(|| {
+                                ComptimeError::NotComptime(format!(
+                                    "unknown compile-time type pack '{pack}'"
+                                ))
+                            })?,
+                            None => self.eval(values, scope)?,
+                        };
+                        elements.extend(
+                            operand
+                                .typelist_elements()
+                                .map(<[CtValue]>::to_vec)
+                                .ok_or_else(|| {
+                                    ComptimeError::NotComptime(
+                                        "TypeList._concat takes the '.values' of type lists"
+                                            .to_string(),
+                                    )
+                                })?,
+                        );
+                    }
+                    return Ok(make_typelist(elements));
                 }
                 // `DType.mantissa_width[dtype]()` and its sibling format
                 // queries fold from the dtype table.

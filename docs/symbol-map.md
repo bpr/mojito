@@ -173,7 +173,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
   `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
   pointer/List/Tuple helpers, and `mlir_op.rs` the one `__mlir_op` statement
-  the bundled modules spell. `checker/initializer_list.rs` owns the
+  the bundled modules spell. `mc_infer.rs:infer_selected_method_call` is the
+  tail every selected signature takes (clone retarget, effects, receiver and
+  argument contracts, result). `resolution.rs:infer_tuple_member` types a
+  member of a public `Tuple` no specialization serves: the structural
+  surface (`builtin_types.rs:infer_tuple_method`) first, then the member
+  `std/builtin/tuple.mojo` declares (`reverse`, `concat`), resolved on the
+  declaration's shell (`mojito-symbol`'s `TUPLE_DECLARATION_SHELL`, emitted
+  by `comptime/specialize.rs:tuple_declaration_shell`) with its pack bound
+  to the receiver's elements. A method's named `out` result is read off
+  `mojito-ast`'s `named_result` / `FnParam::is_named_result` by
+  `declarations.rs:method_sig`, `check_method_inner`, and MIR's method
+  lowering alike. `checker/initializer_list.rs` owns the
   initializer list: `infer_initializer_list` spells `{}` / `{a, b}` at the
   contextual type as that type's construction under an identity derived
   from the brace's, checks it, and records
@@ -424,7 +435,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
   `r.field_at[i].T`, and `r.field["x"].T` in `comptime_type_operand` and
   `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
-  over the `field_types()` node, viewed through `opaque_element`). The
+  over the `field_types()` node, viewed through `opaque_element`).
+  Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
+  reads a pack, a `TypeList` construction, a `.reverse()`, and a
+  `TypeList._concat[A.values, B.values]()` as a `TypeListReceiver`
+  (`Derived` for a list computed from packs still open),
+  `type_list_operand` gives the `ParamExpr` a spread's operand denotes, and
+  `comptime_validation.rs:type_list_element` its `[i]`. The lists are
+  `mojito-types`' `ParamKind::ListTabulate` and `ParamKind::ListConcat`
+  (`ParamContext::list_tabulate`, `list_concat`, `list_reverse`,
+  `list_length`, `list_elements`, `type_list`); a spread of one is the sole
+  argument of its struct type (`types.rs:list_spread_argument`,
+  `spread_arguments`, `expand_pack_spread`), which
+  `type_resolution.rs:tuple_element_types` and
+  `declarations.rs:spread_pack_values` build,
+  `generics.rs:expand_solved_packs` closes at a call, and
+  `native::mono`'s `substitute_ty` closes per instance. The cloner's twins
+  over source types are `comptime/packs.rs:type_list_source_types`,
+  `bind_type_list_packs`, and `expand_spread_argument`, and
+  `comptime/eval.rs` reverses and concatenates closed `TypeList` values. The
   elaborator's `comptime/eval.rs` answers the same queries per instance;
   `template_facts/certificate.rs:template_certificate` keeps every reflection-reading
   body's instances on the clone check (`reads_reflection`).

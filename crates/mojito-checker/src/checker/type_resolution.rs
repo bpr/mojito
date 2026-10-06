@@ -1278,6 +1278,20 @@ impl Checker {
                 mojito_types::types::replace_parameters(context, ty, &bindings, 0)
                     .map_err(param_error)?
             }
+            // A spread of a list computed from packs closes as they bind.
+            Ty::Struct(name, arguments)
+                if !parameters.is_empty()
+                    && let Some(list) = mojito_types::types::list_spread_argument(arguments) =>
+            {
+                let context = &self.param_context;
+                let bindings =
+                    mojito_types::param_expr::ParamBindings::from_named_values(context, parameters);
+                let spread = context
+                    .replace(list, &bindings)
+                    .and_then(|list| mojito_types::types::spread_arguments(name, &list))
+                    .map_err(param_error)?;
+                Ty::Struct(name.clone(), arguments.reusing(spread))
+            }
             Ty::Struct(name, arguments) => Ty::Struct(
                 name.clone(),
                 arguments.reusing(
@@ -2437,6 +2451,29 @@ impl Checker {
         for arg in args {
             if let Some(pack) = self.pack_spread_argument(arg) {
                 elems.push(pack?);
+                continue;
+            }
+            // A spread of a computed list is its elements once every length
+            // in it is known, and the whole argument list until then.
+            if let mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Spread(operand),
+                ..
+            }) = arg
+            {
+                let list = self.type_list_operand(operand)?.ok_or_else(|| {
+                    TypeError::Unsupported(
+                        "a spread type argument takes a pack or a type list".to_string(),
+                    )
+                })?;
+                let spread = mojito_types::types::spread_arguments(
+                    mojito_types::types::TUPLE_TYPE_NAME,
+                    &list,
+                )
+                .map_err(param_error)?;
+                elems.extend(spread.into_iter().filter_map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(ty),
+                    TyArg::Val(_) | TyArg::Origin(_) => None,
+                }));
                 continue;
             }
             elems.push(match arg {

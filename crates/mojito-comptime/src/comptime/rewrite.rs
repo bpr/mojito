@@ -472,6 +472,22 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
     }
 }
 
+/// The source type of element `index` of the type pack `pack`, when `subs`
+/// binds the pack and `index` is a literal in range.
+fn bound_pack_element(pack: &str, index: &Expr, subs: Subs) -> Option<Type> {
+    let ExprKind::Int(position) = &index.kind else {
+        return None;
+    };
+    let CtValue::Tuple(elements) = subs(pack.trim_start_matches('*'))? else {
+        return None;
+    };
+    let position = usize::try_from(position.to_i64()?).ok()?;
+    match elements.get(position)? {
+        CtValue::Type(ty) => source_type_from_ty(ty),
+        _ => None,
+    }
+}
+
 /// Fold upstream's `TypeList` uses of a bound type pack in a runtime
 /// position — `Ts.length` / `Self.Ts.length` / `len(Ts)` to the pack's length and
 /// `Ts.contains[X]()` to whether `X` names an element — so a specialized
@@ -514,12 +530,51 @@ fn fold_pack_typelist_use(e: &Expr, subs: Subs) -> Option<Expr> {
         };
         Some(values.len())
     }
+    /// The element count of a list computed from bound packs: a reversal
+    /// keeps its operand's, a concatenation sums its operands'.
+    fn list_length(object: &Expr, subs: Subs) -> Option<usize> {
+        if let Some(length) = pack_length(object, subs) {
+            return Some(length);
+        }
+        match &object.kind {
+            ExprKind::TupleLit(elements) => Some(elements.len()),
+            ExprKind::Member { object, field } if field == "values" => list_length(object, subs),
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "reverse" && args.is_empty() && kwargs.is_empty() => {
+                list_length(object, subs)
+            }
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if args.is_empty()
+                && kwargs.is_empty()
+                && matches!(&callee.kind, ExprKind::Member { object, field }
+                    if field == "_concat"
+                        && matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")) =>
+            {
+                param_args
+                    .iter()
+                    .map(|argument| match argument {
+                        mojito_ast::ast::ParamArg::Value(values) => list_length(values, subs),
+                        _ => None,
+                    })
+                    .sum()
+            }
+            _ => None,
+        }
+    }
     if let Some(construction) = pack_element_construction(e, subs) {
         return Some(construction);
     }
     match &e.kind {
         ExprKind::Member { object, field } if field == "length" => {
-            let length = pack_length(object, subs)?;
+            let length = list_length(object, subs)?;
             CtValue::Int(length as i64).materialize(e.span)
         }
         ExprKind::Call {
@@ -742,7 +797,15 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
                 *ty = source;
             }
         }
-        Type::Named(_, arguments) => rewrite_param_args(arguments, subs),
+        Type::Named(name, arguments) => {
+            rewrite_param_args(arguments, subs);
+            // `Ts[k]` of a bound pack at a folded index spells the element.
+            if let [ParamArg::Value(index)] = arguments.as_slice()
+                && let Some(element) = bound_pack_element(name, index, subs)
+            {
+                *ty = element;
+            }
+        }
         // `Self.T` of a baked type binder spells the bound type.
         Type::SelfParam(name) => {
             if let Some(CtValue::Type(bound)) = subs(name)
@@ -756,8 +819,16 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             rewrite_param_args(args, subs);
         }
         Type::IndexedProjection { base, index } => {
-            rewrite_type(base, subs);
             rewrite_expr(index, subs);
+            // `Self.Ts[k]` of a bound pack at a folded index spells the
+            // element.
+            if let Type::SelfParam(pack) | Type::Named(pack, _) = &**base
+                && let Some(element) = bound_pack_element(pack, index, subs)
+            {
+                *ty = element;
+                return;
+            }
+            rewrite_type(base, subs);
         }
         Type::Func {
             type_params,
@@ -1047,6 +1118,17 @@ impl PackRewriter {
                 ParamArg::Named { value, .. } => {
                     self.expand_type_pack_argument(value);
                     expanded.push(argument);
+                }
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Spread(operand),
+                    span,
+                    ..
+                }) => {
+                    let operand =
+                        std::mem::replace(&mut **operand, Expr::new(ExprKind::None, *span));
+                    expanded.extend(expand_spread_argument(operand, *span, &|name| {
+                        self.type_pack_expansion(name)
+                    }));
                 }
                 ParamArg::Value(value) => {
                     self.expand_expression(value);

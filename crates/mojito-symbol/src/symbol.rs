@@ -2097,6 +2097,15 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
 
+/// The name the public `Tuple`'s declaration stands under in an elaborated
+/// program.
+///
+/// It names the shell of `std/builtin/tuple.mojo`'s template, against which
+/// the checker types a declared member of a `Tuple` no specialization serves
+/// yet. `$` keeps the name out of source, and it is neither the public name
+/// nor a specialization symbol.
+pub const TUPLE_DECLARATION_SHELL: &str = "$Tuple.declaration";
+
 /// Whether `name` is a minted `Tuple`/`TString` specialization symbol
 /// (`Tuple$t2[y3:Inty4:Bool]`): its element types are baked into the name.
 ///

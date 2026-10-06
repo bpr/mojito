@@ -126,9 +126,7 @@ impl Checker {
         }
         if let Ty::Tuple(elements) = obj_ty {
             reject_kwargs(kwargs)?;
-            return self
-                .infer_tuple_method(span, object, method, elements, call)
-                .map(Some);
+            return self.infer_tuple_member(site, elements).map(Some);
         }
         // A value pack that is still a parameter answers its length as the
         // parameter constant the elaborator folds.
@@ -212,9 +210,7 @@ impl Checker {
         if let Some(elements) = tuple_elements(obj_ty) {
             reject_kwargs(kwargs)?;
             let elements = elements.into_iter().cloned().collect::<Vec<_>>();
-            return self
-                .infer_tuple_method(span, object, method, &elements, call)
-                .map(Some);
+            return self.infer_tuple_member(site, &elements).map(Some);
         }
         Ok(None)
     }

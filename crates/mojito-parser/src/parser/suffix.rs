@@ -310,6 +310,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     start,
                 ))
             }
+            // A spread of a type list (`Tuple[*Ts.reverse()]`) is a
+            // compile-time argument list; no runtime subscript spreads.
+            Ok([mojito_ast::ast::ParamArg::Value(spread)])
+                if matches!(spread.kind, ExprKind::Spread(_))
+                    && matches!(object.kind, ExprKind::Identifier(_)) =>
+            {
+                Ok(self.node(
+                    ExprKind::TypeApply {
+                        name: call_name(object)?,
+                        args: vec![mojito_ast::ast::ParamArg::Value(spread)],
+                    },
+                    start,
+                ))
+            }
             Ok([mojito_ast::ast::ParamArg::Value(index)]) => Ok(self.node(
                 ExprKind::Index {
                     object: Box::new(object),

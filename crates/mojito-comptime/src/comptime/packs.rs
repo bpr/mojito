@@ -306,67 +306,122 @@ pub(super) fn unwrap_runtime_pack_arguments(arguments: Vec<Expr>) -> Vec<Expr> {
 /// storage. Tuple transforms are synthesized only after the element pack is
 /// concrete, so this ordinary index expression reaches checking/MIR with a
 /// statically known index and element type.
-pub(super) fn tuple_storage_element(owner: &str, index: usize, transfer: bool, span: Span) -> Expr {
-    let owner = Expr::new(ExprKind::Identifier(owner.to_string()), span);
-    let storage = Expr::new(
-        ExprKind::Member {
-            object: Box::new(owner),
-            field: "storage".to_string(),
-        },
-        span,
-    );
-    let element = Expr::new(
-        ExprKind::Index {
-            object: Box::new(storage),
-            index: Box::new(Expr::new(ExprKind::Int((index as i64).into()), span)),
-        },
-        span,
-    );
-    if transfer {
-        Expr::new(ExprKind::Transfer(Box::new(element)), span)
-    } else {
-        element
+/// The element types a type-list expression denotes.
+///
+/// The expression is a spread's operand (`Ts.reverse()`,
+/// `TypeList._concat[A.values, B.values]()`), and `pack` gives the elements
+/// of every pack it names. `None` while a pack is unbound or the expression
+/// is no type list.
+pub(super) fn type_list_source_types(
+    operand: &Expr,
+    pack: &dyn Fn(&str) -> Option<Vec<Type>>,
+) -> Option<Vec<Type>> {
+    if let Some(name) = pack_name(operand) {
+        return pack(name);
+    }
+    let operands = |arguments: &[ParamArg]| {
+        arguments
+            .iter()
+            .map(|argument| match argument {
+                ParamArg::Value(values) => type_list_source_types(values, pack),
+                ParamArg::Type(_) | ParamArg::Named { .. } => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    };
+    match &operand.kind {
+        ExprKind::TupleLit(elements) => elements
+            .iter()
+            .map(|element| match &element.kind {
+                ExprKind::TypeValue(ty) => Some(ty.clone()),
+                _ => None,
+            })
+            .collect(),
+        ExprKind::Member { object, field } if field == "values" => {
+            type_list_source_types(object, pack)
+        }
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } if method == "reverse" && args.is_empty() && kwargs.is_empty() => {
+            type_list_source_types(object, pack).map(|types| types.into_iter().rev().collect())
+        }
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } if args.is_empty()
+            && kwargs.is_empty()
+            && matches!(&callee.kind, ExprKind::Member { object, field }
+                if field == "_concat"
+                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")) =>
+        {
+            operands(param_args).map(|lists| lists.into_iter().flatten().collect())
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "TypeList" && args.is_empty() && kwargs.is_empty() => {
+            operands(param_args).map(|lists| lists.into_iter().flatten().collect())
+        }
+        _ => None,
     }
 }
 
-/// Build an ordinary concrete Tuple transform. Keeping these as normal source
-/// AST methods means the checker, HIR, MIR, and VM use their existing method and
-/// constructor paths; Tuple does not acquire an execution-only VM intrinsic.
-pub(super) fn tuple_transform_method(
-    name: &str,
-    self_convention: Option<ArgConvention>,
-    params: Vec<FnParam>,
-    target: String,
-    args: Vec<Expr>,
-    span: Span,
-) -> mojito_ast::ast::Method {
-    let result = Expr::new(
-        ExprKind::Call {
-            name: target.clone(),
-            param_args: Vec::new(),
-            args,
-            kwargs: Vec::new(),
-        },
-        span,
-    );
-    mojito_ast::ast::Method {
-        name: name.to_string(),
-        type_params: Vec::new(),
-        has_self: true,
-        self_convention,
-        self_origin: None,
-        decorators: Vec::new(),
-        params,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        raises_type: None,
-        ret: Some(Type::Named(target, Vec::new())),
-        where_clauses: Vec::new(),
-        self_ty: None,
-        body: vec![mk(StmtKind::Return(Some(result)), span)],
-        provenance: mojito_ast::ast::MethodProvenance::Source,
+/// Write the element types of each pack `pack` binds into a type-list
+/// expression, in the pack's place.
+///
+/// This is the list a specialization leaves open over another pack
+/// (`TypeList._concat[Self.Ts.values, OtherTs.values]()` in a struct clone).
+pub(super) fn bind_type_list_packs(operand: &mut Expr, pack: &dyn Fn(&str) -> Option<Vec<Type>>) {
+    if let Some(types) = pack_name(operand).and_then(pack) {
+        let span = operand.span;
+        operand.kind = ExprKind::TupleLit(
+            types
+                .into_iter()
+                .map(|ty| Expr::new(ExprKind::TypeValue(ty), span))
+                .collect(),
+        );
+        return;
     }
+    let arguments = |arguments: &mut [ParamArg]| {
+        for argument in arguments {
+            if let ParamArg::Value(values) = argument {
+                bind_type_list_packs(values, pack);
+            }
+        }
+    };
+    match &mut operand.kind {
+        ExprKind::Member { object, .. } | ExprKind::MethodCall { object, .. } => {
+            bind_type_list_packs(object, pack);
+        }
+        ExprKind::Invoke { param_args, .. } | ExprKind::Call { param_args, .. } => {
+            arguments(param_args);
+        }
+        _ => {}
+    }
+}
+
+/// A spread type argument expanded over the packs `pack` binds: its element
+/// types when every pack in it is bound, and otherwise the spread with the
+/// bound packs written out.
+pub(super) fn expand_spread_argument(
+    mut operand: Expr,
+    span: Span,
+    pack: &dyn Fn(&str) -> Option<Vec<Type>>,
+) -> Vec<ParamArg> {
+    if let Some(types) = type_list_source_types(&operand, pack) {
+        return types.into_iter().map(ParamArg::Type).collect();
+    }
+    bind_type_list_packs(&mut operand, pack);
+    vec![ParamArg::Value(Expr::new(
+        ExprKind::Spread(Box::new(operand)),
+        span,
+    ))]
 }
 
 /// The concrete default construction a bound pack element's `Ts[i]()`

@@ -64,18 +64,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 pub struct TupleSpecializationRequest {
     elements: Vec<Ty>,
     bare_call: Option<SourceSpan>,
-    transform: Option<TupleTransformRequest>,
-}
-
-/// One value-producing Tuple method selected during checked discovery.
-///
-/// These requests are receiver-specific: emitting every transform whose result
-/// type happens to exist would manufacture reciprocal declaration dependencies
-/// (for example `[Int, String].reverse()` and the uncalled reverse direction).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TupleTransformRequest {
-    Reverse,
-    Concat(Vec<Ty>),
+    reversed: bool,
 }
 
 impl TupleSpecializationRequest {
@@ -84,7 +73,7 @@ impl TupleSpecializationRequest {
         Self {
             elements,
             bare_call: None,
-            transform: None,
+            reversed: false,
         }
     }
 
@@ -93,15 +82,18 @@ impl TupleSpecializationRequest {
         Self {
             elements,
             bare_call: Some(occurrence),
-            transform: None,
+            reversed: false,
         }
     }
 
-    pub const fn transform(elements: Vec<Ty>, transform: TupleTransformRequest) -> Self {
+    /// A checked call of the declared `reverse` on a `Tuple` of `elements`:
+    /// the specialization keeps that member, which every other
+    /// specialization drops.
+    pub const fn reversed(elements: Vec<Ty>) -> Self {
         Self {
             elements,
             bare_call: None,
-            transform: Some(transform),
+            reversed: true,
         }
     }
 
@@ -113,8 +105,8 @@ impl TupleSpecializationRequest {
         self.bare_call.as_ref()
     }
 
-    pub const fn requested_transform(&self) -> Option<&TupleTransformRequest> {
-        self.transform.as_ref()
+    pub const fn keeps_reverse(&self) -> bool {
+        self.reversed
     }
 }
 
@@ -293,7 +285,10 @@ impl MethodSpecializationRequest {
         let regular: Vec<&str> = method
             .params
             .iter()
-            .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
+            .filter(|parameter| {
+                parameter.kind == mojito_ast::ast::ParamKind::Regular
+                    && !parameter.is_named_result()
+            })
             .map(|parameter| parameter.name.as_str())
             .collect();
         let same_overload = self
@@ -1092,26 +1087,14 @@ pub fn elaborate_prepared(
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let mut tuple_universe = Vec::new();
-    let mut tuple_transforms = Vec::<(Vec<Ty>, Vec<TupleTransformRequest>)>::new();
+    let mut reversed_tuples = Vec::<Vec<Ty>>::new();
     for request in tuple_requests {
-        if !tuple_universe
-            .iter()
-            .any(|elements| elements == request.elements())
+        if request.keeps_reverse()
+            && !reversed_tuples
+                .iter()
+                .any(|elements| elements == request.elements())
         {
-            tuple_universe.push(request.elements().to_vec());
-        }
-        if let Some(transform) = request.requested_transform() {
-            if let Some((_, transforms)) = tuple_transforms
-                .iter_mut()
-                .find(|(elements, _)| elements == request.elements())
-            {
-                if !transforms.contains(transform) {
-                    transforms.push(transform.clone());
-                }
-            } else {
-                tuple_transforms.push((request.elements().to_vec(), vec![transform.clone()]));
-            }
+            reversed_tuples.push(request.elements().to_vec());
         }
     }
     let materialized_callables = tuple_materialized_callables(tuple_requests)
@@ -1165,8 +1148,7 @@ pub fn elaborate_prepared(
         per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
-        tuple_universe,
-        tuple_transforms,
+        reversed_tuples,
         materialized_callables,
         fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
@@ -2783,14 +2765,10 @@ struct Elab<'a> {
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
-    /// Closed-world public Tuple element sets discovered by the first checker
-    /// pass. Concrete Tuple specializations use this universe to emit ordinary
-    /// reverse/concat overloads whose result implementation also exists.
-    tuple_universe: Vec<Vec<Ty>>,
-    /// Receiver element sets paired with exactly the Tuple transforms observed
-    /// by checked discovery. This is deliberately separate from the universe:
-    /// mere materialization of a result type must not create an uncalled method.
-    tuple_transforms: Vec<(Vec<Ty>, Vec<TupleTransformRequest>)>,
+    /// The element sets whose `Tuple` a checked call reverses: the
+    /// specializations that keep the declared `reverse`. Keeping it on every
+    /// specialization would close the set of tuple types under reversal.
+    reversed_tuples: Vec<Vec<Ty>>,
     /// Reverse lookup for the opaque callable ids emitted into generated Tuple
     /// annotations. The compiler independently passes the forward map to the
     /// second checker pass.

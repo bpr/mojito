@@ -1243,6 +1243,9 @@ impl Checker {
                     TypeListReceiver::Concrete(types) => GenericConstraint::Bool(
                         types.iter().all(|ty| self.conforms_to(ty, trait_name)),
                     ),
+                    TypeListReceiver::Derived(list) => {
+                        return Err(derived_list_query(&list, field));
+                    }
                 }
             }
             member @ ("any" | "all") => {
@@ -1285,6 +1288,9 @@ impl Checker {
                             types.iter().any(holds)
                         })
                     }
+                    TypeListReceiver::Derived(list) => {
+                        return Err(derived_list_query(&list, field));
+                    }
                 }
             }
             "contains" => {
@@ -1304,10 +1310,46 @@ impl Checker {
                             ));
                         }
                     },
+                    TypeListReceiver::Derived(list) => {
+                        return Err(derived_list_query(&list, field));
+                    }
                 }
             }
             _ => return Ok(None),
         }))
+    }
+
+    /// The parameter list a `TypeList` receiver denotes.
+    pub(super) fn receiver_list(&self, receiver: TypeListReceiver) -> Result<ParamExpr, TypeError> {
+        match receiver {
+            TypeListReceiver::Pack(pack) => self.pack_reference(&pack.name).ok_or_else(|| {
+                TypeError::SymbolicBoundary(format!("pack '{}' is not in scope", pack.name))
+            }),
+            TypeListReceiver::Concrete(types) => {
+                self.param_context.type_list(types).map_err(param_error)
+            }
+            TypeListReceiver::Derived(list) => Ok(list),
+        }
+    }
+
+    /// The list a spread's operand denotes (`Ts.reverse()` in
+    /// `Tuple[*Ts.reverse()]`), or `None` when it is no type list.
+    pub(super) fn type_list_operand(&self, operand: &Expr) -> Result<Option<ParamExpr>, TypeError> {
+        self.typelist_receiver(operand)?
+            .map(|receiver| self.receiver_list(receiver))
+            .transpose()
+    }
+
+    /// The list a `_concat` operand denotes: the `.values` of a type list,
+    /// or the element types a specialization wrote in a bound pack's place.
+    fn type_list_values(&self, values: &Expr) -> Result<ParamExpr, TypeError> {
+        let operand = match &values.kind {
+            ExprKind::Member { object, field } if field == "values" => object,
+            _ => values,
+        };
+        self.type_list_operand(operand)?.ok_or_else(|| {
+            TypeError::Unsupported("TypeList._concat takes the '.values' of type lists".to_string())
+        })
     }
 
     /// A `TypeList` receiver in a constraint position: an enclosing pack
@@ -1325,10 +1367,58 @@ impl Checker {
                 .iter()
                 .any(|parameter| parameter.name.strip_prefix('*') == Some(name))
         };
+        let derived = |list: Result<ParamExpr, mojito_types::param_expr::ParamError>| {
+            list.map(|list| Some(type_list_receiver(list)))
+                .map_err(param_error)
+        };
         match &expr.kind {
-            ExprKind::Identifier(name) => Ok(
-                is_enclosing_pack(name).then(|| TypeListReceiver::Pack(ParamRef::unbound(name)))
-            ),
+            ExprKind::Identifier(name) if !is_enclosing_pack(name) => {
+                match self.local_comptime_value(name) {
+                    Some(bound) => self.typelist_receiver(bound),
+                    None => Ok(None),
+                }
+            }
+            ExprKind::Identifier(name) => Ok(Some(TypeListReceiver::Pack(ParamRef::unbound(name)))),
+            // The element types a specialization wrote in a bound pack's
+            // place.
+            ExprKind::TupleLit(elements) => Ok(elements
+                .iter()
+                .map(|element| self.comptime_type_operand(element).ok().flatten())
+                .collect::<Option<Vec<_>>>()
+                .map(TypeListReceiver::Concrete)),
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "reverse" && args.is_empty() && kwargs.is_empty() => {
+                match self.type_list_operand(object)? {
+                    Some(list) => derived(self.param_context.list_reverse(&list)),
+                    None => Ok(None),
+                }
+            }
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if args.is_empty()
+                && kwargs.is_empty()
+                && matches!(&callee.kind, ExprKind::Member { object, field }
+                    if field == "_concat"
+                        && matches!(&object.kind, ExprKind::Identifier(name) if name == "TypeList")) =>
+            {
+                let lists = param_args
+                    .iter()
+                    .map(|argument| match argument {
+                        mojito_ast::ast::ParamArg::Value(values) => self.type_list_values(values),
+                        _ => Err(TypeError::Unsupported(
+                            "TypeList._concat takes the '.values' of type lists".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                derived(self.param_context.list_concat(&lists))
+            }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 Ok(is_enclosing_pack(field)
                     .then(|| TypeListReceiver::Pack(self.self_binder(field))))
@@ -1665,6 +1755,9 @@ impl Checker {
                 TypeListReceiver::Concrete(types) => {
                     ConstraintOperand::Value(CtValue::Int(types.len() as i64))
                 }
+                TypeListReceiver::Derived(list) => ConstraintOperand::Expr(
+                    self.param_context.list_length(&list).map_err(param_error)?,
+                ),
             });
         }
         // `args.__len__()` of a collector spreading a pack that is still a
@@ -2302,6 +2395,8 @@ pub(super) enum TypeListReceiver {
     Pack(ParamRef),
     /// The concrete constructor `TypeList.of[...]()`, with resolved elements.
     Concrete(Vec<Ty>),
+    /// A list computed from packs still open: a reversal or a concatenation.
+    Derived(ParamExpr),
 }
 
 /// The type a parameterized associated type's body denotes. The body parses as
@@ -2377,6 +2472,36 @@ pub(super) fn assoc_param_kind(param: &mojito_ast::ast::TypeParam) -> AssocParam
     } else {
         AssocParamKind::Type
     }
+}
+
+/// The receiver a parameter list is: its closed elements, the pack it
+/// names, or the computed list itself.
+fn type_list_receiver(list: ParamExpr) -> TypeListReceiver {
+    let closed = match list.as_constant() {
+        Some(CtValue::Tuple(values)) => values
+            .iter()
+            .map(|value| match value {
+                CtValue::Type(ty) => Some((**ty).clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    match (closed, list.kind()) {
+        (Some(types), _) => TypeListReceiver::Concrete(types),
+        (None, mojito_types::param_expr::ParamKind::DeclRef(pack)) => {
+            TypeListReceiver::Pack(pack.clone())
+        }
+        (None, _) => TypeListReceiver::Derived(list),
+    }
+}
+
+/// The rejection of a per-element query over a list computed from packs
+/// still open.
+fn derived_list_query(list: &ParamExpr, query: &str) -> TypeError {
+    TypeError::Unsupported(format!(
+        "TypeList.{query} over the computed list '{list}' whose packs are still parameters"
+    ))
 }
 
 fn unsupported_assoc_body() -> TypeError {

@@ -2058,6 +2058,17 @@ fn param_expr(value: &ParamExpr) -> String {
             "param_field",
             &[("base", param_expr(base)), ("name", symbol(name)), meta],
         ),
+        ParamKind::ListTabulate { count, element } => record(
+            "param_list_tabulate",
+            &[
+                ("count", param_expr(count)),
+                ("element", param_expr(element)),
+            ],
+        ),
+        ParamKind::ListConcat { lists } => record(
+            "param_list_concat",
+            &[("lists", list(lists.iter().map(param_expr)))],
+        ),
         ParamKind::Reflect { subject, query } => record(
             "param_reflect",
             &[

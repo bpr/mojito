@@ -90,6 +90,13 @@ pub(super) fn lower_fn_nested(
             .expect("value parameter was seeded into the function CFG");
         cfg.var_types.insert(slot as VarId, ty.clone());
     }
+    // A named result's slot holds the declared result type, whether or not
+    // the body assigns it whole.
+    if let Some(slot) =
+        named_result.and_then(|result| cfg.vars.iter().position(|candidate| candidate == result))
+    {
+        cfg.var_types.insert(slot as VarId, ret_ty.clone());
+    }
     let mut thunks = ComptimeThunks::for_owner(name);
     let mut f = lower_cfg_nested(
         &cfg,

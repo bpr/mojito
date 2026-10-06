@@ -545,6 +545,16 @@ impl Checker {
         if self.eval_ct(&value).is_ok() {
             return Ok(false);
         }
+        // A value over the body's binders (`comptime n = Self.Ts.length`)
+        // names its parameter expression in a compile-time position, as it
+        // does in the executable check ([`Self::bind_template_comptime`]).
+        if let Some(level) = self.tparams.len().checked_sub(1)
+            && let Ok(expression) = self.compile_dependent_ct_expr(&value)
+            && expression.as_constant().is_none()
+            && let Some(scope) = self.local_comptime_parameters.last_mut()
+        {
+            scope.insert(name.to_string(), (level, expression));
+        }
         if self.infer(&value).is_ok() {
             return Ok(false);
         }
@@ -625,9 +635,37 @@ impl Checker {
                     index: index.clone(),
                 })?)
             }
-            // `types[i]`, `r.field_at[i].T`: a reflected field type.
-            _ => self.reflected_type_operand(expr)?,
+            // `tl[i]` over a closed or computed list, then `types[i]`,
+            // `r.field_at[i].T`: a reflected field type.
+            _ => match self.type_list_element(expr)? {
+                Some(element) => Some(element),
+                None => self.reflected_type_operand(expr)?,
+            },
         })
+    }
+
+    /// The type `list[index]` denotes over a `TypeList` value or a list
+    /// computed from packs; a pack itself is [`Self::pack_element_type`]'s.
+    fn type_list_element(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        let ExprKind::Index { object, index } = &expr.kind else {
+            return Ok(None);
+        };
+        let list = match self.typelist_receiver(object)? {
+            None | Some(super::constraints::TypeListReceiver::Pack(_)) => return Ok(None),
+            Some(receiver) => self.receiver_list(receiver)?,
+        };
+        let index = self
+            .compile_dependent_ct_expr(index)
+            .map_err(|_| TypeError::TypeMismatch {
+                expected: "a compile-time Int index".to_string(),
+                found: "a runtime value".to_string(),
+                context: "TypeList index".to_string(),
+            })?;
+        self.param_context
+            .list_get(&list, &index)
+            .map(mojito_types::types::DependentType::resolve)
+            .map(Some)
+            .map_err(param_error)
     }
 
     /// Type a pack element's default construction while the pack is still a
@@ -1198,8 +1236,10 @@ impl Checker {
     /// shadows an earlier one's of the same spelling, the key the dependent
     /// type's value environment reads.
     pub(super) fn close_pack_elements(&self, ty: Ty, scopes: &[(&[ParamDecl], &[TyArg])]) -> Ty {
-        let names_element =
-            |ty: &Ty| matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some());
+        let names_element = |ty: &Ty| {
+            matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some())
+                || mojito_types::types::list_spread(ty).is_some()
+        };
         if !mojito_types::types::mentions(&ty, &names_element) {
             return ty;
         }
@@ -1213,6 +1253,10 @@ impl Checker {
                     TyArg::Ty(Ty::Param { binder, .. }) if binder.name.starts_with('*') => self
                         .pack_reference(&binder.name)
                         .map(|reference| (name, CtValue::Expr(reference))),
+                    // A pack bound to a list computed from other packs.
+                    TyArg::Ty(ty) if let Some(list) = mojito_types::types::list_spread(ty) => {
+                        Some((name, CtValue::Expr(list.clone())))
+                    }
                     TyArg::Ty(_) | TyArg::Origin(_) => None,
                 }
             })
@@ -1626,7 +1670,9 @@ pub(super) fn positional_pack_binding(
     else {
         return None;
     };
-    if mojito_types::types::pack_spread_argument(arguments).is_some() {
+    if mojito_types::types::pack_spread_argument(arguments).is_some()
+        || mojito_types::types::list_spread_argument(arguments).is_some()
+    {
         return None;
     }
     arguments

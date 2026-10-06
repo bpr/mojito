@@ -805,10 +805,49 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 }
                 return Ok(Ty::Struct(name.clone(), Vec::new().into()));
             }
-            let args = original
-                .iter()
-                .map(|arg| substitute_arg(arg, bindings))
-                .collect::<Result<Vec<_>, _>>()?;
+            // A spread of a bound pack is a whole argument list: element by
+            // element for `Tuple` and `TString`, one bound list for any other
+            // struct, as `expand_pack_spread` spells it.
+            let spread = match mojito_types::types::pack_spread_argument(original) {
+                Some(Ty::Param { binder, .. }) => match bindings.types.get(binder) {
+                    Some(Ty::RuntimePack(elements)) => Some(sub_types(elements, bindings)?),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let args = match spread {
+                Some(elements) if mojito_types::types::binds_pack_elementwise(name) => {
+                    elements.into_iter().map(TyArg::Ty).collect()
+                }
+                Some(elements) => vec![TyArg::Val(CtValue::Tuple(
+                    elements
+                        .into_iter()
+                        .map(Box::new)
+                        .map(CtValue::Type)
+                        .collect(),
+                ))],
+                // A spread of a list computed from packs is that list's
+                // elements under the instance's bindings.
+                None if let Some(list) = mojito_types::types::list_spread_argument(original) => {
+                    let closed = ParamContext::detached()
+                        .replace(list, &ct_bindings(bindings))
+                        .and_then(|list| mojito_types::types::spread_arguments(name, &list))
+                        .map_err(|error| unsupported(error.to_string()))?;
+                    if mojito_types::types::list_spread_argument(&closed).is_some() {
+                        return Err(unsupported(format!(
+                            "spread list `{list}` has no concrete elements"
+                        )));
+                    }
+                    closed
+                        .iter()
+                        .map(|arg| substitute_arg(arg, bindings))
+                        .collect::<Result<Vec<_>, _>>()?
+                }
+                None => original
+                    .iter()
+                    .map(|arg| substitute_arg(arg, bindings))
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
             // Every concrete application of a generic template takes its
             // instance symbol, so distinct instantiations get distinct output
             // declarations. Checker-specialized structs (empty `param_decls`)

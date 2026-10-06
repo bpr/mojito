@@ -388,6 +388,7 @@ impl Env {
             explicit_type,
             message,
             uninitialized: false,
+            by_parts: false,
             obligations: if live {
                 HashSet::from([Vec::new()])
             } else {
@@ -500,6 +501,9 @@ struct Var {
     /// Consumed on a path that may have raised into the enclosing `except`
     /// arm: every use there is a use of an uninitialized value, as upstream.
     uninitialized: bool,
+    /// A `deinit` parameter the callee tears down by parts
+    /// ([`transfers_indexed_storage`]), as it does a `deinit self` receiver.
+    by_parts: bool,
     /// Minimal linear subobjects that still require explicit destruction. The
     /// empty path denotes the intact whole value. Once a field is moved, that
     /// whole obligation is decomposed into its linear child fields.
@@ -812,13 +816,22 @@ fn check_function<'a>(
             source_explicit_name(ty, types)
                 .or_else(|| linear.then(|| LINEAR_TYPE_PARAMETER.to_string()))
         };
+        // A `deinit` parameter whose storage the body transfers out by
+        // index is torn down by parts, as a `deinit self` receiver is, so it
+        // owes no whole-value destruction.
+        let by_parts =
+            convention == Some(ArgConvention::Deinit) && transfers_indexed_storage(body, name);
         let live = explicit.is_some()
+            && !by_parts
             && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
         let message = explicit
             .as_ref()
             .and_then(|name| types.get(name))
             .map(|info| info.message.clone());
         env.declare(name, explicit, message, live);
+        if let Some(parameter) = env.vars.last_mut() {
+            parameter.by_parts = by_parts;
+        }
     }
     let normal = check_block(
         body,
@@ -833,6 +846,33 @@ fn check_function<'a>(
         env.check_ids(0..env.vars.len())?;
     }
     Ok(())
+}
+
+/// Whether `body` transfers an indexed element out of the binding `name`
+/// (`other.storage[i]^`): the teardown by parts the bundled private-storage
+/// structs spell.
+fn transfers_indexed_storage(body: &[Stmt], name: &str) -> bool {
+    struct Finder<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            let ExprKind::Transfer(source) = &expr.kind else {
+                return;
+            };
+            let mut root = &**source;
+            while let ExprKind::Member { object, .. } | ExprKind::Index { object, .. } = &root.kind
+            {
+                root = object;
+            }
+            self.found |= contains_index(source)
+                && matches!(&root.kind, ExprKind::Identifier(root) if root == self.name);
+        }
+    }
+    let mut finder = Finder { name, found: false };
+    mojito_ast::visit::walk_block(&mut finder, body);
+    finder.found
 }
 
 fn root_id(expr: &Expr, env: &Env) -> Option<usize> {
@@ -1362,6 +1402,11 @@ fn move_root(
         && let Some(id) = root_id(expr, env)
         && env.vars[id].explicit_type.is_some()
     {
+        // An indexed transfer out of a `deinit` parameter's storage is its
+        // teardown by parts.
+        if env.vars[id].by_parts {
+            return Ok(());
+        }
         return explicit_error(
             &env.vars[id],
             "uses a dynamic indexed projection that cannot form a stable residual field obligation",

@@ -147,7 +147,23 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
             StmtKind::Assign { name: target, .. } if target == name => {
                 initialized = true;
             }
+            // `__mlir_op.`lit.ownership.mark_initialized`(
+            // __get_mvalue_as_litref(result))`: the result is defined from
+            // here, its storage written through pointers.
+            StmtKind::Expr(expr)
+                if marked_place(expr).is_some_and(
+                    |place| matches!(&place.kind, ExprKind::Identifier(marked) if marked == name),
+                ) =>
+            {
+                initialized = true;
+            }
             StmtKind::Return(Some(_)) | StmtKind::Raise(_) => return true,
+            // The runtime trap of an unspecialized template's stub never
+            // completes, so it produces no result to initialize.
+            StmtKind::Expr(Expr {
+                kind: ExprKind::Call { name, .. },
+                ..
+            }) if name == "_mojito_abort" => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
                 initialized |= definitely_initializes_named_result(body, name);
@@ -233,9 +249,9 @@ fn ranks_beside_clone(sig: &MethodSig, clone_matched: bool) -> bool {
     !clone_matched || sig.per_call_constructor || decls_are_concrete(&sig.decls)
 }
 
-/// Whether `expr` is the `__mlir_op` statement `lit.ownership.mark_initialized`
-/// over `__get_mvalue_as_litref(self.<field>)` or over `self` whole.
-fn marks_initialized(expr: &Expr, field: &str) -> bool {
+/// The place the `__mlir_op` statement `lit.ownership.mark_initialized` marks
+/// (`__get_mvalue_as_litref(place)`), when `expr` is that statement.
+fn marked_place(expr: &Expr) -> Option<&Expr> {
     let ExprKind::MethodCall {
         object,
         method,
@@ -243,29 +259,36 @@ fn marks_initialized(expr: &Expr, field: &str) -> bool {
         kwargs,
     } = &expr.kind
     else {
-        return false;
+        return None;
     };
     if !matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op")
         || method != "lit.ownership.mark_initialized"
         || !kwargs.is_empty()
     {
-        return false;
+        return None;
     }
-    let [
-        Expr {
-            kind: ExprKind::Call { name, args, .. },
-            ..
+    match args.as_slice() {
+        [
+            Expr {
+                kind: ExprKind::Call { name, args, .. },
+                ..
+            },
+        ] if name == "__get_mvalue_as_litref" => match args.as_slice() {
+            [place] => Some(place),
+            _ => None,
         },
-    ] = args.as_slice()
-    else {
-        return false;
-    };
+        _ => None,
+    }
+}
+
+/// Whether `expr` marks `self.<field>`, or `self` whole, initialized.
+fn marks_initialized(expr: &Expr, field: &str) -> bool {
     let is_self = |expr: &Expr| matches!(&expr.kind, ExprKind::Identifier(name) if name == "self");
-    name == "__get_mvalue_as_litref"
-        && matches!(args.as_slice(), [place]
-            if is_self(place)
-                || matches!(&place.kind, ExprKind::Member { object, field: marked }
-                    if marked == field && is_self(object)))
+    marked_place(expr).is_some_and(|place| {
+        is_self(place)
+            || matches!(&place.kind, ExprKind::Member { object, field: marked }
+                if marked == field && is_self(object))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -435,11 +458,12 @@ impl Checker {
             .params
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.kind == mojito_ast::ast::ParamKind::Regular)
+            .filter(|(_, p)| p.kind == mojito_ast::ast::ParamKind::Regular && !p.is_named_result())
             .collect();
         let keyword_only =
             effective_keyword_only_index(&method.params, method.keyword_only, variadic_idx);
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
+        let named_result = mojito_ast::ast::named_result(&method.params);
         Ok(MethodSig {
             availability: method
                 .where_clauses
@@ -478,7 +502,10 @@ impl Checker {
                     self.resolve_generated_return_annotation(ret)?
                 }
                 Some(ret) => self.resolve_return_annotation(ret)?,
-                None => Ty::None,
+                None => match named_result {
+                    Some(result) => self.ty_from_anno(&result.ty)?,
+                    None => Ty::None,
+                },
             },
             ret_mlir_index: super::type_resolution::spells_mlir_index(method.ret.as_ref()),
             raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
@@ -1275,18 +1302,34 @@ impl Checker {
                 "'out self' receiver outside a lifecycle initializer".to_string(),
             ));
         }
+        let named_result = mojito_ast::ast::named_result(&m.params);
+        if m.params.iter().filter(|p| p.is_named_result()).count() > 1 {
+            return Err(TypeError::Unsupported(
+                "multiple named 'out' results".to_string(),
+            ));
+        }
+        if named_result.is_some() && m.ret.is_some() {
+            return Err(TypeError::Unsupported(
+                "a function cannot declare both a named result and '->' return type".to_string(),
+            ));
+        }
         let ret_ty = match &m.ret {
             Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
             // `$`-mangled generated methods rebind already-checked
             // annotations with origins legitimately erased.
             Some(t) if m.name.contains('$') => self.resolve_generated_return_annotation(t)?,
             Some(t) => self.resolve_return_annotation(t)?,
-            None => Ty::None,
+            None => match named_result {
+                Some(result) => self.ty_from_anno(&result.ty)?,
+                None => Ty::None,
+            },
         };
         let regular: Vec<&FnParam> = m
             .params
             .iter()
-            .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
+            .filter(|param| {
+                param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
+            })
             .collect();
         let ref_return = match &m.ret {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
@@ -1459,6 +1502,7 @@ impl Checker {
                 &p.name,
                 pty.clone(),
                 p.kind == mojito_ast::ast::ParamKind::KwVariadic
+                    || p.is_named_result()
                     || ref_parameter_is_writable(p, &reference_type_params),
             )?;
             self.record_owned_pack(p);
@@ -1498,7 +1542,9 @@ impl Checker {
         let owners: Vec<_> = m
             .params
             .iter()
-            .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
+            .filter(|param| {
+                param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
+            })
             .map(|param| {
                 self.lookup_owner(&param.name)
                     .expect("bound method parameter")
@@ -1526,7 +1572,9 @@ impl Checker {
             param_borrowed: m
                 .params
                 .iter()
-                .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
+                .filter(|param| {
+                    param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
+                })
                 .map(|param| {
                     matches!(
                         param.convention,
@@ -1573,6 +1621,8 @@ impl Checker {
         // top-level `def` body is. In particular, an explicit capture list on a
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
+        let named_result = mojito_ast::ast::named_result(&m.params);
+        self.named_result_context.push(named_result.is_some());
         // The struct this method belongs to identifies it as a checked
         // template or as a clone of one. A method checked outside a struct
         // declaration has no such identity and is simply inferred.
@@ -1582,6 +1632,7 @@ impl Checker {
             }
             None => self.check_block(&m.body, Some(ret_ty), false),
         };
+        self.named_result_context.pop();
         self.function_bases.pop();
         self.return_annotations.pop();
         self.return_ref_contracts.pop();
@@ -1612,7 +1663,11 @@ impl Checker {
         self.self_mutable = saved;
         self.self_initializing = saved_initializing;
         result?;
-        if *ret_ty != Ty::None && !definitely_returns(&m.body) {
+        let completes = match named_result {
+            Some(result) => definitely_initializes_named_result(&m.body, &result.name),
+            None => *ret_ty == Ty::None || definitely_returns(&m.body),
+        };
+        if !completes {
             return Err(TypeError::MissingReturn(m.name.clone()));
         }
         Ok(())
@@ -2901,6 +2956,26 @@ impl Checker {
         Ok(self.constructed_type(name, tyargs, &partitioned.tail, &origin_bindings))
     }
 
+    /// The values a spread of a type list binds a pack to: one type per
+    /// element once every length in the list is known, and the list itself,
+    /// as the one spread type, until then.
+    fn spread_pack_values(&self, operand: &Expr) -> Result<Vec<CtValue>, TypeError> {
+        let list = self.type_list_operand(operand)?.ok_or_else(|| {
+            TypeError::Unsupported("a spread type argument takes a pack or a type list".to_string())
+        })?;
+        mojito_types::types::spread_arguments(mojito_types::types::TUPLE_TYPE_NAME, &list)
+            .map_err(param_error)
+            .map(|arguments| {
+                arguments
+                    .into_iter()
+                    .filter_map(|argument| match argument {
+                        TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty))),
+                        TyArg::Val(_) | TyArg::Origin(_) => None,
+                    })
+                    .collect()
+            })
+    }
+
     /// Resolve a generic use site's parameters, returning a type-parameter
     /// substitution and the full argument list (types + values) for the struct's
     /// identity. When `param_args` is non-empty the parameters are supplied
@@ -3068,18 +3143,29 @@ impl Checker {
                         tyargs.push(argument);
                         continue;
                     }
-                    let values = arguments
-                        .into_iter()
-                        .map(|argument| self.resolve_param_arg(decl, argument))
-                        .map(|result| {
-                            result?.ct_value().ok_or_else(|| {
-                                TypeError::Unsupported(
-                                    "an origin argument cannot bind a type or value parameter"
-                                        .to_string(),
-                                )
-                            })
-                        })
-                        .collect::<Result<Vec<_>, TypeError>>()?;
+                    let mut values = Vec::with_capacity(arguments.len());
+                    for argument in arguments {
+                        // A spread of a computed list binds its elements,
+                        // or the list itself while a length in it is open.
+                        if let mojito_ast::ast::ParamArg::Value(Expr {
+                            kind: ExprKind::Spread(operand),
+                            ..
+                        }) = argument
+                        {
+                            values.extend(self.spread_pack_values(operand)?);
+                            continue;
+                        }
+                        values.push(
+                            self.resolve_param_arg(decl, argument)?
+                                .ct_value()
+                                .ok_or_else(|| {
+                                    TypeError::Unsupported(
+                                        "an origin argument cannot bind a type or value parameter"
+                                            .to_string(),
+                                    )
+                                })?,
+                        );
+                    }
                     // A spread of a pack that is still a parameter forwards
                     // that pack whole, as `Self`'s own argument spells it.
                     let spread: Vec<Ty> = values
@@ -3091,7 +3177,9 @@ impl Checker {
                         .collect();
                     Self::reject_mixed_spread(name, &spread)?;
                     if let [CtValue::Type(pack)] = values.as_slice()
-                        && mojito_types::types::pack_spread(std::slice::from_ref(&**pack)).is_some()
+                        && (mojito_types::types::pack_spread(std::slice::from_ref(&**pack))
+                            .is_some()
+                            || mojito_types::types::list_spread(pack).is_some())
                     {
                         tyargs.push(TyArg::Ty((**pack).clone()));
                         continue;

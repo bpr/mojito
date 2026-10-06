@@ -620,7 +620,9 @@ impl Checker {
         }
     }
 
-    /// Type the value-producing Tuple helpers in the current builtin surface.
+    /// Type the public Tuple's structural surface: the consuming teardowns
+    /// and the dunders a discovery round reaches before the specialization
+    /// whose declared methods answer them exists.
     pub(in crate::checker) fn infer_tuple_method(
         &self,
         span: &SourceSpan,
@@ -639,68 +641,6 @@ impl Checker {
             .iter()
             .all(|element| self.is_implicitly_copyable(element));
         match method {
-            "reverse" => {
-                if !param_args.is_empty() {
-                    return Err(TypeError::WrongTypeArgCount {
-                        name: "Tuple.reverse".to_string(),
-                        expected: 0,
-                        got: param_args.len(),
-                    });
-                }
-                self.builtin_args("reverse", 0, args)?;
-                if is_place_expr(object) && !receiver_implicitly_copyable {
-                    return Err(TypeError::NonCopyable {
-                        ty: nominal_tuple_type(elements.to_vec()).to_string(),
-                        context:
-                            "consuming receiver of method 'reverse' must be transferred with '^'"
-                                .to_string(),
-                    });
-                }
-                // The result names the materialized specialization when
-                // discovery has one, so an explicitly annotated binding and
-                // the subscript it feeds agree on the receiver declaration.
-                Ok(self.public_tuple_type(elements.iter().rev().cloned().collect()))
-            }
-            "concat" => {
-                if !param_args.is_empty() {
-                    return Err(TypeError::WrongTypeArgCount {
-                        name: "Tuple.concat".to_string(),
-                        expected: 0,
-                        got: param_args.len(),
-                    });
-                }
-                let tys = self.builtin_args("concat", 1, args)?;
-                let Some(other) = tuple_elements(&tys[0]) else {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a Tuple".to_string(),
-                        found: tys[0].to_string(),
-                        context: "argument to 'concat'".to_string(),
-                    });
-                };
-                if is_place_expr(object) && !receiver_implicitly_copyable {
-                    return Err(TypeError::NonCopyable {
-                        ty: nominal_tuple_type(elements.to_vec()).to_string(),
-                        context:
-                            "consuming receiver of method 'concat' must be transferred with '^'"
-                                .to_string(),
-                    });
-                }
-                if is_place_expr(&args[0])
-                    && !other
-                        .iter()
-                        .all(|element| self.is_implicitly_copyable(element))
-                {
-                    return Err(TypeError::NonCopyable {
-                        ty: tys[0].to_string(),
-                        context:
-                            "deinit argument 1 to method 'concat' must be transferred with '^'"
-                                .to_string(),
-                    });
-                }
-                let mut result = elements.to_vec();
-                result.extend(other.into_iter().cloned());
-                Ok(self.public_tuple_type(result))
-            }
             "consume_elements" | "deinit_with" => {
                 if !args.is_empty() {
                     return Err(TypeError::ArityMismatch {

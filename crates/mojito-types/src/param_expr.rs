@@ -380,6 +380,39 @@ impl ParamContext {
                 })
                 .and_then(|value| self.constant(value.clone()));
         }
+        match list.kind() {
+            ParamKind::ListTabulate { count, element } => {
+                if let (Some(position), Some(count)) = (
+                    index.as_constant().and_then(fold::integer_value),
+                    count.as_constant().and_then(fold::integer_value),
+                ) && (position.is_negative() || position >= count)
+                {
+                    return Err(ParamError::Arithmetic(format!(
+                        "parameter list index {position} is out of range for {count} element(s)"
+                    )));
+                }
+                return self.tabulate_element(element, &index);
+            }
+            // A constant index is an element of the list it falls in, while
+            // every list before it has a known length.
+            ParamKind::ListConcat { lists } => {
+                let constant =
+                    |expr: &ParamExpr| expr.as_constant().and_then(fold::integer_value)?.to_i64();
+                let mut offset = constant(&index);
+                for part in lists {
+                    let (Some(position), Some(length)) =
+                        (offset, constant(&self.list_length(part)?))
+                    else {
+                        break;
+                    };
+                    if position < length {
+                        return self.list_get(part, &self.constant(CtValue::Int(position))?);
+                    }
+                    offset = Some(position - length);
+                }
+            }
+            _ => {}
+        }
         let MetaTy::ParamList(element) = list.meta() else {
             return Err(ParamError::TypeMismatch {
                 operation: "parameter list element".to_string(),
@@ -403,6 +436,204 @@ impl ParamContext {
         }
         let meta = (**element).clone();
         Ok(self.make(meta, ParamKind::ListGet { list, index }))
+    }
+
+    /// The bound index of a [`ParamKind::ListTabulate`] element.
+    pub fn tabulate_index(&self) -> ParamExpr {
+        self.index_ref(0, 0, MetaTy::int())
+    }
+
+    /// `param_list.tabulate`: the list of `count` elements, element `i`
+    /// being `element` with [`Self::tabulate_index`] bound to `i`. A constant
+    /// count whose elements are all constants folds to the constant list.
+    pub fn list_tabulate(
+        &self,
+        count: &ParamExpr,
+        element: &ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        let count = self.intern(count);
+        if !count.meta().is_integer() {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter list tabulation".to_string(),
+                expected: "an Int element count".to_string(),
+                found: count.meta().to_string(),
+            });
+        }
+        let element = self.intern(element);
+        let list = self.make(
+            MetaTy::ParamList(Box::new(element.meta().clone())),
+            ParamKind::ListTabulate { count, element },
+        );
+        let constants = self.list_elements(&list)?.and_then(|elements| {
+            elements
+                .iter()
+                .map(|element| element.as_constant().cloned())
+                .collect::<Option<Vec<_>>>()
+        });
+        match constants {
+            Some(values) => self.constant(CtValue::Tuple(values)),
+            None => Ok(list),
+        }
+    }
+
+    /// `param_list.concat`: the elements of `lists` in order. Nested
+    /// concatenations flatten, empty constants drop, and adjacent constants
+    /// merge, so one list or none is that list or the empty constant.
+    pub fn list_concat(&self, lists: &[ParamExpr]) -> Result<ParamExpr, ParamError> {
+        let mut flat: Vec<ParamExpr> = Vec::new();
+        let mut pending = lists
+            .iter()
+            .rev()
+            .map(|list| self.intern(list))
+            .collect::<Vec<_>>();
+        while let Some(list) = pending.pop() {
+            match list.kind() {
+                ParamKind::ListConcat { lists } => pending.extend(lists.iter().rev().cloned()),
+                ParamKind::Constant(CtValue::Tuple(values)) => {
+                    if values.is_empty() {
+                        continue;
+                    }
+                    if let Some(ParamKind::Constant(CtValue::Tuple(previous))) =
+                        flat.last().map(ParamExpr::kind)
+                    {
+                        let merged = previous.iter().chain(values).cloned().collect();
+                        flat.pop();
+                        flat.push(self.constant(CtValue::Tuple(merged))?);
+                    } else {
+                        flat.push(list);
+                    }
+                }
+                ParamKind::DeclRef(_) | ParamKind::ListTabulate { .. } => flat.push(list),
+                _ => {
+                    return Err(ParamError::TypeMismatch {
+                        operation: "parameter list concatenation".to_string(),
+                        expected: "a parameter list".to_string(),
+                        found: list.meta().to_string(),
+                    });
+                }
+            }
+        }
+        if flat.len() < 2 {
+            return flat
+                .pop()
+                .map_or_else(|| self.constant(CtValue::Tuple(Vec::new())), Ok);
+        }
+        let element = flat
+            .iter()
+            .find_map(|list| match list.meta() {
+                MetaTy::ParamList(element) => Some((**element).clone()),
+                MetaTy::Tuple(members) => members.first().cloned(),
+                _ => None,
+            })
+            .unwrap_or(MetaTy::Type);
+        Ok(self.make(
+            MetaTy::ParamList(Box::new(element)),
+            ParamKind::ListConcat { lists: flat },
+        ))
+    }
+
+    /// The list `list` reversed: upstream's `TypeList.reverse`, a tabulation
+    /// of `list`'s length whose element `i` is `list[length - 1 - i]`.
+    pub fn list_reverse(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let length = self.list_length(list)?;
+        let minus_one = self.constant(CtValue::Int(-1))?;
+        let index = self.op(
+            ParamOp::Add,
+            &[
+                self.shift(&length, 0, 1)?,
+                minus_one.clone(),
+                self.op(ParamOp::Mul, &[self.tabulate_index(), minus_one])?,
+            ],
+        )?;
+        let element = self.list_get(&self.shift(list, 0, 1)?, &index)?;
+        self.list_tabulate(&length, &element)
+    }
+
+    /// The length of a parameter list, as an `Int` expression: a constant
+    /// list's count, a pack's length query, a tabulation's count, or the sum
+    /// of a concatenation's.
+    pub fn list_length(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        match list.kind() {
+            ParamKind::Constant(CtValue::Tuple(values)) => {
+                let length = i64::try_from(values.len()).map_err(|_| {
+                    ParamError::Arithmetic("parameter list is too long to count".to_string())
+                })?;
+                self.constant(CtValue::Int(length))
+            }
+            ParamKind::DeclRef(pack) if matches!(list.meta(), MetaTy::ParamList(_)) => {
+                Ok(self.pack_query(pack, PackQuery::Length))
+            }
+            ParamKind::ListTabulate { count, .. } => Ok(count.clone()),
+            ParamKind::ListConcat { lists } => {
+                let lengths: Vec<ParamExpr> = lists
+                    .iter()
+                    .map(|list| self.list_length(list))
+                    .collect::<Result<_, _>>()?;
+                self.op(ParamOp::Add, &lengths)
+            }
+            _ => Err(ParamError::TypeMismatch {
+                operation: "parameter list length".to_string(),
+                expected: "a parameter list".to_string(),
+                found: list.meta().to_string(),
+            }),
+        }
+    }
+
+    /// The elements of a parameter list whose length is known, in order: a
+    /// constant list's values, a tabulation of a constant count, or a
+    /// concatenation of such lists. `None` while a length is still open.
+    pub fn list_elements(&self, list: &ParamExpr) -> Result<Option<Vec<ParamExpr>>, ParamError> {
+        match list.kind() {
+            ParamKind::Constant(CtValue::Tuple(values)) => values
+                .iter()
+                .map(|value| self.constant(value.clone()))
+                .collect::<Result<_, _>>()
+                .map(Some),
+            ParamKind::ListTabulate { count, element } => {
+                let Some(count) = count.as_constant().and_then(fold::integer_value) else {
+                    return Ok(None);
+                };
+                let count = count.to_i64().filter(|count| *count >= 0).ok_or_else(|| {
+                    ParamError::Arithmetic(format!("parameter list length {count} is negative"))
+                })?;
+                (0..count)
+                    .map(|index| {
+                        self.tabulate_element(element, &self.constant(CtValue::Int(index))?)
+                    })
+                    .collect::<Result<_, _>>()
+                    .map(Some)
+            }
+            ParamKind::ListConcat { lists } => {
+                let mut elements = Vec::new();
+                for list in lists {
+                    let Some(part) = self.list_elements(list)? else {
+                        return Ok(None);
+                    };
+                    elements.extend(part);
+                }
+                Ok(Some(elements))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The parameter list of `elements`: the constant list when every type
+    /// is closed, and otherwise a tabulation selecting among them.
+    pub fn type_list(&self, elements: Vec<Ty>) -> Result<ParamExpr, ParamError> {
+        let values = elements
+            .iter()
+            .cloned()
+            .map(Box::new)
+            .map(CtValue::Type)
+            .collect();
+        if let Ok(constant) = self.constant(CtValue::Tuple(values)) {
+            return Ok(constant);
+        }
+        let count = i64::try_from(elements.len()).map_err(|_| {
+            ParamError::Arithmetic("parameter list is too long to count".to_string())
+        })?;
+        let element = self.select(elements, &self.tabulate_index())?;
+        self.list_tabulate(&self.constant(CtValue::Int(count))?, &element)
     }
 
     /// A field of a struct-typed parameter value (`Self.e.rows`): upstream's
@@ -602,6 +833,16 @@ impl ParamContext {
             ParamKind::Field { base, name } => {
                 self.field(&self.fold(base)?, name, expr.meta().clone())?
             }
+            ParamKind::ListTabulate { count, element } => {
+                self.list_tabulate(&self.fold(count)?, &self.fold(element)?)?
+            }
+            ParamKind::ListConcat { lists } => {
+                let lists: Vec<ParamExpr> = lists
+                    .iter()
+                    .map(|list| self.fold(list))
+                    .collect::<Result<_, _>>()?;
+                self.list_concat(&lists)?
+            }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.fold(subject)?, query.clone())
             }
@@ -728,6 +969,19 @@ impl ParamContext {
                     name,
                     expr.meta().clone(),
                 );
+            }
+            ParamKind::ListTabulate { count, element } => {
+                return self.list_tabulate(
+                    &self.answer_queries(count, answer)?,
+                    &self.answer_queries(element, answer)?,
+                );
+            }
+            ParamKind::ListConcat { lists } => {
+                let lists: Vec<ParamExpr> = lists
+                    .iter()
+                    .map(|list| self.answer_queries(list, answer))
+                    .collect::<Result<_, _>>()?;
+                return self.list_concat(&lists);
             }
             ParamKind::Apply {
                 function,
@@ -1072,6 +1326,18 @@ impl ParamContext {
         })
     }
 
+    /// `element` of a tabulation with its index bound to `index`.
+    fn tabulate_element(
+        &self,
+        element: &ParamExpr,
+        index: &ParamExpr,
+    ) -> Result<ParamExpr, ParamError> {
+        let mut bindings = ParamBindings::new();
+        bindings.push_frame(vec![Some(index.clone())]);
+        let mut memo = HashMap::new();
+        self.replace_at(element, &bindings, 0, &mut memo)
+    }
+
     fn count_fold(&self) {
         if let Some(shared) = &self.shared {
             shared.constant_folds.fetch_add(1, AtomicOrdering::Relaxed);
@@ -1155,18 +1421,38 @@ impl ParamContext {
                 &self.replace_at(subject, bindings, depth, memo)?,
                 query.clone(),
             ),
-            // A pack bound to its elements answers its length; the other
-            // queries stay the checker's concrete pack logic.
+            ParamKind::ListTabulate { count, element } => self.list_tabulate(
+                &self.replace_at(count, bindings, depth, memo)?,
+                &self.replace_at(element, bindings, depth + 1, memo)?,
+            )?,
+            ParamKind::ListConcat { lists } => {
+                let lists: Vec<ParamExpr> = lists
+                    .iter()
+                    .map(|list| self.replace_at(list, bindings, depth, memo))
+                    .collect::<Result<_, _>>()?;
+                self.list_concat(&lists)?
+            }
+            // A pack bound to its elements, to another pack, or to a list
+            // computed from packs answers its length; the other queries stay
+            // the checker's concrete pack logic.
             ParamKind::PackQuery {
                 pack,
                 query: PackQuery::Length,
-            } if let Some(CtValue::Tuple(elements)) =
-                bindings.lookup(pack).and_then(ParamExpr::as_constant) =>
+            } if let Some(bound) = bindings.lookup(pack).filter(|bound| {
+                matches!(
+                    bound.kind(),
+                    ParamKind::Constant(CtValue::Tuple(_))
+                        | ParamKind::ListTabulate { .. }
+                        | ParamKind::ListConcat { .. }
+                ) || (bound.as_decl_ref().is_some() && matches!(bound.meta(), MetaTy::ParamList(_)))
+            }) =>
             {
-                let length = i64::try_from(elements.len()).map_err(|_| {
-                    ParamError::Arithmetic(format!("pack `{pack}` is too long to count"))
-                })?;
-                self.constant(CtValue::Int(length))?
+                let length = self.list_length(bound)?;
+                if depth == 0 {
+                    length
+                } else {
+                    self.shift(&length, 0, depth)?
+                }
             }
             ParamKind::PackQuery { pack, query } => {
                 let query = match query {
@@ -1248,6 +1534,17 @@ impl ParamContext {
             )?,
             ParamKind::Field { base, name } => {
                 self.field(&self.shift(base, cutoff, by)?, name, expr.meta().clone())?
+            }
+            ParamKind::ListTabulate { count, element } => self.list_tabulate(
+                &self.shift(count, cutoff, by)?,
+                &self.shift(element, cutoff + 1, by)?,
+            )?,
+            ParamKind::ListConcat { lists } => {
+                let lists: Vec<ParamExpr> = lists
+                    .iter()
+                    .map(|list| self.shift(list, cutoff, by))
+                    .collect::<Result<_, _>>()?;
+                self.list_concat(&lists)?
             }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
@@ -1465,42 +1762,36 @@ impl ParamExpr {
     /// payloads are the type visitors' to walk.
     pub fn visit(&self, visitor: &mut dyn FnMut(&Self)) {
         visitor(self);
+        for operand in self.operands() {
+            operand.visit(visitor);
+        }
+    }
+
+    /// The expressions directly below this node, in order. A tabulation's
+    /// element is the last of its two, under the tabulation's own binder.
+    pub fn operands(&self) -> Vec<&Self> {
         match self.kind() {
-            ParamKind::Op { operands, .. } => {
-                for operand in operands {
-                    operand.visit(visitor);
-                }
-            }
-            ParamKind::Identical(left, right) => {
-                left.visit(visitor);
-                right.visit(visitor);
-            }
+            ParamKind::Op { operands, .. } => operands.iter().collect(),
+            ParamKind::Identical(left, right) => vec![left, right],
             ParamKind::Conforms { subject, .. }
             | ParamKind::Trivial { subject, .. }
             | ParamKind::Reflect { subject, .. }
-            | ParamKind::Field { base: subject, .. } => {
-                subject.visit(visitor);
-            }
-            ParamKind::Select { index, .. } => index.visit(visitor),
-            ParamKind::ListGet { list, index } => {
-                list.visit(visitor);
-                index.visit(visitor);
-            }
+            | ParamKind::Field { base: subject, .. } => vec![subject],
+            ParamKind::Select { index, .. } => vec![index],
+            ParamKind::ListGet { list, index } => vec![list, index],
+            ParamKind::ListTabulate { count, element } => vec![count, element],
+            ParamKind::ListConcat { lists } => lists.iter().collect(),
             ParamKind::PackQuery {
                 query: PackQuery::Contains(element),
                 ..
-            } => element.visit(visitor),
-            ParamKind::Apply { args, .. } => {
-                for arg in args {
-                    arg.visit(visitor);
-                }
-            }
+            } => vec![element],
+            ParamKind::Apply { args, .. } => args.iter().collect(),
             ParamKind::Constant(_)
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
             | ParamKind::TypeShape(_)
             | ParamKind::PackQuery { .. }
-            | ParamKind::Hole { .. } => {}
+            | ParamKind::Hole { .. } => Vec::new(),
         }
     }
 
@@ -1537,6 +1828,8 @@ impl ParamExpr {
             ParamKind::Apply { .. } => 12,
             ParamKind::Hole { .. } => 13,
             ParamKind::Field { .. } => 14,
+            ParamKind::ListTabulate { .. } => 15,
+            ParamKind::ListConcat { .. } => 16,
         }
     }
 }
@@ -1695,6 +1988,17 @@ pub enum ParamKind {
     },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     Hole { kind: HoleKind, token: u64 },
+    /// `param_list.tabulate`: the list of `count` elements whose element `i`
+    /// is `element` at `i`. `element` sits under one binder of one slot, its
+    /// index, which it names as slot `0` of depth `0`; it names no signature
+    /// slot outside that binder.
+    ListTabulate {
+        count: ParamExpr,
+        element: ParamExpr,
+    },
+    /// `param_list.concat`: the lists' elements in order. It holds at least
+    /// two lists, none of them a concatenation or an empty constant.
+    ListConcat { lists: Vec<ParamExpr> },
 }
 
 /// The primitive operators. An enum case does not make a source operation
@@ -3047,6 +3351,14 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             HoleKind::Unknown => write!(f, "?unknown{token}"),
             HoleKind::Unbound => write!(f, "?unbound{token}"),
         },
+        ParamKind::ListTabulate { count, element } => {
+            write!(f, "param_list.tabulate({count}, [idx] {element})")
+        }
+        ParamKind::ListConcat { lists } => {
+            write!(f, "param_list.concat(")?;
+            write_operands(f, &lists.iter().collect::<Vec<_>>())?;
+            write!(f, ")")
+        }
     }
 }
 

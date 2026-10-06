@@ -1155,13 +1155,43 @@ impl Elab<'_> {
         for v in self.eval_iter(iter, env)? {
             self.burn()?;
             let subs: Subs = &|n| (n == var).then(|| v.clone());
-            let substituted: Vec<Stmt> = body
+            let mut substituted: Vec<Stmt> = body
                 .iter()
                 .map(|s| rewrite_stmt_cloned(s, subs, false))
                 .collect();
+            self.fold_comptime_indices(&mut substituted, env);
             splice_selected_block(stmt, self.block(&substituted, env, in_fn)?, out);
         }
         Ok(())
+    }
+
+    /// Fold each subscript index of an unrolled loop copy that is an
+    /// arithmetic expression over compile-time bindings (`storage[n - 1 -
+    /// i]` at `i = 0`) to its literal, so the copy names one element as a
+    /// literal index does.
+    fn fold_comptime_indices(&self, stmts: &mut [Stmt], env: &HashMap<String, CtValue>) {
+        struct Indices<'a, 'e> {
+            elab: &'a Elab<'e>,
+            env: &'a HashMap<String, CtValue>,
+        }
+        impl mojito_ast::visit::MutVisitor for Indices<'_, '_> {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                let ExprKind::Index { index, .. } = &mut expr.kind else {
+                    return;
+                };
+                if !matches!(index.kind, ExprKind::Infix(..)) {
+                    return;
+                }
+                if let Ok(value @ CtValue::Int(_)) = self.elab.eval(index, self.env)
+                    && let Some(mut literal) = value.materialize(index.span)
+                {
+                    literal.source.clone_from(&index.source);
+                    literal.syntax_id = index.syntax_id;
+                    **index = literal;
+                }
+            }
+        }
+        mojito_ast::visit::walk_block_mut(&mut Indices { elab: self, env }, stmts);
     }
 
     /// Keep a `comptime for` the template serves

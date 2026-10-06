@@ -6,11 +6,11 @@ use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
     MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
-    TStringSpecializationRequest, TupleSpecializationRequest, TupleTransformRequest,
-    UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
-    dtype_generic_template_names, elaborate_prepared, generated_names, instance_traces,
-    pack_generic_template_names, prepare, template_display_name, tuple_materialized_callables,
-    unserved_template_parameter, variadic_struct_template_names,
+    TStringSpecializationRequest, TupleSpecializationRequest, UnservedTemplateUse,
+    bound_generic_template_names, comptime_generic_template_names, dtype_generic_template_names,
+    elaborate_prepared, generated_names, instance_traces, pack_generic_template_names, prepare,
+    template_display_name, tuple_materialized_callables, unserved_template_parameter,
+    variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -834,7 +834,7 @@ impl ServedRequests {
 fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpecializationRequest> {
     let mut element_sets = Vec::<Vec<Ty>>::new();
     let mut calls = Vec::<(Vec<Ty>, crate::token::SourceSpan)>::new();
-    let mut transforms = Vec::<(Vec<Ty>, TupleTransformRequest)>::new();
+    let mut reversed = Vec::<Vec<Ty>>::new();
 
     checked.scan_expressions(&mut |expression| {
         if let Some(ty) = checked.expression_type(expression) {
@@ -851,6 +851,8 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
                 calls.push((elements, expression.source_span().without_syntax()));
             }
         }
+        // A checked call of the declared `reverse` asks its receiver's
+        // specialization to keep that member.
         if let ExprKind::MethodCall {
             object,
             method,
@@ -858,25 +860,15 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
             kwargs,
             ..
         } = &expression.kind
+            && method == "reverse"
+            && args.is_empty()
             && kwargs.is_empty()
             && let Some(receiver) = checked
                 .expression_type(object)
                 .and_then(closed_public_tuple_elements)
+            && !reversed.contains(&receiver)
         {
-            let transform = match (method.as_str(), args.as_slice()) {
-                ("reverse", []) => Some(TupleTransformRequest::Reverse),
-                ("concat", [argument]) => checked
-                    .expression_type(argument)
-                    .and_then(closed_public_tuple_elements)
-                    .map(TupleTransformRequest::Concat),
-                _ => None,
-            };
-            if let Some(transform) = transform {
-                let request = (receiver, transform);
-                if !transforms.contains(&request) {
-                    transforms.push(request);
-                }
-            }
+            reversed.push(receiver);
         }
         if let Some(ty) = checked.expression_place_type(expression) {
             collect_public_tuple_types(ty, &mut element_sets);
@@ -926,9 +918,9 @@ fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpeciali
         }),
     );
     requests.extend(
-        transforms.into_iter().map(|(elements, transform)| {
-            TupleSpecializationRequest::transform(elements, transform)
-        }),
+        reversed
+            .into_iter()
+            .map(TupleSpecializationRequest::reversed),
     );
     requests
 }
@@ -1584,6 +1576,8 @@ fn tuple_specialization_ct_expr_is_closed(
             // to evaluate names no instance.
             ParamKind::Hole { .. }
             | ParamKind::ListGet { .. }
+            | ParamKind::ListTabulate { .. }
+            | ParamKind::ListConcat { .. }
             | ParamKind::Reflect { .. }
             | ParamKind::Apply { .. } => false,
             // A signature slot is bound by the contract that holds it.

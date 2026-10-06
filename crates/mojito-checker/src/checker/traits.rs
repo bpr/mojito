@@ -2545,6 +2545,16 @@ impl Checker {
         if mojito_types::types::tstring_elements(ty).is_some() {
             return false;
         }
+        // The public `Tuple` no specialization serves yet is copyable
+        // exactly when its elements are, as its declaration's conditional
+        // conformance says.
+        if matches!(ty, Ty::Struct(name, _) if name == mojito_types::types::TUPLE_TYPE_NAME)
+            && let Some(elements) = tuple_elements(ty)
+        {
+            return elements
+                .into_iter()
+                .all(|element| self.is_copyable(element));
+        }
         match ty {
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
                 // A declared Copyable-family conformance is the contract
@@ -2615,6 +2625,16 @@ impl Checker {
         // payload's triviality.
         if mojito_types::types::uninit_storage_element(ty).is_some() {
             return true;
+        }
+        // The public `Tuple` no specialization serves yet is implicitly
+        // copyable exactly when its elements are, as its declaration's
+        // conditional conformance says.
+        if matches!(ty, Ty::Struct(name, _) if name == mojito_types::types::TUPLE_TYPE_NAME)
+            && let Some(elements) = tuple_elements(ty)
+        {
+            return elements
+                .into_iter()
+                .all(|element| self.is_implicitly_copyable(element));
         }
         match ty {
             Ty::Struct(name, args) => self.structs.get(name).map_or_else(

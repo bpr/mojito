@@ -37,6 +37,16 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
         // arguments contribute no type solution. A structural mismatch is left
         // for the caller's coercion check to report.
         Ty::Struct(pn, pargs) => {
+            // A spread of a pack against a closed element list is a whole
+            // argument list, which `solve_value_args` binds: its one slot is
+            // no element pattern. Against another spread it forwards that
+            // pack, which the slot below binds.
+            if mojito_types::types::pack_spread_argument(pargs).is_some()
+                && !matches!(actual, Ty::Struct(_, aargs)
+                    if mojito_types::types::pack_spread_argument(aargs).is_some())
+            {
+                return Ok(());
+            }
             if let Ty::Struct(an, aargs) = actual
                 && pn == an
                 && pargs.len() == aargs.len()
@@ -162,6 +172,39 @@ pub(super) fn expand_bound_pack(ty: &Ty, decls: &[ParamDecl], targs: &[TyArg]) -
         Some((pack, elements)) => mojito_types::types::expand_pack_spread(ty, &pack, &elements),
         None => ty.clone(),
     }
+}
+
+/// `ty` with every spread of a pack the callable itself declares expanded to
+/// the elements this use solved it to.
+///
+/// `other: Tuple[*OtherTs]` at `OtherTs = [Int, Bool]` is `Tuple[Int,
+/// Bool]`. A pack still open, or forwarded from the caller's, keeps its
+/// spread.
+pub(super) fn expand_solved_packs(ty: &Ty, decls: &[ParamDecl], tyargs: &[TyArg]) -> Ty {
+    decls
+        .iter()
+        .zip(tyargs)
+        .filter_map(|(decl, argument)| match (decl, argument) {
+            (
+                ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                },
+                TyArg::Val(CtValue::Tuple(values)),
+            ) => values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some((**ty).clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|elements| (name.trim_start_matches('*'), elements)),
+            _ => None,
+        })
+        .fold(ty.clone(), |ty, (pack, elements)| {
+            mojito_types::types::expand_pack_spread(&ty, pack, &elements)
+        })
 }
 
 /// The pack a closed application of a variadic struct binds, with its
@@ -759,7 +802,8 @@ impl Checker {
         let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
         let values = Self::value_argument_environment(&decls, &tyargs);
         let resolve = |ty: &Ty| {
-            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            let expanded = expand_solved_packs(ty, &decls, &tyargs);
+            let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
         let contract = Ty::Func {
@@ -1225,7 +1269,8 @@ impl Checker {
             self.resolve_use_params(name, &signature.decls, param_args, &patterns, &actuals)?;
         let values = Self::value_argument_environment(&signature.decls, &tyargs);
         let resolve = |ty: &Ty| {
-            let substituted = self.resolve_assoc_ty(&substitute(ty, &subst));
+            let expanded = expand_solved_packs(ty, &signature.decls, &tyargs);
+            let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
         // A method-level type pack (`*args: *Ts`) inferred from the overflow

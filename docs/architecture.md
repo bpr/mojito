@@ -2301,8 +2301,9 @@ bridge; the separate method-free tuple-shaped path is compiler-private
 runtime-pack storage, not a public collection.
 
 Tuple specialization is a closed-set, two-phase handoff. The discovery check
-collects every public Tuple element sequence and only the transforms actually
-called on each receiver; flexible numeric literal types are default-materialized
+collects every public Tuple element sequence and the calls of the two
+transforms `std/builtin/tuple.mojo` declares, `reverse` and `concat`, on each
+receiver; flexible numeric literal types are default-materialized
 at this runtime-storage boundary so a constructor and its later receiver cannot
 request different specializations. The elaborator then emits that complete set
 of concrete declarations. Before checking their members, the checker
@@ -2313,11 +2314,30 @@ gate does not enable forward references in user source.
 
 This predeclaration is necessary for reciprocal transforms. If both
 `Tuple[Int, String].reverse()` and `Tuple[String, Int].reverse()` occur, each
-generated method returns and constructs the other specialization, so no linear
-declaration order can place both callees first. Reverse-result edges are
-therefore forward-safe and are not hard edges in specialization ordering;
-dependencies that need a declaration's checked storage layout, such as the
-right operand of generated concatenation, remain topologically ordered.
+specialization's `reverse` names the other as its result, so no linear
+declaration order can place both first. A transform's result and operand
+types are therefore forward references to predeclared identities, and the
+specializations need no ordering among themselves.
+
+The two transforms are declared in Mojo with upstream's signatures: a named
+`out` result typed by a spread of a list computed from the element packs,
+`Tuple[*Self.Ts.reverse()]` and `Tuple[*TypeList._concat[Self.Ts.values,
+OtherTs.values]()]`. The cloner expands a spread whose packs are all bound
+to its element types (`comptime/packs.rs:expand_spread_argument`), so a
+specialization's `reverse` names a closed result; `concat`, whose own pack
+is open in the specialization, keeps the spread with the struct's elements
+written in, and the checker resolves it to a `ParamKind::ListConcat` the
+call closes. A specialization keeps a transform only where a checked call
+asks for it: `reverse` by `TupleSpecializationRequest::reversed`, since
+keeping it everywhere would close the set of tuple types under reversal, and
+`concat` by the method request that mints its per-call clone. A call that
+reaches a `Tuple` no specialization serves yet, or a specialization that was
+not asked to keep the member, is typed against the declaration itself: the
+elaborator always emits the template's shell under
+`symbol::TUPLE_DECLARATION_SHELL`, and
+`method_calls/resolution.rs:infer_tuple_member` resolves the member on it
+with the pack bound to the receiver's elements. The request that call
+records is what the next discovery round mints.
 
 ### If
 

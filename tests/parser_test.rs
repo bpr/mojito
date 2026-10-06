@@ -2259,6 +2259,75 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
 }
 
 #[test]
+fn parses_a_spread_of_a_type_list_expression() {
+    // A spread of anything but a pack itself is a value argument holding
+    // the spread expression: a reversal, a concatenation, and their chains.
+    let parsed = parse(
+        "struct Pair[*Ts: Movable]:\n    def flip(self) -> Tuple[*Self.Ts.reverse()]:\n        pass\n\n    def join[*Us: Movable](self, other: Tuple[*Us]) -> Tuple[*TypeList._concat[Self.Ts.values, Us.values]()]:\n        pass\n\ndef flip[*Ts: Movable](t: Tuple[*Ts]) -> Tuple[*Ts.reverse()]:\n    pass\n",
+    );
+    let spread_operand = |ty: &Option<Type>| -> Expr {
+        let Some(Type::Named(name, arguments)) = ty else {
+            panic!("expected a Tuple annotation, got {ty:?}")
+        };
+        assert_eq!(name, "Tuple");
+        let [ParamArg::Value(spread)] = arguments.as_slice() else {
+            panic!("expected one spread argument, got {arguments:?}")
+        };
+        let ExprKind::Spread(operand) = &spread.kind else {
+            panic!("expected a spread, got {spread:?}")
+        };
+        (**operand).clone()
+    };
+    let StmtKind::Struct { methods, .. } = &parsed[0].kind else {
+        panic!("expected struct declaration")
+    };
+    assert!(matches!(
+        &spread_operand(&methods[0].ret).kind,
+        ExprKind::MethodCall { object, method, .. }
+            if method == "reverse"
+                && matches!(&object.kind, ExprKind::Member { field, .. } if field == "Ts")
+    ));
+    let ExprKind::Invoke {
+        callee, param_args, ..
+    } = spread_operand(&methods[1].ret).kind
+    else {
+        panic!("expected a `_concat` application")
+    };
+    assert!(matches!(&callee.kind, ExprKind::Member { field, .. } if field == "_concat"));
+    // `Self.Ts.values` and `Us.values` are both value arguments.
+    assert!(matches!(
+        param_args.as_slice(),
+        [ParamArg::Value(own), ParamArg::Value(other)]
+            if matches!(&own.kind, ExprKind::Member { field, .. } if field == "values")
+                && matches!(&other.kind, ExprKind::Member { field, .. } if field == "values")
+    ));
+    let StmtKind::Def { ret, .. } = &parsed[1].kind else {
+        panic!("expected function declaration")
+    };
+    assert!(matches!(
+        &spread_operand(ret).kind,
+        ExprKind::MethodCall { method, .. } if method == "reverse"
+    ));
+    // In expression position the bracketed spread is a type application.
+    assert!(matches!(
+        &parse_expr("Tuple[*Ts.reverse()]").kind,
+        ExprKind::TypeApply { name, .. } if name == "Tuple"
+    ));
+    mojito::parse("def bad(t: Tuple[*]):\n    pass\n").expect_err("a bare '*' must reject");
+}
+
+#[test]
+fn parses_a_self_rooted_chain_continued_by_an_operator_as_a_subscript() {
+    // `Self.Ts.length - 1 - i` starts as a type-shaped chain; the operator
+    // makes it the index expression it is.
+    let index = match parse_expr("storage[Self.Ts.length - 1 - i]").kind {
+        ExprKind::Index { index, .. } => *index,
+        other => panic!("expected a subscript, got {other:?}"),
+    };
+    assert!(matches!(index.kind, ExprKind::Infix(..)), "got {index:?}");
+}
+
+#[test]
 fn parses_positional_only_and_keyword_only_markers() {
     let (p, slash, star) = def_params("def mn(a: Int, b: Int, /) -> Int:\n    return a\n");
     assert_eq!(p.len(), 2);

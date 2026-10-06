@@ -579,13 +579,19 @@ fn no_transfer_never_errors() {
 #[test]
 fn transferred_tuple_reverse_consumes_the_receiver() {
     let src = "def main():\n    var pair = Tuple(3, \"seven\")\n    var reversed = pair^.reverse()\n    print(reversed)\n    print(pair)\n";
-    assert!(matches!(own(src), Err(OwnershipError::UseAfterMove { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::UseAfterMove { .. })
+    ));
 }
 
 #[test]
 fn transferred_tuple_concat_consumes_both_operands() {
     let src = "def main():\n    var left = Tuple(3, \"seven\")\n    var right = Tuple(True)\n    var joined = left^.concat(right^)\n    print(joined)\n    print(right)\n";
-    assert!(matches!(own(src), Err(OwnershipError::UseAfterMove { .. })));
+    assert!(matches!(
+        own_linked(src),
+        Err(OwnershipError::UseAfterMove { .. })
+    ));
 }
 
 #[test]

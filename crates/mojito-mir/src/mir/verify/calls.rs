@@ -346,40 +346,48 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
         frames: &[Vec<Option<Ty>>],
     ) -> Result<(), String> {
         use mojito_types::param_expr::{MetaTy, ParamKind};
-        let mut finding = None;
-        expr.visit(&mut |node| {
-            if finding.is_some() {
-                return;
+        // A tabulation's element names its index as the slot of a binder of
+        // its own.
+        if let ParamKind::ListTabulate { count, element } = expr.kind() {
+            check_expr(count, frames)?;
+            let mut inner = frames.to_vec();
+            inner.push(vec![Some(Ty::Int)]);
+            return check_expr(element, &inner);
+        }
+        let finding = match expr.kind() {
+            ParamKind::Hole { .. } => {
+                Some("an unknown or unbound parameter cannot cross into MIR".to_string())
             }
-            finding = match node.kind() {
-                ParamKind::Hole { .. } => {
-                    Some("an unknown or unbound parameter cannot cross into MIR".to_string())
-                }
-                ParamKind::IndexRef { depth, index } => {
-                    let slot = frames
-                        .len()
-                        .checked_sub(1 + *depth as usize)
-                        .and_then(|frame| frames[frame].get(*index as usize));
-                    match slot {
-                        None => Some(format!(
-                            "signature slot {depth}.{index} names no enclosing binder"
-                        )),
-                        Some(None) => Some(format!(
-                            "signature slot {depth}.{index} names a type parameter"
-                        )),
-                        Some(Some(declared)) if MetaTy::value(declared.clone()) != *node.meta() => {
-                            Some(format!(
-                                "signature slot {depth}.{index} is declared `{declared}`, not `{}`",
-                                node.meta()
-                            ))
-                        }
-                        Some(Some(_)) => None,
+            ParamKind::IndexRef { depth, index } => {
+                let slot = frames
+                    .len()
+                    .checked_sub(1 + *depth as usize)
+                    .and_then(|frame| frames[frame].get(*index as usize));
+                match slot {
+                    None => Some(format!(
+                        "signature slot {depth}.{index} names no enclosing binder"
+                    )),
+                    Some(None) => Some(format!(
+                        "signature slot {depth}.{index} names a type parameter"
+                    )),
+                    Some(Some(declared)) if MetaTy::value(declared.clone()) != *expr.meta() => {
+                        Some(format!(
+                            "signature slot {depth}.{index} is declared `{declared}`, not `{}`",
+                            expr.meta()
+                        ))
                     }
+                    Some(Some(_)) => None,
                 }
-                _ => None,
-            };
-        });
-        finding.map_or(Ok(()), Err)
+            }
+            _ => None,
+        };
+        match finding {
+            Some(finding) => Err(finding),
+            None => expr
+                .operands()
+                .into_iter()
+                .try_for_each(|operand| check_expr(operand, frames)),
+        }
     }
 
     fn walk(

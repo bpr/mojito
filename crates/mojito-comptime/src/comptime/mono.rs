@@ -1954,7 +1954,10 @@ impl Elab<'_> {
             forwarded_pack_types,
         } = request;
         let StmtKind::Def {
-            name, type_params, ..
+            name,
+            type_params,
+            params,
+            ..
         } = &template.kind
         else {
             return Err(ComptimeError::NotComptime(format!(
@@ -2001,6 +2004,19 @@ impl Elab<'_> {
                     ParamDecl::Type {
                         name: pack, bounds, ..
                     } => {
+                        // A pack no collector gathers (`other: Tuple[*Ts]`)
+                        // is inferred through a parameter's type, which is
+                        // the checker's to solve.
+                        let collected = params.iter().any(|parameter| {
+                            parameter.kind == ParamKind::Variadic
+                                && matches!(&parameter.ty, Type::Named(spread, _) if spread == pack)
+                        });
+                        if arguments.is_empty() && forwarded_pack_types.is_none() && !collected {
+                            return Err(ComptimeError::NotComptime(format!(
+                                "type pack '{}' of '{display_name}' is bound by no collector",
+                                pack.trim_start_matches('*')
+                            )));
+                        }
                         let types = if arguments.is_empty() {
                             match forwarded_pack_types {
                                 Some(types) => types.to_vec(),

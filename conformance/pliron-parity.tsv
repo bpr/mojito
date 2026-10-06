@@ -253,6 +253,7 @@ assets/ok/maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
+assets/ok/method_named_result.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized
 assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
@@ -360,6 +361,7 @@ assets/ok/pack_element_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/pack_forwarding_method.mojo	main	exe-differential	sanitized
 assets/ok/pack_forwarding_print.mojo	main	exe-differential	sanitized
 assets/ok/pack_index_named_method.mojo	main	exe-differential	sanitized
+assets/ok/pack_inferred_through_tuple.mojo	main	exe-differential	sanitized
 assets/ok/pack_length_runtime_position.mojo	main	exe-differential	sanitized
 assets/ok/pack_method_template_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_arity.mojo	main	exe-differential	sanitized
@@ -373,6 +375,7 @@ assets/ok/pack_overload_leading_type.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_method_arity.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_sibling_forward.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_variadic_position.mojo	main	exe-differential	sanitized
+assets/ok/pack_reverse_concat_types.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_explicit_in_generic_body.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_inferred_args.mojo	main	exe-differential	sanitized
@@ -808,6 +811,7 @@ assets/ok/tuple_hashable_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/tuple_nested_type_arguments.mojo	main	exe-differential	sanitized
 assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized
 assets/ok/tuple_one_element.mojo	main	exe-differential	sanitized
+assets/ok/tuple_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
@@ -817,6 +821,7 @@ assets/ok/type_param_copy_construction.mojo	main	exe-differential	sanitized
 assets/ok/type_predicate_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/type_receiver_instance_call.mojo	main	exe-differential	sanitized
 assets/ok/typelist_comptime_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/typelist_reverse_concat.mojo	main	exe-differential	sanitized
 assets/ok/typelist_where_clauses.mojo	main	exe-differential	sanitized
 assets/ok/unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanitized

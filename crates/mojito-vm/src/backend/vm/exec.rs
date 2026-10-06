@@ -2154,10 +2154,19 @@ impl VmBackend {
             // reference into the caller's storage, and so is a handle the
             // place reaches below its root (the value `p.src[].v = …`
             // replaces lives wherever `p.src` points).
-            // The marked storage already exists: an initializer's receiver
-            // enters with every field's storage present and unwritten, which
-            // the pointer writes that follow fill.
-            MirInstr::MarkInitialized { .. } => {}
+            // An initializer's receiver enters with every field's storage
+            // present and unwritten, which the pointer writes that follow
+            // fill. A named result marked whole has no storage yet: it gets
+            // the same unwritten skeleton here.
+            MirInstr::MarkInitialized { place } => {
+                if place.proj.is_empty()
+                    && matches!(vars[place.root as usize], Value::None)
+                    && let Some(Ty::Struct(name, _)) = &place.ty
+                    && let Some(skeleton) = Self::uninitialized_struct(prog, name)
+                {
+                    vars[place.root as usize] = skeleton;
+                }
+            }
             MirInstr::DropPlace { place } => {
                 let reference = self.place_handle(frame_id, place, regs, vars)?;
                 let value = if let Some(reference) = reference {

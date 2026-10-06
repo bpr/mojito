@@ -537,6 +537,12 @@ impl ScopeCx<'_> {
         args: &[TyArg],
         nested: &mut Vec<(ParamId, MetaTy)>,
     ) {
+        // A spread of a list computed from packs still open is the whole
+        // argument list, a `ParamList` rather than one type.
+        if let Some(list) = mojito_types::types::list_spread_argument(args) {
+            self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
+            return;
+        }
         for (slot, argument) in args.iter().enumerate() {
             match argument {
                 TyArg::Ty(ty) => self.walk_in(role, ty, nested),

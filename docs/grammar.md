@@ -266,7 +266,9 @@ can be consumed and forwarded as the final call argument with `**kwargs^`; the
 callee must also declare a compatible collector. The declaration-side `var` is
 required; bare `**kwargs: T` is rejected, while call-site forwarding keeps the
 `**kwargs^` spelling. A single `out result: T` is a caller-transparent named
-result; multiple named results are unsupported.
+result, on a function or a method (`def flip(deinit self, out result:
+Pair)`); a second named result, and one beside a `->` result, are rejected
+as upstream rejects them.
 A `convention` word is only a convention when a parameter name follows it, so `imm`,
 `mut`, `ref`, etc. remain usable as parameter names (`def f(imm: Int)`, `def f(ref:
 Int)`). The legacy `read` convention is a hard error with a migration
@@ -417,9 +419,23 @@ the call/construction parentheses, or as type arguments in an annotation:
 
 ```
 param_args: '[' ','.param_arg+ ']'
-param_arg: [NAME '='] (type | expression)
-                                           # a positional/named type or comptime value
+param_arg:
+    | [NAME '='] (type | expression)       # a positional/named type or comptime value
+    | '*' typelist_expr                    # a spread of a type list
+typelist_expr: expression                  # a pack, `Self.` pack, or a postfix chain over one
 ```
+
+A **spread** argument `'*' typelist_expr` supplies a whole argument list from
+a type list. Its operand is a pack (`*Ts`, or a struct's own `*Self.Ts`), or
+a type-list expression over packs: a reversal (`*Ts.reverse()`) or a
+concatenation (`*TypeList._concat[Self.Ts.values, OtherTs.values]()`), as
+upstream's `Tuple.reverse` and `Tuple.concat` spell their result types. The
+spread of a pack keeps the pack's own type node; any other operand parses as
+a spread expression. A bracket holding one spread after a name is a type
+application (`Tuple[*Ts.reverse()]`), never a subscript. A `Self`-rooted
+chain an operator continues (`storage[Self.Ts.length - 1 - i]`) is the value
+expression it starts, and `Self.Ts.values` is a value argument like a `def`'s
+own `Ts.values`.
 
 A type parameter receives a `type`; a value parameter receives a **comptime value
 expression** — an `Int` expression over literals, `comptime` constants, and the
@@ -971,7 +987,9 @@ vocabulary: `TypeList.of[Trait=..., T1, ...]()` (concrete) and
 propositions (`P` an `IsTrivially*` spelling or a one-parameter predicate
 alias); a compile-time TypeList value also binds with `comptime`, measures
 with `len`, indexes with compile-time bounds checking, and drives
-`comptime if`.
+`comptime if`. A list reverses with `.reverse()` and lists concatenate with
+`TypeList._concat[A.values, B.values]()`; the result measures and indexes
+like any list, over closed lists and over packs still open alike.
 
 ```
 comptime_if_stmt:  'comptime' if_stmt      # 'comptime' 'if' … 'elif' … 'else' …

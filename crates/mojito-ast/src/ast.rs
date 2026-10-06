@@ -672,6 +672,19 @@ pub struct FnParam {
     pub origin: Option<OriginSpec>,
 }
 
+impl FnParam {
+    /// Whether this is a named `out` result: a callee-local slot the callable
+    /// returns, which no caller passes.
+    pub fn is_named_result(&self) -> bool {
+        self.kind == ParamKind::Regular && self.convention == Some(ArgConvention::Out)
+    }
+}
+
+/// The named `out` result among `params`, when the callable declares one.
+pub fn named_result(params: &[FnParam]) -> Option<&FnParam> {
+    params.iter().find(|param| param.is_named_result())
+}
+
 /// Whether a `FnParam` is a plain parameter or a variadic (`*args`/`**kwargs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
@@ -687,7 +700,7 @@ pub enum ParamKind {
 ///
 /// borrowed, the default), `mut`, `var`, `out`, and `ref` — a
 /// parametric-mutability reference). `imm`, `mut`, `var`, call-scoped `ref`,
-/// and a single free-function named `out` result are modeled.
+/// and a single named `out` result on a function or a method are modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArgConvention {
     /// `imm` — the immutable convention. The legacy `read` spelling is a hard

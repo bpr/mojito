@@ -427,6 +427,63 @@ fn const_param_round_trips() {
     assert_reprints(&program);
 }
 
+/// The reversal of a pack still open reprints as a `param_list_tabulate`
+/// node, spread as the one argument of a `Tuple` type.
+#[test]
+fn param_list_tabulate_round_trips() {
+    let context = ParamContext::detached();
+    let pack = context.decl_ref(
+        test_binder("Ts").id,
+        "Ts",
+        mojito_types::param_expr::MetaTy::type_list(),
+    );
+    let reversed = context.list_reverse(&pack).expect("a pack reverses");
+    assert_reprints(&program_with_spread(reversed, "param_list_tabulate"));
+}
+
+/// The concatenation of a closed list and a pack still open reprints as a
+/// `param_list_concat` node, spread as the one argument of a `Tuple` type.
+#[test]
+fn param_list_concat_round_trips() {
+    let context = ParamContext::detached();
+    let pack = context.decl_ref(
+        test_binder("Ts").id,
+        "Ts",
+        mojito_types::param_expr::MetaTy::type_list(),
+    );
+    let closed = context
+        .type_list(vec![Ty::Int, Ty::Bool])
+        .expect("closed types are a list");
+    let joined = context
+        .list_concat(&[closed, pack])
+        .expect("lists concatenate");
+    assert_reprints(&program_with_spread(joined, "param_list_concat"));
+}
+
+/// A program whose one register has the type `Tuple[*list]`, asserting the
+/// canonical text spells `list` as the node `tag`.
+fn program_with_spread(list: ParamExpr, tag: &str) -> MirProgram {
+    let spread = Ty::Struct(
+        "Tuple".into(),
+        vec![mojito_types::types::TyArg::Ty(Ty::Dependent(
+            mojito_types::types::DependentType::Parameter(list),
+        ))]
+        .into(),
+    );
+    let program = program_with(vec![(
+        "spread".into(),
+        function_with(
+            vec![spread],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::None,
+            }],
+        ),
+    )]);
+    assert!(write::program(&program).contains(&format!("dependent_parameter({tag}")));
+    program
+}
+
 /// A closed vector or struct parameter value reprints as its `ct_*` value,
 /// and a field of a symbolic struct parameter as a `param_field` node.
 #[test]

@@ -8,6 +8,35 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Tuple.reverse` and `Tuple.concat` are now declared in
+  `std/builtin/tuple.mojo` with upstream's signatures, as in the pin, where
+  the checker typed both in Rust from the element list and the elaborator
+  synthesized their bodies: `def reverse(deinit self, out result:
+  Tuple[*Self.Ts.reverse()])` and `def concat[*OtherTs: Movable](deinit
+  self, deinit other: Tuple[*OtherTs], out result:
+  Tuple[*TypeList._concat[Self.Ts.values, OtherTs.values]()])`. So
+  `pair.concat[Bool](Tuple(True))`, which was rejected, binds the pack
+  explicitly. Five pieces of Mojo landed for the port. A method takes a
+  named `out` result, as a function does. A callable's own pack is inferred
+  through a `Tuple[*Ts]` parameter from the argument's element list, the
+  caller's own pack included (`inner(t)` over `t: Tuple[*Us]`). A type
+  list reverses (`Ts.reverse()`) and concatenates
+  (`TypeList._concat[A.values, B.values]()`), over closed lists and over
+  packs still open, and spreads into a type (`Tuple[*Ts.reverse()]`): the
+  open form is upstream's `param_list.tabulate` / `param_list.concat`, which
+  MIR carries (schema 1.29) and the elaborator closes per instance. The
+  `lit.ownership.mark_initialized` statement marks a method's named result.
+  A subscript index that starts with a `Self` chain
+  (`storage[Self.Ts.length - 1 - i]`) parses. A closed `TypeList`'s `length`
+  now folds in a runtime position (`print(tl.length)`) and its element
+  indexes in a `comptime if` (`tl[2] == Float64`), both of which were
+  rejected. Each transform is kept on a `Tuple` specialization only where a
+  checked call asks for it, and a call that reaches a `Tuple` no
+  specialization serves yet, or one over a pack still open (`t^.reverse()`
+  in `def flip[*Ts: Movable](var t: Tuple[*Ts]) -> Tuple[*Ts.reverse()]`),
+  is typed against the declaration. The bodies
+  still transfer each element out of the private storage where upstream
+  moves it through a pointer (roadmap R343).
 - `Tuple`'s default initializer is now upstream's, as in the pin: it marks
   `self.storage` initialized with
   `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(...))`

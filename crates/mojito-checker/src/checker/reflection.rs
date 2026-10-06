@@ -210,6 +210,15 @@ impl Checker {
             .map_err(|error| TypeError::NotComptime(error.to_string()))
     }
 
+    /// The defining expression of a function-local `comptime` binding kept
+    /// for inlining, innermost scope first.
+    pub(super) fn local_comptime_value(&self, name: &str) -> Option<&Expr> {
+        self.local_comptime_values
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+    }
+
     /// The handle and query an expression reads: `r.field_count()`,
     /// `r.is_struct()`, `r.field_names()`, `r.field_types()`,
     /// `r.field_index["x"]()`, with `r` a handle expression or a bound name.
@@ -478,15 +487,6 @@ impl Checker {
             });
         }
         Ok(ty)
-    }
-
-    /// The defining expression of a function-local `comptime` binding kept
-    /// for inlining, innermost scope first.
-    fn local_comptime_value(&self, name: &str) -> Option<&Expr> {
-        self.local_comptime_values
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
     }
 }
 

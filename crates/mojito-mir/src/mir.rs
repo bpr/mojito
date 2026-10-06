@@ -848,9 +848,19 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         deinit.push(is_deinit(&m.self_convention));
                         refp.push(is_ref(&m.self_convention));
                     }
-                    names.extend(m.params.iter().map(|p| p.name.clone()));
+                    // The named result follows the ABI parameters as a
+                    // callee-local uninitialized slot no caller passes.
+                    let named_result = mojito_ast::ast::named_result(&m.params);
+                    let caller_params = || {
+                        m.params
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, p)| !p.is_named_result())
+                    };
+                    names.extend(caller_params().map(|(_, p)| p.name.clone()));
+                    names.extend(named_result.map(|result| result.name.clone()));
                     names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-                    ptys.extend(m.params.iter().enumerate().map(|(param, p)| {
+                    ptys.extend(caller_params().map(|(param, p)| {
                         body_parameter_ty(
                             p,
                             checked_type_or_record(
@@ -866,9 +876,9 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             ),
                         )
                     }));
-                    owned.extend(m.params.iter().map(|p| is_owned(&p.convention)));
-                    deinit.extend(m.params.iter().map(|p| is_deinit(&p.convention)));
-                    refp.extend(m.params.iter().map(|p| is_ref(&p.convention)));
+                    owned.extend(caller_params().map(|(_, p)| is_owned(&p.convention)));
+                    deinit.extend(caller_params().map(|(_, p)| is_deinit(&p.convention)));
+                    refp.extend(caller_params().map(|(_, p)| is_ref(&p.convention)));
                     lower_fn_nested(
                         FunctionLowering {
                             checked,
@@ -889,7 +899,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             ret_ty,
                             raises: effect.raises,
                             error_ty: effect.error,
-                            named_result: None,
+                            named_result: named_result.map(|result| result.name.as_str()),
                             body: &m.body,
                             overloads: &overloads,
                         },
