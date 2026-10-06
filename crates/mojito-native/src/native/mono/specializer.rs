@@ -740,6 +740,15 @@ impl<'a> Specializer<'a> {
                 format!("compile-time application of `{function}`, which has no MIR declaration"),
             )
         })?;
+        // A static method of a generic struct is applied to the instance it
+        // is called on first (`G[n].f()`).
+        let owner = mojito_symbol::symbol::split_method_symbol(function)
+            .and_then(|(owner, _)| self.structs.get(owner).copied())
+            .filter(|owner| !owner.param_decls.is_empty());
+        let (instance, args) = match (owner, args.split_first()) {
+            (Some(owner), Some((instance, args))) => (Some((owner, instance)), args),
+            _ => (None, args),
+        };
         let parameters = declaration.param_decls.len() + declaration.param_types.len();
         if parameters != args.len() {
             return Err(self.error(
@@ -771,6 +780,20 @@ impl<'a> Specializer<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut instance_bindings = self.base_bindings();
+        if let Some((owner, instance)) = instance {
+            let ty = match instance.kind() {
+                ParamKind::TypeShape(ty) => substitute_ty(ty, bindings).ok(),
+                ParamKind::Constant(CtValue::Type(ty)) => substitute_ty(ty, bindings).ok(),
+                _ => None,
+            }
+            .ok_or_else(|| unresolved("an unresolved instance", instance))?;
+            let Ty::Struct(name, arguments) = &ty else {
+                return Err(unresolved("an instance that is no struct", instance));
+            };
+            bind_ty_args(&owner.param_decls, arguments, &mut instance_bindings)
+                .map_err(|error| self.error(Some(template), error))?;
+            instance_bindings.self_instance = Some((nominal_template(name).to_string(), ty));
+        }
         let mut arguments = Vec::new();
         for (decl, arg) in declaration.param_decls.iter().zip(args) {
             let binder = decl.binder();
@@ -2371,6 +2394,17 @@ impl<'a> Specializer<'a> {
             let Some(template) = self.structs.get(template_name.as_str()).copied() else {
                 continue;
             };
+            // A static method being run at compile time may be what a field
+            // type of its own struct applies (`SIMD[dt, Self.width()]`): the
+            // struct is declared by the body that uses it, once the method
+            // has run.
+            if self.demand_stack.iter().any(|demanded| {
+                mojito_symbol::symbol::split_method_symbol(demanded)
+                    .is_some_and(|(instance, _)| instance == name)
+            }) {
+                self.discovered_types.remove(&Ty::Struct(name, arguments));
+                continue;
+            }
             // An instance applied element by element binds its lone pack to
             // every argument, of which the empty tuple has none.
             let elementwise = name != template_name

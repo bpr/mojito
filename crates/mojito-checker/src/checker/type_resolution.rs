@@ -1903,7 +1903,18 @@ impl Checker {
                     };
                     let value = match self.eval_associated_ct(expr, &HashMap::new()) {
                         Ok(value @ CtValue::Expr(_)) => value,
-                        Ok(value) => open().map_or(value, CtValue::Expr),
+                        // A closed value stays the value it is (`Int(3)`),
+                        // unless a binder it reads keeps it open: nothing
+                        // is lifted for it.
+                        Ok(value) => {
+                            let lifting = self.lifting_positions.replace(0);
+                            let compiled = self
+                                .compile_dependent_ct_expr(expr)
+                                .ok()
+                                .filter(|expression| expression.as_constant().is_none());
+                            self.lifting_positions.set(lifting);
+                            compiled.map_or(value, CtValue::Expr)
+                        }
                         Err(error) => match open() {
                             Some(expression) => CtValue::Expr(expression),
                             None if self.source_validation => {

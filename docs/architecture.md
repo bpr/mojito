@@ -546,20 +546,32 @@ declares its binders, and reads the expression as that application wherever
 it denotes one (`Flatten::comptime_application`). The checked arena holds a
 node for such an expression inside an annotation, which has none otherwise
 (`type_applications`, `checked.rs`). A closed one in a plain `def`
-(`g[h(3)]()`) is lifted the same way, over no binder. A call of a plain
-module `def` over `Int` and `Bool` arguments lifts nothing: it is the
-application of that `def` to the parameter expressions of its arguments
-(`Checker::called_application`, over the `applicable_functions` collected
-before any declaration is checked), as the pin's call node is. It names no
-declaration's binders, so a signature and a struct field type take it, a
-caller that binds the parameters spells the same value (`h(2)` for `h(n)`),
-and inference solves a parameter through it argument by argument
-(`solve_applied_args`, `checker/generics.rs`). `native::mono` runs the
+(`g[h(3)]()`) is lifted the same way, over no binder. A call of a
+module `def` or a static method over `Int` and `Bool` values lifts nothing:
+it is the application of that callable to the parameter expressions of its
+arguments (`Checker::called_application`, over the `applicable_functions`
+collected before any declaration is checked), as the pin's call node is.
+The application names the MIR declaration of the one overload the
+arguments select, and lists the callee's own compile-time arguments, then
+its runtime ones in declared order with a declared default where the call
+omits one, so `d(1)` and `d(1, 3)` are one node. A static method of a
+generic struct is applied first to the instance it is called on
+(`G[n].w()`, `Self.w()`), a type that is still a pattern. The application
+names no declaration's binders, so a signature and a struct field type take
+it, a caller that binds the parameters spells the same value (`h(2)` for
+`h(n)`), and inference solves a parameter through it argument by argument,
+through the instance too (`solve_applied_args`, `checker/generics.rs`).
+`not` and a conditional expression are the parameter domain's own
+operators (`eval_associated_ct`), never a function. A raising callee is
+rejected where it is called. `native::mono` runs the
 function on the argument values (`Specializer::demand_application`, whose
-trailing arguments are the callee's runtime parameters), closes the
-instance's values before it answers nested applications
+leading argument is the owner instance of a generic struct's static method
+and whose trailing arguments are the callee's runtime parameters), closes
+the instance's values before it answers nested applications
 (`Specializer::applied`), and demands the applications a struct instance's
-field types carry (`discover_structs`). The
+field types carry (`discover_structs`). A struct whose own static method is
+being run is declared by the body that uses it, once the method has run, so
+a field type may apply a static method of its own struct. The
 cloner serves a display binding by syntax alone
 (`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
 keeps the clone only where a type or parameter argument is the display

@@ -461,6 +461,30 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.parse_expression_from(atom, Precedence::Lowest)?,
                 ));
             }
+            // `Self.width()` calls a static method of the enclosing struct.
+            if let Type::SelfParam(method) = &ty
+                && matches!(self.peek_token()?, Some(Token::LParen))
+            {
+                let object = Expr::new(
+                    ExprKind::Identifier("Self".to_string()),
+                    (start, self.last_span.1),
+                );
+                self.next_token()?;
+                let (args, kwargs) = self.parse_call_args()?;
+                self.expect(&Token::RParen, "Expected ')' after arguments")?;
+                let call = Expr::new(
+                    ExprKind::MethodCall {
+                        object: Box::new(object),
+                        method: method.clone(),
+                        args,
+                        kwargs,
+                    },
+                    (start, self.last_span.1),
+                );
+                return Ok(ParamArg::Value(
+                    self.parse_expression_from(call, Precedence::Lowest)?,
+                ));
+            }
             return Ok(ParamArg::Type(ty));
         }
         if let Some(Token::Identifier(_)) = self.peek_token()? {
@@ -493,6 +517,17 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         },
                         (id_span.0, self.last_span.1),
                     )));
+                }
+                // A member of the applied type (`Grid[n].cells()`, a static
+                // method call) is a value expression over the application.
+                if matches!(self.peek_token()?, Some(Token::Dot)) {
+                    let atom = Expr::new(
+                        ExprKind::TypeApply { name: id, args },
+                        (id_span.0, self.last_span.1),
+                    );
+                    return Ok(ParamArg::Value(
+                        self.parse_expression_from(atom, Precedence::Lowest)?,
+                    ));
                 }
                 return Ok(ParamArg::Type(Type::Named(id, args)));
             }

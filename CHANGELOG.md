@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A signature or a struct field type can now apply any callable over `Int`
+  and `Bool` values to a compile-time parameter, and spell `not` or a
+  conditional, as it can at the pin: `def gen[n: Int]() -> SIMD[DType.int32,
+  twice[n]()]` for a generic `def twice[k: Int]() -> Int`, an overloaded
+  callee, one with a default, a keyword, or a `var` parameter, a static
+  method (`S.f(n)`, `G[n].w()`, and `Self.w()` in the struct's own field
+  types), `Flag[not (n == 9)]`, and `SIMD[DType.int32, n if n > 2 else
+  h(n)]` were rejected with "not a compile-time Int constant". Each call is
+  the application of its callee, the same value wherever it is spelled: a
+  default stands for an omitted argument (`d(1)` is `d(1, 3)`), `Self.w()`
+  is `G[2].w()` for the instance, and a call infers a parameter through one.
+  `not (n == 9)` is `n != 9`, and a conditional over a closed condition is
+  its taken arm. A raising callee is rejected with "cannot call raising
+  function in type parameter".
+- A static method can now be called through `Self` in a method body
+  (`Self.cells()`), as it can at the pin, where the check stopped with
+  "Undefined variable 'Self'".
 - A signature or a struct field type can now apply a function to a
   compile-time parameter, as it can at the pin: `def make[n: Int]() ->
   SIMD[DType.int32, h(n)]`, a parameter `v: SIMD[DType.int32, h(n)]`, and

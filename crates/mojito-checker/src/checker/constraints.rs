@@ -460,6 +460,26 @@ impl Checker {
             ExprKind::Prefix(PrefixOp::Neg, e) => self
                 .fold_ct_neg(&self.eval_associated_ct(e, associated)?)
                 .map_err(param_error),
+            // `not b` over a compile-time `Bool`; any other operand is the
+            // ordinary rejection below.
+            ExprKind::Prefix(PrefixOp::Not, operand)
+                if let Ok(value) = self.eval_associated_ct(operand, associated)
+                    && let Some(negated) = self.fold_ct_not(&value) =>
+            {
+                negated.map_err(param_error)
+            }
+            // `a if c else b`: the arm a closed condition selects, else the
+            // selection over both arms.
+            ExprKind::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } if let Ok(condition) = self.eval_associated_ct(cond, associated)
+                && let Some(selected) =
+                    self.fold_ct_cond(&condition, then_branch, else_branch, associated) =>
+            {
+                selected
+            }
             ExprKind::Infix(op, l, r) => self.eval_associated_ct_infix(
                 *op,
                 &self.eval_associated_ct(l, associated)?,
@@ -478,8 +498,14 @@ impl Checker {
             _ => self
                 .eval_reflection_expr(expr)?
                 .or_else(|| self.positioned_application(expr).map(CtValue::Expr))
-                .ok_or_else(|| {
-                    TypeError::NotComptime("not an associated comptime expression".to_string())
+                .ok_or_else(|| match self.calls_raising_application(expr) {
+                    Some(function) => TypeError::BadCall {
+                        func: function.to_string(),
+                        reason: "cannot call raising function in type parameter".to_string(),
+                    },
+                    None => {
+                        TypeError::NotComptime("not an associated comptime expression".to_string())
+                    }
                 }),
         }
     }
@@ -540,6 +566,59 @@ impl Checker {
             CtValue::Expr(expr) => self.param_context.neg(expr).map(ParamExpr::into_value),
             concrete => mojito_types::param_expr::fold::fold_neg(concrete),
         }
+    }
+
+    /// `not value` over an associated compile-time `Bool`; `None` for a value
+    /// of any other type.
+    fn fold_ct_not(
+        &self,
+        value: &CtValue,
+    ) -> Option<Result<CtValue, mojito_types::param_expr::ParamError>> {
+        match value {
+            CtValue::Bool(value) => Some(Ok(CtValue::Bool(!value))),
+            CtValue::Expr(expr) if *expr.meta() == MetaTy::bool() => {
+                Some(self.param_context.not(expr).map(ParamExpr::into_value))
+            }
+            _ => None,
+        }
+    }
+
+    /// `then_branch if condition else else_branch` over an associated
+    /// compile-time `Bool` condition: the arm a closed condition selects,
+    /// else the selection between the two arms' values, an integer literal
+    /// arm taking the `Int` the other arm or a bare literal has. `None` for
+    /// a condition of any other type.
+    fn fold_ct_cond(
+        &self,
+        condition: &CtValue,
+        then_branch: &Expr,
+        else_branch: &Expr,
+        associated: &HashMap<String, CtValue>,
+    ) -> Option<Result<CtValue, TypeError>> {
+        let condition = match condition {
+            CtValue::Bool(true) => return Some(self.eval_associated_ct(then_branch, associated)),
+            CtValue::Bool(false) => return Some(self.eval_associated_ct(else_branch, associated)),
+            CtValue::Expr(condition) if *condition.meta() == MetaTy::bool() => condition,
+            _ => return None,
+        };
+        let arm = |branch: &Expr| {
+            let value = match self.eval_associated_ct(branch, associated)? {
+                literal @ CtValue::IntLiteral(_) => {
+                    literal.clone().materialize_as(&Ty::Int).unwrap_or(literal)
+                }
+                value => value,
+            };
+            self.param_context.constant(value).map_err(param_error)
+        };
+        Some(arm(then_branch).and_then(|then_value| {
+            self.param_context
+                .op(
+                    mojito_types::param_expr::ParamOp::Cond,
+                    &[condition.clone(), then_value, arm(else_branch)?],
+                )
+                .map(ParamExpr::into_value)
+                .map_err(param_error)
+        }))
     }
 
     /// The symbolic value of a module constant's initializer that applies a
@@ -871,6 +950,26 @@ impl Checker {
                 if let Some(projection) = self.struct_value_field(object, field) =>
             {
                 projection
+            }
+            // A comparison, a boolean connective, `not`, or a conditional
+            // over compile-time values, in the operators' canonical form.
+            ExprKind::Infix(
+                InfixOp::Eq
+                | InfixOp::Ne
+                | InfixOp::Lt
+                | InfixOp::Le
+                | InfixOp::Gt
+                | InfixOp::Ge
+                | InfixOp::And
+                | InfixOp::Or,
+                _,
+                _,
+            )
+            | ExprKind::Prefix(PrefixOp::Not, _)
+            | ExprKind::IfExpr { .. }
+                if let Ok(value) = self.eval_associated_ct(expr, &HashMap::new()) =>
+            {
+                constant(value)
             }
             // `reflect[T].field_count()`: a constant for a struct subject, a
             // query node for a symbolic one.

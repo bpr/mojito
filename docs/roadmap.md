@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R396**.
+Next free ID: **R400**.
 
 ## Ordered Work
 
@@ -134,30 +134,6 @@ correctness fix to existing behavior is allowed.
     R6), and `DefSpecializationRequest::with_variadic`.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
-
-- [ ] **R391 (P3) A signature or a struct field type that applies a
-  generic function or a method to a parameter is rejected**
-
-  Problem: `def gen[n: Int]() -> SIMD[DType.int32, twice[n]()]:` for `def
-  twice[k: Int]() -> Int` is rejected with "not a compile-time Int constant:
-  not an associated comptime expression", where the pin runs it.
-  - A call of a plain module `def` over `Int` and `Bool` arguments is the
-    application of that `def` wherever it is spelled
-    (`Checker::called_application`, `checker/comptime_validation.rs`), so a
-    signature and a field type take it.
-  - Any other call is still a function MIR lifts from the body that spells
-    it, and a signature or a field has no body.
-  - The shapes left out are a generic callee, an overloaded one, a method or
-    a static method, a callee with a default, a keyword, a `var` or a
-    `raises`, and a result or a parameter that is neither `Int` nor `Bool`
-    (`applicable_functions`).
-  - `not (n == 9)` and `n if n > 2 else h(n)` are rejected in a signature
-    too. The parameter domain has both operators, and the check compiles
-    neither.
-  - In a body each of these is lifted whole, so it is a different value
-    from the same call spelled in another declaration.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R375 (P3b) An alias of a local `comptime` display binding keys a
   clone**
@@ -840,7 +816,8 @@ correctness fix to existing behavior is allowed.
     an erased frame runs no such function.
   - A parameter argument alone (`g[h(n)]()`) runs erased, since the body
     computes the value where it stands.
-  - `assets/ok/comptime_application_argument.mojo` and
+  - `assets/ok/comptime_application_argument.mojo`,
+    `assets/ok/comptime_call_callee_shapes.mojo`, and
     `assets/ok/comptime_call_signature.mojo` are the `ERASED_VM_RESIDUE`
     rows (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and these rows with it.
@@ -2354,6 +2331,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R399 A method given a caller's parameter as its own value
+  parameter leaves an untyped register**
+
+  Problem: `return g.plain[b]()` in `def user[a: Int, b: Int](g: G[a]) ->
+  Int`, for `def plain[m: Int](self) -> Int` in `struct G[k: Int]`, fails
+  with "invalid checked program: fn 'user': register r1 has no checked
+  type", where the pin runs it.
+  - A literal argument (`g.plain[4]()`) in the same `def` runs.
+  - The same call on a concrete receiver in `main` (`g.plain[3]()`) runs.
+  - The bracket argument is lowered as a read of the binder `b`, and that
+    read has no checked type on this path.
+  - Found while landing the callee shapes a signature applies (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R128 A `Tuple` over a type parameter needs no evidence the
   parameter is `Movable`**
 
@@ -2613,6 +2605,45 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R396 A signature that calls a function over a value that is no
+  `Int` or `Bool` is rejected**
+
+  Problem: `def gen[n: Int]() -> SIMD[DType.int32, Int(half(n))]:` for `def
+  half(x: Int) -> Float64`, and `-> SIMD[DType.int32, P(n).get()]` for a
+  method `get` of `struct P`, are rejected with "not a compile-time Int
+  constant: not an associated comptime expression", where the pin runs both.
+  - A call is the application of its callee by name only when every
+    parameter and the result is an `Int` or a `Bool`
+    (`applicable_functions`, `checker/comptime_validation.rs`).
+  - A method call's receiver is a struct value, which is no such argument.
+  - In a body each of these is lifted whole, so it runs there, as a
+    different value from the same call spelled in another declaration.
+  - A struct value in the parameter domain can take the frozen form a
+    struct-typed parameter argument already has.
+  - Found while landing the callee shapes a signature applies (2026-10-06).
+  - Depends on R386, which gives the parameter domain a value meta for a
+    `Float64` and a `String`.
+  - Model: Fable, Not Planned.
+
+- [ ] **R397 A signature that calls a function generic over a type is
+  rejected**
+
+  Problem: `def gen[n: Int]() -> SIMD[DType.int32, idt(n)]:` for `def
+  idt[T: Copyable](x: T) -> T` is rejected with "not a compile-time Int
+  constant: not an associated comptime expression", where the pin runs it.
+  - A callee's own compile-time parameters are applied by name when each is
+    an `Int` or a `Bool` the call spells (`twice[n]()`).
+  - A type parameter, a parameter the call leaves to inference, and one
+    with a default are left out (`ApplicableShape::applicable`,
+    `checker/comptime_validation.rs`).
+  - A default argument that reads a name the calling declaration binds too
+    is left out as well, since the default belongs to the callee's scope
+    (`Checker::applied_default`).
+  - In a body such a call is lifted whole, so it runs there.
+  - Found while landing the callee shapes a signature applies (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R387 A function applied in a parameter argument cannot print**
 
   Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
@@ -2633,11 +2664,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R388 A type over a lifted application is spelled by its function's
   name in a diagnostic**
 
-  Problem: `var a: SIMD[DType.int32, twice[n]()] = SIMD[DType.int32, n *
-  2](1)` in `def f[n: Int]()`, for `def twice[k: Int]() -> Int`, is rejected
-  with "expected SIMD[DType.int32, $comptime$$2017(n)], found
-  SIMD[DType.int32, 2 * n]", where the pin spells the expected type
-  `SIMD[.int32, twice[n]()]`.
+  Problem: `var a: SIMD[DType.int32, max(n, 2)] = SIMD[DType.int32, n *
+  2](1)` in `def f[n: Int]()` is rejected with "expected SIMD[DType.int32,
+  $comptime$$2014(n)], found SIMD[DType.int32, 2 * n]", where the pin spells
+  the expected type `SIMD[.int32, max(n, Int(2))]`.
   - Both compilers reject the program. Only the spelling differs.
   - The application names the function MIR lifts, not the expression it
     computes (`Checker::lifted_application`,
@@ -2646,6 +2676,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     is the application of that `def`.
   - Found while landing an application in a type or a parameter argument
     (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R398 A type over the application of a generic, overloaded, or
+  static callee is spelled by its symbol in a diagnostic**
+
+  Problem: `var x: SIMD[DType.int32, 4] = gen[2]()` for `def gen[n: Int]()
+  -> SIMD[DType.int32, twice[n]()]` is rejected with "found
+  SIMD[DType.int32, twice(2)]", where the pin spells the found type
+  `SIMD[.int32, twice[Int(2)]()]`.
+  - Both compilers reject the program. Only the spelling differs.
+  - An overloaded callee prints its symbol: `ov$ov$Int(2)` for `ov(2)`.
+  - A static method of a generic struct prints the instance it is called on
+    as an argument: `G.w[G[2]]()` for `G[2].w()`.
+  - `not (n > 9)` prints as `not 9 < n`.
+  - The application holds the MIR declaration's name and every argument in
+    one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
+    neither the source name nor which arguments are compile-time ones.
+  - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -1910,6 +1910,88 @@ fn called_function_in_a_signature_keeps_application_identity() {
 }
 
 #[test]
+fn called_callable_shapes_keep_application_identity() {
+    let prefix = "def twice[k: Int]() -> Int:\n    return k * 2\n\n\
+        def ov(n: Int) -> Int:\n    return n * 2\n\n\
+        def ov(b: Bool) -> Int:\n    return 8\n\n\
+        def d(n: Int, m: Int = 3) -> Int:\n    return n + m\n\n\
+        struct S:\n    @staticmethod\n    def f(n: Int) -> Int:\n        return n * 2\n\n\
+        struct G[k: Int]:\n    var v: SIMD[DType.int32, Self.w()]\n\n\
+        \x20   def __init__(out self):\n        self.v = 3\n\n\
+        \x20   @staticmethod\n    def w() -> Int:\n        return Self.k * 2\n\n\
+        def generic[n: Int]() -> SIMD[DType.int32, twice[n]()]:\n    \
+        return SIMD[DType.int32, twice[n]()](7)\n\n\
+        def overloaded[n: Int]() -> SIMD[DType.int32, ov(n)]:\n    \
+        return SIMD[DType.int32, ov(n)](7)\n\n\
+        def defaulted[n: Int]() -> SIMD[DType.int32, d(n)]:\n    \
+        return SIMD[DType.int32, d(n, m=3)](7)\n\n\
+        def static[n: Int]() -> SIMD[DType.int32, S.f(n)]:\n    \
+        return SIMD[DType.int32, S.f(n)](7)\n\n\
+        def on_instance[n: Int](v: SIMD[DType.int32, G[n].w()]) -> Int:\n    return n\n\n";
+    ok(&format!(
+        "{prefix}def main():\n    var a: SIMD[DType.int32, twice[2]()] = generic[2]()\n    \
+         var b: SIMD[DType.int32, ov(2)] = overloaded[2]()\n    \
+         var c: SIMD[DType.int32, d(2, 3)] = defaulted[2]()\n    \
+         var e: SIMD[DType.int32, S.f(2)] = static[2]()\n    \
+         var g = G[2]()\n    var field: SIMD[DType.int32, G[2].w()] = g.v\n    \
+         var explicit = on_instance[2](g.v)\n    var inferred = on_instance(g.v)\n"
+    ));
+    // An application is not the value it computes, and one overload is not
+    // another.
+    let computed = err(&format!(
+        "{prefix}def main():\n    var a: SIMD[DType.int32, 4] = generic[2]()\n"
+    ));
+    assert!(matches!(computed, TypeError::TypeMismatch { expected, .. }
+            if expected == "SIMD[DType.int32, 4]"));
+    assert!(
+        check_source(&format!(
+            "{prefix}def main():\n    var b: SIMD[DType.int32, ov(True)] = overloaded[2]()\n"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn comptime_not_and_conditional_compile_to_parameter_operators() {
+    let prefix = "def h(n: Int) -> Int:\n    return n * 2\n\n\
+        struct Flag[b: Bool]:\n    var x: Int\n\n\
+        \x20   def __init__(out self):\n        self.x = 0\n\n\
+        def negated[n: Int]() -> Flag[not (n == 9)]:\n    return Flag[n != 9]()\n\n\
+        def chosen[n: Int]() -> SIMD[DType.int32, n if n > 2 else h(n)]:\n    \
+        return SIMD[DType.int32, n if n > 2 else h(n)](7)\n\n";
+    ok(&format!(
+        "{prefix}def main():\n    var t: Flag[True] = negated[1]()\n    \
+         var f: Flag[not (9 == 9)] = negated[9]()\n    \
+         var taken: SIMD[DType.int32, 4] = chosen[4]()\n    \
+         var other: SIMD[DType.int32, h(1)] = chosen[1]()\n"
+    ));
+    // The untaken arm's application stays an application.
+    assert!(
+        check_source(&format!(
+            "{prefix}def main():\n    var other: SIMD[DType.int32, 2] = chosen[1]()\n"
+        ))
+        .is_err()
+    );
+    // The negation of a comparison is not the comparison that decides the
+    // same.
+    let respelled = err("struct Flag[b: Bool]:\n    var x: Int\n\n\
+         \x20   def __init__(out self):\n        self.x = 0\n\n\
+         def negated[n: Int]() -> Flag[not (n > 9)]:\n    return Flag[n <= 9]()\n");
+    assert!(matches!(respelled, TypeError::TypeMismatch { .. }));
+}
+
+#[test]
+fn rejects_a_raising_call_in_a_type_parameter() {
+    let raising = err("def r(n: Int) raises -> Int:\n    return n * 2\n\n\
+         def gen[n: Int]() -> SIMD[DType.int32, r(n)]:\n    return SIMD[DType.int32, 2](7)\n");
+    assert!(
+        matches!(&raising, TypeError::BadCall { func, reason }
+            if func == "r" && reason == "cannot call raising function in type parameter"),
+        "got {raising:?}"
+    );
+}
+
+#[test]
 fn rejects_non_power_of_two_width() {
     let e = err("var v: SIMD[DType.int32, 3] = SIMD[DType.int32, 3](1, 2, 3)\n");
     assert!(matches!(e, TypeError::BadSimdWidth(_)), "got {e:?}");

@@ -437,7 +437,10 @@ a spread expression. A bracket holding one spread after a name is a type
 application (`Tuple[*Ts.reverse()]`), never a subscript. A `Self`-rooted
 chain an operator continues (`storage[Self.Ts.length - 1 - i]`) is the value
 expression it starts, and `Self.Ts.values` is a value argument like a `def`'s
-own `Ts.values`.
+own `Ts.values`. A call on a type is a value expression too: `Self.width()`
+calls a static method of the enclosing struct, and a member of an applied
+type (`Grid[n].cells()`) continues as the postfix chain it starts, where the
+applied type alone (`Grid[n]`) stays a type argument.
 
 A type parameter receives a `type`; a value parameter receives a **comptime value
 expression** — an `Int` expression over literals, `comptime` constants, and the

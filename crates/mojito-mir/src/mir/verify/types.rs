@@ -529,10 +529,18 @@ pub(super) fn instantiate_checked_type(
 /// Whether two instantiations of one struct hold, in the same slot, distinct
 /// residual expressions over the same set of parameters. An instance binding
 /// maps both alike, so they can never become equal; residuals over different
-/// binders (a caller's `n + 1` against a callee's `m + 1`) are not judged.
+/// binders (a caller's `n + 1` against a callee's `m + 1`) are not judged,
+/// and neither is one over a type that is still a pattern (`G[k].f()`
+/// against `G[2].f()`), whose binders sit inside the type.
 pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
     use mojito_types::ct::CtValue;
+    use mojito_types::param_expr::{ParamExpr, ParamKind};
     use mojito_types::types::TyArg;
+    fn over_type_pattern(expr: &ParamExpr) -> bool {
+        let mut pattern = false;
+        expr.visit(&mut |node| pattern |= matches!(node.kind(), ParamKind::TypeShape(_)));
+        pattern
+    }
     let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
         (found, expected)
     else {
@@ -542,7 +550,10 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
         && found_args.len() == expected_args.len()
         && found_args.iter().zip(expected_args).any(|pair| match pair {
             (TyArg::Val(CtValue::Expr(left)), TyArg::Val(CtValue::Expr(right))) => {
-                left != right && left.free_parameters() == right.free_parameters()
+                left != right
+                    && left.free_parameters() == right.free_parameters()
+                    && !over_type_pattern(left)
+                    && !over_type_pattern(right)
             }
             (TyArg::Ty(left), TyArg::Ty(right)) => residual_arguments_conflict(left, right),
             _ => false,

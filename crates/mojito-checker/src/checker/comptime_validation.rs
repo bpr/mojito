@@ -82,54 +82,106 @@ pub(super) struct ForwardedPack {
     pub(super) owned: bool,
 }
 
-/// The module functions a compile-time call applies by name
-/// ([`Checker::called_application`]), each with its parameter types and its
-/// result: a `def` that is not generic, overloaded, or raising, takes `imm`
-/// `Int` and `Bool` parameters without defaults, and returns an `Int` or a
-/// `Bool`.
+/// A callable a compile-time call applies by name
+/// ([`Checker::called_application`]): a module `def` or a static method of a
+/// struct, whose own compile-time parameters and runtime parameters are each
+/// an `Int` or a `Bool`, and which returns one.
+#[derive(Debug, Clone)]
+pub(in crate::checker) struct ApplicableFunction {
+    /// The MIR declaration the elaborator runs.
+    symbol: String,
+    /// Whether it is a static method of a generic struct, which is applied
+    /// to the instance it is called on before any other argument.
+    on_instance: bool,
+    /// The callable's own compile-time parameters, in declared order.
+    binders: Vec<(String, Ty)>,
+    /// Its runtime parameters, in declared order.
+    params: Vec<ApplicableParameter>,
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    result: Ty,
+    /// Whether it is declared `raises`, which no type or parameter argument
+    /// may call.
+    raises: bool,
+}
+
+/// The callables a compile-time call applies by name
+/// ([`Checker::called_application`]), every overload under the name a call
+/// spells: `h` for a module `def`, `S.f` for a static method.
 pub(super) fn applicable_functions(
     stmts: &[Stmt],
     overloads: &mojito_symbol::symbol::OverloadSets,
-) -> HashMap<String, (Vec<Ty>, Ty)> {
-    let scalar = |ty: &SourceType| match ty {
-        SourceType::Int => Some(Ty::Int),
-        SourceType::Bool => Some(Ty::Bool),
-        _ => None,
-    };
-    stmts
-        .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def {
+) -> HashMap<String, Vec<ApplicableFunction>> {
+    let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
+    for statement in stmts {
+        match &statement.kind {
+            StmtKind::Def {
                 name,
                 type_params,
                 params,
+                positional_only,
+                keyword_only,
                 captures: None,
-                raises: false,
+                raises,
                 ret: Some(ret),
                 where_clauses,
                 ..
-            } = &statement.kind
-            else {
-                return None;
-            };
-            if !(type_params.is_empty() && where_clauses.is_empty())
-                || overloads.function_is_overloaded(name, params.len())
-            {
-                return None;
+            } if where_clauses.is_empty() => {
+                let shape = ApplicableShape {
+                    type_params,
+                    params,
+                    positional_only: *positional_only,
+                    keyword_only: *keyword_only,
+                    raises: *raises,
+                    ret,
+                };
+                let symbol =
+                    mojito_symbol::symbol::lowered_def_name(name, type_params, params, overloads);
+                functions
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(shape.applicable(symbol, false));
             }
-            let params = params
-                .iter()
-                .map(|param| {
-                    (param.kind == mojito_ast::ast::ParamKind::Regular
-                        && param.default.is_none()
-                        && matches!(param.convention, None | Some(ArgConvention::Imm)))
-                    .then(|| scalar(&param.ty))
-                    .flatten()
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some((name.clone(), (params, scalar(ret)?)))
-        })
-        .collect()
+            StmtKind::Struct {
+                name,
+                type_params,
+                methods,
+                template_shell: false,
+                ..
+            } => {
+                for method in methods {
+                    let Some(ret) = method
+                        .ret
+                        .as_ref()
+                        .filter(|_| !method.has_self && method.where_clauses.is_empty())
+                    else {
+                        continue;
+                    };
+                    let shape = ApplicableShape {
+                        type_params: &method.type_params,
+                        params: &method.params,
+                        positional_only: method.positional_only,
+                        keyword_only: method.keyword_only,
+                        raises: method.raises,
+                        ret,
+                    };
+                    let source = format!("{name}.{}", method.name);
+                    let symbol = mojito_symbol::symbol::lowered_method_name(
+                        &source,
+                        type_params,
+                        mojito_symbol::symbol::MethodShape::of(method),
+                        overloads,
+                    );
+                    functions
+                        .entry(source)
+                        .or_default()
+                        .extend(shape.applicable(symbol, !type_params.is_empty()));
+                }
+            }
+            _ => {}
+        }
+    }
+    functions
 }
 
 impl Checker {
@@ -694,8 +746,9 @@ impl Checker {
     /// any other expression.
     pub(super) fn lifted_application(&self, expr: &Expr) -> Option<ParamExpr> {
         let called = self.called_application(expr);
-        // A signature or a field type has no body to lift a function from.
-        if self.scopes.len() < 2 {
+        // A signature or a field type has no body to lift a function from,
+        // and no compile-time argument calls a raising function.
+        if self.scopes.len() < 2 || self.calls_raising_application(expr).is_some() {
             return called;
         }
         let names = names_read(expr);
@@ -733,58 +786,240 @@ impl Checker {
         Some(application)
     }
 
-    /// The application a call of a module function denotes when every
-    /// argument is a compile-time `Int` or `Bool` (`h(n)`, `h(Self.n + 1)`,
-    /// `h(h(2))`): the function applied to the parameter expressions of its
-    /// arguments, as the pin's call node is. It names no declaration's
-    /// binders, so a caller that binds them spells the same value
-    /// (`h(2)` for `h(n)` at `n = 2`), and the elaborator runs the function
-    /// on the argument values. `None` for a callee that is no such function
-    /// ([`applicable_functions`]), a keyword or an omitted argument, or an
-    /// argument that denotes no parameter expression.
+    /// The application a call of a module function or a static method
+    /// denotes when every argument is a compile-time `Int` or `Bool`
+    /// (`h(n)`, `h(Self.n + 1)`, `twice[n]()`, `S.f(n)`, `d(n, m=4)`): the
+    /// callable applied to the parameter expressions of its compile-time
+    /// arguments, then of its runtime ones in declared order, a default
+    /// standing where the call omits one, as the pin's call node is. It
+    /// names no declaration's binders, so a caller that binds them spells
+    /// the same value (`h(2)` for `h(n)` at `n = 2`, `d(1, 3)` for `d(1)`),
+    /// and the elaborator runs the callable on the argument values. `None`
+    /// for a callee that is no such callable ([`applicable_functions`]), a
+    /// call that selects no one overload, or an argument that denotes no
+    /// parameter expression.
     fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        let ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } = &expr.kind
-        else {
-            return None;
-        };
-        // A local of the name shadows the module function.
-        if !(param_args.is_empty() && kwargs.is_empty())
-            || self.binding_scope(name).is_some_and(|scope| scope > 0)
-        {
-            return None;
-        }
-        let (params, ret) = self.applicable_functions.get(name)?;
-        if params.len() != args.len() {
-            return None;
-        }
-        let arguments = args
-            .iter()
-            .zip(params)
-            .map(|(arg, param)| {
-                let _lifting = self.lifting_position();
-                let argument = self.compile_dependent_ct_expr(arg).ok()?;
-                // A literal argument is the value the parameter holds, so
-                // that `h(2)` is `h(n)` at `n = 2`.
-                let argument = match argument.as_constant() {
-                    Some(value) => self
-                        .param_context
-                        .constant(value.clone().materialize_as(param)?)
-                        .ok()?,
-                    None => argument,
+        let (function, arguments) = self.selected_application(expr)?;
+        (!function.raises).then(|| {
+            self.param_context.apply(
+                &function.symbol,
+                &arguments,
+                mojito_types::param_expr::MetaTy::value(function.result.clone()),
+            )
+        })
+    }
+
+    /// Whether `expr` calls a `raises` callable a compile-time call would
+    /// otherwise apply, which the pin rejects in a type or a parameter
+    /// argument.
+    pub(super) fn calls_raising_application(&self, expr: &Expr) -> Option<&str> {
+        let (function, _) = self.selected_application(expr)?;
+        function.raises.then_some(function.symbol.as_str())
+    }
+
+    /// The callable a compile-time call applies and the parameter
+    /// expressions of its arguments: the one overload under the spelled
+    /// name the arguments bind and type.
+    fn selected_application(&self, expr: &Expr) -> Option<(&ApplicableFunction, Vec<ParamExpr>)> {
+        let (name, instance, param_args, args, kwargs) = match &expr.kind {
+            // A local of the name shadows the module function.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if self.binding_scope(name).is_none_or(|scope| scope == 0) => {
+                (name.clone(), None, param_args.as_slice(), args, kwargs)
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => {
+                let (owner, instance) = self.applied_owner(object, method)?;
+                let name = format!("{owner}.{method}");
+                (name, Some(instance), [].as_slice(), args, kwargs)
+            }
+            // A static method given its own compile-time arguments
+            // (`S.t[n]()`).
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return None;
                 };
-                (argument.meta().as_value() == Some(param)).then_some(argument)
+                let (owner, instance) = self.applied_owner(object, field)?;
+                let name = format!("{owner}.{field}");
+                (name, Some(instance), param_args.as_slice(), args, kwargs)
+            }
+            _ => return None,
+        };
+        let mut selected = self
+            .applicable_functions
+            .get(&name)?
+            .iter()
+            .filter_map(|function| {
+                let mut arguments = Vec::new();
+                if function.on_instance {
+                    arguments.push(self.param_context.type_shape(instance.clone()?));
+                }
+                arguments.extend(self.applied_arguments(function, param_args, args, kwargs)?);
+                Some((function, arguments))
+            });
+        let application = selected.next()?;
+        selected.next().is_none().then_some(application)
+    }
+
+    /// The struct whose static method `method` a call on `object` names
+    /// (`S.f(n)`, `G[n].f()`, `Self.f()`), with the instance `object`
+    /// spells; `None` for a receiver that is a value, or a struct with no
+    /// applicable `method`.
+    fn applied_owner(&self, object: &Expr, method: &str) -> Option<(String, Ty)> {
+        let applicable = |owner: &str| {
+            self.applicable_functions
+                .contains_key(&format!("{owner}.{method}"))
+        };
+        let named = |name: &String, args: Vec<ParamArg>| {
+            (self.binding_scope(name).is_none() && applicable(name))
+                .then(|| {
+                    self.ty_from_anno(&SourceType::Named(name.clone(), args))
+                        .ok()
+                })
+                .flatten()
+        };
+        let instance = match &object.kind {
+            ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone().filter(
+                |ty| matches!(ty, Ty::Struct(owner, _) if applicable(template_name(owner))),
+            ),
+            ExprKind::Identifier(name) => named(name, Vec::new()),
+            ExprKind::TypeApply { name, args } => named(name, args.clone()),
+            // A lone value argument parses as a subscript (`G[n]`).
+            ExprKind::Index { object, index } => match (&object.kind, &index.kind) {
+                (ExprKind::Identifier(name), ExprKind::TupleLit(elements)) => named(
+                    name,
+                    elements.iter().cloned().map(ParamArg::Value).collect(),
+                ),
+                (ExprKind::Identifier(name), _) => {
+                    named(name, vec![ParamArg::Value((**index).clone())])
+                }
+                _ => None,
+            },
+            _ => None,
+        }?;
+        match &instance {
+            Ty::Struct(owner, _) => Some((template_name(owner).to_string(), instance.clone())),
+            _ => None,
+        }
+    }
+
+    /// The parameter expressions a call's arguments give `function`, its
+    /// compile-time parameters first; `None` when they do not bind its
+    /// parameters or one is not a compile-time value of its parameter's
+    /// type.
+    fn applied_arguments(
+        &self,
+        function: &ApplicableFunction,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Vec<ParamExpr>> {
+        use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
+        if param_args.len() != function.binders.len() {
+            return None;
+        }
+        let mut arguments = Vec::with_capacity(function.binders.len() + function.params.len());
+        for (index, (binder, ty)) in function.binders.iter().enumerate() {
+            let named = param_args.iter().find_map(|arg| match arg {
+                ParamArg::Named { name, value } if name == binder => Some(&**value),
+                _ => None,
+            });
+            let positional = param_args
+                .get(index)
+                .filter(|arg| !matches!(arg, ParamArg::Named { .. }));
+            let argument = match named.or(positional)? {
+                ParamArg::Value(value) => self.applied_argument(value, ty)?,
+                ParamArg::Type(SourceType::SelfParam(parameter)) => {
+                    self.applied_value(self.self_param_value(parameter)?, ty)?
+                }
+                _ => return None,
+            };
+            arguments.push(argument);
+        }
+        let names: Vec<String> = function
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        let required: Vec<bool> = function
+            .params
+            .iter()
+            .map(|param| param.default.is_none())
+            .collect();
+        let keywords: Vec<&str> = kwargs.iter().map(|kwarg| kwarg.name.as_str()).collect();
+        let matched = match_call_slots(
+            &names,
+            &required,
+            function.positional_only,
+            function.keyword_only,
+            args.len(),
+            &keywords,
+            CallVariadics {
+                positional: false,
+                keyword: false,
+            },
+        )
+        .ok()?;
+        for (slot, param) in matched.slots.iter().zip(&function.params) {
+            arguments.push(match slot {
+                ArgSlot::Positional(index) => self.applied_argument(&args[*index], &param.ty)?,
+                ArgSlot::Keyword(index) => {
+                    self.applied_argument(&kwargs[*index].value, &param.ty)?
+                }
+                ArgSlot::Default => self.applied_default(param.default.as_ref()?, &param.ty)?,
+            });
+        }
+        Some(arguments)
+    }
+
+    /// The parameter expression of a call argument for a parameter of type
+    /// `ty`.
+    fn applied_argument(&self, argument: &Expr, ty: &Ty) -> Option<ParamExpr> {
+        let _lifting = self.lifting_position();
+        let argument = self.compile_dependent_ct_expr(argument).ok()?;
+        self.applied_value(argument.into_value(), ty)
+    }
+
+    /// The parameter expression of a declared default a call omits, for a
+    /// parameter of type `ty`. The default is its declaration's, so it
+    /// stands only where every name it reads means what it means there: no
+    /// local and no binder of the calling declaration.
+    fn applied_default(&self, default: &Expr, ty: &Ty) -> Option<ParamExpr> {
+        names_read(default)
+            .iter()
+            .all(|name| {
+                name != "Self"
+                    && self.binding_scope(name).is_none_or(|scope| scope == 0)
+                    && self.value_parameter_in_scope(name).is_none()
             })
-            .collect::<Option<Vec<_>>>()?;
-        Some(self.param_context.apply(
-            name,
-            &arguments,
-            mojito_types::param_expr::MetaTy::value(ret.clone()),
-        ))
+            .then(|| self.applied_argument(default, ty))
+            .flatten()
+    }
+
+    /// `value` as the argument of a parameter of type `ty`. A literal is the
+    /// value the parameter holds, so that `h(2)` is `h(n)` at `n = 2`.
+    fn applied_value(&self, value: CtValue, ty: &Ty) -> Option<ParamExpr> {
+        let argument = match value {
+            CtValue::Expr(argument) => argument,
+            closed => self
+                .param_context
+                .constant(closed.materialize_as(ty)?)
+                .ok()?,
+        };
+        (argument.meta().as_value() == Some(ty)).then_some(argument)
     }
 
     /// The application of the function MIR lifts for `expr`, an expression
@@ -2581,6 +2816,85 @@ pub(super) fn reads_reflection(stmts: &[Stmt]) -> bool {
     let mut finder = ReflectionFinder { found: false };
     mojito_ast::visit::walk_block(&mut finder, stmts);
     finder.found
+}
+
+#[derive(Debug, Clone)]
+struct ApplicableParameter {
+    name: String,
+    ty: Ty,
+    default: Option<Expr>,
+}
+
+/// The signature of a `def` or a static method, as its declaration spells
+/// it.
+struct ApplicableShape<'a> {
+    type_params: &'a [mojito_ast::ast::TypeParam],
+    params: &'a [mojito_ast::ast::FnParam],
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    raises: bool,
+    ret: &'a SourceType,
+}
+
+impl ApplicableShape<'_> {
+    /// The callable under `symbol`, when a compile-time call can apply it.
+    fn applicable(&self, symbol: String, on_instance: bool) -> Option<ApplicableFunction> {
+        let scalar = |ty: &SourceType| match ty {
+            SourceType::Int => Some(Ty::Int),
+            SourceType::Bool => Some(Ty::Bool),
+            _ => None,
+        };
+        let binders = self
+            .type_params
+            .iter()
+            .map(|binder| {
+                let plain = binder.value_type.is_none()
+                    && binder.callable_bound.is_none()
+                    && binder.origin_mutability.is_none()
+                    && binder.default.is_none()
+                    && binder.constraints.is_empty()
+                    && !binder.infer_only;
+                let ty = match binder.bounds.as_slice() {
+                    [bound] if plain && bound == "Int" => Ty::Int,
+                    [bound] if plain && bound == "Bool" => Ty::Bool,
+                    _ => return None,
+                };
+                Some((binder.name.clone(), ty))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let params = self
+            .params
+            .iter()
+            .map(|param| {
+                let passed_by_value = param.kind == mojito_ast::ast::ParamKind::Regular
+                    && matches!(
+                        param.convention,
+                        None | Some(ArgConvention::Imm | ArgConvention::Var)
+                    );
+                Some(ApplicableParameter {
+                    name: param.name.clone(),
+                    ty: scalar(&param.ty).filter(|_| passed_by_value)?,
+                    default: param.default.clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(ApplicableFunction {
+            symbol,
+            on_instance,
+            binders,
+            params,
+            positional_only: self.positional_only,
+            keyword_only: self.keyword_only,
+            result: scalar(self.ret)?,
+            raises: self.raises,
+        })
+    }
+}
+
+/// The name a struct was declared under, whichever instance clone `name`
+/// spells.
+fn template_name(name: &str) -> &str {
+    mojito_symbol::symbol::specialization_template(name).unwrap_or(name)
 }
 
 struct ReflectionFinder {

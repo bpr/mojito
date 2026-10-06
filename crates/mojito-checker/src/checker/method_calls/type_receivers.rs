@@ -62,6 +62,41 @@ impl Checker {
             );
             return Ok(Some(ty));
         }
+        // `Self.width()`: a static method of the enclosing struct, called on
+        // the instance `Self` names, which is the struct applied to its own
+        // parameters (`Grid[Self.n].width()`).
+        if let ExprKind::Identifier(name) = &object.kind
+            && name == "Self"
+            && let Some(Ty::Struct(instance, _)) = &self.self_ty
+            && let owner =
+                mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
+            && let Some(info) = self.structs.get(owner)
+            && info
+                .methods
+                .get(method)
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
+        {
+            let targs: Vec<_> = info
+                .source_params
+                .iter()
+                .map(|parameter| {
+                    mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()))
+                })
+                .collect();
+            let ty = self.infer_struct_static_method(span.clone(), owner, &targs, method, call)?;
+            self.record_static_receiver(object, owner, &targs);
+            // The receiver spells no struct name for lowering to compose
+            // the symbol from.
+            self.operation_adjustments
+                .borrow_mut()
+                .entry(span.clone())
+                .or_insert_with(|| {
+                    mojito_checked::checked::SemanticAdjustment::ResolveCallable(format!(
+                        "{owner}.{method}"
+                    ))
+                });
+            return Ok(Some(ty));
+        }
         // A **static** method on a parameterized type — the receiver is a type,
         // not a value (`Dict[Int, Int].fromkeys(...)`). Handled before inferring
         // the object (which would reject a bare `TypeApply`). The pointer family

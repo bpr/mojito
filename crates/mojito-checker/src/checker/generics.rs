@@ -303,7 +303,7 @@ pub(super) fn solve_value_args(
                 out.entry(reference.name.to_string()).or_insert(value);
             }
             if let (SimdWidth::Expr(lanes), SimdWidth::Expr(actual)) = (width, &actual_width) {
-                solve_applied_args(lanes, actual, out);
+                solve_applied_args(lanes, actual, width_binders, out);
             }
             if let SimdWidth::Expr(lanes) = width
                 && let Some(reference) = lanes.as_decl_ref()
@@ -370,7 +370,7 @@ pub(super) fn solve_value_args(
                             out.entry(reference.name.to_string())
                                 .or_insert_with(|| value.clone());
                         } else if let CtValue::Expr(actual) = value {
-                            solve_applied_args(expr, actual, out);
+                            solve_applied_args(expr, actual, width_binders, out);
                         }
                     }
                     (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, width_binders, out),
@@ -606,10 +606,16 @@ fn substitute_origin(
 }
 
 /// Solve value parameters from the arguments of one function's application
-/// (`h(n)` against `h(2)` solves `n = 2`), as the pin unifies a call in the
-/// parameter domain argument by argument. First solution wins; any other
-/// pair of expressions contributes nothing.
-fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap<String, CtValue>) {
+/// (`h(n)` against `h(2)` solves `n = 2`, `G[n].f()` against `G[2].f()` the
+/// same through the instance), as the pin unifies a call in the parameter
+/// domain argument by argument. First solution wins; any other pair of
+/// expressions contributes nothing.
+fn solve_applied_args(
+    pattern: &ParamExpr,
+    actual: &ParamExpr,
+    width_binders: &HashSet<ParamId>,
+    out: &mut HashMap<String, CtValue>,
+) {
     let (
         ParamKind::Apply { function, args, .. },
         ParamKind::Apply {
@@ -625,8 +631,8 @@ fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap
         return;
     }
     for (arg, actual) in args.iter().zip(actuals) {
-        match arg.as_decl_ref() {
-            Some(reference) => {
+        match (arg.kind(), actual.kind()) {
+            (ParamKind::DeclRef(reference), _) => {
                 out.entry(reference.name.to_string()).or_insert_with(|| {
                     actual
                         .as_constant()
@@ -634,7 +640,11 @@ fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap
                         .unwrap_or_else(|| CtValue::Expr(actual.clone()))
                 });
             }
-            None => solve_applied_args(arg, actual, out),
+            (
+                ParamKind::TypeShape(pattern),
+                ParamKind::TypeShape(actual) | ParamKind::Constant(CtValue::Type(actual)),
+            ) => solve_value_args(pattern, actual, width_binders, out),
+            _ => solve_applied_args(arg, actual, width_binders, out),
         }
     }
 }

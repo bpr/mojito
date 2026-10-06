@@ -1248,16 +1248,30 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `record_lifted_applications`, which `into_carry` runs to record
   `SemanticAdjustment::ComptimeApplication` beside the expression's own
   operation. The arena builder gives such an expression inside an
-  annotation a node (`type_applications`, `checked.rs`). A call of a plain
-  module `def` over `Int` and `Bool` arguments is instead the application
-  of the `def` itself (`Checker::called_application`, tried first by
-  `lifted_application` and alone in a signature or a field type):
+  annotation a node (`type_applications`, `checked.rs`). A call of a module
+  `def` or a static method over `Int` and `Bool` values is instead the
+  application of the callable itself (`Checker::called_application`, tried
+  first by `lifted_application` and alone in a signature or a field type):
   `applicable_functions` (`checker/comptime_validation.rs`, run by
-  `check_program` and `ConformanceOracle::from_program`) collects the
-  callees before any declaration is checked, `solve_applied_args`
-  (`checker/generics.rs`, from `solve_value_args`) solves a value parameter
-  through one, and `ComptimeThunks::request_applications` lifts nothing
-  for it.
+  `check_program` and `ConformanceOracle::from_program`) collects every
+  overload under the name a call spells (`ApplicableFunction`, built by
+  `ApplicableShape::applicable`) before any declaration is checked,
+  `selected_application` picks the one overload the arguments bind and
+  type, `applied_owner` resolves a static call's struct and instance
+  (`S.f(n)`, `G[n].f()`, `Self.f()`), `applied_arguments` orders the
+  compile-time and runtime arguments through `ast::call::match_call_slots`
+  with `applied_default` for an omitted one, `calls_raising_application`
+  backs the raising-callee rejection in `eval_associated_ct`,
+  `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
+  solves a value parameter through one, and
+  `ComptimeThunks::request_applications` lifts nothing for it. `not` and a
+  conditional are compiled by `fold_ct_not` and `fold_ct_cond`
+  (`checker/constraints.rs`). A static call through `Self` in a body is
+  typed by `infer_type_receiver_call`
+  (`checker/method_calls/type_receivers.rs`) as the call on the enclosing
+  struct applied to its own parameters, and the parser spells the type
+  argument forms (`Self.w()`, `G[n].w()`) in `parse_param_arg`
+  (`parser/types.rs`).
   `ComptimeThunks::request_applications` (`mir.rs`, from `lower_fn_nested`
   and the nested-`def` lowering once the body is lowered) lifts each named
   function over the narrowest recorded scope (`enter_scope`) that declares

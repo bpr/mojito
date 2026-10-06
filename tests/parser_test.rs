@@ -2328,6 +2328,46 @@ fn parses_a_self_rooted_chain_continued_by_an_operator_as_a_subscript() {
 }
 
 #[test]
+fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
+    // `Self.width()` and `Grid[n].cells()` start as type-shaped arguments;
+    // the call makes each the value expression it is.
+    let arguments = |source: &str| match parse_expr(source).kind {
+        ExprKind::TypeApply { args, .. } => args,
+        other => panic!("expected a type application, got {other:?}"),
+    };
+    let on_self = arguments("SIMD[DType.int32, Self.width()]");
+    assert!(
+        matches!(&on_self[1], ParamArg::Value(Expr {
+                kind: ExprKind::MethodCall { object, method, args, .. },
+                ..
+            }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && method == "width"
+                && args.is_empty()),
+        "got {on_self:?}"
+    );
+    let on_instance = arguments("SIMD[DType.int32, Grid[n].cells(2) + 1]");
+    let ParamArg::Value(Expr {
+        kind: ExprKind::Infix(_, call, _),
+        ..
+    }) = &on_instance[1]
+    else {
+        panic!("expected an operator over the call, got {on_instance:?}");
+    };
+    assert!(
+        matches!(&call.kind, ExprKind::MethodCall { object, method, args, .. }
+            if matches!(&object.kind, ExprKind::TypeApply { name, .. } if name == "Grid")
+                && method == "cells"
+                && args.len() == 1),
+        "got {call:?}"
+    );
+    // An applied type with no member stays a type argument.
+    assert!(matches!(
+        arguments("Pair[Grid[n], Int]").as_slice(),
+        [ParamArg::Type(_), ParamArg::Type(_)]
+    ));
+}
+
+#[test]
 fn parses_positional_only_and_keyword_only_markers() {
     let (p, slash, star) = def_params("def mn(a: Int, b: Int, /) -> Int:\n    return a\n");
     assert_eq!(p.len(), 2);
