@@ -564,11 +564,13 @@ pub fn walk_trait_comptime<V: Visitor>(visitor: &mut V, member: &TraitComptime) 
 ///
 /// Such a binding is `comptime L = [a, b]`, a list, set, or dictionary
 /// display at any depth, unannotated and with no parameters of its own,
-/// under a name nothing else in `statements` binds.
+/// under a name nothing else in `statements` binds. An alias of one
+/// (`comptime A = L`), bound once as well, is another name of that display.
 pub fn display_bindings(statements: &[Stmt]) -> HashMap<String, Expr> {
     #[derive(Default)]
     struct Names {
         displays: HashMap<String, Expr>,
+        aliases: HashMap<String, String>,
         bindings: HashMap<String, usize>,
     }
 
@@ -589,12 +591,17 @@ pub fn display_bindings(statements: &[Stmt]) -> HashMap<String, Expr> {
                     value,
                 } => {
                     self.bind(name);
-                    if type_params.is_empty()
-                        && ty.is_none()
-                        && where_clauses.is_empty()
-                        && matches!(value.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_))
-                    {
-                        self.displays.insert(name.clone(), value.clone());
+                    if !(type_params.is_empty() && ty.is_none() && where_clauses.is_empty()) {
+                        return;
+                    }
+                    match &value.kind {
+                        ExprKind::ListLit(_) | ExprKind::BraceLit(_) => {
+                            self.displays.insert(name.clone(), value.clone());
+                        }
+                        ExprKind::Identifier(target) => {
+                            self.aliases.insert(name.clone(), target.clone());
+                        }
+                        _ => {}
                     }
                 }
                 StmtKind::VarDecl { name, .. }
@@ -618,9 +625,19 @@ pub fn display_bindings(statements: &[Stmt]) -> HashMap<String, Expr> {
     walk_block(&mut found, statements);
     let Names {
         mut displays,
+        mut aliases,
         bindings,
     } = found;
     displays.retain(|name, _| bindings.get(name) == Some(&1));
+    aliases.retain(|name, _| bindings.get(name) == Some(&1));
+    // An alias of an alias names the display the chain ends at.
+    while let Some((name, display)) = aliases
+        .iter()
+        .find_map(|(name, target)| Some((name.clone(), displays.get(target)?.clone())))
+    {
+        aliases.remove(&name);
+        displays.insert(name, display);
+    }
     displays
 }
 

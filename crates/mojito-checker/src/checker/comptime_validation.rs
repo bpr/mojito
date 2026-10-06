@@ -1248,6 +1248,20 @@ impl Checker {
                 .insert(name.to_string(), ty);
             return Ok(true);
         }
+        if let Some((target, display)) = self.aliased_display(value) {
+            // An alias of a display binding (`comptime A = L`) is another
+            // name of that binding: it denotes the same sequence, and MIR
+            // sees a read of it, and the statement, as the display's.
+            self.declare_alias(name, target)?;
+            self.record_statement_binding(stmt, name);
+            self.local_comptime_displays
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), display);
+            return Ok(true);
+        }
         if let Some(expression) = self.comptime_value_expression(value)
             && let Some(scope) = self.local_comptime_parameters.last_mut()
         {
@@ -1391,6 +1405,12 @@ impl Checker {
         if self.tparams.is_empty() {
             return;
         }
+        if let Some((_, display)) = self.aliased_display(value) {
+            if let Some(scope) = self.local_comptime_displays.last_mut() {
+                scope.insert(name.to_string(), display);
+            }
+            return;
+        }
         let Some((element, ty)) = self
             .comptime_iteration_element(value)
             .ok()
@@ -1410,6 +1430,15 @@ impl Checker {
         if let Some(scope) = self.local_comptime_displays.last_mut() {
             scope.insert(name.to_string(), display);
         }
+    }
+
+    /// The display binding a local `comptime` alias's `value` names
+    /// (`comptime A = L`), which the alias denotes whole, with its name.
+    fn aliased_display<'v>(&self, value: &'v Expr) -> Option<(&'v str, BoundDisplay)> {
+        let ExprKind::Identifier(target) = &value.kind else {
+            return None;
+        };
+        Some((target, self.display_named(target)?.clone()))
     }
 
     /// Every binder in scope as the reference a parameter expression names

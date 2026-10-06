@@ -135,19 +135,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R375 (P3b) An alias of a local `comptime` display binding keys a
-  clone**
-
-  Problem: `comptime A = L` over `comptime L = [n, n * 2]`, then `comptime
-  for x in A:`, in `def f[n: Int]()` is unrolled in the AST on a clone.
-  - The cloner serves a display binding by its own name
-    (`mojito_ast::visit::display_bindings`), and the check binds no alias of
-    one (`bind_template_comptime`, `checker/comptime_validation.rs`).
-  - A method of a generic struct has no clone, so the loop fails there with
-    "'A' is not a compile-time type", where the pin prints the elements.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R371 (P3b) A `comptime for` the template does not serve fails when
   it is nested in a kept `comptime if` arm or a served loop**
 

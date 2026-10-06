@@ -63,6 +63,7 @@ assets/ok/comptime_call_callee_shapes.mojo	main	exe-differential	sanitized
 assets/ok/comptime_call_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
+assets/ok/comptime_display_binding_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_reads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized

@@ -1196,6 +1196,9 @@ struct ComptimeThunks {
 struct DisplayBinding {
     owner: mojito_types::origin::OwnerId,
     name: String,
+    /// The local `comptime` aliases of the binding (`comptime A = L`), which
+    /// the check binds as other names of it.
+    aliases: Vec<String>,
     /// The display and its checked facts, for a `materialize[L]()` that
     /// builds it in place.
     display: std::rc::Rc<Expr>,
@@ -1339,6 +1342,16 @@ impl ComptimeThunks {
     /// The display binding `owner` is, if it is one.
     fn display(&self, owner: mojito_types::origin::OwnerId) -> Option<&DisplayBinding> {
         self.displays.iter().find(|display| display.owner == owner)
+    }
+
+    /// Record `name` as an alias of the display binding `owner`, when it is
+    /// one; whether it is.
+    fn alias_display(&mut self, owner: mojito_types::origin::OwnerId, name: &str) -> bool {
+        self.displays
+            .iter_mut()
+            .find(|display| display.owner == owner)
+            .map(|display| display.aliases.push(name.to_string()))
+            .is_some()
     }
 
     /// The sequence of the binding whose display sits at `display`: the
@@ -3046,7 +3059,7 @@ impl Flatten<'_> {
             .displays
             .iter()
             .rev()
-            .find(|display| display.name == *name)?
+            .find(|display| display.name == *name || display.aliases.contains(name))?
             .display
             .source_span();
         let sequence = self.comptime_thunks.bound_sequence(&display)?;

@@ -593,11 +593,13 @@ dominates — is copied once per element with fresh registers, the binder's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
-for the pruning. Every other `comptime for` — over an alias of a local
-`comptime` display, a display with an element that applies a function, a
-loop that constructs a reflected field type, and every one outside a generic
-`def` or a generic struct's method — is unrolled in the AST as before
-(roadmap R375, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
+for the pruning. An alias of a local display binding (`comptime A = L`) is
+another name of it: the check binds the alias to the display's owner and
+sequence, so a loop over it is the display's loop. Every other `comptime
+for` — over a display with an element that applies a function, a loop that
+constructs a reflected field type, and every one outside a generic `def` or
+a generic struct's method — is unrolled in the AST as before (roadmap R363,
+R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

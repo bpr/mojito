@@ -91,6 +91,38 @@ impl Checker {
         })
     }
 
+    /// Bind `name` in the innermost scope as another name of the immutable
+    /// binding `target` resolves to: a read of either is a read of the one
+    /// binding, with its type and its owner.
+    pub(super) fn declare_alias(&mut self, name: &str, target: &str) -> Result<(), TypeError> {
+        let (Some(ty), Some(owner)) = (self.lookup(target).cloned(), self.lookup_owner(target))
+        else {
+            return Err(TypeError::InvariantViolation(format!(
+                "alias '{name}' names '{target}', which is not in scope"
+            )));
+        };
+        let scope = self.scopes.last_mut().ok_or_else(|| {
+            TypeError::InvariantViolation("checker scope stack is empty".to_string())
+        })?;
+        if scope.contains_key(name) {
+            return Err(TypeError::Redeclaration(name.to_string()));
+        }
+        scope.insert(name.to_string(), ty);
+        self.mutable_scopes
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker mutability scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), false);
+        self.owner_scopes
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker owner scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), owner);
+        Ok(())
+    }
+
     pub(super) fn declare_with_mutability(
         &mut self,
         name: &str,

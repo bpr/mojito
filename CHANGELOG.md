@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` alias of a display binding over a generic body's
+  parameters (`comptime A = L` after `comptime L = [n, n * 2]`) is now
+  another name of that binding, as at the pin: `comptime for x in A`, `A[0]`
+  and `len(A)` in a condition or a type argument, and `materialize[A]()`
+  read the display, so a generic struct's method that iterated the alias no
+  longer fails with "'A' is not a compile-time type", and a `def` doing so
+  is no longer cloned per instantiation.
 - A signature or a struct field type can now apply any callable over `Int`
   and `Bool` values to a compile-time parameter, and spell `not` or a
   conditional, as it can at the pin: `def gen[n: Int]() -> SIMD[DType.int32,

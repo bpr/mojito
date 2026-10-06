@@ -63,6 +63,7 @@ assets/ok/comptime_call_callee_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_call_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_display_binding_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape

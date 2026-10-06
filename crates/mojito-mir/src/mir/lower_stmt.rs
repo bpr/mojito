@@ -2823,6 +2823,7 @@ impl Flatten<'_> {
                 let binding = DisplayBinding {
                     owner,
                     name: name.to_string(),
+                    aliases: Vec::new(),
                     display,
                     facts: std::rc::Rc::new(facts),
                     ty,
@@ -2836,6 +2837,14 @@ impl Flatten<'_> {
                     self.emit(MirInstr::Unsupported(finding));
                 }
             }
+            return;
+        }
+        // An alias of a display binding (`comptime A = L`) is another name
+        // of it, which the check binds to the display's own owner.
+        if matches!(value.kind, ExprKind::Identifier(_))
+            && statement_binding
+                .is_some_and(|owner| self.comptime_thunks.alias_display(owner, name))
+        {
             return;
         }
         if statement_binding.is_none() && self.checked_ty(value).is_none() {
