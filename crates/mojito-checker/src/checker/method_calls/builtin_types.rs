@@ -208,7 +208,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(value.source_span());
                 }
-                let vty = self.infer(value)?;
+                let vty = self.infer_with_expected(value, elem, true)?;
                 if !coerces(&vty, elem) {
                     return Err(TypeError::TypeMismatch {
                         expected: elem.to_string(),
@@ -373,7 +373,7 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                let found = self.infer(&args[0])?;
+                let found = self.infer_with_expected(&args[0], element, true)?;
                 if !coerces(&found, element) {
                     return Err(TypeError::TypeMismatch {
                         expected: element.to_string(),

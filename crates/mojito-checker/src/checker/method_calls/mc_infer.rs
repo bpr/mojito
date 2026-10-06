@@ -71,6 +71,11 @@ impl Checker {
             parameterized_syntax,
             ..
         } = call;
+        // `__mlir_op.`...`(...)` names no value: the one admitted operation
+        // is a statement over a place.
+        if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op") {
+            return self.infer_mlir_op(span, method, call);
+        }
         if let Some(ty) = self.infer_type_receiver_call(span, object, method, call)? {
             return Ok(ty);
         }

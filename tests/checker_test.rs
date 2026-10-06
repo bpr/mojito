@@ -7360,3 +7360,32 @@ fn augmented_assignment_dispatches_through_a_bounds_inplace_dunder() {
         "unexpected error: {unbound}"
     );
 }
+
+#[test]
+fn mlir_op_outside_the_bundled_library_is_rejected() {
+    // The pin accepts `__mlir_op` in user code; Mojito admits only
+    // `lit.ownership.mark_initialized` in the bundled modules that reach
+    // compiler-private storage, so a user initializer's spelling is a
+    // subset rejection, not a divergence fixture.
+    let error = err(
+        "struct Box(Movable):\n    var a: Int\n\n    def __init__(out self):\n        __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(self.a))\n        Pointer(to=self.a).unsafe_write(1)\n\ndef main():\n    var x = Box()\n    print(x.a)\n",
+    );
+    assert!(
+        error.to_string().contains(
+            "'__mlir_op' is accepted only as 'lit.ownership.mark_initialized' over \
+             '__get_mvalue_as_litref(place)' in the bundled standard library"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn initializer_list_without_a_contextual_type_is_rejected() {
+    let error = err("def main():\n    var d = {}\n    print(1)\n");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot emit initializer list without a contextual type"),
+        "{error}"
+    );
+}

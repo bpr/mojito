@@ -501,6 +501,33 @@ impl Flatten<'_> {
             });
             return Some(dest);
         }
+        // `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(p))`:
+        // the place is defined from here, with nothing written.
+        if self.checked_adjustments(e).iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::MarkInitialized
+            )
+        }) {
+            let operand = match args {
+                [
+                    Expr {
+                        kind: ExprKind::Call { args, .. },
+                        ..
+                    },
+                ] => args.first(),
+                _ => None,
+            }
+            .expect("checked mark_initialized names a place");
+            let place = self.place(operand);
+            self.emit(MirInstr::MarkInitialized { place });
+            let dest = self.fresh_typed(span(e), None, Ty::None);
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::None,
+            });
+            return Some(dest);
+        }
         // Compiler-private inline uninit storage (`MaybeUninit`'s
         // field). `unsafe_write` stores through the payload projection
         // — the place is opaque to drop elaboration, so a previously

@@ -239,6 +239,15 @@ pub fn derive_adjustment(
         SemanticAdjustment::PointerToPlace { mutable } => {
             Some(SemanticAdjustment::PointerToPlace { mutable: *mutable })
         }
+        // The marked place is the template's own, under every instance.
+        SemanticAdjustment::MarkInitialized => Some(SemanticAdjustment::MarkInitialized),
+        // An initializer list's construction is spelled in the template's
+        // own terms; the facts it recorded close under their own identity.
+        SemanticAdjustment::InitializerList { construction } => {
+            Some(SemanticAdjustment::InitializerList {
+                construction: construction.clone(),
+            })
+        }
         SemanticAdjustment::PointerOriginCast {
             origin: mojito_types::origin::PointerOrigin::Place { .. },
         } => None,

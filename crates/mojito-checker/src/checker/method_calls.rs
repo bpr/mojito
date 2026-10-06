@@ -11,6 +11,7 @@ mod builtin_types;
 mod call_contract;
 mod intrinsic_receivers;
 mod mc_infer;
+mod mlir_op;
 mod receiver_effects;
 mod resolution;
 mod selection;

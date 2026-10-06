@@ -96,7 +96,11 @@ simple_stmt:
     | 'pass'
     | 'break'
     | 'continue'
+    | mlir_op_stmt
     | expression
+# The one `__mlir_op` form accepted, upstream's `lit.ownership.mark_initialized` over a
+# place, in the bundled modules that reach compiler-private storage (`Tuple.__init__`).
+mlir_op_stmt: '__mlir_op' '.' '`lit.ownership.mark_initialized`' '(' '__get_mvalue_as_litref' '(' expression ')' ')'
 
 compound_stmt:
     | function_def
@@ -725,8 +729,8 @@ list_literal:
     | '[' [','.expression+ [',']] ']'
     | '[' expression comprehension_clauses ']'
 brace_literal:
-    | '{' '}'                              # contextually typed empty Dict
-    | '{' ','.expression+ [','] '}'        # Set display
+    | '{' '}'                              # empty Dict or Set in a collection context; elsewhere the initializer list `T()` of the contextual type
+    | '{' ','.expression+ [','] '}'        # Set display; the initializer list `T(a, b)` at any other contextual type
     | '{' ','.(expression ':' expression)+ [','] '}' # Dict display
     | '{' expression comprehension_clauses '}'       # Set comprehension
     | '{' expression ':' expression comprehension_clauses '}' # Dict comprehension

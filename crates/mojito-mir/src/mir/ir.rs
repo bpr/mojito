@@ -403,7 +403,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(target, &mut out);
             out.push(marker);
         }
-        MirInstr::DropPlace { place: target } => place_regs_mut(target, &mut out),
+        MirInstr::DropPlace { place: target } | MirInstr::MarkInitialized { place: target } => {
+            place_regs_mut(target, &mut out);
+        }
         MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
     }
     out
@@ -1437,6 +1439,14 @@ pub enum MirInstr {
     ConsumePlace {
         place: MirPlace,
         marker: Reg,
+    },
+    /// Mark `place` initialized without writing it (upstream's
+    /// `lit.ownership.mark_initialized`): ownership treats the place as
+    /// defined from here, so a constructor may fill its storage through
+    /// pointers; the storage itself already exists, so the backends emit
+    /// nothing.
+    MarkInitialized {
+        place: MirPlace,
     },
     /// Destroy one projected field of an aggregate now — running the field
     /// value's own destructor — and tombstone it, leaving the rest of the

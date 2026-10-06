@@ -172,7 +172,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and argument conventions and builds the reference result, and
   `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
   `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
-  pointer/List/Tuple helpers. Together they own method-call inference (including the `Writer.write` intrinsic and its
+  pointer/List/Tuple helpers, and `mlir_op.rs` the one `__mlir_op` statement
+  the bundled modules spell. `checker/initializer_list.rs` owns the
+  initializer list: `infer_initializer_list` spells `{}` / `{a, b}` at the
+  contextual type as that type's construction under an identity derived
+  from the brace's, checks it, and records
+  `SemanticAdjustment::InitializerList`, which `mojito-checked`'s arena
+  builder answers at the brace's location and `mojito-hir`
+  (`substitute_initializer_lists`) lowers in the brace's place. Together they own method-call inference (including the `Writer.write` intrinsic and its
   inverse: `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
   `mir/lower_expr/expr.rs` lowers as `writer.write(x)`, and
@@ -373,12 +380,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   through `constructed_type` and `default_construction`, beside the
   unroller's per-copy call) writes as the element's default construction (each
   instance's construction is `comptime/rewrite.rs:pack_element_construction`,
-  reached for a `def` through `fold_pack_uses`; stored to
-  the element's own storage, as `Tuple.__init__(out self)` stores it, the
-  place is `indexing.rs:check_place_impl`'s compile-time index of the
-  private storage, counted by
-  `declarations.rs:initializes_storage_elements`, and an instance derives
-  the store, a `print` argument, or a local's value through
+  reached for a `def` through `fold_pack_uses`; `Tuple.__init__(out self)`
+  writes it through `Pointer(to=self[i]).unsafe_write({})`, the initializer
+  list `initializer_list.rs:infer_initializer_list` spells as the element's
+  construction, after the `lit.ownership.mark_initialized` statement
+  `method_calls/mlir_op.rs:infer_mlir_op` records as
+  `SemanticAdjustment::MarkInitialized`, which `lower_expr/expr_method.rs`
+  lowers as `MirInstr::MarkInitialized` and `analysis/moves.rs` defines in
+  the place-tree flow `store_drops.rs` replays; an instance derives a
+  `print` argument or a local's value through
   `template_facts/realization_folds.rs:element_construction_facts`, a copy with no folded
   index taking its loop index from `constructed_element_indices`, which
   `index_indifferent` lets pick among elements sharing the constructed type),

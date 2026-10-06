@@ -168,7 +168,7 @@ pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 27;
+pub const VERSION_MINOR: u16 = 28;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -366,6 +366,7 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::ConsumeVar { .. } => "consume.var",
         MirInstr::ConsumePlace { .. } => "consume.place",
         MirInstr::DropPlace { .. } => "drop.place",
+        MirInstr::MarkInitialized { .. } => "ownership.mark_initialized",
         MirInstr::Unsupported(_) => "unsupported",
         MirInstr::GetIter { .. } => "iter.init",
         MirInstr::HasNext { .. } => "iter.has_next",

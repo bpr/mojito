@@ -233,96 +233,39 @@ fn ranks_beside_clone(sig: &MethodSig, clone_matched: bool) -> bool {
     !clone_matched || sig.per_call_constructor || decls_are_concrete(&sig.decls)
 }
 
-/// Whether `body` builds the compiler-private element storage `self.<field>`
-/// one element at a time in straight-line code: a store to every index of a
-/// bound pack, or, while the pack is still a parameter, a `comptime for` over
-/// `range(len(<pack>))` storing the element at its loop variable.
-fn initializes_storage_elements(body: &[Stmt], field: &str, field_ty: &Ty) -> bool {
-    let Ty::Tuple(elements) = field_ty else {
+/// Whether `expr` is the `__mlir_op` statement `lit.ownership.mark_initialized`
+/// over `__get_mvalue_as_litref(self.<field>)` or over `self` whole.
+fn marks_initialized(expr: &Expr, field: &str) -> bool {
+    let ExprKind::MethodCall {
+        object,
+        method,
+        args,
+        kwargs,
+    } = &expr.kind
+    else {
         return false;
     };
-    if let [Ty::Param { binder, .. }] = elements.as_slice()
-        && let Some(pack) = binder.name.strip_prefix('*')
+    if !matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op")
+        || method != "lit.ownership.mark_initialized"
+        || !kwargs.is_empty()
     {
-        return body.iter().any(|stmt| {
-            matches!(
-                &stmt.kind,
-                StmtKind::ComptimeFor { var, iter, body }
-                    if ranges_over_pack(iter, pack)
-                        && body.iter().any(|stmt| {
-                            stored_storage_element(stmt, field).is_some_and(|index| {
-                                matches!(&index.kind, ExprKind::Identifier(name) if name == var)
-                            })
-                        })
-            )
-        });
-    }
-    let mut stored = vec![false; elements.len()];
-    mark_stored_elements(body, field, &mut stored);
-    stored.into_iter().all(|stored| stored)
-}
-
-fn mark_stored_elements(body: &[Stmt], field: &str, stored: &mut [bool]) {
-    for stmt in body {
-        if let StmtKind::Scope(body) = &stmt.kind {
-            mark_stored_elements(body, field, stored);
-        } else if let Some(Expr {
-            kind: ExprKind::Int(index),
-            ..
-        }) = stored_storage_element(stmt, field)
-            && let Some(slot) = index
-                .to_i64()
-                .and_then(|index| usize::try_from(index).ok())
-                .and_then(|index| stored.get_mut(index))
-        {
-            *slot = true;
-        }
-    }
-}
-
-/// The index of the `self.<field>[index] = value` store `stmt` is, if it is one.
-fn stored_storage_element<'a>(stmt: &'a Stmt, field: &str) -> Option<&'a Expr> {
-    let StmtKind::SetPlace { place, .. } = &stmt.kind else {
-        return None;
-    };
-    let ExprKind::Index { object, index } = &place.kind else {
-        return None;
-    };
-    matches!(
-        &object.kind,
-        ExprKind::Member { object, field: stored }
-            if stored == field
-                && matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
-    )
-    .then_some(&**index)
-}
-
-/// Whether `iter` is `range(len(Self.<pack>))` or `range(len(<pack>))`.
-fn ranges_over_pack(iter: &Expr, pack: &str) -> bool {
-    let ExprKind::Call { name, args, .. } = &iter.kind else {
         return false;
-    };
+    }
     let [
         Expr {
-            kind:
-                ExprKind::Call {
-                    name: length,
-                    args: measured,
-                    ..
-                },
+            kind: ExprKind::Call { name, args, .. },
             ..
         },
     ] = args.as_slice()
     else {
         return false;
     };
-    name == "range"
-        && length == "len"
-        && matches!(
-            measured.as_slice(),
-            [Expr { kind: ExprKind::Member { field, .. } | ExprKind::Identifier(field), .. }]
-                if field == pack
-        )
+    let is_self = |expr: &Expr| matches!(&expr.kind, ExprKind::Identifier(name) if name == "self");
+    name == "__get_mvalue_as_litref"
+        && matches!(args.as_slice(), [place]
+            if is_self(place)
+                || matches!(&place.kind, ExprKind::Member { object, field: marked }
+                    if marked == field && is_self(object)))
 }
 
 #[derive(Clone, Copy)]
@@ -346,6 +289,11 @@ fn init_field_flow(body: &[Stmt], field: &str, mut initialized: bool) -> InitFie
                             && matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
                 ) =>
             {
+                initialized = true;
+            }
+            // `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(
+            // self.field))`, or over `self` whole, initializes the field.
+            StmtKind::Expr(expr) if marks_initialized(expr, field) => {
                 initialized = true;
             }
             StmtKind::Return(_) => {
@@ -1428,10 +1376,8 @@ impl Checker {
         }) {
             return Ok(());
         }
-        for (field, field_ty) in &info.fields {
-            if !definitely_initializes_self_field(body, field)
-                && !initializes_storage_elements(body, field, field_ty)
-            {
+        for (field, _) in &info.fields {
+            if !definitely_initializes_self_field(body, field) {
                 return Err(TypeError::UninitializedField {
                     struct_name: sname.to_string(),
                     method: method.to_string(),

@@ -1044,6 +1044,14 @@ impl Checker {
             _ => TypeError::Unsupported("Pointer(to=...) requires a place expression".to_string()),
         })?;
         let element = self.infer(value)?;
+        // A place an accessor returns by reference (`t[0]` on a `Tuple`) is
+        // the pointer's referent: the handle is retained, never read out.
+        if let Some(reference) = self.infer_reference_value(value) {
+            self.reference_value_uses.borrow_mut().insert(
+                value.source_span(),
+                reference.mutability == mojito_types::origin::Mutability::Mutable,
+            );
+        }
         let mutable = self.owner_is_mutable(place.root);
         self.operation_adjustments.borrow_mut().insert(
             span,

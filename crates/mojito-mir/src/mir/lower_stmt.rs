@@ -585,9 +585,12 @@ impl Flatten<'_> {
             }
             ExprKind::Index { object, index } => {
                 // A type-keyed projection (`v[Int]` on the self-hosted
-                // `Variant`): the accessor call's reference result is the
-                // place.
-                if self.type_keyed_accessor_call(e).is_some()
+                // `Variant`), or a `Tuple` element the checker resolved to
+                // its compile-time-index accessor (`t[0]`, upstream's
+                // `__getitem_param__` returning `ref` into storage): the
+                // accessor call's reference result is the place.
+                if (self.type_keyed_accessor_call(e).is_some()
+                    || self.element_accessor_call(e).is_some())
                     && let Some(place) = self.materialize_reference_result_place(e)
                 {
                     return place;

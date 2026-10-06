@@ -674,7 +674,9 @@ pub(super) fn loan_accesses(
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*marker))]
         }
-        MirInstr::DropPlace { place } => vec![(place.clone(), LoanAccess::Write, span_for(Reg(0)))],
+        MirInstr::DropPlace { place } | MirInstr::MarkInitialized { place } => {
+            vec![(place.clone(), LoanAccess::Write, span_for(Reg(0)))]
+        }
         MirInstr::Call {
             dest,
             func,

@@ -1002,7 +1002,7 @@ impl Checker {
             ExprKind::BraceLit(entries) => {
                 if entries.is_empty() {
                     return Err(TypeError::Unsupported(
-                        "an empty '{}' display needs a Dict[K, V] type annotation".to_string(),
+                        "cannot emit initializer list without a contextual type".to_string(),
                     ));
                 }
                 let dictionary = entries[0].1.is_some();
@@ -2171,6 +2171,16 @@ impl Checker {
                 None
             };
 
+        // A brace display at any other expected type is upstream's
+        // initializer list: the construction of that type from its entries.
+        if let ExprKind::BraceLit(entries) = &expression.kind
+            && set_element(expected).is_none()
+            && dict_elements(expected).is_none()
+            && entries.iter().all(|(_, value)| value.is_none())
+        {
+            let entries: Vec<Expr> = entries.iter().map(|(key, _)| key.clone()).collect();
+            return self.infer_initializer_list(expression, &entries, expected, record);
+        }
         let Some(elements) = elements else {
             return self.infer(expression);
         };
@@ -2451,6 +2461,12 @@ impl Checker {
                 .map(|elements| self.public_tuple_type(elements));
         }
         let tuple = self.tuple_type(param_args)?;
+        // `Tuple[T0, ...]()` is the default construction: the specialization's
+        // own `Defaultable` initializer once the discovery pass has
+        // materialized it, and the canonical type before, as the request.
+        if args.is_empty() {
+            return Ok(tuple);
+        }
         let elements = tuple_elements(&tuple)
             .expect("Tuple type construction has type arguments")
             .into_iter()

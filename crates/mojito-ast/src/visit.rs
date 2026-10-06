@@ -598,6 +598,21 @@ fn walk_optional_block<V: Visitor>(visitor: &mut V, statements: Option<&[Stmt]>)
     }
 }
 
+/// Numbers synthesized expressions with identities derived from `parent`, in
+/// visiting order, so a construct the compiler spells for a source node keeps
+/// one identity per occurrence across passes.
+pub struct DerivedIdentities {
+    pub parent: mojito_common::token::SyntaxId,
+    pub next: u32,
+}
+
+impl MutVisitor for DerivedIdentities {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        expr.syntax_id = mojito_common::token::SyntaxId::derived(self.parent, self.next);
+        self.next += 1;
+    }
+}
+
 /// Callbacks for an in-place walk. Every method has a no-op default.
 ///
 /// A statement is reported before its children; an expression after its

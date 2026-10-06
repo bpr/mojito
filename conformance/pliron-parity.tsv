@@ -200,6 +200,7 @@ assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
+assets/ok/initializer_list_contextual.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
 assets/ok/inplace_raises_try.mojo	main	exe-differential	sanitized
 assets/ok/inplace_subscript_multi.mojo	main	exe-differential	sanitized
@@ -510,6 +511,7 @@ assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_tuple_element.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_clone_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized

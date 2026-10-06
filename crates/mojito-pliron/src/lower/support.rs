@@ -613,6 +613,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ConsumeVar { .. } => "ConsumeVar",
         MirInstr::ConsumePlace { .. } => "ConsumePlace",
         MirInstr::DropPlace { .. } => "DropPlace",
+        MirInstr::MarkInitialized { .. } => "MarkInitialized",
         MirInstr::GetIter { .. } => "GetIter",
         MirInstr::HasNext { .. } => "HasNext",
         MirInstr::Next { .. } => "Next",

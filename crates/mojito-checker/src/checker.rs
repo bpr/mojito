@@ -3102,6 +3102,8 @@ mod traits;
 
 mod inference;
 
+mod initializer_list;
+
 mod indexing;
 
 mod method_calls;

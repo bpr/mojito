@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Tuple`'s default initializer is now upstream's, as in the pin: it marks
+  `self.storage` initialized with
+  `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(...))`
+  and writes each element through `Pointer(to=self[i]).unsafe_write({})`,
+  where it stored each element into the private storage. Three pieces of
+  Mojo landed for it: the `__mlir_op` statement (accepted only in the
+  bundled modules that reach compiler-private storage, carried in MIR as
+  `MarkInitialized`, schema 1.28, which ownership treats as the place's
+  definition and the backends emit nothing for), a pointer to a `Tuple`
+  element (`Pointer(to=t[0])`, the `ref` its compile-time-index accessor
+  returns, which failed in the VM before), and the initializer list `{}` /
+  `{a, b}` at any contextual type (`var s: String = {}`, `take({1, 2})`,
+  `var p: T = {}` over a `Defaultable` binder), which the checker spells and
+  checks as that type's construction and HIR lowers in the brace's place. A
+  brace with no contextual type reports upstream's `cannot emit initializer
+  list without a contextual type`. The checker rule that counted element
+  stores into a `Tuple` field as its initialization is gone.
 - A struct keyed on a vector value (`AHasher[key: U256]`) or on a
   struct-typed value (`Tagged[e: Extent]`) is now a generator, as in the
   pin: its members are checked once with the value symbolic and

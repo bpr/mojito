@@ -359,10 +359,10 @@ pub(super) fn substitute_instruction(
     use MirInstr::{
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
-        MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet, PointerStorageDestroy,
-        PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle, SizeOf, Slice, Store, StoreRef,
-        Try, TryNext, TypeName, UninitStorageDestroy, UninitStorageTake, VariantReplace,
-        VariantSet, VariantSetInitWith,
+        MarkInitialized, MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet,
+        PointerStorageDestroy, PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle, SizeOf,
+        Slice, Store, StoreRef, Try, TryNext, TypeName, UninitStorageDestroy, UninitStorageTake,
+        VariantReplace, VariantSet, VariantSetInitWith,
     };
     match instruction {
         // A SIMD instruction's slots close as the vector type they build
@@ -402,7 +402,8 @@ pub(super) fn substitute_instruction(
         | StoreRef { place, .. }
         | LoadPlace { place, .. }
         | ConsumePlace { place, .. }
-        | DropPlace { place } => substitute_place(place, bindings)?,
+        | DropPlace { place }
+        | MarkInitialized { place } => substitute_place(place, bindings)?,
         MakeClosure { captures, .. } => {
             for capture in captures {
                 substitute_place(&mut capture.place, bindings)?;

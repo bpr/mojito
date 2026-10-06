@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R340**.
+Next free ID: **R343**.
 
 ## Ordered Work
 
@@ -2091,6 +2091,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R342 An initializer list with keyword entries, or bound by a
+  `comptime` statement, is rejected**
+
+  Problem: `take({1, kw=2})` and `comptime e: Tuple[Int, Int] = {}` are
+  valid Mojo, the initializer list being the construction `T(1, kw=2)`,
+  where Mojito's parser has no keyword entry in `brace_literal` and the
+  elaborator reports `an empty '{}' display needs a Dict[K, V] type
+  annotation` for the binding.
+  - `{}` and `{a, b}` at a runtime contextual type landed on 2026-10-05
+    (`checker/initializer_list.rs`).
+  - The parser's `brace_literal` and `comptime/elab.rs` are the two sites.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -2913,6 +2927,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R340 A `comptime for` header cannot call a static method on `Self`**
+
+  Problem: `comptime for i in range(Self.__len__())` in a variadic struct's
+  method reports `Undefined variable 'Self'`, where the pin accepts it and
+  upstream's `Tuple` spells every element loop that way.
+  - Mojito's `tuple.mojo` keeps `range(len(Self.Ts))`.
+  - The header is evaluated by the elaborator, which binds no `Self` for a
+    static call.
+  - Found while landing the `Tuple` default initializer (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -3695,17 +3721,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R160.
   - Model: Fable, Not Planned.
 
-- [ ] **R161 `Tuple`'s default initializer stores into private storage where
-  upstream marks `self` initialized and writes each element through a
-  pointer**
+- [ ] **R341 `Tuple`'s pack, copy, and move initializers store the private
+  storage whole where upstream marks `self` initialized and writes each
+  element through a pointer**
 
-  Problem: Mojito's `Tuple` default initializer stores each element to the
-  private storage (`self.storage[i] = Self.Ts[i]()`). Upstream marks `self`
-  initialized and writes each element through a pointer
-  (`Pointer(to=self[i]).unsafe_write({})`).
-  - Mojito has no `mark_initialized`.
-  - Mojito has no pointer to an uninitialized element.
-  - Mojito has no contextual `{}` construction.
+  Problem: Mojito's `Tuple.__init__(out self, var *args)` builds
+  `self.storage = __RuntimeTuple(*args^)`, and its copy and move
+  initializers are synthesized over the whole storage. Upstream marks
+  `self._mlir_value` initialized and writes per element:
+  `args^.consume_elements[init_elt]()` with
+  `Pointer(to=self[idx]).unsafe_write(elt^)`, `unsafe_write(copy=copy[i])`,
+  and `unsafe_write_move_from(Pointer(to=move[i]))`.
+  - The default initializer took upstream's shape on 2026-10-05: the
+    `lit.ownership.mark_initialized` statement and
+    `Pointer(to=self[i]).unsafe_write({})`.
+  - Mojito has no `unsafe_write_move_from`.
+  - A `@__parameter` closure over the receiver (`init_elt`) is not spelled
+    in Mojito.
   - Depends on nothing.
   - Model: Fable, Planned.
 

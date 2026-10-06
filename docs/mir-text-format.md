@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.27
+# Mojito Textual MIR Format, Version 1.28
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.27 is implemented end to end for inspection and loading: canonical
+Version 1.28 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.27
+mojito-mir 1.28
 ```
 
-The writer emits 1.27. The reader accepts 1.0 through 1.27; *Schema 1.0*
+The writer emits 1.28. The reader accepts 1.0 through 1.28; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -663,6 +663,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` |
+| `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`) |
 | `GetField` | `field.get` |
 | `Index` / `Slice` / `MultiIndex` / `MultiSet` | `index.get` / `slice.get` / `index.multi` / `index.multi_set` |
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
@@ -706,7 +707,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.27
+mojito-mir 1.28
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

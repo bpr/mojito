@@ -877,6 +877,20 @@ pub enum SemanticAdjustment {
         output_index: usize,
         checked: bool,
     },
+    /// The `__mlir_op` statement `lit.ownership.mark_initialized` over
+    /// `__get_mvalue_as_litref(place)`: it marks a place initialized, after
+    /// which its storage is written through pointers (`Tuple.__init__`). MIR
+    /// carries it as `MarkInitialized` over the place.
+    MarkInitialized,
+    /// An initializer list `{}` / `{a, b}` at the type its context expects:
+    /// upstream's set-initializer literal emitted as the construction
+    /// `T(a, b)` of that type. The checker spells and checks the
+    /// construction under an identity derived from the brace's, so the brace
+    /// keeps the type its context sees and the construction its own facts;
+    /// the checked arena hands HIR the construction in the brace's place.
+    InitializerList {
+        construction: InitializerListConstruction,
+    },
     /// Construct an origin-bearing pointer to existing checked storage
     /// (`UnsafePointer(to=place)`). The checked pointer type retains the
     /// inferred place origin; execution represents the value as a frame/slot
@@ -972,6 +986,16 @@ pub enum SemanticAdjustment {
         invalidations: Vec<InteriorInvalidation>,
     },
 }
+
+/// The construction an initializer list checked as.
+///
+/// See [`SemanticAdjustment::InitializerList`]. Equality is the expression's
+/// structural equality, an equivalence on parsed syntax (a literal is never
+/// NaN).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InitializerListConstruction(pub Box<Expr>);
+
+impl Eq for InitializerListConstruction {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedTupleUnpackElement {
@@ -1091,14 +1115,14 @@ pub struct CheckedTables {
 }
 
 impl CheckedTables {
-    pub fn new(expressions: Vec<CheckedExpr>, declarations: Vec<CheckedDeclaration>) -> Self {
-        let mut expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>> = HashMap::new();
-        for node in &expressions {
-            expressions_by_span
-                .entry(node.syntax.source_span())
-                .or_default()
-                .push(node.id);
-        }
+    /// `expressions_by_span` is the arena builder's index: every node at its
+    /// own location, and a construction the checker spelled for a source
+    /// expression (an initializer list's) at that expression's location too.
+    pub fn new(
+        expressions: Vec<CheckedExpr>,
+        declarations: Vec<CheckedDeclaration>,
+        expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+    ) -> Self {
         let declarations_by_span = declarations
             .iter()
             .enumerate()
@@ -1724,7 +1748,11 @@ impl CheckedProgram {
             implicit_conversion_types,
             checked_types,
             generic_parameters,
-            tables: Arc::new(CheckedTables::new(expressions, declarations)),
+            tables: Arc::new(CheckedTables::new(
+                expressions,
+                declarations,
+                expression_index.clone(),
+            )),
             expression_index,
             explicit_destroy_types,
             conformances,
@@ -2024,6 +2052,22 @@ fn build_checked_expressions(
                     for value in values {
                         add(self, value);
                     }
+                }
+                // An initializer list is its construction: the node built
+                // for the construction answers at the brace's location too,
+                // so HIR lowers the construction where the brace was written.
+                BraceLit(_)
+                    if let Some(SemanticAdjustment::InitializerList { construction }) =
+                        self.operation_adjustments.get(&expression.source_span()) =>
+                {
+                    let node = self.expr(&construction.0);
+                    if self.scan.is_none() {
+                        self.index
+                            .entry(expression.source_span())
+                            .or_default()
+                            .push(node);
+                    }
+                    return node;
                 }
                 BraceLit(values) => {
                     for (key, value) in values {

@@ -1019,6 +1019,7 @@ impl Lower {
     fn expr(&self, e: &Expr) -> HirExpr {
         let original_span = e.source_span();
         let mut syntax = e.clone();
+        self.substitute_initializer_lists(&mut syntax);
         rename_expr(&mut syntax, &|span, n| {
             // A `$contextual` leading-dot root substitutes its checker-
             // resolved base type name; everything downstream sees the
@@ -1063,6 +1064,44 @@ impl Lower {
         }
     }
 
+    /// Replace every initializer list in `syntax` by the construction the
+    /// checker spelled for it, the node the checked arena answers at the
+    /// brace's location, so the CFG lowers the construction where the brace
+    /// was written and the brace's own entries, cloned into it, keep their
+    /// identities.
+    fn substitute_initializer_lists(&self, syntax: &mut Expr) {
+        struct Substitute<'a> {
+            checked: &'a CheckedTables,
+        }
+
+        impl mojito_ast::visit::MutVisitor for Substitute<'_> {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                if !matches!(expr.kind, ExprKind::BraceLit(_)) {
+                    return;
+                }
+                let Some(construction) = self
+                    .checked
+                    .expression_ids_at(&expr.source_span())
+                    .first()
+                    .and_then(|id| self.checked.expression(*id))
+                    .filter(|node| node.syntax.syntax_id != expr.syntax_id)
+                    .map(|node| node.syntax.clone())
+                else {
+                    return;
+                };
+                *expr = construction;
+                mojito_ast::visit::walk_expr_mut(self, expr);
+            }
+        }
+
+        mojito_ast::visit::walk_expr_mut(
+            &mut Substitute {
+                checked: &self.checked,
+            },
+            syntax,
+        );
+    }
+
     fn checked_expr(&self, node: &CheckedExpr) -> HirExpr {
         HirExpr {
             syntax: node.syntax.clone(),
@@ -1083,7 +1122,12 @@ impl Lower {
         }
     }
 
-    fn statement(&self, syntax: Stmt) -> HirStmt {
+    fn statement(&self, mut syntax: Stmt) -> HirStmt {
+        // MIR lowers the statement's own syntax against these roots' facts,
+        // so an initializer list is replaced in the statement as well.
+        for root in statement_expression_roots_mut(&mut syntax) {
+            self.substitute_initializer_lists(root);
+        }
         let declaration = self.checked.declaration_at(&syntax.source_span());
         let expressions = statement_expression_roots(&syntax)
             .into_iter()
@@ -1612,6 +1656,29 @@ fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
     let mut names = HashSet::new();
     walk(body, &mut names);
     names
+}
+
+/// [`statement_expression_roots`], mutably.
+fn statement_expression_roots_mut(statement: &mut Stmt) -> Vec<&mut Expr> {
+    match &mut statement.kind {
+        StmtKind::VarDecl { value, .. }
+        | StmtKind::RefDecl { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::Comptime { value, .. }
+        | StmtKind::Raise(value)
+        | StmtKind::Expr(value) => vec![value],
+        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
+            vec![place, value]
+        }
+        StmtKind::Unpack { targets, value, .. } => {
+            let mut roots: Vec<&mut Expr> = targets.iter_mut().collect();
+            roots.push(value);
+            roots
+        }
+        StmtKind::Return(Some(value)) => vec![value],
+        StmtKind::With { items, .. } => items.iter_mut().map(|item| &mut item.context).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {

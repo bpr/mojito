@@ -439,6 +439,19 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
             }
             vec![(place.root, path, Touch::Write { parent }, *reference)]
         }
+        // Marking a place initialized writes it without a value: its parent
+        // must hold a value, as for a store.
+        MirInstr::MarkInitialized { place } => {
+            let path = place_path(place);
+            let mut parent = path.clone();
+            if matches!(
+                place.proj.last(),
+                Some(Proj::Field(_) | Proj::ConstIndex(_))
+            ) {
+                parent.pop();
+            }
+            vec![(place.root, path, Touch::Write { parent }, Reg(0))]
+        }
         MirInstr::MultiSet {
             receiver_place,
             value,
@@ -528,6 +541,11 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, refills: &Refills)
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) =>
         {
+            state[place.root as usize].do_def(&place_path(place));
+        }
+        // A place marked initialized holds a value from here on, whatever
+        // storage lies behind it (upstream's `lit.ownership.mark_initialized`).
+        MirInstr::MarkInitialized { place } => {
             state[place.root as usize].do_def(&place_path(place));
         }
         _ => {}

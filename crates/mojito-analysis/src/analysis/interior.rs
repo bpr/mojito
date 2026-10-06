@@ -906,6 +906,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::UninitStorage { .. }
         | MirInstr::UninitStorageTake { .. }
         | MirInstr::UninitStorageDestroy { .. }
+        | MirInstr::MarkInitialized { .. }
         | MirInstr::MakeSimd { .. }
         | MirInstr::SimdCast { .. }
         | MirInstr::SimdBitcast { .. }

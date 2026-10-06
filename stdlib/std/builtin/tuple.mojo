@@ -23,11 +23,12 @@ struct Tuple[*Ts: Movable](
     def __init__(out self, var *args: *Self.Ts):
         self.storage = __RuntimeTuple(*args^)
 
-    # Upstream writes each element through a pointer into storage it has
-    # marked initialized; the private storage is built element by element.
     def __init__(out self) where conforms_to(Self.Ts.values, Defaultable):
+        __mlir_op.`lit.ownership.mark_initialized`(
+            __get_mvalue_as_litref(self.storage)
+        )
         comptime for i in range(len(Self.Ts)):
-            self.storage[i] = Self.Ts[i]()
+            Pointer(to=self[i]).unsafe_write({})
 
     # Current Mojo's compile-time-index hook.
     def __getitem_param__[index: Int](

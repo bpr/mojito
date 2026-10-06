@@ -1832,6 +1832,23 @@ impl Flatten<'_> {
         .then_some(contract)
     }
 
+    /// The compile-time-index accessor call a nominal subscript resolved to
+    /// (`t[0]` on a `Tuple` specialization, `__getitem_param__$0`), whose
+    /// `ref` result into the element is the subscript's place.
+    fn element_accessor_call(
+        &self,
+        expression: &Expr,
+    ) -> Option<mojito_checked::checked::CheckedCallContract> {
+        if !matches!(expression.kind, ExprKind::Index { .. }) {
+            return None;
+        }
+        let contract = self.checked_call_contract(expression)?;
+        (contract.arguments.is_empty()
+            && contract.reference_result.is_some()
+            && contract.target.contains(".__getitem_param__$"))
+        .then_some(contract)
+    }
+
     fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
         self.checked_adjustments(expression)
             .iter()

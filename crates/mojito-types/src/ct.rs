@@ -572,6 +572,69 @@ impl CtValue {
     }
 }
 
+/// The source spelling of a closed type (`Dict[String, Int, Fnv1a]`).
+///
+/// Scalars, nominal structs over type/value arguments, and SIMD, as a
+/// materialized collection type or an initializer list's construction spells
+/// it. Origin arguments and callables have no spelling here.
+pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
+    Some(match ty {
+        Ty::Int | Ty::IntLiteral => Type::Int,
+        Ty::UInt => Type::UInt,
+        Ty::Bool => Type::Bool,
+        Ty::StringLiteral => Type::StringLiteral,
+        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
+        Ty::None => Type::None,
+        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
+        Ty::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        } => Type::Named(
+            "SIMD".to_string(),
+            vec![
+                ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
+                ParamArg::Value(CtValue::Int(*width).materialize(span)?),
+            ],
+        ),
+        // A symbolic slot has no source spelling: its declaration is still
+        // a template.
+        Ty::Simd { .. } => return None,
+        // A generated public-Tuple specialization keeps its element types
+        // behind an argument-less symbol: spell the canonical `Tuple[...]`
+        // application, which the checker maps back onto the specialization.
+        Ty::Struct(name, _)
+            if name != crate::types::TUPLE_TYPE_NAME
+                && let Some(elements) = crate::types::tuple_elements(ty) =>
+        {
+            Type::Named(
+                crate::types::TUPLE_TYPE_NAME.to_string(),
+                elements
+                    .into_iter()
+                    .map(|element| source_type(element, span).map(ParamArg::Type))
+                    .collect::<Option<Vec<_>>>()?,
+            )
+        }
+        Ty::Struct(name, arguments) => Type::Named(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(ParamArg::Type(source_type(ty, span)?)),
+                    TyArg::Val(value) => Some(ParamArg::Value(value.materialize(span)?)),
+                    // An origin tail entry has no source spelling of its own;
+                    // upstream's `_` placeholder leaves the slot to inference
+                    // at the materialized spelling's use.
+                    TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
+                        ExprKind::Identifier("_".to_string()),
+                        span,
+                    ))),
+                })
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    })
+}
+
 /// The exact literal of one integer lane (unsigned lanes exceed `i64`).
 fn lane_literal(value: i128) -> IntLiteral {
     if let Ok(value) = i64::try_from(value) {
@@ -612,52 +675,6 @@ fn literal(kind: ExprKind, span: Span) -> Expr {
         source: None,
         syntax_id: mojito_common::token::SyntaxId::fresh(),
     }
-}
-
-/// The source spelling of an explicit collection type (`Dict[String, Int,
-/// Fnv1a]`): scalars, nominal structs over type/value arguments, and SIMD.
-/// Origin arguments and callables have no spelling here.
-fn source_type(ty: &Ty, span: Span) -> Option<Type> {
-    Some(match ty {
-        Ty::Int | Ty::IntLiteral => Type::Int,
-        Ty::UInt => Type::UInt,
-        Ty::Bool => Type::Bool,
-        Ty::StringLiteral => Type::StringLiteral,
-        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
-        Ty::None => Type::None,
-        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
-        Ty::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(width),
-        } => Type::Named(
-            "SIMD".to_string(),
-            vec![
-                ParamArg::Value(CtValue::Dtype(*dtype).materialize(span)?),
-                ParamArg::Value(CtValue::Int(*width).materialize(span)?),
-            ],
-        ),
-        // A symbolic slot has no source spelling: its declaration is still
-        // a template.
-        Ty::Simd { .. } => return None,
-        Ty::Struct(name, arguments) => Type::Named(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => Some(ParamArg::Type(source_type(ty, span)?)),
-                    TyArg::Val(value) => Some(ParamArg::Value(value.materialize(span)?)),
-                    // An origin tail entry has no source spelling of its own;
-                    // upstream's `_` placeholder leaves the slot to inference
-                    // at the materialized spelling's use.
-                    TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
-                        ExprKind::Identifier("_".to_string()),
-                        span,
-                    ))),
-                })
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        _ => return None,
-    })
 }
 
 impl fmt::Display for CtValue {

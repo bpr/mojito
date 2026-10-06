@@ -200,6 +200,7 @@ assets/ok/implicit_conversion_exact_source.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/implicit_conversion_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_raises_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_subscript_multi.mojo	-	ineligible	no-scalar-entry-shape
@@ -510,6 +511,7 @@ assets/ok/pointer_to_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_binding_twice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_union_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_to_tuple_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape

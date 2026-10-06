@@ -2273,12 +2273,14 @@ fn struct_hasher_field_update_is_template_served() {
 }
 
 #[test]
-fn tuple_default_initializer_derives() {
-    // `Tuple`'s `__init__(out self)` builds its storage one element at a
-    // time from the pack element's own default construction, checked once
-    // with the pack symbolic: every Defaultable specialization derives it,
-    // each element's concrete construction (`Int(0)`, `Optional[Int]()`, a
-    // nested `Tuple`'s) recording its own facts.
+fn tuple_default_initializer_clones_check() {
+    // `Tuple`'s `__init__(out self)` is upstream's: it marks `self.storage`
+    // initialized and writes each element through `Pointer(to=self[i])` from
+    // the initializer list `{}`, which the element's own default
+    // construction stands for. Every Defaultable specialization runs it; the
+    // template facts carry neither the marking statement nor a pointer write
+    // of an initializer list, so each clone's initializer is checked on its
+    // own until `Tuple` is served by its template (R4).
     let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    var n = Tuple[String, Tuple[Int, Bool]]()\n    print(t[0], t[1] is None, u[0], u[1], u[2], n[0], n[1][0], n[1][1])\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2297,10 +2299,9 @@ fn tuple_default_initializer_derives() {
         "Tuple$t2[y6:Stringy16:Tuple[Int, Bool]]",
     ] {
         let name = format!("{instance}.__init__");
-        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
         assert!(
-            !stats.inferred_clones.contains(&name),
-            "{name} is never inferred: {stats:?}"
+            stats.inferred_clones.contains(&name),
+            "{name} is checked on its own: {stats:?}"
         );
     }
 }

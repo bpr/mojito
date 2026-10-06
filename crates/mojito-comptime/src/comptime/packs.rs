@@ -378,7 +378,7 @@ pub(super) fn pack_element_default_construction(
     parent: mojito_common::token::SyntaxId,
 ) -> Option<Expr> {
     let mut construction = default_constructor_call(&source_type_from_ty(element)?, element, span)?;
-    let mut identities = DerivedIdentities { parent, next: 0 };
+    let mut identities = mojito_ast::visit::DerivedIdentities { parent, next: 0 };
     mojito_ast::visit::walk_expr_mut(&mut identities, &mut construction);
     construction.syntax_id = parent;
     Some(construction)
@@ -516,18 +516,4 @@ pub(super) fn select_top_level_whole_pack_abi(
     parameter.kind = ParamKind::Regular;
     *name = "__RuntimeTuple".to_string();
     Ok(())
-}
-
-/// Numbers synthesized expressions with identities derived from `parent`, in
-/// visiting order.
-struct DerivedIdentities {
-    parent: mojito_common::token::SyntaxId,
-    next: u32,
-}
-
-impl mojito_ast::visit::MutVisitor for DerivedIdentities {
-    fn visit_expr_mut(&mut self, expr: &mut Expr) {
-        expr.syntax_id = mojito_common::token::SyntaxId::derived(self.parent, self.next);
-        self.next += 1;
-    }
 }

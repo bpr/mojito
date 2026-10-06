@@ -2154,6 +2154,10 @@ impl VmBackend {
             // reference into the caller's storage, and so is a handle the
             // place reaches below its root (the value `p.src[].v = …`
             // replaces lives wherever `p.src` points).
+            // The marked storage already exists: an initializer's receiver
+            // enters with every field's storage present and unwritten, which
+            // the pointer writes that follow fill.
+            MirInstr::MarkInitialized { .. } => {}
             MirInstr::DropPlace { place } => {
                 let reference = self.place_handle(frame_id, place, regs, vars)?;
                 let value = if let Some(reference) = reference {

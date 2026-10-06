@@ -452,6 +452,9 @@ impl FnLowering<'_> {
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
             MirInstr::DropPlace { place } => self.lower_drop_place(ctx, place),
+            // The receiver's alloca and its leaf drop flags already exist;
+            // the marked storage is filled by the writes that follow.
+            MirInstr::MarkInitialized { .. } => Ok(()),
             MirInstr::ConsumePlace { marker, .. } => {
                 // Consumption skips the whole-value destructor and destroys
                 // only residual fields. MIR emits it only after a named

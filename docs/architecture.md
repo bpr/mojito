@@ -3882,7 +3882,13 @@ moved value is a checker error in any case). It replays the move checker's place
 (`observe_move_states`) from a different entry: parameters initialized, every
 other slot uninitialized, and an initializer's `out self` receiver with each
 declared field uninitialized, so a constructor's first store into a field
-destroys nothing and a second destroys the first. A field wholly moved out is
+destroys nothing and a second destroys the first. `MarkInitialized`, the image
+of upstream's `lit.ownership.mark_initialized`, defines its place in that flow
+without writing it: a constructor that then fills the storage through pointers
+(`Tuple.__init__`, `Pointer(to=self[i]).unsafe_write({})`) writes through
+handles that name no whole variable, so nothing is destroyed, as upstream
+assumes the storage uninitialized; the VM and the native backend emit nothing
+for it, the receiver's storage already existing. A field wholly moved out is
 reinitialized without a drop; a depth-one field moved on only some paths drops
 under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
 same root at the same position as its `Store`, so liveness, loans, and the
