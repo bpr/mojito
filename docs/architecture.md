@@ -681,8 +681,12 @@ struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
 which the checker reads as the frozen value. A variadic struct the
 template serves (`served_variadic_structs`: its source names no struct
 still specialized whole) is a generator too, `native::mono` binding its
-pack per instance; `Tuple`, `TString`, `Variant`, and the variadic structs
-over them are still specialized whole. A method with a lane binder of its
+pack per instance. The public `Tuple` and `TString` are such generators:
+a tuple's type is the nominal `Tuple[...]` applied element by element
+(`types::canonical_pack_arguments`), `t[k]` is the template's
+`__getitem_param__[k]`, and the consuming members move elements out
+through pointers and end the storage with `MirInstr::MarkDestroyed`.
+`Variant` and the variadic structs over it are still specialized whole. A method with a lane binder of its
 own is a generator too, instantiated per call.
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
@@ -2300,44 +2304,26 @@ collection behavior in the VM is the explicitly CTFE-only `ComptimeList`
 bridge; the separate method-free tuple-shaped path is compiler-private
 runtime-pack storage, not a public collection.
 
-Tuple specialization is a closed-set, two-phase handoff. The discovery check
-collects every public Tuple element sequence and the calls of the two
-transforms `std/builtin/tuple.mojo` declares, `reverse` and `concat`, on each
-receiver; flexible numeric literal types are default-materialized
-at this runtime-storage boundary so a constructor and its later receiver cannot
-request different specializations. The elaborator then emits that complete set
-of concrete declarations. Before checking their members, the checker
-predeclares each generated Tuple symbol together with the fixed arguments
-retained in its materialized `element_types` member. Method signatures and
-compiler-owned constructors may refer to those predeclared identities, but the
-gate does not enable forward references in user source.
-
-This predeclaration is necessary for reciprocal transforms. If both
-`Tuple[Int, String].reverse()` and `Tuple[String, Int].reverse()` occur, each
-specialization's `reverse` names the other as its result, so no linear
-declaration order can place both first. A transform's result and operand
-types are therefore forward references to predeclared identities, and the
-specializations need no ordering among themselves.
-
-The two transforms are declared in Mojo with upstream's signatures: a named
-`out` result typed by a spread of a list computed from the element packs,
-`Tuple[*Self.Ts.reverse()]` and `Tuple[*TypeList._concat[Self.Ts.values,
-OtherTs.values]()]`. The cloner expands a spread whose packs are all bound
-to its element types (`comptime/packs.rs:expand_spread_argument`), so a
-specialization's `reverse` names a closed result; `concat`, whose own pack
-is open in the specialization, keeps the spread with the struct's elements
-written in, and the checker resolves it to a `ParamKind::ListConcat` the
-call closes. A specialization keeps a transform only where a checked call
-asks for it: `reverse` by `TupleSpecializationRequest::reversed`, since
-keeping it everywhere would close the set of tuple types under reversal, and
-`concat` by the method request that mints its per-call clone. A call that
-reaches a `Tuple` no specialization serves yet, or a specialization that was
-not asked to keep the member, is typed against the declaration itself: the
-elaborator always emits the template's shell under
-`symbol::TUPLE_DECLARATION_SHELL`, and
-`method_calls/resolution.rs:infer_tuple_member` resolves the member on it
-with the pack bound to the receiver's elements. The request that call
-records is what the next discovery round mints.
+The public `Tuple` is an ordinary struct generator. `std/builtin/tuple.mojo`
+declares one template, the check types it once with `*Ts` symbolic, and
+`native::mono` mints an instance per element list. A tuple's type is the
+nominal `Tuple[T0, ...]` applied element by element
+(`types::canonical_pack_arguments`); a display types its literal elements as
+literals, and the instance is named by their materialized types
+(`mono/unify.rs:bind_pack`). `t[k]` is `__getitem_param__[k](ref self)`,
+whose reference result is the element's place, and a temporary tuple lends
+it from a hidden slot. The two transforms are declared with upstream's
+signatures: a named `out` result typed by a spread of a list computed from
+the element packs, `Tuple[*Self.Ts.reverse()]` and
+`Tuple[*TypeList._concat[Self.Ts.values, OtherTs.values]()]`, which the
+checker carries as `ParamKind::ListTabulate`/`ListConcat` and the elaborator
+closes per instance. Each consuming member moves its elements out with
+`Pointer(to=self[i]).unsafe_take_pointee()` inside a `comptime for` the
+template keeps and then ends the storage with `MirInstr::MarkDestroyed`,
+since the private storage would otherwise destroy the moved elements again.
+`TString` is a generator the same way; a `t"…"` occurrence becomes a
+`TString(...)` construction of the template from the element types the
+checker records.
 
 ### If
 
@@ -3908,7 +3894,12 @@ without writing it: a constructor that then fills the storage through pointers
 (`Tuple.__init__`, `Pointer(to=self[i]).unsafe_write({})`) writes through
 handles that name no whole variable, so nothing is destroyed, as upstream
 assumes the storage uninitialized; the VM and the native backend emit nothing
-for it, the receiver's storage already existing. A field wholly moved out is
+for it, the receiver's storage already existing. `MarkDestroyed`, the image
+of `lit.ownership.mark_destroyed`, is its counterpart: it moves its place in
+that flow without reading it, after a consuming member took each element out
+through a pointer (`Tuple.consume_elements`), so no destructor runs on the
+storage; the VM tombstones the place and the native backend clears its
+presence flag. A field wholly moved out is
 reinitialized without a drop; a depth-one field moved on only some paths drops
 under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
 same root at the same position as its `Store`, so liveness, loans, and the

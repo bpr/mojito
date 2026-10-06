@@ -132,12 +132,7 @@ impl Checker {
                     .fields
                     .iter()
                     .find(|(candidate, _)| candidate == field)?;
-                let field_ty = substitute_at(field_ty, info, &arguments);
-                Some(if arguments.is_empty() {
-                    field_ty
-                } else {
-                    self.canonicalize_public_tuple_types(field_ty)
-                })
+                Some(substitute_at(field_ty, info, &arguments))
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
             ExprKind::MultiIndex { .. } => {
@@ -1484,122 +1479,6 @@ impl Checker {
             return Ok(element.clone());
         }
         self.prepare_index_argument(&obj_ty, index, "__getitem__", 0)?;
-        // A generated Tuple declaration may occur later than the generic body
-        // currently being checked (the bundled List slice overload is one such
-        // body). Phase one has already validated and retained that Tuple's
-        // concrete element identity, so select its conventional generated
-        // accessor now instead of falling through to the metadata-only Tuple
-        // shortcut and losing executable dispatch.
-        if let Ty::Struct(name, _) = &obj_ty
-            && !self.structs.contains_key(name)
-            && self
-                .predeclared_generated_tuple_arguments
-                .contains_key(name)
-        {
-            let elements = tuple_elements(&obj_ty).ok_or_else(|| {
-                TypeError::InvariantViolation(format!(
-                    "predeclared generated Tuple '{name}' lost its element types"
-                ))
-            })?;
-            let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
-                expected: "a compile-time Int index".to_string(),
-                found: "a runtime value".to_string(),
-                context: format!("variadic struct '{name}' subscript"),
-            })?;
-            let k = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
-                expected: format!("a pack index in 0..{}", elements.len()),
-                found: exact.to_string(),
-                context: format!("variadic struct '{name}' subscript"),
-            })?;
-            if k < 0 || k as usize >= elements.len() {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("a pack index in 0..{}", elements.len()),
-                    found: k.to_string(),
-                    context: format!("variadic struct '{name}' subscript"),
-                });
-            }
-            let element = elements[k as usize].clone();
-            let value_receiver = !is_place_expr(object);
-            let method = if value_receiver {
-                if !self.is_implicitly_copyable(&element) {
-                    return Err(TypeError::NonCopyable {
-                        ty: obj_ty.to_string(),
-                        context: "indexing an rvalue Tuple requires an implicitly copyable element"
-                            .to_string(),
-                    });
-                }
-                format!("__getitem_param_value__${k}")
-            } else {
-                format!("__getitem_param__${k}")
-            };
-            let target = format!("{name}.{method}");
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target.clone());
-            if value_receiver {
-                let result_ty = match &element {
-                    Ty::Ref(reference) => reference.referent.as_ref().clone(),
-                    value => value.clone(),
-                };
-                self.selected_calls.borrow_mut().insert(
-                    span,
-                    mojito_checked::checked::CheckedCallContract {
-                        target,
-                        raises: None,
-                        result_ty: result_ty.clone(),
-                        result_adapter: None,
-                        receiver_requires_place: false,
-                        receiver_elided: false,
-                        receiver_convention: None,
-                        arguments: Vec::new(),
-                        captures: Vec::new(),
-                        reference_result: None,
-                        parameter_arguments: Vec::new(),
-                        param_decls: Vec::new(),
-                        boundary: mojito_checked::checked::CheckedCallBoundary::default(),
-                    },
-                );
-                return Ok(result_ty);
-            }
-            let reference = match element {
-                // The generated accessor for a reference-valued element
-                // forwards that element's original handle rather than creating
-                // an outer reference to the Tuple's private storage slot.
-                Ty::Ref(reference) => reference,
-                referent => {
-                    let receiver = self.reference_actual(object)?;
-                    mojito_types::origin::RefTy {
-                        referent: Box::new(referent),
-                        origin: receiver.origin,
-                        mutability: receiver.mutability,
-                    }
-                }
-            };
-            let result = (*reference.referent).clone();
-            self.selected_calls.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::CheckedCallContract {
-                    target,
-                    raises: None,
-                    result_ty: Ty::Ref(reference.clone()),
-                    result_adapter: None,
-                    receiver_requires_place: true,
-                    receiver_elided: false,
-                    receiver_convention: Some(ArgConvention::Ref),
-                    arguments: Vec::new(),
-                    captures: Vec::new(),
-                    reference_result: Some(reference.clone()),
-                    parameter_arguments: Vec::new(),
-                    param_decls: Vec::new(),
-                    boundary: mojito_checked::checked::CheckedCallBoundary::default(),
-                },
-            );
-            self.operation_adjustments.borrow_mut().insert(
-                span,
-                mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
-            );
-            return Ok(result);
-        }
         // Current Mojo permits a general compile-time parameter subscript hook,
         // not only the dependent accessor family synthesized for variadic
         // structs. Pass the source index as a checked value parameter and no
@@ -2247,15 +2126,8 @@ impl Checker {
             })?;
             if let Some((_, fty)) = info.fields.iter().find(|(n, _)| n == field) {
                 // The receiver's arguments — origin tail included — bind the
-                // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`),
-                // and a public `Tuple` they close names its specialization.
-                let fty = substitute_at(fty, info, targs);
-                let fty = if targs.is_empty() {
-                    fty
-                } else {
-                    self.canonicalize_public_tuple_types(fty)
-                };
-                return Ok(match fty {
+                // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
+                return Ok(match substitute_at(fty, info, targs) {
                     Ty::Ref(reference) => *reference.referent,
                     value => value,
                 });

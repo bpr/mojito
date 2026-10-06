@@ -1843,8 +1843,8 @@ impl Flatten<'_> {
     }
 
     /// The compile-time-index accessor call a nominal subscript resolved to
-    /// (`t[0]` on a `Tuple` specialization, `__getitem_param__$0`), whose
-    /// `ref` result into the element is the subscript's place.
+    /// (`t[0]` on a `Tuple`, `__getitem_param__[0]`), whose `ref` result
+    /// into the element is the subscript's place.
     fn element_accessor_call(
         &self,
         expression: &Expr,
@@ -1853,10 +1853,10 @@ impl Flatten<'_> {
             return None;
         }
         let contract = self.checked_call_contract(expression)?;
-        (contract.arguments.is_empty()
-            && contract.reference_result.is_some()
-            && contract.target.contains(".__getitem_param__$"))
-        .then_some(contract)
+        let accessor = contract.target.ends_with(".__getitem_param__")
+            || contract.target.contains(".__getitem_param__$");
+        let returns_element = contract.arguments.is_empty() && contract.reference_result.is_some();
+        (accessor && returns_element).then_some(contract)
     }
 
     fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
@@ -2516,6 +2516,11 @@ impl Flatten<'_> {
     /// typed builder: names resolve here, operator semantics and canonical
     /// form are [`ParamContext`]'s.
     fn value_binder_expr(&self, expression: &Expr) -> Option<ParamExpr> {
+        // A compile-time query the checker recorded (`Self.Ts.length`, a
+        // `comptime for` index) is its parameter expression.
+        if let Some(value) = self.param_value(expression) {
+            return Some(value);
+        }
         let context = ParamContext::detached();
         match &expression.kind {
             ExprKind::Int(value) => context

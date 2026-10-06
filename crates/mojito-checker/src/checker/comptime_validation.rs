@@ -494,7 +494,12 @@ impl Checker {
         {
             scope.insert(name.to_string(), (level, expression));
         }
-        if matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "reflect") {
+        // A reflection handle, or a type list computed from the body's packs
+        // (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), is a
+        // compile-time-only value inlined at its uses.
+        if matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "reflect")
+            || matches!(self.type_list_operand(value), Ok(Some(_)))
+        {
             self.local_comptime_values
                 .last_mut()
                 .ok_or_else(|| {

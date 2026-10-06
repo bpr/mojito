@@ -292,6 +292,20 @@ impl Flatten<'_> {
         // storage primitive. Public `Tuple` is an ordinary nominal
         // variadic struct and follows the call path below.
         if name == "__RuntimeTuple" && kwargs.is_empty() && !self.overloads.is_function(name) {
+            // Moving a whole pack into its storage (`__RuntimeTuple(*args^)`)
+            // is one relocation: the collector already holds the elements
+            // in storage shape.
+            if let [
+                Expr {
+                    kind: ExprKind::Spread(spread),
+                    ..
+                },
+            ] = args
+                && matches!(&spread.kind, ExprKind::Transfer(inner)
+                    if matches!(inner.kind, ExprKind::Identifier(_)))
+            {
+                return self.expr(spread);
+            }
             let regs = self.args(args);
             let element_types = match self.checked_ty(e) {
                 Some(Ty::Tuple(elements)) => Some(elements),

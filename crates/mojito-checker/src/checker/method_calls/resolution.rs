@@ -123,19 +123,7 @@ impl Checker {
         else {
             return structural;
         };
-        let result = self.infer_selected_method_call(site, resolved)?;
-        // The instance a member with parameters of its own asks for belongs
-        // to the receiver's specialization, which the next round mints.
-        if let Some(instantiation) = self.method_instantiations.borrow_mut().get_mut(span)
-            && instantiation.owner == mojito_types::types::TUPLE_TYPE_NAME
-            && elements
-                .iter()
-                .all(|element| !mojito_types::types::is_symbolic(element))
-        {
-            instantiation.owner = mojito_symbol::symbol::tuple_specialization_symbol(elements);
-            instantiation.owner_arguments = Vec::new();
-        }
-        Ok(self.canonicalize_public_tuple_types(result))
+        self.infer_selected_method_call(site, resolved)
     }
 
     /// A generic method's resolved compile-time arguments, and a concrete
@@ -298,19 +286,37 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| substitute_at(ty, info, targs));
-            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
+            // A value parameter typed over the struct's pack (a handler
+            // `def[index: Int](var element: Self.Ts[index])`) is judged at
+            // the receiver's elements.
+            let at_receiver = self.method_decls_at_receiver(sig, info, targs);
+            let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
                 .instantiate_method_generics(
                     &format!("{sname}.{method}"),
-                    sig,
+                    at_receiver.as_ref().unwrap_or(sig),
                     &receiver_params,
                     receiver_variadic.as_ref(),
                     receiver_kw_variadic.as_ref(),
                     param_args,
                     args,
                     kwargs,
-                )
-            else {
-                continue;
+                ) {
+                Ok(instantiated) => instantiated,
+                // A runtime value where a subscript accessor takes a
+                // compile-time `Int` (`t[i]` over a runtime `i`) is the
+                // reason the call reports.
+                Err(TypeError::NotComptime(_))
+                    if !overloaded
+                        && matches!(method, "__getitem__" | "__getitem_param__")
+                        && matches!(sig.decls.as_slice(),
+                            [ParamDecl::Value { ty, .. }] if **ty == Ty::Int) =>
+                {
+                    availability_failure.get_or_insert_with(|| {
+                        "expected a compile-time Int index, found a runtime value".to_string()
+                    });
+                    continue;
+                }
+                Err(_) => continue,
             };
             let Ok(clone_origins) = self.bind_clone_receiver_origins(
                 &format!("{sname}.{method}"),
@@ -368,8 +374,13 @@ impl Checker {
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
-                    return_type: clone_origins.substitute(&self.close_pack_elements(
-                        self.close_method_values(
+                    // A pack element closes under the receiver's and the
+                    // call's own arguments at once: an argument may name the
+                    // caller's binder of the same identity
+                    // (`result[Self.Ts.length + i]` inside a method of the
+                    // struct), which the receiver's must not rewrite.
+                    return_type: clone_origins.substitute(&self.close_method_values(
+                        self.close_pack_elements(
                             substitute(
                                 &super::super::generics::expand_solved_packs(
                                     &substitute_at(&sig.ret, info, targs),
@@ -378,13 +389,13 @@ impl Checker {
                                 ),
                                 &method_subst,
                             ),
-                            &sig.decls,
-                            &method_arguments,
+                            &[
+                                (&sig.decls, &method_arguments),
+                                (&info.decls, &positional_pack_arguments(&info.decls, targs)),
+                            ],
                         ),
-                        &[
-                            (&sig.decls, &method_arguments),
-                            (&info.decls, &positional_pack_arguments(&info.decls, targs)),
-                        ],
+                        &sig.decls,
+                        &method_arguments,
                     )),
                     result_adapter: None,
                     raises: sig.raises,

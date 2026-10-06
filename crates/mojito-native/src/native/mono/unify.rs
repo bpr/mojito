@@ -70,6 +70,52 @@ pub(super) fn ordered_arguments(
         .collect()
 }
 
+/// The instance type of the struct `template` under `bindings`, named as
+/// [`substitute_ty`] names an application of it: a bound pack spells its
+/// elements one by one for a struct that binds its pack elementwise
+/// (`Tuple`), and as one list for any other.
+pub(super) fn owner_instance_ty(
+    template: &str,
+    decls: &[ParamDecl],
+    bindings: &Bindings,
+) -> Result<Ty, MonoError> {
+    let elementwise = mojito_types::types::binds_pack_elementwise(template);
+    let mut arguments = Vec::new();
+    for (decl, argument) in decls
+        .iter()
+        .zip(ordered_arguments(decls, bindings, template)?)
+    {
+        match (decl, argument) {
+            (
+                ParamDecl::Type { variadic: true, .. },
+                InstanceArg::Ty(Ty::RuntimePack(elements)),
+            ) => {
+                if elementwise {
+                    arguments.extend(elements.into_iter().map(InstanceArg::Ty));
+                } else {
+                    arguments.push(InstanceArg::Value(CtValue::Tuple(
+                        elements
+                            .into_iter()
+                            .map(Box::new)
+                            .map(CtValue::Type)
+                            .collect(),
+                    )));
+                }
+            }
+            (_, argument) => arguments.push(argument),
+        }
+    }
+    let name = mojito_symbol::symbol::instance_symbol(template, &arguments);
+    let ty_arguments: Vec<TyArg> = arguments
+        .into_iter()
+        .map(|argument| match argument {
+            InstanceArg::Ty(ty) => TyArg::Ty(ty),
+            InstanceArg::Value(value) => TyArg::Val(value),
+        })
+        .collect();
+    Ok(Ty::Struct(name, ty_arguments.into()))
+}
+
 /// Each supplied compile-time argument paired with the declaration it fills.
 /// Positional arguments skip the inferred-only declarations
 /// (`hash[T: Hashable, //, HasherType]` binds `HasherType` first), as the
@@ -181,7 +227,7 @@ pub(super) fn bind_explicit_value_arguments(
             // records that binder, which the enclosing instance's bindings
             // resolve. An unresolvable argument leaves the slot to its
             // default. A binder the receiver already solved keeps that
-            // solution: the name alone drops a minted `Tuple$tN`'s element
+            // solution: the name alone drops a `Tuple`'s element
             // arguments, which the receiver's type — and so the instance's
             // owner — spells.
             ParamDecl::Type { .. } if bindings.types.contains_key(&declaration.binder()) => {}
@@ -502,6 +548,9 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
         _ if pattern == actual => Ok(()),
+        // A type computed from parameters (`Ts[index]`) solves nothing: it
+        // closes once the parameters it reads are bound.
+        Ty::Dependent(_) => Ok(()),
         _ => Err(format!("expected `{pattern}`, found `{actual}`")),
     }
 }
@@ -554,6 +603,15 @@ pub(super) fn unify_arg(
             },
         },
         (TyArg::Val(p), TyArg::Val(a)) if p == a => Ok(()),
+        // A pack bound as one list of types (`Pair[T, Int]`) unifies type by
+        // type.
+        (TyArg::Val(CtValue::Tuple(p)), TyArg::Val(CtValue::Tuple(a))) if p.len() == a.len() => {
+            p.iter().zip(a).try_for_each(|pair| match pair {
+                (CtValue::Type(p), CtValue::Type(a)) => unify(p, a, bindings),
+                (p, a) if p == a => Ok(()),
+                _ => Err("generic application arguments disagree".to_string()),
+            })
+        }
         (TyArg::Origin(_), TyArg::Origin(_)) => Ok(()),
         _ => Err("generic application arguments disagree".to_string()),
     }
@@ -563,6 +621,12 @@ pub(super) fn unify_arg(
 /// spelling of the pack substitutes to, and as the element tuple the
 /// parameter expressions over it (`Ts[i]`, the pack's length) fold under.
 pub(super) fn bind_pack(binder: &ParamRef, elements: Vec<Ty>, bindings: &mut Bindings) {
+    // An element spelled as a literal type (`(1, "a")` is typed over
+    // `IntLiteral`) is stored materialized, and names the instance so.
+    let elements: Vec<Ty> = elements
+        .into_iter()
+        .map(|element| mojito_types::types::default_literal(&element))
+        .collect();
     bindings.values.insert(
         binder.clone(),
         CtValue::Tuple(

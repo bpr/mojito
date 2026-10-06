@@ -374,40 +374,6 @@ impl Checker {
                     self.type_runtime_param_args(param_args)?;
                     return Ok(constructed);
                 }
-                // Tuple specializations are predeclared as one closed set before
-                // their members are checked.  A generated transform may therefore
-                // construct its reverse result before that result's full StructInfo
-                // has been populated (the reciprocal reverse direction makes any
-                // sequential declaration order impossible).  Its concrete element
-                // arguments are enough to validate the compiler-owned constructor;
-                // `public_tuple_type` also proves that they select this exact
-                // predeclared symbol.  Ordinary source constructors retain
-                // sequential visibility because this gate is enabled only while a
-                // compiler-generated Tuple implementation is being checked.
-                _ if self.allow_generated_tuple_forward_types
-                    && self.declared_structs.contains(name)
-                    && (name.starts_with("Tuple$") || name.contains("$Tuple$"))
-                    && param_args.is_empty()
-                    && kwargs.is_empty() =>
-                {
-                    let tuple = self.infer_tuple_construction(&[], args)?;
-                    if matches!(&tuple, Ty::Struct(target, _) if target == name) {
-                        // Preserve the predeclared implementation as an exact
-                        // checked callee.  This is intentionally redundant with
-                        // the synthetic source spelling: MIR consumes checked
-                        // call identity and never has to infer that a nominal
-                        // Tuple construction is not the unspecialized template.
-                        self.overload_targets
-                            .borrow_mut()
-                            .insert(span, name.to_string());
-                        return Ok(tuple);
-                    }
-                    return Err(TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: "generated Tuple constructor arguments select a different specialization"
-                            .to_string(),
-                    });
-                }
                 "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
                     return self.infer_pointer_to(span, param_args, args, kwargs);
                 }
@@ -1813,7 +1779,7 @@ impl Checker {
             kwargs,
             None,
         );
-        let mut referent = self.canonicalize_public_tuple_types(resolve(ret)?);
+        let mut referent = resolve(ret)?;
         if forwarded_pack.is_some() {
             // A result naming the callee's pack elements (`Us[i]`) closes
             // over the caller's own pack.

@@ -803,8 +803,8 @@ impl Elab<'_> {
                         self.mono_expr(value, consts, mono)?;
                     }
                 }
-                // Rewrite a checker-selected occurrence into the concrete
-                // `TString` specialization's construction: literal segments
+                // Rewrite a checker-selected occurrence into the `TString`
+                // construction its template serves: literal segments
                 // become string constants, and an interpolation whose
                 // interleaved element type is the builtin string arrives
                 // pre-formatted through a synthesized `String(...)`
@@ -813,11 +813,11 @@ impl Elab<'_> {
                 // occurrence without a target — the discovery round or a
                 // retained abstract template body — deliberately survives
                 // for the eager MIR fallback.
-                let Some(target) = mono.tstring_call_targets.get(&source_span.without_syntax())
+                let Some(elements) = mono.tstring_call_targets.get(&source_span.without_syntax())
                 else {
                     return Ok(());
                 };
-                if parts.len() != target.elements.len() {
+                if parts.len() != elements.len() {
                     return Ok(());
                 }
                 let span = e.span;
@@ -828,7 +828,7 @@ impl Elab<'_> {
                     unreachable!("the enclosing match arm established a t-string");
                 };
                 let mut args = Vec::with_capacity(parts.len());
-                for (part, element) in parts.into_iter().zip(&target.elements) {
+                for (part, element) in parts.into_iter().zip(elements) {
                     match part {
                         TStringPart::Literal(text) => {
                             let mut literal = Expr::new(ExprKind::Str(text), span);
@@ -870,7 +870,7 @@ impl Elab<'_> {
                     }
                 }
                 e.kind = ExprKind::Call {
-                    name: target.symbol.clone(),
+                    name: mojito_types::types::TSTRING_TYPE_NAME.to_string(),
                     param_args: Vec::new(),
                     args,
                     kwargs: Vec::new(),
@@ -1016,24 +1016,8 @@ impl Elab<'_> {
                     *name = mangled;
                     return Ok(());
                 }
-                // A bare public `Tuple(...)` has no source type arguments from
-                // which pre-check elaboration could soundly choose `*Ts`.  Only
-                // rewrite an occurrence the checker explicitly identified; an
-                // unhinted occurrence deliberately survives for the discovery
-                // check.
-                if name == "Tuple"
-                    && param_args.is_empty()
-                    && mono.resolves_top_template(name)
-                    && self.struct_template(name)
-                {
-                    if let Some(target) = mono.tuple_call_targets.get(&source_span.without_syntax())
-                    {
-                        *name = target.clone();
-                    }
-                    return Ok(());
-                }
-                // A bare construction of any other single-pack template
-                // (`Pair((1, True))`) likewise survives for the discovery
+                // A bare construction of a single-pack template
+                // (`Pair((1, True))`) survives for the discovery
                 // check, which infers the pack from the constructor it
                 // selects; the template is retained as a shell so the checker
                 // can type that constructor.

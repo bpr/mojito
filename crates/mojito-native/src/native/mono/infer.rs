@@ -63,6 +63,37 @@ impl Specializer<'_> {
                         }
                     )
                 });
+        // An accessor keyed on a value parameter of its own
+        // (`Tuple.__getitem_param__[index: Int]`) varies by it: the constant
+        // index binds before the receiver is inferred, so the result type
+        // over it closes, and joins the instance identity.
+        let mut explicit = Vec::new();
+        for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
+            if !matches!(decl, ParamDecl::Value { .. }) {
+                continue;
+            }
+            // A constant register is the value; an index built from the
+            // caller's binders is its recorded expression under the caller
+            // instance's bindings.
+            let value = param_arg
+                .value
+                .and_then(|reg| {
+                    self.constant_values
+                        .get(&reg.0)
+                        .cloned()
+                        .or_else(|| const_reg_value(function, reg))
+                })
+                .or_else(|| {
+                    param_arg
+                        .expr
+                        .as_ref()
+                        .and_then(|expr| eval_ct(expr, &self.enclosing).ok())
+                });
+            let Some(value) = value else {
+                return Ok(());
+            };
+            explicit.push((decl.binder(), value));
+        }
         let (target, mut bindings, mut arguments) = if callable_parameter {
             self.infer_call(
                 owner,
@@ -77,28 +108,18 @@ impl Specializer<'_> {
             )?
         } else {
             let (bindings, arguments, _) =
-                self.infer_receiver_call(owner, &target, &receiver_ty, result)?;
+                self.infer_receiver_call(owner, &target, &receiver_ty, result, &explicit)?;
             (target, bindings, arguments)
         };
-        // A comptime-specialized accessor (`Tuple$tN.__getitem__[i: Int]`)
-        // varies by its value parameter: the constant index joins the
-        // instance identity — sharing on the receiver alone would collapse
-        // same-element-type indexes onto one body — and binds for the
-        // instance body's value-parameter reads.
-        for (decl, param_arg) in call.param_decls.iter().zip(&call.param_arg_regs) {
-            if !matches!(decl, ParamDecl::Value { .. })
-                || bindings.values.contains_key(&decl.binder())
-            {
+        let declared = &self.declarations[target.as_str()].param_decls;
+        for (binder, value) in explicit {
+            if bindings.values.contains_key(&binder) {
                 continue;
             }
-            let value = param_arg
-                .value
-                .and_then(|reg| const_reg_value(function, reg));
-            let Some(value) = value else {
-                return Ok(());
-            };
-            bindings.values.insert(decl.binder(), value.clone());
-            arguments.push(InstanceArg::Value(value));
+            bindings.values.insert(binder.clone(), value.clone());
+            if !declared.iter().any(|decl| decl.binder() == binder) {
+                arguments.push(InstanceArg::Value(value));
+            }
         }
         call.target = self.enqueue(&target, bindings, arguments)?;
         call.param_arg_regs.clear();
@@ -282,7 +303,7 @@ impl Specializer<'_> {
         // An unspecialized variadic callee instantiates at its call-site
         // arity: each overflow positional unifies against the pack element
         // and the arity joins the instance identity. Checker-specialized
-        // packs (`Tuple$tN`'s concrete `RuntimePack`) keep their identity.
+        // packs (a concrete `RuntimePack`) keep their identity.
         let variadic_arity = match &declaration.variadic {
             // A type pack binds to the overflow's element types whole, one
             // per position, unless the call's recorded solution bound it.
@@ -304,7 +325,7 @@ impl Specializer<'_> {
             }
             // The declaration records the pack ELEMENT type; a concrete
             // `RuntimePack`/`Tuple` spelling means the checker already
-            // specialized the pack (`Tuple$tN`).
+            // specialized the pack.
             Some(element) if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)) => {
                 for index in &slots.positional_overflow {
                     let actual = reg_ty(caller, args[*index], owner)?;
@@ -368,25 +389,13 @@ impl Specializer<'_> {
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
             && !struct_decl.param_decls.is_empty()
         {
-            let owner_arguments = ordered_arguments(
-                &struct_decl.param_decls,
-                &bindings,
-                nominal_template(receiver_name),
-            )?;
-            let ty_arguments = owner_arguments
-                .iter()
-                .map(|argument| match argument {
-                    InstanceArg::Ty(ty) => TyArg::Ty(ty.clone()),
-                    InstanceArg::Value(value) => TyArg::Val(value.clone()),
-                })
-                .collect::<Vec<_>>();
-            let owner = mojito_symbol::symbol::instance_symbol(
-                nominal_template(receiver_name),
-                &owner_arguments,
-            );
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
-                Ty::Struct(owner, ty_arguments.into()),
+                owner_instance_ty(
+                    nominal_template(receiver_name),
+                    &struct_decl.param_decls,
+                    &bindings,
+                )?,
             ));
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
@@ -578,7 +587,7 @@ impl Specializer<'_> {
             ));
         }
         let (bindings, arguments, result) =
-            self.infer_receiver_call(owner, &target, receiver, result)?;
+            self.infer_receiver_call(owner, &target, receiver, result, &[])?;
         let concrete = self.enqueue(&target, bindings, arguments)?;
         Ok((concrete, result))
     }
@@ -629,6 +638,7 @@ impl Specializer<'_> {
         target: &str,
         receiver: &Ty,
         result: Option<&Ty>,
+        explicit: &[(ParamRef, CtValue)],
     ) -> Result<(Bindings, Vec<InstanceArg>, Ty), MonoError> {
         let declaration = self.declarations.get(target).copied().ok_or_else(|| {
             self.error(
@@ -637,6 +647,15 @@ impl Specializer<'_> {
             )
         })?;
         let mut bindings = self.base_bindings();
+        for (binder, value) in explicit {
+            if declaration
+                .param_decls
+                .iter()
+                .any(|decl| decl.binder() == *binder)
+            {
+                bindings.values.insert(binder.clone(), value.clone());
+            }
+        }
         let mut owner_covered = 0;
         if let Ty::Struct(receiver_name, arguments) = receiver
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
@@ -693,25 +712,13 @@ impl Specializer<'_> {
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
             && !struct_decl.param_decls.is_empty()
         {
-            let owner_arguments = ordered_arguments(
-                &struct_decl.param_decls,
-                &bindings,
-                nominal_template(receiver_name),
-            )?;
-            let ty_arguments = owner_arguments
-                .iter()
-                .map(|argument| match argument {
-                    InstanceArg::Ty(ty) => TyArg::Ty(ty.clone()),
-                    InstanceArg::Value(value) => TyArg::Val(value.clone()),
-                })
-                .collect::<Vec<_>>();
-            let owner = mojito_symbol::symbol::instance_symbol(
-                nominal_template(receiver_name),
-                &owner_arguments,
-            );
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
-                Ty::Struct(owner, ty_arguments.into()),
+                owner_instance_ty(
+                    nominal_template(receiver_name),
+                    &struct_decl.param_decls,
+                    &bindings,
+                )?,
             ));
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);

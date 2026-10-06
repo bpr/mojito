@@ -403,9 +403,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             place_regs_mut(target, &mut out);
             out.push(marker);
         }
-        MirInstr::DropPlace { place: target } | MirInstr::MarkInitialized { place: target } => {
-            place_regs_mut(target, &mut out);
-        }
+        MirInstr::DropPlace { place: target }
+        | MirInstr::MarkInitialized { place: target }
+        | MirInstr::MarkDestroyed { place: target } => place_regs_mut(target, &mut out),
         MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
     }
     out
@@ -1446,6 +1446,13 @@ pub enum MirInstr {
     /// pointers; the storage itself already exists, so the backends emit
     /// nothing.
     MarkInitialized {
+        place: MirPlace,
+    },
+    /// End `place`'s value without destroying it (upstream's
+    /// `lit.ownership.mark_destroyed`): ownership treats the place as moved
+    /// from here, its storage having been moved out through pointers, so no
+    /// destructor runs on it.
+    MarkDestroyed {
         place: MirPlace,
     },
     /// Destroy one projected field of an aggregate now — running the field

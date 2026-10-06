@@ -466,34 +466,6 @@ fn scan_rs_files(dir: &std::path::Path, offenders: &mut Vec<String>) {
 }
 
 #[test]
-fn specialization_keys_spell_a_minted_tuple_element_canonically() {
-    // A nested Tuple element mangles the same whether it is still the nominal
-    // `Tuple[Int, Bool]` or already its minted `Tuple$t2[...]` instance
-    // carrying those elements; an argument-erased symbol stays verbatim.
-    use mojito::symbol::{canonical_specialization_type, mangle, tuple_specialization_values};
-    use mojito::{Ty, TyArg};
-    let elements = vec![TyArg::Ty(Ty::Int), TyArg::Ty(Ty::Bool)];
-    let minted = Ty::Struct(
-        "Tuple$t2[y3:Inty4:Bool]".to_string(),
-        elements.clone().into(),
-    );
-    let nominal = Ty::Struct("Tuple".to_string(), elements.into());
-    assert_eq!(
-        mangle(
-            "Tuple",
-            &tuple_specialization_values(&[minted.clone(), Ty::Int])
-        ),
-        mangle(
-            "Tuple",
-            &tuple_specialization_values(&[nominal.clone(), Ty::Int])
-        )
-    );
-    assert_eq!(canonical_specialization_type(&minted), nominal);
-    let erased = Ty::Struct("Tuple$t2[y3:Inty4:Bool]".to_string(), Vec::new().into());
-    assert_eq!(canonical_specialization_type(&erased), erased);
-}
-
-#[test]
 fn collector_position_is_part_of_callable_identity() {
     let source = "def route(a: Int, *rest: Int) -> Int:\n    return 1\n\ndef route(*rest: Int, a: Int) -> Int:\n    return 2\n\ndef main():\n    print(route(1, 2))\n    print(route(2, a=1))\n";
     let names = lowered_names(source);

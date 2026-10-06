@@ -2068,9 +2068,17 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 }
             }
         }
-        StmtKind::ComptimeFor { iter, body, .. } => {
+        StmtKind::ComptimeFor { var, iter, body } => {
             rewrite_expr(iter, subs);
-            rewrite_block(body, subs, into_defs);
+            if into_defs {
+                // A loop the template keeps binds its index in the body,
+                // where it shadows a module constant of its name.
+                let index = var.clone();
+                let inner: Subs = &|name| if name == index { None } else { subs(name) };
+                rewrite_block(body, inner, into_defs);
+            } else {
+                rewrite_block(body, subs, into_defs);
+            }
         }
         StmtKind::Try {
             body,

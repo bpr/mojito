@@ -98,9 +98,11 @@ simple_stmt:
     | 'continue'
     | mlir_op_stmt
     | expression
-# The one `__mlir_op` form accepted, upstream's `lit.ownership.mark_initialized` over a
-# place, in the bundled modules that reach compiler-private storage (`Tuple.__init__`).
-mlir_op_stmt: '__mlir_op' '.' '`lit.ownership.mark_initialized`' '(' '__get_mvalue_as_litref' '(' expression ')' ')'
+# The two `__mlir_op` forms accepted, upstream's `lit.ownership.mark_initialized` and
+# `lit.ownership.mark_destroyed` over a place, in the bundled modules that reach
+# compiler-private storage (`Tuple.__init__`, `Tuple.consume_elements`).
+mlir_op_stmt: '__mlir_op' '.' mlir_ownership_op '(' '__get_mvalue_as_litref' '(' expression ')' ')'
+mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_destroyed`'
 
 compound_stmt:
     | function_def

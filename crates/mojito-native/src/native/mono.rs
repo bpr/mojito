@@ -225,12 +225,8 @@ struct Bindings {
     /// The names of every generic struct template in the source program.
     /// Substitution renames a concrete application of one of these to its
     /// instance symbol; checker-specialized structs with empty `param_decls`
-    /// (the `Tuple$tN` family) keep their names.
+    /// (a variadic struct the cloner specialized whole) keep their names.
     generic_templates: Rc<HashSet<String>>,
-    /// The `Tuple` specializations the source declares (`Tuple$t2[…]`).
-    /// Substitution names a public `Tuple` it closes by its specialization,
-    /// as the checker names a substituted use.
-    tuple_specializations: Rc<HashSet<String>>,
     /// Each source struct's parameters, unparameterized associated types,
     /// and fields. Substitution solves `C.Element` from them once `C` is
     /// bound to an instance, where no signature spelled the member for
@@ -296,7 +292,6 @@ struct Specializer<'a> {
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
-    tuple_specializations: Rc<HashSet<String>>,
     struct_shapes: Rc<HashMap<String, StructShape>>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,

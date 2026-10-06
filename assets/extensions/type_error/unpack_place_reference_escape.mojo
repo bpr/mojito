@@ -1,9 +1,10 @@
 # expect: cannot implicitly convert 'RefBox[origin_of(local)]' value to 'RefBox[origin]'
 # Unpacking into a struct field keeps the struct's origin identity: a box over
 # a local does not fit a `RefBox[Self.origin]` slot (the `ref`-field spelling
-# of assets/type_error/struct_binder_origin_store_mismatch.mojo).
+# of assets/type_error/struct_binder_origin_store_mismatch.mojo). Unpacking
+# copies each element out of the tuple, so the box is implicitly copyable.
 @fieldwise_init
-struct RefBox[origin: Origin[mut=True]]:
+struct RefBox[origin: Origin[mut=True]](ImplicitlyCopyable):
     var value: ref[origin] List[Int]
 
 @fieldwise_init

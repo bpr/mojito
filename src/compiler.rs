@@ -6,11 +6,10 @@ use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
     MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
-    TStringSpecializationRequest, TupleSpecializationRequest, UnservedTemplateUse,
-    bound_generic_template_names, comptime_generic_template_names, dtype_generic_template_names,
-    elaborate_prepared, generated_names, instance_traces, pack_generic_template_names, prepare,
-    template_display_name, tuple_materialized_callables, unserved_template_parameter,
-    variadic_struct_template_names,
+    TStringSpecializationRequest, UnservedTemplateUse, bound_generic_template_names,
+    comptime_generic_template_names, dtype_generic_template_names, elaborate_prepared,
+    generated_names, instance_traces, pack_generic_template_names, prepare, template_display_name,
+    unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -367,18 +366,16 @@ impl Compiler {
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
-        // Public `Tuple[*Ts]` is a nominal variadic struct, but the element
-        // types of a bare `Tuple(exprs...)` or tuple display are semantic
-        // facts, and an inferred bound-generic call's instantiation is
-        // likewise resolved only by the checker: pre-check elaboration cannot
-        // infer arbitrary expression types. Iterate discovery to a fixpoint:
+        // The element types of a `t"…"` occurrence are semantic facts, and an
+        // inferred bound-generic call's instantiation is likewise resolved
+        // only by the checker: pre-check elaboration cannot infer arbitrary
+        // expression types. Iterate discovery to a fixpoint:
         // each check pass may record new closed instantiations (a requested
         // clone's body can itself contain inferred calls), so requests
         // accumulate monotonically and each round re-elaborates the original
         // linked program with the full set. Programs without generics converge
-        // after the first pass with no re-elaboration, and tuple-only programs
-        // keep their single re-elaboration; ownership and MIR verification run
-        // exactly once, on the fixpoint program.
+        // after the first pass with no re-elaboration; ownership and MIR
+        // verification run exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
         let templates = {
             let mut templates = bound_generic_template_names(linked);
@@ -390,7 +387,6 @@ impl Compiler {
         let range_templates = scalar_range_template_names(linked);
         let variadic_templates = variadic_struct_template_names(linked);
         let user_structs = user_struct_names(linked);
-        let mut tuple_requests: Vec<TupleSpecializationRequest> = Vec::new();
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
@@ -479,13 +475,6 @@ impl Compiler {
             // recorded one of these is inferred again next round, whatever
             // else its record still matches (`PassCarry::for_next_round`).
             let mut served = ServedRequests::default();
-            for request in tuple_specialization_requests(checked.result()) {
-                if !tuple_requests.contains(&request) {
-                    served.tuple_elements.push(request.elements().to_vec());
-                    tuple_requests.push(request);
-                    grew = true;
-                }
-            }
             for request in tstring_specialization_requests(checked.result()) {
                 if !tstring_requests.contains(&request) {
                     last_new_callee = String::from("TString");
@@ -569,7 +558,6 @@ impl Compiler {
             grew |= reached.is_some();
             last_new_callee = reached.unwrap_or(last_new_callee);
             drop(requests);
-            timing::count("tuple_requests", tuple_requests.len() as u64);
             timing::count("tstring_requests", tstring_requests.len() as u64);
             timing::count("def_requests", def_requests.len() as u64);
             timing::count("method_requests", method_requests.len() as u64);
@@ -608,7 +596,6 @@ impl Compiler {
                 elaborate_prepared(
                     &prepared,
                     ElaborationInputs {
-                        tuple_requests: &tuple_requests,
                         tstring_requests: &tstring_requests,
                         def_requests: &def_requests,
                         method_requests: &method_requests,
@@ -643,7 +630,7 @@ impl Compiler {
             timing::count("body_facts.dirty_sites", dirty.len() as u64);
             checked = crate::checker::check_program_carrying(
                 &elaborated,
-                &tuple_materialized_callables(&tuple_requests),
+                &std::collections::HashMap::new(),
                 &mut templates_catalog,
                 Some(checked.for_next_round(&dirty)),
             )
@@ -768,7 +755,6 @@ fn elaboration_inputs(templates: &crate::templates::TemplateCatalog) -> Elaborat
 /// which body records of the previous round are stale.
 #[derive(Default)]
 struct ServedRequests {
-    tuple_elements: Vec<Vec<Ty>>,
     tstring_elements: Vec<Vec<Ty>>,
     callees: Vec<String>,
     methods: Vec<(String, String)>,
@@ -782,8 +768,8 @@ struct ServedRequests {
 impl ServedRequests {
     /// The body sites whose facts a newly served request would change:
     /// those that reached a struct application it instantiates, recorded an instantiation of a callee or method it
-    /// clones, or typed an expression, place, or binding with a tuple or
-    /// t-string it materializes. (A rewritten call occurrence changes the
+    /// clones, or typed an expression, place, or binding with a t-string it
+    /// materializes. (A rewritten call occurrence changes the
     /// body's syntax hash instead.)
     fn dirty_sites(&self, carry: &crate::checker::PassCarry) -> HashSet<crate::token::SourceSpan> {
         let instances: Vec<(&str, &[TyArg])> = self
@@ -791,7 +777,6 @@ impl ServedRequests {
             .iter()
             .map(|instance| (instance.template(), instance.arguments()))
             .collect();
-        let tuples = !self.tuple_elements.is_empty();
         let tstrings = !self.tstring_elements.is_empty();
         carry
             .sites()
@@ -813,116 +798,15 @@ impl ServedRequests {
                                         == Some(owner))
                         })
                     })
-                    || ((tuples || tstrings)
+                    || (tstrings
                         && site.recorded_types().any(|ty| {
-                            let mut sets = Vec::new();
-                            if tuples {
-                                collect_public_tuple_types(ty, &mut sets);
-                            }
-                            sets.iter().any(|set| self.tuple_elements.contains(set))
-                                || (tstrings
-                                    && closed_tstring_elements(ty).is_some_and(|elements| {
-                                        self.tstring_elements.contains(&elements)
-                                    }))
+                            closed_tstring_elements(ty)
+                                .is_some_and(|elements| self.tstring_elements.contains(&elements))
                         }))
             })
             .map(|site| site.key().clone())
             .collect()
     }
-}
-
-fn tuple_specialization_requests(checked: &DiscoveryResult) -> Vec<TupleSpecializationRequest> {
-    let mut element_sets = Vec::<Vec<Ty>>::new();
-    let mut calls = Vec::<(Vec<Ty>, crate::token::SourceSpan)>::new();
-    let mut reversed = Vec::<Vec<Ty>>::new();
-
-    checked.scan_expressions(&mut |expression| {
-        if let Some(ty) = checked.expression_type(expression) {
-            collect_public_tuple_types(ty, &mut element_sets);
-            if matches!(
-                &expression.kind,
-                ExprKind::Call {
-                    name,
-                    param_args,
-                    ..
-                } if name == "Tuple" && param_args.is_empty()
-            ) && let Some(elements) = closed_public_tuple_elements(ty)
-            {
-                calls.push((elements, expression.source_span().without_syntax()));
-            }
-        }
-        // A checked call of the declared `reverse` asks its receiver's
-        // specialization to keep that member.
-        if let ExprKind::MethodCall {
-            object,
-            method,
-            args,
-            kwargs,
-            ..
-        } = &expression.kind
-            && method == "reverse"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && let Some(receiver) = checked
-                .expression_type(object)
-                .and_then(closed_public_tuple_elements)
-            && !reversed.contains(&receiver)
-        {
-            reversed.push(receiver);
-        }
-        if let Some(ty) = checked.expression_place_type(expression) {
-            collect_public_tuple_types(ty, &mut element_sets);
-        }
-        if let Some(ty) = checked.expression_binding_type(expression) {
-            collect_public_tuple_types(ty, &mut element_sets);
-        }
-    });
-    for ty in checked.declaration_types() {
-        collect_public_tuple_types(&ty, &mut element_sets);
-    }
-    // A closed `Tuple` bound to a generic call's type parameter, or to an
-    // element of its type pack, is a type the instance builds (`T()` at
-    // `T = Tuple[Int, Bool]`, `Ts[i]()`). The table is unordered, so its
-    // finds join in symbol order.
-    let mut instantiated = Vec::new();
-    for instantiation in checked.generic_instantiations().values() {
-        for argument in &instantiation.arguments {
-            match argument {
-                TyArg::Ty(ty) => collect_public_tuple_types(ty, &mut instantiated),
-                TyArg::Val(CtValue::Tuple(elements)) => {
-                    for element in elements {
-                        if let CtValue::Type(ty) = element {
-                            collect_public_tuple_types(ty, &mut instantiated);
-                        }
-                    }
-                }
-                TyArg::Val(_) | TyArg::Origin(_) => {}
-            }
-        }
-    }
-    instantiated
-        .sort_by_cached_key(|elements| crate::symbol::tuple_specialization_symbol(elements));
-    for elements in instantiated {
-        if !element_sets.contains(&elements) {
-            element_sets.push(elements);
-        }
-    }
-
-    let mut requests = element_sets
-        .into_iter()
-        .map(TupleSpecializationRequest::declaration)
-        .collect::<Vec<_>>();
-    requests.extend(
-        calls.into_iter().map(|(elements, occurrence)| {
-            TupleSpecializationRequest::bare_call(elements, occurrence)
-        }),
-    );
-    requests.extend(
-        reversed
-            .into_iter()
-            .map(TupleSpecializationRequest::reversed),
-    );
-    requests
 }
 
 /// Reject a reference the discovery fixpoint left on an abstract path that
@@ -1231,8 +1115,8 @@ fn scalar_range_requests(
 /// The checker-recorded bare constructions of variadic struct templates
 /// (`Pair((1, True))`, the pack inferred from the constructor) whose pack is
 /// closed, as constructor-rewrite requests on the template, sorted like
-/// [`def_specialization_requests`]. The public `Tuple` and `TString` have
-/// their own request kinds. Occurrence conflicts share the caller's
+/// [`def_specialization_requests`]. The public `Tuple` and `TString` are
+/// served by their templates. Occurrence conflicts share the caller's
 /// def-request conflict handling.
 fn variadic_struct_requests(
     checked: &DiscoveryResult,
@@ -1314,34 +1198,6 @@ fn closed_generic_argument(argument: &TyArg) -> bool {
     }
 }
 
-fn public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
-        return None;
-    };
-    if name != crate::types::TUPLE_TYPE_NAME
-        && !name.ends_with(&format!("${}", crate::types::TUPLE_TYPE_NAME))
-        && !name.starts_with(&format!("{}$", crate::types::TUPLE_TYPE_NAME))
-        && !name.contains(&format!("${}$", crate::types::TUPLE_TYPE_NAME))
-    {
-        return None;
-    }
-    arguments
-        .iter()
-        .map(|argument| match argument {
-            // A bare literal has a flexible checker type, but public Tuple
-            // storage is runtime storage and therefore uses the literal's
-            // default materialization.  Canonicalize recursively here so the
-            // constructor occurrence, its inferred binding, and later method
-            // receiver all request one specialization identity.  Without this,
-            // `Tuple(1, 2)` generated `[IntLiteral, IntLiteral]` while
-            // `pair.reverse()` requested `[Int, Int]`, leaving the concrete
-            // declaration without its discovered transform methods.
-            TyArg::Ty(ty) => Some(runtime_tuple_element_type(ty)),
-            TyArg::Val(_) | TyArg::Origin(_) => None,
-        })
-        .collect()
-}
-
 /// The checker-typed `t"…"` occurrences whose interleaved element lists are
 /// fully concrete and therefore materializable as `TString` specializations.
 /// Open occurrences (a t-string inside a still-abstract generic template body)
@@ -1372,19 +1228,6 @@ fn closed_tstring_elements(ty: &Ty) -> Option<Vec<Ty>> {
         .into_iter()
         .cloned()
         .collect::<Vec<_>>();
-    elements
-        .iter()
-        .all(tuple_specialization_type_is_closed)
-        .then_some(elements)
-}
-
-/// A public Tuple implementation is a concrete nominal declaration, so a
-/// checker fact from a generic signature cannot request one until every free
-/// type/value component has been substituted at an executable use. Origin
-/// parameters are deliberately not considered free here: Tuple specialization
-/// retains those as explicit inferred parameters for reference-valued elements.
-fn closed_public_tuple_elements(ty: &Ty) -> Option<Vec<Ty>> {
-    let elements = public_tuple_elements(ty)?;
     elements
         .iter()
         .all(tuple_specialization_type_is_closed)
@@ -1689,115 +1532,6 @@ impl ClosingBinders {
             .ids
             .extend(decls.iter().map(|declaration| declaration.id().clone()));
         nested
-    }
-}
-
-fn runtime_tuple_element_type(ty: &Ty) -> Ty {
-    match ty {
-        Ty::IntLiteral => Ty::Int,
-        Ty::FloatLiteral => Ty::Float64,
-        Ty::Struct(name, arguments) => Ty::Struct(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => TyArg::Ty(runtime_tuple_element_type(ty)),
-                    TyArg::Val(value) => TyArg::Val(value.clone()),
-                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
-                })
-                .collect(),
-        ),
-        Ty::ComptimeList(element) => {
-            Ty::ComptimeList(Box::new(runtime_tuple_element_type(element)))
-        }
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(runtime_tuple_element_type).collect()),
-        Ty::RuntimePack(elements) => {
-            Ty::RuntimePack(elements.iter().map(runtime_tuple_element_type).collect())
-        }
-        Ty::VariadicPack(element) => {
-            Ty::VariadicPack(Box::new(runtime_tuple_element_type(element)))
-        }
-        Ty::Variant(alternatives) => Ty::Variant(
-            alternatives
-                .iter()
-                .map(runtime_tuple_element_type)
-                .collect(),
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(runtime_tuple_element_type(element)),
-            origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(runtime_tuple_element_type(&reference.referent));
-            Ty::Ref(reference)
-        }
-        other => other.clone(),
-    }
-}
-
-fn collect_public_tuple_types(ty: &Ty, output: &mut Vec<Vec<Ty>>) {
-    if let Some(elements) = public_tuple_elements(ty) {
-        if elements.iter().all(tuple_specialization_type_is_closed) && !output.contains(&elements) {
-            output.push(elements.clone());
-        }
-        for element in &elements {
-            collect_public_tuple_types(element, output);
-        }
-    }
-    match ty {
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            for ty in params {
-                collect_public_tuple_types(ty, output);
-            }
-            collect_public_tuple_types(ret, output);
-            if let Some(ty) = variadic {
-                collect_public_tuple_types(ty, output);
-            }
-            if let Some(ty) = kw_variadic {
-                collect_public_tuple_types(ty, output);
-            }
-            if let Some(ty) = error {
-                collect_public_tuple_types(ty, output);
-            }
-        }
-        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
-            for ty in types {
-                collect_public_tuple_types(ty, output);
-            }
-        }
-        Ty::Struct(_, arguments) => {
-            for argument in arguments {
-                if let TyArg::Ty(ty) = argument {
-                    collect_public_tuple_types(ty, output);
-                }
-            }
-        }
-        Ty::Param {
-            callable_bound: Some(bound),
-            ..
-        }
-        | Ty::Assoc { base: bound, .. }
-        | Ty::ComptimeList(bound)
-        | Ty::VariadicPack(bound)
-        | Ty::Pointer { element: bound, .. } => collect_public_tuple_types(bound, output),
-        Ty::Ref(reference) => collect_public_tuple_types(&reference.referent, output),
-        _ => {}
     }
 }
 

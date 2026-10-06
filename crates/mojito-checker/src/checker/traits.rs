@@ -339,22 +339,7 @@ impl Checker {
             },
             decls.clone(),
         );
-        // A generated public-Tuple implementation has erased its source pack
-        // declaration, but its materialized `element_types` member retains the
-        // concrete pack. Recover that checked identity before resolving `Self`
-        // in fields and method signatures. The reserved specialization symbol
-        // verifies provenance without decoding a mangled name.
-        let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
-        let saved_forward_types = std::mem::replace(
-            &mut self.allow_generated_tuple_forward_types,
-            generated_tuple,
-        );
-        let saved_type_params =
-            std::mem::replace(&mut self.enclosing_type_params, type_params.to_vec());
-        let fixed_arguments = self.generated_tuple_arguments(name, declaration.associated);
-        self.enclosing_type_params = saved_type_params;
-        self.allow_generated_tuple_forward_types = saved_forward_types;
-        let fixed_arguments = fixed_arguments?;
+        let fixed_arguments: Option<Vec<TyArg>> = None;
 
         let explicit_destroy_message = declaration
             .decorators
@@ -438,16 +423,11 @@ impl Checker {
         })?;
         let decls = info.decls.clone();
         let fixed_arguments = info.fixed_arguments.clone();
-        let generated_tuple = name.starts_with("Tuple$") || name.contains("$Tuple$");
         let self_ty = Ty::Struct(
             name.to_string(),
             (fixed_arguments.unwrap_or_else(|| info.self_arguments())).into(),
         );
         let saved = SavedStructScope {
-            forward_types: std::mem::replace(
-                &mut self.allow_generated_tuple_forward_types,
-                generated_tuple,
-            ),
             type_params: std::mem::replace(
                 &mut self.enclosing_type_params,
                 declaration.type_params.to_vec(),
@@ -469,7 +449,6 @@ impl Checker {
         self.self_decls = saved.self_decls;
         self.enclosing_type_params = saved.type_params;
         self.self_ty = saved.self_ty;
-        self.allow_generated_tuple_forward_types = saved.forward_types;
         self.bundled_stdlib_declaration = saved.bundled_stdlib;
     }
 
@@ -1550,13 +1529,8 @@ impl Checker {
                 bounds.iter().any(|bound| {
                     matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
                         || self.trait_refines(bound, "Copyable")
-                }) || ["Copyable", "ImplicitlyCopyable"].iter().any(|required| {
-                    let needed = GenericConstraint::Conforms {
-                        param: binder.clone(),
-                        trait_name: (*required).to_string(),
-                    };
-                    assumption.is_some_and(|known| generic_constraint_implies(known, &needed))
-                })
+                }) || assumption
+                    .is_some_and(|known| binder_conformance_assumed(binder, "Copyable", known))
             }
             Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
             Ty::Struct(name, arguments) => {
@@ -1566,7 +1540,8 @@ impl Checker {
                     // Copyable proof strong enough to change a method ABI.
                     return false;
                 };
-                let environment = ConstraintEnvironment::declared(&info.decls, arguments);
+                let arguments = positional_pack_arguments(&info.decls, arguments);
+                let environment = ConstraintEnvironment::declared(&info.decls, &arguments);
                 if let Some(methods) = info.methods.get("__copyinit__") {
                     // A declared copy initializer suppresses the fieldwise copy
                     // path. Its method availability is therefore the real
@@ -1620,7 +1595,9 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let ok = match tr {
             "Copyable" => self.struct_copyable_conformance_ok(name, assumption),
-            "ImplicitlyCopyable" => self.struct_implicitly_copyable_conformance_ok(name),
+            "ImplicitlyCopyable" => {
+                self.struct_implicitly_copyable_conformance_ok(name, assumption)
+            }
             // A declared narrowing conformance (`Movable where False`) must
             // verify at declaration like `Deinitable where False`;
             // effectiveness is enforced at the transfer/consuming use sites.
@@ -1797,7 +1774,8 @@ impl Checker {
                 let Ok(condition) = self.compile_condition(&info.decls, condition) else {
                     return false;
                 };
-                let environment = ConstraintEnvironment::declared(&info.decls, args);
+                let args = positional_pack_arguments(&info.decls, args);
+                let environment = ConstraintEnvironment::declared(&info.decls, &args);
                 self.eval_constraint_under_assumption(
                     &condition,
                     &environment,
@@ -1847,6 +1825,15 @@ impl Checker {
                             visiting,
                         ))
                     }),
+                    // A pack bound to another declaration's pack that is
+                    // still a parameter (`Tuple[*Self.Ts]`): its elements
+                    // are that pack's, whose bound or the premise decides.
+                    TyArg::Ty(pack @ Ty::Param { binder, .. }) if binder.name.starts_with('*') => {
+                        self.conforms_to(pack, trait_name)
+                            || assumption.is_some_and(|known| {
+                                binder_conformance_assumed(binder, trait_name, known)
+                            })
+                    }
                     _ => false,
                 }),
             And(left, right) => {
@@ -2249,7 +2236,7 @@ impl Checker {
                     Vec::new()
                 }
             }
-            "ImplicitlyCopyable" if self.struct_implicitly_copyable_conformance_ok(name) => {
+            "ImplicitlyCopyable" if self.struct_implicitly_copyable_conformance_ok(name, None) => {
                 declared(&|declared| {
                     matches!(declared, "ImplicitlyCopyable" | "TrivialRegisterPassable")
                 })
@@ -2652,7 +2639,7 @@ impl Checker {
                             && s.conformance_conditions.get(c).is_none_or(|condition| {
                                 self.eval_conformance_condition(s, args, condition)
                             })
-                    }) && self.struct_implicitly_copyable_conformance_ok(name)
+                    }) && self.struct_implicitly_copyable_conformance_ok(name, None)
                 },
             ),
             Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
@@ -3005,15 +2992,26 @@ impl Checker {
             })
     }
 
-    pub(super) fn struct_implicitly_copyable_conformance_ok(&self, name: &str) -> bool {
+    pub(super) fn struct_implicitly_copyable_conformance_ok(
+        &self,
+        name: &str,
+        assumption: Option<&GenericConstraint>,
+    ) -> bool {
         let Some(info) = self.structs.get(name) else {
             return false;
         };
         info.methods.contains_key("__copyinit__")
-            || info
-                .fields
-                .iter()
-                .all(|(_, ty)| self.is_implicitly_copyable(ty))
+            || info.fields.iter().all(|(_, ty)| {
+                self.is_implicitly_copyable(ty)
+                    // Private pack storage (`__RuntimeTuple[*Self.Ts]`)
+                    // copies as its elements do, which the conformance's own
+                    // `where` clause states.
+                    || matches!(ty, Ty::Tuple(elements)
+                        if matches!(mojito_types::types::pack_spread(elements),
+                            Some(Ty::Param { binder, .. }) if assumption.is_some_and(|known| {
+                                binder_conformance_assumed(binder, "ImplicitlyCopyable", known)
+                            })))
+            })
     }
 
     /// At a **consuming** position (binding a value to a new place, passing it by
@@ -3447,7 +3445,6 @@ fn parametric_origin_writes_in_body(
 /// The outer checker scope saved while a struct's members resolve at the
 /// struct's own type parameters; restored by `Checker::exit_struct_scope`.
 struct SavedStructScope {
-    forward_types: bool,
     type_params: Vec<mojito_ast::ast::TypeParam>,
     self_decls: Vec<ParamDecl>,
     self_ty: Option<Ty>,

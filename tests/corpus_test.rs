@@ -371,6 +371,22 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",
+    // R361, the erased oracle: `Tuple` and `TString` are served by their
+    // templates, whose bodies an erased frame cannot always run. A tuple an
+    // intrinsic or a named result builds reifies no pack, and a default
+    // initializer constructs an element from a reified type name.
+    "pack_element_default_construction",
+    "pack_element_rebind",
+    "pack_inferred_through_tuple",
+    "repr_type_names",
+    "slice_descriptor_protocols",
+    "template_tuple_default_initializer",
+    "tstring_forms",
+    "tuple_nested_type_arguments",
+    "tuple_reverse_concat",
+    "type_names_applied_elements",
+    "variadic_method_type_params",
+    "variadic_pack_upstream_spellings",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

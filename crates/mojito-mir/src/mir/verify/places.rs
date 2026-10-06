@@ -116,7 +116,8 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         | MirInstr::VariantReplace { place, .. }
         | MirInstr::ConsumePlace { place, .. }
         | MirInstr::DropPlace { place }
-        | MirInstr::MarkInitialized { place } => vec![place],
+        | MirInstr::MarkInitialized { place }
+        | MirInstr::MarkDestroyed { place } => vec![place],
         MirInstr::MakeClosure { captures, .. } => {
             captures.iter().map(|capture| &capture.place).collect()
         }
@@ -201,7 +202,8 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
         | MirInstr::VariantReplace { place, .. }
         | MirInstr::ConsumePlace { place, .. }
         | MirInstr::DropPlace { place }
-        | MirInstr::MarkInitialized { place } => vec![place],
+        | MirInstr::MarkInitialized { place }
+        | MirInstr::MarkDestroyed { place } => vec![place],
         MirInstr::MakeClosure { captures, .. } => captures
             .iter_mut()
             .map(|capture| &mut capture.place)

@@ -339,6 +339,15 @@ pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::P
 /// mistyped signature slot, and an unknown or unbound parameter before
 /// wildcard compatibility could hide it.
 pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
+    validate_dependent_bindings_in(ty, &HashSet::new())
+}
+
+/// [`validate_dependent_bindings`] for a type a body names: the binders in
+/// `enclosing`, which the declaration owning the body declares, bind too.
+pub(super) fn validate_dependent_bindings_in(
+    ty: &Ty,
+    enclosing: &HashSet<String>,
+) -> Result<(), String> {
     /// `frames` holds the value-binder types of each enclosing generic
     /// signature, innermost last; a type parameter's slot holds `None`.
     fn check_expr(
@@ -539,7 +548,28 @@ pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
         Ok(())
     }
 
-    walk(ty, &HashSet::new(), &mut Vec::new())
+    walk(ty, enclosing, &mut Vec::new())
+}
+
+/// The binders the declaration owning function `name` declares: its own and,
+/// for a method, its struct's.
+fn enclosing_binders(name: &str, declarations: &MirDeclarations) -> HashSet<String> {
+    let own = declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == name)
+        .map_or(&[][..], |declaration| &declaration.param_decls);
+    let owner = name.split_once('.').and_then(|(owner, _)| {
+        declarations
+            .structs
+            .iter()
+            .find(|declaration| declaration.name == owner)
+            .map(|declaration| &declaration.param_decls[..])
+    });
+    own.iter()
+        .chain(owner.unwrap_or(&[]))
+        .map(|declaration| declaration.name().trim_start_matches('*').to_string())
+        .collect()
 }
 
 /// The storage a `MakeRef` handle designates. A capability-typed root already
@@ -767,7 +797,10 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                                 "{prefix}: symbolic generic indirect call carries an orphaned instantiation witness"
                             ));
                 }
-                if let Err(reason) = validate_dependent_bindings(symbolic) {
+                if let Err(reason) = validate_dependent_bindings_in(
+                    symbolic,
+                    &enclosing_binders(cx.name, cx.declarations),
+                ) {
                     errors.push(format!(
                         "{prefix}: invalid symbolic generic callable contract: {reason}"
                     ));

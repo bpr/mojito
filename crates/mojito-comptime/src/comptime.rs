@@ -38,9 +38,7 @@ use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
     StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
-pub use mojito_symbol::symbol::{
-    mangle, tstring_specialization_symbol, tuple_specialization_symbol, tuple_specialization_values,
-};
+pub use mojito_symbol::symbol::{mangle, tuple_specialization_values};
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
@@ -52,63 +50,6 @@ use mojito_vm::backend::VmBackend;
 use mojito_vm::runtime::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
-
-/// One checker-discovered instantiation of the public variadic `Tuple` struct.
-///
-/// Compile-time elaboration cannot soundly infer the types of arbitrary runtime
-/// expressions.  The checker therefore supplies the exact element types and may
-/// identify one bare `Tuple(...)` occurrence whose callee should be rewritten to
-/// the resulting concrete specialization.  A request without an occurrence only
-/// materializes the declaration (for example, for a contextual type use).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TupleSpecializationRequest {
-    elements: Vec<Ty>,
-    bare_call: Option<SourceSpan>,
-    reversed: bool,
-}
-
-impl TupleSpecializationRequest {
-    #[allow(dead_code)] // used by the compiler once checked discovery is wired in
-    pub const fn declaration(elements: Vec<Ty>) -> Self {
-        Self {
-            elements,
-            bare_call: None,
-            reversed: false,
-        }
-    }
-
-    #[allow(dead_code)] // used by the compiler once checked discovery is wired in
-    pub const fn bare_call(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
-        Self {
-            elements,
-            bare_call: Some(occurrence),
-            reversed: false,
-        }
-    }
-
-    /// A checked call of the declared `reverse` on a `Tuple` of `elements`:
-    /// the specialization keeps that member, which every other
-    /// specialization drops.
-    pub const fn reversed(elements: Vec<Ty>) -> Self {
-        Self {
-            elements,
-            bare_call: None,
-            reversed: true,
-        }
-    }
-
-    pub fn elements(&self) -> &[Ty] {
-        &self.elements
-    }
-
-    pub const fn occurrence(&self) -> Option<&SourceSpan> {
-        self.bare_call.as_ref()
-    }
-
-    pub const fn keeps_reverse(&self) -> bool {
-        self.reversed
-    }
-}
 
 /// One checker-discovered lazy template-string occurrence.
 ///
@@ -345,68 +286,6 @@ impl StructInstanceRequest {
     pub fn arguments(&self) -> &[TyArg] {
         &self.arguments
     }
-}
-
-/// Exact callable types which a generated public-Tuple declaration references
-/// through opaque compiler-only AST ids.
-///
-/// Source `def(...)` annotations cannot encode all of this metadata, so the
-/// compiler passes this map directly to the second checker pass instead of
-/// round-tripping through syntax.
-pub fn tuple_materialized_callables(
-    requests: &[TupleSpecializationRequest],
-) -> HashMap<String, Ty> {
-    fn collect(ty: &Ty, output: &mut Vec<Ty>) {
-        if matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. }) {
-            if !output.contains(ty) {
-                output.push(ty.clone());
-            }
-            return;
-        }
-        match ty {
-            Ty::Struct(_, arguments) => {
-                for argument in arguments {
-                    if let TyArg::Ty(ty) = argument {
-                        collect(ty, output);
-                    }
-                }
-            }
-            Ty::ComptimeList(element)
-            | Ty::VariadicPack(element)
-            | Ty::Pointer { element, .. }
-            | Ty::Assoc { base: element, .. } => collect(element, output),
-            Ty::Tuple(elements)
-            | Ty::RuntimePack(elements)
-            | Ty::Variant(elements)
-            | Ty::Overload(elements) => {
-                for element in elements {
-                    collect(element, output);
-                }
-            }
-            Ty::Ref(reference) => collect(&reference.referent, output),
-            Ty::Dependent(dependent) => {
-                for element in dependent
-                    .selection()
-                    .map_or(&[][..], |(elements, _)| elements)
-                {
-                    collect(element, output);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut callables = Vec::new();
-    for request in requests {
-        for element in request.elements() {
-            collect(element, &mut callables);
-        }
-    }
-    callables
-        .into_iter()
-        .enumerate()
-        .map(|(index, callable)| (format!("$mojito$callable_type${index}"), callable))
-        .collect()
 }
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
@@ -690,7 +569,6 @@ pub struct Elaborated {
 /// first elaboration outside the driver.
 #[derive(Clone, Copy, Default)]
 pub struct ElaborationInputs<'a> {
-    pub tuple_requests: &'a [TupleSpecializationRequest],
     pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
     pub method_requests: &'a [MethodSpecializationRequest],
@@ -1057,7 +935,6 @@ pub fn elaborate_prepared(
     inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
     let ElaborationInputs {
-        tuple_requests,
         tstring_requests,
         def_requests,
         method_requests,
@@ -1087,20 +964,6 @@ pub fn elaborate_prepared(
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let mut reversed_tuples = Vec::<Vec<Ty>>::new();
-    for request in tuple_requests {
-        if request.keeps_reverse()
-            && !reversed_tuples
-                .iter()
-                .any(|elements| elements == request.elements())
-        {
-            reversed_tuples.push(request.elements().to_vec());
-        }
-    }
-    let materialized_callables = tuple_materialized_callables(tuple_requests)
-        .into_iter()
-        .map(|(key, ty)| (ty, key))
-        .collect();
     let bound_generics = collect_bound_generic_templates(program);
     let pack_generics = collect_pack_generic_templates(program);
     let elab = Elab {
@@ -1148,8 +1011,6 @@ pub fn elaborate_prepared(
         per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
-        reversed_tuples,
-        materialized_callables,
         fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
         def_traces: RefCell::new(Vec::new()),
@@ -1184,7 +1045,7 @@ pub fn elaborate_prepared(
         generated: _,
         ctfe_template_stats: _,
         clones: _,
-    } = elab.monomorphize(materialized, tuple_requests, tstring_requests, def_requests)?;
+    } = elab.monomorphize(materialized, tstring_requests, def_requests)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -1523,7 +1384,8 @@ pub(super) fn comptime_for_is_template_served(
 /// The alias a `comptime NAME = Ts[index]` statement declares of an element
 /// of a pack `is_pack` accepts, as the type `Ts[index]` it denotes: such an
 /// alias names a parameter expression, so a template carries it as that
-/// dependent element rather than evaluating it with the index unknown.
+/// dependent element rather than evaluating it with the index unknown. An
+/// enclosing struct's pack is spelled, and asked of `is_pack`, as `Self.Ts`.
 pub(super) fn pack_element_alias(
     kind: &StmtKind,
     is_pack: &dyn Fn(&str) -> bool,
@@ -1541,15 +1403,28 @@ pub(super) fn pack_element_alias(
     let ExprKind::Index { object, index } = &value.kind else {
         return None;
     };
-    let ExprKind::Identifier(base) = &object.kind else {
+    if !type_params.is_empty() || !where_clauses.is_empty() {
         return None;
-    };
-    (type_params.is_empty() && where_clauses.is_empty() && is_pack(base)).then(|| {
-        (
+    }
+    match &object.kind {
+        ExprKind::Identifier(base) if is_pack(base) => Some((
             name.clone(),
             Type::Named(base.clone(), vec![ParamArg::Value((**index).clone())]),
-        )
-    })
+        )),
+        ExprKind::Member { object, field }
+            if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                && is_pack(&format!("Self.{field}")) =>
+        {
+            Some((
+                name.clone(),
+                Type::IndexedProjection {
+                    base: Box::new(Type::SelfParam(field.clone())),
+                    index: index.clone(),
+                },
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
@@ -1739,11 +1614,10 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
 }
 
 /// The variadic structs whose template serves them: each one whose source
-/// names no struct still specialized whole (`Tuple`, `TString`, `Variant`,
-/// and every variadic struct not served itself, to a fixpoint) and builds
-/// no tuple display or t-string, whose types those structs carry. The check
-/// types such a struct once with its pack symbolic, and `native::mono` binds
-/// the pack per instance.
+/// names no struct still specialized whole (`Variant`, and every variadic
+/// struct not served itself, to a fixpoint). `Tuple` and `TString` are
+/// among the served. The check types such a struct once with its pack
+/// symbolic, and `native::mono` binds the pack per instance.
 fn served_variadic_structs(program: &[Stmt]) -> HashSet<String> {
     struct Finder<'a> {
         whole: &'a HashSet<&'a str>,
@@ -1769,7 +1643,6 @@ fn served_variadic_structs(program: &[Stmt]) -> HashSet<String> {
                 ExprKind::Identifier(name)
                 | ExprKind::Call { name, .. }
                 | ExprKind::TypeApply { name, .. } => self.names_whole(name),
-                ExprKind::TupleLit(_) | ExprKind::TString { .. } => true,
                 _ => false,
             };
         }
@@ -1789,11 +1662,7 @@ fn served_variadic_structs(program: &[Stmt]) -> HashSet<String> {
             _ => None,
         })
         .collect();
-    let compiler_known = [
-        mojito_types::types::TUPLE_TYPE_NAME,
-        mojito_types::types::TSTRING_TYPE_NAME,
-        "Variant",
-    ];
+    let compiler_known = ["Variant"];
     let mut whole: HashSet<&str> = variadic.iter().map(|(name, _)| *name).collect();
     loop {
         let served: Vec<&str> = variadic
@@ -2323,7 +2192,6 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
 fn source_type_from_ty_with_origins(
     ty: &Ty,
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
-    materialized_callables: &[(Ty, String)],
 ) -> Option<Type> {
     Some(match ty {
         Ty::Int | Ty::IntLiteral => Type::Int,
@@ -2333,27 +2201,20 @@ fn source_type_from_ty_with_origins(
         Ty::Float64 | Ty::FloatLiteral => Type::Float64,
         Ty::None => Type::None,
         Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
-        callable @ (Ty::Func { .. } | Ty::GenericFunc { .. }) => {
-            let (_, key) = materialized_callables
-                .iter()
-                .find(|(candidate, _)| candidate == callable)?;
-            Type::MaterializedCallable(key.clone())
-        }
+        // A callable has no source spelling a clone could carry.
+        Ty::Func { .. } | Ty::GenericFunc { .. } => return None,
         Ty::ComptimeList(element) => Type::Named(
             "List".to_string(),
             vec![ParamArg::Type(source_type_from_ty_with_origins(
                 element,
                 origin_names,
-                materialized_callables,
             )?)],
         ),
         Ty::Tuple(elements) => Type::Named(
             "__RuntimeTuple".to_string(),
             elements
                 .iter()
-                .map(|element| {
-                    source_type_from_ty_with_origins(element, origin_names, materialized_callables)
-                })
+                .map(|element| source_type_from_ty_with_origins(element, origin_names))
                 .collect::<Option<Vec<_>>>()?
                 .into_iter()
                 .map(ParamArg::Type)
@@ -2372,13 +2233,7 @@ fn source_type_from_ty_with_origins(
                 mojito_types::types::TUPLE_TYPE_NAME.to_string(),
                 elements
                     .into_iter()
-                    .map(|element| {
-                        source_type_from_ty_with_origins(
-                            element,
-                            origin_names,
-                            materialized_callables,
-                        )
-                    })
+                    .map(|element| source_type_from_ty_with_origins(element, origin_names))
                     .collect::<Option<Vec<_>>>()?
                     .into_iter()
                     .map(ParamArg::Type)
@@ -2391,8 +2246,7 @@ fn source_type_from_ty_with_origins(
                 .iter()
                 .map(|argument| match argument {
                     TyArg::Ty(ty) => {
-                        source_type_from_ty_with_origins(ty, origin_names, materialized_callables)
-                            .map(ParamArg::Type)
+                        source_type_from_ty_with_origins(ty, origin_names).map(ParamArg::Type)
                     }
                     TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
                     // An origin tail entry spells as the binder it names when
@@ -2467,11 +2321,7 @@ fn source_type_from_ty_with_origins(
             Type::Named(
                 "Pointer".to_string(),
                 vec![
-                    ParamArg::Type(source_type_from_ty_with_origins(
-                        element,
-                        origin_names,
-                        materialized_callables,
-                    )?),
+                    ParamArg::Type(source_type_from_ty_with_origins(element, origin_names)?),
                     ParamArg::Type(origin),
                 ],
             )
@@ -2488,7 +2338,6 @@ fn source_type_from_ty_with_origins(
                 referent: Box::new(source_type_from_ty_with_origins(
                     &reference.referent,
                     origin_names,
-                    materialized_callables,
                 )?),
                 origin: Some(vec![Expr::new(ExprKind::Identifier(origin_name), (0, 0))]),
             }
@@ -2765,14 +2614,6 @@ struct Elab<'a> {
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
-    /// The element sets whose `Tuple` a checked call reverses: the
-    /// specializations that keep the declared `reverse`. Keeping it on every
-    /// specialization would close the set of tuple types under reversal.
-    reversed_tuples: Vec<Vec<Ty>>,
-    /// Reverse lookup for the opaque callable ids emitted into generated Tuple
-    /// annotations. The compiler independently passes the forward map to the
-    /// second checker pass.
-    materialized_callables: Vec<(Ty, String)>,
     /// The compilation's checked templates, which the checks of a VM-CTFE
     /// subprogram derive its traced clones from; absent outside the driver.
     templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
@@ -2858,14 +2699,6 @@ struct DefCallTarget {
     /// every uniquely named template.
     decl: Option<usize>,
     vals: Vec<CtValue>,
-}
-
-/// The concrete `TString` specialization a checked `t"…"` occurrence
-/// constructs, with the interleaved element types directing the argument
-/// rewrite.
-struct TStringTarget {
-    symbol: String,
-    elements: Vec<Ty>,
 }
 
 /// The source tag a per-instantiation or per-call method clone's body carries:
@@ -2986,15 +2819,12 @@ struct Mono {
     /// specialization. `None` is an ordinary binding which shadows a pack of
     /// the same name; scopes mirror `value_scopes` exactly.
     runtime_pack_scopes: Vec<HashMap<String, Option<Vec<Type>>>>,
-    /// Exact bare public `Tuple(...)` occurrences selected by the checker and
-    /// the concrete variadic-struct symbol each one constructs.
-    tuple_call_targets: HashMap<SourceSpan, String>,
-    /// Exact `t"…"` occurrences selected by the checker: the concrete
-    /// `TString` specialization symbol each one constructs plus the
-    /// interleaved element types (an element typed `String` where the source
-    /// part is an interpolation directs the rewrite to wrap that argument in
-    /// a `String(...)` conversion — the snapshot for non-Copyable places).
-    tstring_call_targets: HashMap<SourceSpan, TStringTarget>,
+    /// Exact `t"…"` occurrences selected by the checker, with the
+    /// interleaved element types of each (an element typed `String` where
+    /// the source part is an interpolation directs the rewrite to wrap that
+    /// argument in a `String(...)` conversion — the snapshot for
+    /// non-Copyable places).
+    tstring_call_targets: HashMap<SourceSpan, Vec<Ty>>,
     /// Bound-generic templates with at least one reference left on the
     /// abstract path (an unresolvable call or a function-value use), and
     /// variadic struct templates applied over such a body's own symbolic
@@ -3757,7 +3587,7 @@ struct Job {
 }
 
 fn source_type_from_ty(ty: &Ty) -> Option<Type> {
-    source_type_from_ty_with_origins(ty, &HashMap::new(), &[])
+    source_type_from_ty_with_origins(ty, &HashMap::new())
 }
 
 /// The concrete call-site information used to select one function-template
@@ -4123,7 +3953,6 @@ mod vm_bridge_tests {
 #[cfg(test)]
 fn elaborate_with_requests(
     program: Vec<Stmt>,
-    tuple_requests: &[TupleSpecializationRequest],
     tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
     method_requests: &[MethodSpecializationRequest],
@@ -4132,7 +3961,6 @@ fn elaborate_with_requests(
     elaborate_prepared(
         &prepare(program)?,
         ElaborationInputs {
-            tuple_requests,
             tstring_requests,
             def_requests,
             method_requests,
@@ -4140,138 +3968,6 @@ fn elaborate_with_requests(
             ..ElaborationInputs::default()
         },
     )
-}
-
-#[cfg(test)]
-mod tuple_request_tests {
-    use super::{TupleSpecializationRequest, elaborate_with_requests, tuple_specialization_symbol};
-    use mojito::{Ty, parse};
-    use mojito_ast::ast::{ExprKind, StmtKind};
-    use mojito_types::types::tuple_type;
-
-    const TEMPLATE: &str =
-        "struct Tuple[*Ts: AnyType]:\n    var storage: __RuntimeTuple[*Self.Ts]\n\n";
-
-    fn bare_call(program: &[mojito_ast::ast::Stmt]) -> &mojito_ast::ast::Expr {
-        program
-            .iter()
-            .find_map(|statement| match &statement.kind {
-                StmtKind::Def { name, body, .. } if name == "main" => {
-                    body.iter().find_map(|statement| match &statement.kind {
-                        StmtKind::VarDecl { value, .. }
-                            if matches!(&value.kind, ExprKind::Call { name, param_args, .. }
-                                if name == "Tuple" && param_args.is_empty()) =>
-                        {
-                            Some(value)
-                        }
-                        _ => None,
-                    })
-                }
-                _ => None,
-            })
-            .expect("test program contains one bare Tuple call")
-    }
-
-    fn struct_names(program: &[mojito_ast::ast::Stmt]) -> Vec<&str> {
-        program
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Struct { name, .. } => Some(name.as_str()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn checked_int_string_request_rewrites_only_its_bare_tuple_call() {
-        let source = format!("{TEMPLATE}def main():\n    var value = Tuple(1, \"two\")\n");
-        let parsed = parse(&source).expect("parse Tuple request fixture");
-        let occurrence = bare_call(&parsed).source_span();
-        let elements = vec![Ty::Int, Ty::StringLiteral];
-        let expected = tuple_specialization_symbol(&elements);
-
-        let elaborated = elaborate_with_requests(
-            parsed,
-            &[TupleSpecializationRequest::bare_call(elements, occurrence)],
-            &[],
-            &[],
-            &[],
-            &[],
-        )
-        .expect("materialize checked Tuple specialization")
-        .program;
-
-        assert!(struct_names(&elaborated).contains(&expected.as_str()));
-        let rewritten = elaborated
-            .iter()
-            .find_map(|statement| match &statement.kind {
-                StmtKind::Def { name, body, .. } if name == "main" => {
-                    body.iter().find_map(|statement| match &statement.kind {
-                        StmtKind::VarDecl { value, .. } => Some(value),
-                        _ => None,
-                    })
-                }
-                _ => None,
-            })
-            .expect("rewritten initializer");
-        assert!(
-            matches!(&rewritten.kind, ExprKind::Call { name, param_args, .. }
-            if name == &expected && param_args.is_empty())
-        );
-    }
-
-    #[test]
-    fn context_free_request_materializes_declaration_without_rewriting_bare_call() {
-        let source = format!("{TEMPLATE}def main():\n    var value = Tuple(1, 2)\n");
-        let parsed = parse(&source).expect("parse Tuple request fixture");
-        let elements = vec![Ty::Int, Ty::Int];
-        let expected = tuple_specialization_symbol(&elements);
-
-        let elaborated = elaborate_with_requests(
-            parsed,
-            &[TupleSpecializationRequest::declaration(elements)],
-            &[],
-            &[],
-            &[],
-            &[],
-        )
-        .expect("materialize contextual Tuple declaration")
-        .program;
-
-        assert!(struct_names(&elaborated).contains(&expected.as_str()));
-        assert_eq!(
-            match &bare_call(&elaborated).kind {
-                ExprKind::Call { name, .. } => name,
-                _ => unreachable!("helper selected a Call"),
-            },
-            "Tuple",
-            "an unhinted bare call must survive for the next discovery check"
-        );
-    }
-
-    #[test]
-    fn nested_tuple_request_seeds_inner_and_outer_specializations() {
-        let parsed = parse(TEMPLATE).expect("parse Tuple template");
-        let inner = tuple_type(vec![Ty::Int]);
-        let outer_elements = vec![inner, Ty::StringLiteral];
-        let inner_symbol = tuple_specialization_symbol(&[Ty::Int]);
-        let outer_symbol = tuple_specialization_symbol(&outer_elements);
-
-        let elaborated = elaborate_with_requests(
-            parsed,
-            &[TupleSpecializationRequest::declaration(outer_elements)],
-            &[],
-            &[],
-            &[],
-            &[],
-        )
-        .expect("materialize nested Tuple specializations")
-        .program;
-        let names = struct_names(&elaborated);
-
-        assert!(names.contains(&inner_symbol.as_str()), "{names:?}");
-        assert!(names.contains(&outer_symbol.as_str()), "{names:?}");
-    }
 }
 
 #[cfg(test)]
@@ -4369,7 +4065,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
             .expect("a request on a template-served def must not fail elaboration")
             .program;
 
@@ -4413,7 +4109,7 @@ mod def_request_tests {
             type_params,
         ));
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4440,7 +4136,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -4467,7 +4163,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 

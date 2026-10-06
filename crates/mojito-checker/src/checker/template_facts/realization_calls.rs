@@ -158,12 +158,6 @@ impl Checker {
                 .get(owner)
                 .is_some_and(|info| info.methods.contains_key(&accessor));
             if !declared {
-                if self
-                    .predeclared_generated_tuple_arguments
-                    .contains_key(owner)
-                {
-                    return Err("a tuple element's Tuple is generated but not yet declared");
-                }
                 if fact_at(&facts.selected_calls, id).is_some() {
                     return Err("a tuple element's accessor is not declared on the instance");
                 }
@@ -1089,7 +1083,7 @@ impl Checker {
         let from = fact_at(&facts.expression_types, *id)
             .ok_or("a converted expression has no retained type")?
             .clone();
-        let to = self.instance_ty(&result, substitution);
+        let to = mojito_types::types::substitute(&result, substitution);
         if self.value_coerces(&from, &to) {
             return Err("the instance's value reaches the target without a conversion");
         }
@@ -1230,7 +1224,7 @@ impl Checker {
             // availability condition is judged at the instance's receiver
             // arguments, as the clone check judges it.
             if !declared.availability.is_empty() && !substitution.is_empty() {
-                let Ty::Struct(_, bound) = self.instance_ty(
+                let Ty::Struct(_, bound) = mojito_types::types::substitute(
                     &Ty::Struct(owner.to_string(), arguments.to_vec().into()),
                     substitution,
                 ) else {

@@ -440,22 +440,6 @@ pub(super) fn pack_element_default_construction(
 }
 
 fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr> {
-    // A nested Tuple element constructs through its minted specialization:
-    // the public `Tuple[...]()` spelling would be folded as the compile-time
-    // Tuple constructor inside the generated body.
-    if let Ty::Struct(name, _) = semantic
-        && mojito_symbol::symbol::is_tuple_specialization_symbol(name)
-    {
-        return Some(Expr::new(
-            ExprKind::Call {
-                name: name.clone(),
-                param_args: Vec::new(),
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            },
-            span,
-        ));
-    }
     // A SIMD element default-constructs to zero lanes: the checker accepts one
     // lane to splat, not a nullary construction, so spell the zero explicitly.
     if let (Ty::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic, ty) {

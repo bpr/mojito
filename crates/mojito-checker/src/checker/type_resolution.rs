@@ -61,11 +61,9 @@ impl Checker {
 
     /// The source spelling `StringLiteral`: upstream parameterizes the type
     /// by the literal's value, so the bare spelling is concrete only as a
-    /// whole parameter annotation, where the value infers per call. A
-    /// generated tuple specialization stamps an inferred literal element
-    /// with the same spelling, so it is concrete there too.
+    /// whole parameter annotation, where the value infers per call.
     pub(super) fn bare_string_literal(&self) -> Result<Ty, TypeError> {
-        if self.bare_string_literal_parameter.get() || self.allow_generated_tuple_forward_types {
+        if self.bare_string_literal_parameter.get() {
             Ok(Ty::StringLiteral)
         } else {
             Err(TypeError::Unsupported(
@@ -432,17 +430,6 @@ impl Checker {
                 if name == "Tuple" {
                     return self.tuple_type(args);
                 }
-                // A generated public-Tuple name keeps its forward-type
-                // resolution even once its shell is registered: its source
-                // parameter list is erased, so ordinary declaration binding
-                // cannot accept the semantic arguments the mangled reference
-                // spells.
-                if self.allow_generated_tuple_forward_types
-                    && (name.starts_with("Tuple$") || name.contains("$Tuple$"))
-                    && self.declared_structs.contains(name)
-                {
-                    return self.generated_tuple_forward_type(name, args);
-                }
                 // Generic comptime aliases share the redeclaration-checked
                 // type namespace with structs; expand an application into the
                 // aliased type before the struct lookup.
@@ -473,10 +460,6 @@ impl Checker {
                     let (_, tyargs) =
                         self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
                     return Ok(self.struct_instance_type(name, tyargs));
-                }
-                if self.allow_generated_tuple_forward_types && self.declared_structs.contains(name)
-                {
-                    return self.generated_tuple_forward_type(name, args);
                 }
                 if matches!(
                     name.as_str(),
@@ -1116,43 +1099,6 @@ impl Checker {
         Ok(())
     }
 
-    /// Resolve only the nominal identity embedded in a compiler-generated
-    /// Tuple's concrete metadata. Full parameter arity/bound validation still
-    /// occurs at the user's original type use during discovery; this path exists
-    /// solely because the generated implementation may be emitted before that
-    /// already-checked user struct declaration.
-    pub(super) fn generated_tuple_forward_type(
-        &self,
-        name: &str,
-        arguments: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
-        fn argument(
-            checker: &Checker,
-            value: &mojito_ast::ast::ParamArg,
-        ) -> Result<TyArg, TypeError> {
-            match value {
-                mojito_ast::ast::ParamArg::Type(ty) => checker.ty_from_anno(ty).map(TyArg::Ty),
-                mojito_ast::ast::ParamArg::Value(value) => checker
-                    .eval_associated_ct(value, &HashMap::new())
-                    .map(TyArg::Val),
-                mojito_ast::ast::ParamArg::Named { value, .. } => argument(checker, value),
-            }
-        }
-
-        let arguments = if arguments.is_empty() {
-            self.predeclared_generated_tuple_arguments
-                .get(name)
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            arguments
-                .iter()
-                .map(|value| argument(self, value))
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        Ok(Ty::Struct(name.to_string(), arguments.into()))
-    }
-
     /// Resolve the type-valued sequence at the base of an indexed type
     /// projection. A source value may expose such a sequence through an
     /// associated compile-time member; its runtime value is never inspected.
@@ -1261,6 +1207,25 @@ impl Checker {
                     let bindings = mojito_types::param_expr::ParamBindings::from_named_values(
                         context, parameters,
                     );
+                    // A pack bound to a list of types selects the indexed
+                    // one, whether or not each is closed (`Tuple[T, Int]`
+                    // over a binder `T`).
+                    if let Some((list, index)) = dependent.pack_element()
+                        && let Some(CtValue::Tuple(elements)) = list
+                            .as_decl_ref()
+                            .and_then(|pack| parameters.get(pack.name.trim_start_matches('*')))
+                        && let Some(position) = context
+                            .replace(index, &bindings)
+                            .ok()
+                            .as_ref()
+                            .and_then(ParamExpr::as_constant)
+                            .and_then(mojito_types::param_expr::fold::integer_value)
+                            .and_then(|position| position.to_i64())
+                            .and_then(|position| usize::try_from(position).ok())
+                        && let Some(CtValue::Type(element)) = elements.get(position)
+                    {
+                        return Ok((**element).clone());
+                    }
                     context
                         .replace(dependent.expr(), &bindings)
                         .map(DependentType::resolve)
@@ -1587,9 +1552,7 @@ impl Checker {
         // The symbolic template keeps canonical `Tuple[T, ...]`; a substituted
         // application must re-select the executable nominal implementation so
         // discovery can materialize it.
-        Ok(self.canonicalize_public_tuple_types(
-            self.resolve_assoc_ty(&substitute_assoc(template, &bindings)),
-        ))
+        Ok(self.resolve_assoc_ty(&substitute_assoc(template, &bindings)))
     }
 
     /// Concretely resolve a parameterized associated-type application on a
@@ -1924,12 +1887,25 @@ impl Checker {
                     // constructor keying `AHasher[SIMD[DType.uint64, 4](0)]`);
                     // the application stays symbolic in that argument, and
                     // the executable check sees the folded value.
+                    // An argument computed from parameters still open
+                    // (`self[Self.Ts.length - 1 - i]`) is that expression,
+                    // and a binder in scope shadows a module constant of its
+                    // name (a `comptime for i` under a module `comptime i`).
+                    let open = || {
+                        self.compile_dependent_ct_expr(expr)
+                            .ok()
+                            .filter(|expression| expression.as_constant().is_none())
+                    };
                     let value = match self.eval_associated_ct(expr, &HashMap::new()) {
-                        Ok(value) => value,
-                        Err(_) if self.source_validation => {
-                            return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
-                        }
-                        Err(error) => return Err(error),
+                        Ok(value @ CtValue::Expr(_)) => value,
+                        Ok(value) => open().map_or(value, CtValue::Expr),
+                        Err(error) => match open() {
+                            Some(expression) => CtValue::Expr(expression),
+                            None if self.source_validation => {
+                                return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
+                            }
+                            None => return Err(error),
+                        },
                     };
                     // A struct over an applied module constant is its own
                     // type at the pin (`Buf[f(7)]` is not `Buf[8]`), which no
@@ -2593,41 +2569,7 @@ impl Checker {
         for element in &elements {
             reject_stored_callable_type(element, "the 'Tuple' element type")?;
         }
-        Ok(self.public_tuple_type(elements))
-    }
-
-    /// Recover the concrete public-Tuple arguments deliberately materialized by
-    /// variadic-struct specialization. A user declaration cannot forge the
-    /// compiler-generated symbol because `$` is not a source identifier, and
-    /// the canonical symbol is recomputed from the semantic element types rather
-    /// than decoded from text.
-    pub(super) fn generated_tuple_arguments(
-        &self,
-        name: &str,
-        associated: &[StructComptime],
-    ) -> Result<Option<Vec<TyArg>>, TypeError> {
-        let Some(element_types) = associated
-            .iter()
-            .find(|member| member.name == "element_types")
-        else {
-            return Ok(None);
-        };
-        let ExprKind::TupleLit(elements) = &element_types.value.kind else {
-            return Ok(None);
-        };
-        let semantic = elements
-            .iter()
-            .map(|element| match &element.kind {
-                ExprKind::TypeValue(ty) => self.ty_from_anno(ty),
-                _ => Err(TypeError::NotComptime(
-                    "Tuple.element_types must contain only types".to_string(),
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if mojito_symbol::symbol::tuple_specialization_symbol(&semantic) != name {
-            return Ok(None);
-        }
-        Ok(Some(semantic.into_iter().map(TyArg::Ty).collect()))
+        Ok(mojito_types::types::tuple_type(elements))
     }
 
     /// Upstream's spelling of a checked type in a diagnostic, with each struct
@@ -2784,7 +2726,10 @@ impl Checker {
             .get(name)
             .and_then(|info| info.fixed_arguments.clone())
             .unwrap_or(arguments);
-        Ty::Struct(name.to_string(), arguments.into())
+        Ty::Struct(
+            name.to_string(),
+            mojito_types::types::canonical_pack_arguments(name, arguments).into(),
+        )
     }
 
     /// The struct's own instance type as `Self` resolves to inside its methods:

@@ -395,6 +395,17 @@ impl Flatten<'_> {
         let (argument, arg_place) = self.lower_call_argument(value);
         let (recv, recv_place) = self.lower_call_receiver(container);
         let contains = self.fresh_typed(span(e), None, Ty::Bool);
+        // A generic `__contains__[T]` binds its own parameters from the
+        // call's solved arguments, as a spelled method call's does.
+        let param_decls = self
+            .checked_call_contract(e)
+            .map(|contract| contract.param_decls)
+            .unwrap_or_default();
+        let instantiated_args = if param_decls.is_empty() {
+            Vec::new()
+        } else {
+            self.instantiated_args(e)
+        };
         self.emit_interior_invalidations(container, None);
         self.emit_call_invalidations(e, std::slice::from_ref(value), &[]);
         self.emit(MirInstr::MethodCall {
@@ -413,8 +424,8 @@ impl Flatten<'_> {
             kwarg_places: Vec::new(),
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs: Vec::new(),
-            param_decls: Vec::new(),
-            instantiated_args: self.instantiated_args(e),
+            param_decls,
+            instantiated_args,
             spread: None,
         });
         self.emit_nested_closure_argument_keepalives(std::slice::from_ref(value), &[]);

@@ -525,21 +525,10 @@ pub struct Checker {
     /// Top-level traits registered by `check_program`'s pre-pass; the walk
     /// removes each entry instead of re-registering.
     predeclared_traits: HashSet<String>,
-    /// Fixed semantic arguments for every compiler-generated public Tuple in
-    /// the final program. This signature-only predeclaration is populated as a
-    /// closed set before sequential member checking, so reciprocal transforms
-    /// can name each other's complete nominal type without exposing ordinary
-    /// source forward references.
-    predeclared_generated_tuple_arguments: HashMap<String, Vec<TyArg>>,
     /// Exact semantic callable contracts named by compiler-only opaque type
     /// ids in generated Tuple declarations. Parsed source cannot populate this
     /// namespace.
     materialized_callables: HashMap<String, Ty>,
-    /// Generated Tuple implementations are emitted at the stdlib template
-    /// position, which may precede user element declarations. While checking
-    /// that compiler-owned specialization only, permit nominal forward type
-    /// identities; ordinary source declarations retain sequential visibility.
-    allow_generated_tuple_forward_types: bool,
     /// Defined traits, by name (their method requirements).
     traits: HashMap<String, TraitInfo>,
     /// Stack of a generic `def`'s checked type parameters, innermost last. A
@@ -1030,9 +1019,7 @@ impl Checker {
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
             predeclared_traits: HashSet::new(),
-            predeclared_generated_tuple_arguments: HashMap::new(),
             materialized_callables,
-            allow_generated_tuple_forward_types: false,
             traits: HashMap::new(),
             tparams: Vec::new(),
             vparams: Vec::new(),

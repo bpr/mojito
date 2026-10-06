@@ -816,10 +816,13 @@ impl Prog {
         }
         let mut packs = self.mir.functions.iter().filter(|(fname, _)| {
             mojito_symbol::symbol::is_overload_of(fname, &init)
-                && self
-                    .sigs
-                    .get(fname.as_str())
-                    .is_some_and(|signature| matches!(signature.variadic, Some(Ty::RuntimePack(_))))
+                && self.sigs.get(fname.as_str()).is_some_and(|signature| {
+                    signature.variadic.as_ref().is_some_and(|element| {
+                        matches!(element, Ty::RuntimePack(_))
+                            || mojito_types::types::pack_spread(std::slice::from_ref(element))
+                                .is_some()
+                    })
+                })
         });
         match (packs.next(), packs.next()) {
             (Some((fname, _)), None) => fname.clone(),
@@ -1225,6 +1228,34 @@ fn erased_closed_ty(
     let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, &named);
     mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
         .unwrap_or_else(|_| ty.clone())
+}
+
+/// The length of the type list an application spreads (`Tuple[*Ts.reverse()]`,
+/// `Tuple[*Self.Ts]`), counted under the erased frame's reified packs.
+fn erased_list_length(
+    arguments: &[TyArg],
+    function: &MirFunction,
+    variables: &[Value],
+    comptime: &[(String, Value)],
+) -> Option<usize> {
+    let context = mojito_types::param_expr::ParamContext::detached();
+    let named = erased_parameter_values(function, variables, comptime);
+    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, &named);
+    if let Some(Ty::Param { binder, .. }) = mojito_types::types::pack_spread_argument(arguments) {
+        return match named.get(binder.name.trim_start_matches('*')) {
+            Some(mojito_types::ct::CtValue::Tuple(elements)) => Some(elements.len()),
+            _ => None,
+        };
+    }
+    let list = mojito_types::types::list_spread_argument(arguments)?;
+    let length = context.list_length(list).ok()?;
+    context
+        .replace(&length, &bindings)
+        .ok()?
+        .as_constant()
+        .and_then(mojito_types::param_expr::fold::integer_value)
+        .and_then(|length| length.to_i64())
+        .and_then(|length| usize::try_from(length).ok())
 }
 
 /// Decide a `comptime if` on the erased path from the frame's reified value

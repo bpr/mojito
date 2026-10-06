@@ -693,6 +693,9 @@ impl Decoder {
             "ownership.mark_initialized" => Some(MirInstr::MarkInitialized {
                 place: self.req(value, fields, "place", Self::place)?,
             }),
+            "ownership.mark_destroyed" => Some(MirInstr::MarkDestroyed {
+                place: self.req(value, fields, "place", Self::place)?,
+            }),
             "unsupported" => Some(MirInstr::Unsupported(self.req(
                 value,
                 fields,

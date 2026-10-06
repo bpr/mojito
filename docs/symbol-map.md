@@ -34,7 +34,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 |---|---|---|
 | Structural call binding | `call::{match_call_slots, match_fieldwise_slots, ArgSlot, CallSlots}` | Checker and VM call adapters; `match_fieldwise_slots` binds a `@fieldwise_init` construction's keywords to fields for the checker, template facts, and MIR, which lists the registers in field order from `OverloadSets::fieldwise_parameters`. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
-| Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, VariadicKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, canonical_specialization_type, unqualified_instance_name, lowered_def_name, lowered_method_name, static_method_symbol, is_tuple_specialization_symbol}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. A receiver-overloaded static (`Tuple.__len__()` beside the instance `__len__`) keys as `static_method_symbol`; a minted Tuple instance spells bare in overload keys and with its elements in instance names (`KeyMode`). An `instance_symbol` whose argument spelling passes 96 characters names its arguments by a SHA-256 digest (`W$mono$H…`), and a nested instance argument spells as its own symbol, so a symbol's length is bounded at any nesting depth. A struct's variadic runtime-pack constructor beside a same-arity nullary one is selected by the VM's `constructor_name`, the monomorphizer's `runtime_pack_constructor`, and the native `constructor_init` alike. |
+| Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, VariadicKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, canonical_specialization_type, unqualified_instance_name, lowered_def_name, lowered_method_name, static_method_symbol}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. A receiver-overloaded static (`Tuple.__len__()` beside the instance `__len__`) keys as `static_method_symbol`; a minted Tuple instance spells bare in overload keys and with its elements in instance names (`KeyMode`). An `instance_symbol` whose argument spelling passes 96 characters names its arguments by a SHA-256 digest (`W$mono$H…`), and a nested instance argument spells as its own symbol, so a symbol's length is bounded at any nesting depth. A struct's variadic runtime-pack constructor beside a same-arity nullary one is selected by the VM's `constructor_name`, the monomorphizer's `runtime_pack_constructor`, and the native `constructor_init` alike. |
 | Checked semantic facts | `checked::{CheckedProgram, CheckedTables, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. `CheckedProgram::tables` is the one `Arc<CheckedTables>` (expressions, declarations, span indexes) that every `hir::Cfg` and MIR `Flatten` shares — lowering never copies program-wide tables. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
@@ -398,7 +398,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `method_calls/mlir_op.rs:infer_mlir_op` records as
   `SemanticAdjustment::MarkInitialized`, which `lower_expr/expr_method.rs`
   lowers as `MirInstr::MarkInitialized` and `analysis/moves.rs` defines in
-  the place-tree flow `store_drops.rs` replays; an instance derives a
+  the place-tree flow `store_drops.rs` replays; the consuming members
+  (`reverse`, `concat`, `consume_elements`) move each element out with
+  `Pointer(to=self[i]).unsafe_take_pointee()` and end the storage with
+  `lit.ownership.mark_destroyed`, `SemanticAdjustment::MarkDestroyed`
+  lowered as `MirInstr::MarkDestroyed`, which `analysis/moves.rs` moves,
+  `field_drops.rs` counts as the field's transfer, the VM tombstones, and
+  Pliron's `lower/drops.rs:clear_presence` clears the leaf flag for; an instance derives a
   `print` argument or a local's value through
   `template_facts/realization_folds.rs:element_construction_facts`, a copy with no folded
   index taking its loop index from `constructed_element_indices`, which
@@ -600,9 +606,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   them from other growth (`nested_def_entries`), and writes them again under
   an instance's own statement and bindings (`install_nested_defs`); a
   capturing callable's environment is kept like a struct's origin slots
-  (`map_struct_origins`). Every type an instance substitutes
-  names the generated Tuple the clone check selects
-  (`inference.rs:canonicalize_public_tuple_types`). A retained struct type that
+  (`map_struct_origins`). A retained struct type that
   names a binding in an origin argument is kept by template owner
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
   the bundle's `typed_origins`: only a slot naming a binding is unbound and
@@ -1089,7 +1093,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elab::instance_body_request_target`.
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
   friends), struct-specialization argument resolution, and the t-string
-  desugar into its `TString` specialization's construction.
+  desugar into a construction of the `TString` template.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
@@ -1102,9 +1106,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value argument) before writing any of it, so no symbolic spelling enters a
   key. `SpecializationKeyPart::ErasedOrigin` is the owner-key marker an erased
   origin argument contributes. `specialized_method_values` refuses a residual
-  value and skips only a deferred callable-value slot;
-  `tuple_specialization_symbol`/`tstring_specialization_symbol` name the
-  unspecialized nominal type for elements that are not closed.
+  value and skips only a deferred callable-value slot.
 - A scalar `__hash__` leaf calls its hasher's `_update_with_simd`
   instance at the leaf's vector type (`mojito_types::types::hash_leaf_ty`):
   `native::mono`'s `enqueue_hash_leaf_instances` instantiates it, and the
@@ -1277,9 +1279,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct-typed value is no template the cloner keeps:
   `is_specializable_declaration` (`comptime.rs`) admits only a variadic
   struct, and `served_variadic_structs` (a fixpoint over the variadic
-  structs whose source names none still specialized whole, builds no tuple
-  display, and writes no t-string; `Tuple`, `TString`, and `Variant` are
-  always whole) exempts the rest; `Elab::served_structs` carries the set.
+  structs whose source names none still specialized whole; `Variant` is
+  always whole, `Tuple` and `TString` are served) exempts the rest;
+  `Elab::served_structs` carries the set.
+- `Tuple` and `TString` are generators (2026-10-06). The checker spells a
+  tuple's type as the nominal application (`types::tuple_type`,
+  `types::canonical_pack_arguments` in `struct_instance_type`), reads an
+  unpacked element through `Tuple.__getitem_param__`
+  (`statements.rs:tuple_unpack_plan`, `CheckedTupleUnpackElement::{param_decls,
+  temporary}`), assumes a conformance's `where` clause for a pack field
+  (`overload_support.rs:binder_conformance_assumed`), and binds an open
+  computed index as its parameter expression (`type_resolution.rs:resolve_param_arg`).
+  `mir/facts.rs:subscript_call_contract` records that expression on the
+  subscript call, `mono/substitute.rs:substitute_subscript_call` folds it in
+  each loop copy, and `mono/infer.rs:rewrite_subscript_call` binds the index
+  before the receiver is inferred. `mono/unify.rs:owner_instance_ty` and
+  `substitute_ty` name an instance element by element, the empty tuple
+  included. `comptime/mono.rs` rewrites a checked `t"…"` occurrence into a
+  `TString(...)` construction from the driver's
+  `tstring_specialization_requests`.
 - A read of a closed vector or struct binder folds to `Const::Value(CtValue)`
   (`mir/ir.rs`, text `value(...)`, schema 1.27): `Specializer::value_param_constant`
   (`mono/instances.rs`) and `value_parameter_constant`

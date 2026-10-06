@@ -399,7 +399,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.root, place_path(place), Touch::Read, *marker)]
         }
-        MirInstr::DropPlace { place } => {
+        MirInstr::DropPlace { place } | MirInstr::MarkDestroyed { place } => {
             vec![(place.root, place_path(place), Touch::Read, Reg(0))]
         }
         MirInstr::MakeClosure { dest, captures, .. } => captures
@@ -525,7 +525,9 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, refills: &Refills)
         }
         // A named destructor's receiver: consumed by the call it follows.
         MirInstr::ConsumeVar { var } => state[*var as usize].do_move(&[]),
-        MirInstr::ConsumePlace { place, .. } | MirInstr::DropPlace { place } => {
+        MirInstr::ConsumePlace { place, .. }
+        | MirInstr::DropPlace { place }
+        | MirInstr::MarkDestroyed { place } => {
             state[place.root as usize].do_move(&place_path(place));
         }
         // A field or statically selected private Tuple-element store
@@ -934,7 +936,10 @@ fn check_instruction_uses(
 ) -> Result<(), OwnershipError> {
     let widens_hole = matches!(
         instr,
-        MirInstr::MovePlace { .. } | MirInstr::ConsumePlace { .. } | MirInstr::DropPlace { .. }
+        MirInstr::MovePlace { .. }
+            | MirInstr::ConsumePlace { .. }
+            | MirInstr::DropPlace { .. }
+            | MirInstr::MarkDestroyed { .. }
     );
     for (root, path, touch, reg) in place_uses(instr, refills) {
         let node = &state[root as usize];

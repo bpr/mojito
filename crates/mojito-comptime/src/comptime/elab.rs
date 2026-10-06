@@ -48,11 +48,21 @@ impl Elab<'_> {
         // so each iteration's `comptime T = Self.Ts[i]` binds separately).
         let mut type_aliases: HashMap<String, CtValue> = HashMap::new();
         let mut source_aliases: HashMap<String, Type> = HashMap::new();
+        // The pack elements the template's aliases denote, as written.
+        let mut element_aliases: HashMap<String, Expr> = HashMap::new();
         for stmt in stmts {
             // `comptime T = Ts[i]` over a template's own type pack is the
             // dependent element it denotes: later statements spell it
             // `Ts[i]`, and the elaborator below MIR closes it per instance.
             if let Some((name, element)) = self.template_pack_element_alias(&stmt.kind) {
+                // The alias names a binder from here on, so a `comptime if`
+                // over it stays in the template.
+                if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
+                    binders.insert(name.clone());
+                }
+                if let StmtKind::Comptime { value, .. } = &stmt.kind {
+                    element_aliases.insert(name.clone(), (*value).clone());
+                }
                 source_aliases.insert(name, element);
                 continue;
             }
@@ -69,6 +79,9 @@ impl Elab<'_> {
             }
             if !source_aliases.is_empty() {
                 substitute_type_bindings_in_block(&mut out[first_new..], &source_aliases);
+            }
+            if !element_aliases.is_empty() {
+                spell_aliases_in_conditions(&mut out[first_new..], &element_aliases);
             }
             if let StmtKind::Comptime {
                 name, type_params, ..
@@ -92,7 +105,10 @@ impl Elab<'_> {
     fn template_pack_element_alias(&self, kind: &StmtKind) -> Option<(String, Type)> {
         let binders = self.template_binders.borrow();
         let binders = binders.last()?;
-        pack_element_alias(kind, &|base| binders.contains(&format!("*{base}")))
+        pack_element_alias(kind, &|base| {
+            binders.contains(&format!("*{base}"))
+                || (base.starts_with("Self.") && binders.contains(base))
+        })
     }
 
     /// The module constants whose initializer applies a function, as source
@@ -1221,7 +1237,10 @@ impl Elab<'_> {
         }
         binders.insert(var.clone());
         self.template_binders.borrow_mut().push(binders);
-        let body = self.block(body, &mut env.clone(), true);
+        // The index shadows a module constant of its name in the body.
+        let mut inner = env.clone();
+        inner.remove(var);
+        let body = self.block(body, &mut inner, true);
         self.template_binders.borrow_mut().pop();
         out.push(rebuilt(
             stmt,
@@ -1292,6 +1311,37 @@ fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     };
     mojito_ast::visit::walk_expr(&mut finder, expression);
     finder.found
+}
+
+/// Spell each pack-element alias a kept `comptime if` condition names
+/// (`comptime if T == Int` under `comptime T = Self.Ts[i]`) as the element
+/// it denotes, which the check types with the pack symbolic.
+fn spell_aliases_in_conditions(statements: &mut [Stmt], aliases: &HashMap<String, Expr>) {
+    struct Spell<'a>(&'a HashMap<String, Expr>);
+
+    impl mojito_ast::visit::MutVisitor for Spell<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            if let ExprKind::Identifier(name) = &expr.kind
+                && let Some(element) = self.0.get(name)
+            {
+                expr.kind = element.kind.clone();
+            }
+        }
+    }
+
+    struct Conditions<'a>(&'a HashMap<String, Expr>);
+
+    impl mojito_ast::visit::MutVisitor for Conditions<'_> {
+        fn visit_stmt_mut(&mut self, statement: &mut Stmt) {
+            if let StmtKind::ComptimeIf { branches, .. } = &mut statement.kind {
+                for (condition, _) in branches {
+                    mojito_ast::visit::walk_expr_mut(&mut Spell(self.0), condition);
+                }
+            }
+        }
+    }
+
+    mojito_ast::visit::walk_block_mut(&mut Conditions(aliases), statements);
 }
 
 /// The binder-set entry of a struct parameter, which a method body names

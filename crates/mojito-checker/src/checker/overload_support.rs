@@ -144,6 +144,31 @@ pub(super) fn generic_constraint_implies(
     }
 }
 
+/// Whether `premise` guarantees that `binder` conforms to `required`: of the
+/// type itself, or of every element when `binder` is a pack
+/// (`conforms_to(Ts.values, Trait)`).
+pub(super) fn binder_conformance_assumed(
+    binder: &ParamRef,
+    required: &str,
+    premise: &GenericConstraint,
+) -> bool {
+    match premise {
+        GenericConstraint::WithMessage(condition, _) => {
+            binder_conformance_assumed(binder, required, condition)
+        }
+        GenericConstraint::Conforms { param, trait_name }
+        | GenericConstraint::ConformsPack { param, trait_name } => {
+            param == binder
+                && (trait_name == required || builtin_trait_implies(trait_name, required))
+        }
+        GenericConstraint::And(left, right) => {
+            binder_conformance_assumed(binder, required, left)
+                || binder_conformance_assumed(binder, required, right)
+        }
+        _ => false,
+    }
+}
+
 /// Whether conformance to the built-in trait `available` proves conformance
 /// to `required`: the lifecycle traits refine one another, and a trivial
 /// marker implies the lifecycle it makes trivial.

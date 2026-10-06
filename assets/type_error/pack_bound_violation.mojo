@@ -1,4 +1,4 @@
-# expect: not Copyable
+# expect: type 'NoCopy' for parameter '*Ts' does not conform to trait 'Copyable'
 struct NoCopy(Movable):
     var x: Int
 

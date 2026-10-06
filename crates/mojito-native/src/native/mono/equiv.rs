@@ -327,7 +327,7 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
 /// origin facts with no runtime ABI: instance identity and binding solutions
 /// must not split on them (`capturing[_]` vs `capturing[origin@N]` is the
 /// same closure value).
-/// Materialize literal types nested inside a solution (`Tuple$t2[..][IntLiteral,
+/// Materialize literal types nested inside a solution (`Tuple[IntLiteral,
 /// IntLiteral]` → `[Int, Int]`): instance symbols spell them materialized, so
 /// two solutions differing only there are one instance, not a symbol
 /// collision. The top-level literal case is `bind_type`'s merge rule.

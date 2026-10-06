@@ -36,15 +36,6 @@ impl<'a> Specializer<'a> {
                     .map(|d| d.name.clone())
                     .collect(),
             ),
-            tuple_specializations: Rc::new(
-                source
-                    .declarations
-                    .structs
-                    .iter()
-                    .filter(|d| mojito_symbol::symbol::is_tuple_specialization_symbol(&d.name))
-                    .map(|d| d.name.clone())
-                    .collect(),
-            ),
             struct_shapes: Rc::new(
                 source
                     .declarations
@@ -184,7 +175,6 @@ impl<'a> Specializer<'a> {
     pub(super) fn base_bindings(&self) -> Bindings {
         Bindings {
             generic_templates: Rc::clone(&self.generic_templates),
-            tuple_specializations: Rc::clone(&self.tuple_specializations),
             struct_shapes: Rc::clone(&self.struct_shapes),
             ..Bindings::default()
         }
@@ -1181,7 +1171,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let (bindings, arguments, _) =
-                self.infer_receiver_call(owner, target, param_ty, None)?;
+                self.infer_receiver_call(owner, target, param_ty, None, &[])?;
             let instance = self.enqueue(target, bindings, arguments)?;
             *target = instance;
         }
@@ -1772,6 +1762,7 @@ impl<'a> Specializer<'a> {
                                         &write_string,
                                         &receiver_ty,
                                         None,
+                                        &[],
                                     )?;
                                     self.enqueue(&write_string, bindings, arguments)?;
                                     // Each argument is formatted through its
@@ -2248,7 +2239,14 @@ impl<'a> Specializer<'a> {
             let Some(template) = self.structs.get(template_name.as_str()).copied() else {
                 continue;
             };
-            if arguments.len() < template.param_decls.len() {
+            // An instance applied element by element binds its lone pack to
+            // every argument, of which the empty tuple has none.
+            let elementwise = name != template_name
+                && matches!(
+                    template.param_decls.as_slice(),
+                    [ParamDecl::Type { variadic: true, .. }]
+                );
+            if arguments.len() < template.param_decls.len() && !elementwise {
                 continue;
             }
             let mut bindings = self.base_bindings();
@@ -2416,10 +2414,11 @@ impl<'a> Specializer<'a> {
         let mut packs = self.functions.keys().filter(|name| {
             mojito_symbol::symbol::is_overload_of(name, init_base)
                 && self.declarations.get(*name).is_some_and(|declaration| {
-                    matches!(
-                        declaration.variadic,
-                        Some(mojito_types::types::Ty::RuntimePack(_))
-                    )
+                    declaration.variadic.as_ref().is_some_and(|element| {
+                        matches!(element, mojito_types::types::Ty::RuntimePack(_))
+                            || mojito_types::types::pack_spread(std::slice::from_ref(element))
+                                .is_some()
+                    })
                 })
         });
         let first = (*packs.next()?).to_string();

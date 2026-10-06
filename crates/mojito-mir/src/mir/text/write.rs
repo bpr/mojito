@@ -1195,9 +1195,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("marker", reg_value(*marker)),
             ],
         ),
-        MirInstr::DropPlace { place } | MirInstr::MarkInitialized { place } => {
-            record(tag, &[("place", place_value(place))])
-        }
+        MirInstr::DropPlace { place }
+        | MirInstr::MarkInitialized { place }
+        | MirInstr::MarkDestroyed { place } => record(tag, &[("place", place_value(place))]),
         MirInstr::Unsupported(message) => record(tag, &[("message", quote(message))]),
         MirInstr::GetIter {
             source,

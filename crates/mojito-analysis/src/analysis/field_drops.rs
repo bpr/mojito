@@ -538,7 +538,9 @@ fn direct_field_uses(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
 /// them, so no `DropPlace` follows).
 fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
     let mut set = FieldSet::new();
-    if let MirInstr::MovePlace { place, .. } | MirInstr::ConsumePlace { place, .. } = instr
+    if let MirInstr::MovePlace { place, .. }
+    | MirInstr::ConsumePlace { place, .. }
+    | MirInstr::MarkDestroyed { place } = instr
         && place.root == root.var
         && let Some(Proj::Field(field)) = place.proj.first()
         && let Some(position) = root.position(field)

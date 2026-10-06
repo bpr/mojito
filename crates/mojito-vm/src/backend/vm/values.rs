@@ -325,8 +325,9 @@ impl VmBackend {
                 "vm: constructed struct '{name}' is missing from MIR"
             ))
         })?;
-        let fields = uninitialized_fields(&def.fields);
+        let mut fields = uninitialized_fields(&def.fields);
         let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
+        size_pack_storage(&def.fields, &mut fields, &value_params);
         // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
         // produces its argument's exact type; when the call site supplied no
         // parameter arguments (a generic template body cannot), inherit the
@@ -944,6 +945,30 @@ impl VmBackend {
             );
         }
         Ok(allocation)
+    }
+}
+
+/// Give storage over a pack the instance reifies (`__RuntimeTuple[*Self.Ts]`
+/// in an erased template) one placeholder per element of that pack.
+fn size_pack_storage(
+    declared: &[(String, Ty)],
+    fields: &mut [(String, Value)],
+    value_params: &[(String, Value)],
+) {
+    for ((_, ty), (_, placeholder)) in declared.iter().zip(fields) {
+        let Ty::Tuple(elements) = ty else {
+            continue;
+        };
+        let Some(Ty::Param { binder, .. }) = mojito_types::types::pack_spread(elements) else {
+            continue;
+        };
+        let pack = binder.name.trim_start_matches('*');
+        if let Some((_, Value::Tuple(bound))) = value_params
+            .iter()
+            .find(|(name, _)| name.trim_start_matches('*') == pack)
+        {
+            *placeholder = Value::Tuple(vec![Value::None; bound.len()]);
+        }
     }
 }
 

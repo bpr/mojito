@@ -7364,7 +7364,8 @@ fn augmented_assignment_dispatches_through_a_bounds_inplace_dunder() {
 #[test]
 fn mlir_op_outside_the_bundled_library_is_rejected() {
     // The pin accepts `__mlir_op` in user code; Mojito admits only
-    // `lit.ownership.mark_initialized` in the bundled modules that reach
+    // `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` in
+    // the bundled modules that reach
     // compiler-private storage, so a user initializer's spelling is a
     // subset rejection, not a divergence fixture.
     let error = err(
@@ -7372,8 +7373,9 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
     );
     assert!(
         error.to_string().contains(
-            "'__mlir_op' is accepted only as 'lit.ownership.mark_initialized' over \
-             '__get_mvalue_as_litref(place)' in the bundled standard library"
+            "'__mlir_op' is accepted only as 'lit.ownership.mark_initialized' or \
+             'lit.ownership.mark_destroyed' over '__get_mvalue_as_litref(place)' in the \
+             bundled standard library"
         ),
         "{error}"
     );

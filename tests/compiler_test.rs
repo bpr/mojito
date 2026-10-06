@@ -2272,15 +2272,29 @@ fn struct_hasher_field_update_is_template_served() {
     );
 }
 
+/// No clone of the public `Tuple` is checked: its template serves every
+/// instance.
+fn assert_no_tuple_clone(stats: &mojito::templates::TemplateStats) {
+    let clone = |name: &String| name.starts_with("Tuple");
+    assert!(
+        !stats
+            .derived
+            .iter()
+            .chain(&stats.inferred_clones)
+            .chain(&stats.verified)
+            .any(clone)
+            && !stats.refused.iter().any(|(name, _)| clone(name)),
+        "no Tuple instance is cloned: {stats:?}"
+    );
+}
+
 #[test]
-fn tuple_default_initializer_clones_check() {
+fn tuple_default_initializer_is_template_served() {
     // `Tuple`'s `__init__(out self)` is upstream's: it marks `self.storage`
     // initialized and writes each element through `Pointer(to=self[i])` from
     // the initializer list `{}`, which the element's own default
-    // construction stands for. Every Defaultable specialization runs it; the
-    // template facts carry neither the marking statement nor a pointer write
-    // of an initializer list, so each clone's initializer is checked on its
-    // own until `Tuple` is served by its template (R4).
+    // construction stands for. The template serves every Defaultable
+    // instance, so no clone of it is checked.
     let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    var n = Tuple[String, Tuple[Int, Bool]]()\n    print(t[0], t[1] is None, u[0], u[1], u[2], n[0], n[1][0], n[1][1])\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2290,19 +2304,7 @@ fn tuple_default_initializer_clones_check() {
             compiler.execute(program).expect("execute").output,
             "0 True 0 False 0.0  0 False\n"
         );
-    }
-    let stats = derived.template_stats();
-    for instance in [
-        "Tuple$t2[y3:Inty13:Optional[Int]]",
-        "Tuple$t3[y6:UInt64y4:Booly7:Float64]",
-        "Tuple$t2[y3:Inty4:Bool]",
-        "Tuple$t2[y6:Stringy16:Tuple[Int, Bool]]",
-    ] {
-        let name = format!("{instance}.__init__");
-        assert!(
-            stats.inferred_clones.contains(&name),
-            "{name} is checked on its own: {stats:?}"
-        );
+        assert_no_tuple_clone(program.template_stats());
     }
 }
 
@@ -2328,44 +2330,27 @@ fn unavailable_initializer_is_rejected() {
 }
 
 #[test]
-fn tuple_callable_binder_teardowns_derive() {
+fn tuple_teardowns_are_template_served() {
     // `Tuple.consume_elements` and `deinit_with` take a compile-time
-    // callable binder, which every specialization keeps: each unrolled
-    // `elt_handler[i](self.storage[i]^)` applies the instance's own binder
-    // at the copy's literal, and the residue the call publishes names the
-    // binder, so every plain-data instance derives both teardowns.
+    // callable binder and move each element out through a pointer in a
+    // `comptime for` the template keeps: the elaborator unrolls it per
+    // instance, and no clone of either teardown is checked.
     let source = "def main():\n    var pair = (String(\"b\"), 1)\n    var words = (String(\"x\"), String(\"y\"), String(\"z\"))\n    print(pair[0], words[2])\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
     let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
     for program in [&derived, &verified] {
         assert_eq!(compiler.execute(program).expect("execute").output, "b z\n");
-    }
-    let stats = derived.template_stats();
-    for instance in [
-        "Tuple$t2[y6:Stringy3:Int]",
-        "Tuple$t3[y6:Stringy6:Stringy6:String]",
-    ] {
-        for member in ["consume_elements", "deinit_with"] {
-            let name = format!("{instance}.{member}");
-            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-            assert!(
-                !stats.inferred_clones.contains(&name),
-                "{name} is never inferred: {stats:?}"
-            );
-        }
+        assert_no_tuple_clone(program.template_stats());
     }
 }
 
 #[test]
-fn tuple_over_erased_views_derives() {
+fn tuple_over_erased_views_is_template_served() {
     // `split_at_grapheme` returns `Tuple[StringSpan, StringSpan]`, whose
-    // element origins the elaborator erases: the loans name no place in the
-    // clone's own check either, so every member derives as it does for
-    // plain-data elements, the teardowns and the `rebind`-keyed
-    // `__contains__` among them. `StringSpan` is not `Defaultable`, so the
-    // default `__init__` is the shared unavailable-member stub, whose first
-    // copy is inferred.
+    // element origins erase from the instance: the template serves it as it
+    // serves plain-data elements, the `rebind`-keyed `__contains__` and the
+    // comparison members among them.
     let source = "def main():\n    var text = String(\"h\u{e9}llo\")\n    var parts = text.split_at_grapheme(2)\n    print(parts[0], parts[1], len(parts))\n    var again = text.split_at_grapheme(2)\n    print(parts == again, parts != again)\n    print(parts)\n";
     let compiler = Compiler::default();
     let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
@@ -2375,31 +2360,8 @@ fn tuple_over_erased_views_derives() {
             compiler.execute(program).expect("execute").output,
             "h\u{e9} llo 2\nTrue False\n(h\u{e9}, llo)\n"
         );
+        assert_no_tuple_clone(program.template_stats());
     }
-    let stats = derived.template_stats();
-    let instance = "Tuple$t2[y10:StringSpany10:StringSpan]";
-    for member in [
-        "__eq__",
-        "__ne__",
-        "__hash__",
-        "__contains__",
-        "write_to",
-        "consume_elements",
-        "deinit_with",
-        "copy",
-    ] {
-        let name = format!("{instance}.{member}");
-        assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-    }
-    let inferred: Vec<&String> = stats
-        .inferred_clones
-        .iter()
-        .filter(|name| name.starts_with(instance))
-        .collect();
-    assert!(
-        inferred.len() <= 1 && inferred.iter().all(|name| name.ends_with(".__init__")),
-        "only the unavailable default `__init__` of {instance} is inferred: {stats:?}"
-    );
 }
 
 #[test]
@@ -3888,41 +3850,16 @@ fn module_constants_do_not_reach_bundled_compile_time_binders() {
 }
 
 #[test]
-fn tuple_members_derive_from_their_templates() {
-    // A `Tuple` specialized whole takes each member from its checked
-    // template: the static `__len__` over its folded pack length, the
-    // initializer relocating its pack whole, each unrolled element accessor
-    // and its value twin, the synthesized `copy`, every per-element
-    // `__contains__` overload, `write_repr_to`, and the consuming teardowns,
-    // which take a callable binder.
+fn tuple_members_are_template_served() {
+    // Every member of `Tuple` runs from its template: the static `__len__`
+    // over its pack length, the initializer relocating its pack whole, the
+    // element accessor, the synthesized `copy`, `__contains__`,
+    // `write_repr_to`, and the consuming teardowns.
     let source = "def main():\n    var t = (1, String(\"a\"))\n    print(len(t), Tuple[Int, String].__len__())\n    print(t[0], t[1])\n    var c = t.copy()\n    print(c[1], 1 in t, String(\"b\") in t)\n    print(repr(t))\n";
-    let owner = "Tuple$t2[y3:Inty6:String].";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compile_entry(&compiler, source);
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .filter_map(|name| name.strip_prefix(owner))
-            .collect();
-        for member in [
-            "__init__",
-            "__len__",
-            "__getitem_param__$0",
-            "__getitem_param_value__$1",
-            "copy",
-            "__contains__",
-            "write_repr_to",
-            "consume_elements",
-            "deinit_with",
-        ] {
-            assert!(derived.contains(member), "{member} derives: {stats:?}");
-        }
+        assert_no_tuple_clone(program.template_stats());
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "2 2\n1 a\na True False\nTuple[SIMD[DType.int, 1], String](Int(1), 'a')\n"

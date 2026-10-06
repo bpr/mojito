@@ -267,6 +267,7 @@ assets/ok/mut_parameter_reassignment_drop_shapes.mojo	-	ineligible	no-scalar-ent
 assets/ok/mut_parameter_transfer_refilled.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_pointer_parameter_reassign.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mut_ref_writeback.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/named_result_transferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/named_shared_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/native_borrowed_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
@@ -376,6 +377,7 @@ assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_sibling_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_variadic_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_reverse_concat_types.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_struct_element_alias_condition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_explicit_in_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_inferred_args.mojo	-	ineligible	no-scalar-entry-shape
@@ -813,6 +815,7 @@ assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_reverse_concat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape

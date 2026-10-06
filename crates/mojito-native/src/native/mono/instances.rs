@@ -420,7 +420,7 @@ impl Specializer<'_> {
         if !self.functions.contains_key(target.as_str()) {
             return Ok(());
         }
-        let (bindings, arguments, _) = self.infer_receiver_call(owner, &target, ty, None)?;
+        let (bindings, arguments, _) = self.infer_receiver_call(owner, &target, ty, None, &[])?;
         self.enqueue(&target, bindings, arguments)?;
         Ok(())
     }

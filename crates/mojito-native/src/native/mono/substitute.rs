@@ -359,10 +359,10 @@ pub(super) fn substitute_instruction(
     use MirInstr::{
         Call, CallIndirect, Const, ConstructTypeParam, ConsumePlace, DefVar, DropPlace,
         EstablishLoans, Index, LoadPlace, MakeClosure, MakeRef, MakeSimd, MakeTuple, MakeVariant,
-        MarkInitialized, MaterializeLiteral, MethodCall, MovePlace, MultiIndex, MultiSet,
-        PointerStorageDestroy, PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle, SizeOf,
-        Slice, Store, StoreRef, Try, TryNext, TypeName, UninitStorageDestroy, UninitStorageTake,
-        VariantReplace, VariantSet, VariantSetInitWith,
+        MarkDestroyed, MarkInitialized, MaterializeLiteral, MethodCall, MovePlace, MultiIndex,
+        MultiSet, PointerStorageDestroy, PointerStorageTake, SimdBitcast, SimdCast, SimdShuffle,
+        SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName, UninitStorageDestroy,
+        UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
     };
     match instruction {
         // A SIMD instruction's slots close as the vector type they build
@@ -403,7 +403,8 @@ pub(super) fn substitute_instruction(
         | LoadPlace { place, .. }
         | ConsumePlace { place, .. }
         | DropPlace { place }
-        | MarkInitialized { place } => substitute_place(place, bindings)?,
+        | MarkInitialized { place }
+        | MarkDestroyed { place } => substitute_place(place, bindings)?,
         MakeClosure { captures, .. } => {
             for capture in captures {
                 substitute_place(&mut capture.place, bindings)?;
@@ -673,6 +674,18 @@ pub(super) fn substitute_subscript_call(
             argument.parameter_ty = ty;
         }
     }
+    // A compile-time index over binders the bindings close (a `comptime
+    // for` index in its iteration's copy) is its value from here.
+    for argument in &mut call.param_arg_regs {
+        if let Some(value) = argument
+            .expr
+            .as_ref()
+            .and_then(|expr| eval_ct(expr, bindings).ok())
+            .and_then(|value| ParamContext::detached().constant(value).ok())
+        {
+            argument.expr = Some(value);
+        }
+    }
     sub_ref_opt(&mut call.reference_result, bindings)
 }
 
@@ -761,7 +774,6 @@ pub(super) fn struct_instance<'b>(
     };
     let mut instance = Bindings {
         generic_templates: Rc::clone(&bindings.generic_templates),
-        tuple_specializations: Rc::clone(&bindings.tuple_specializations),
         struct_shapes: Rc::clone(&bindings.struct_shapes),
         self_instance: Some((template.clone(), ty.clone())),
         ..Bindings::default()
@@ -802,6 +814,16 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     && template == name
                 {
                     return Ok(concrete.clone());
+                }
+                // `Tuple` applied to no element is the empty tuple's
+                // instance, not the template.
+                if mojito_types::types::binds_pack_elementwise(name)
+                    && bindings.generic_templates.contains(name.as_str())
+                {
+                    return Ok(Ty::Struct(
+                        mojito_symbol::symbol::instance_symbol(name, &[]),
+                        Vec::new().into(),
+                    ));
                 }
                 return Ok(Ty::Struct(name.clone(), Vec::new().into()));
             }
@@ -848,17 +870,21 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     .map(|arg| substitute_arg(arg, bindings))
                     .collect::<Result<Vec<_>, _>>()?,
             };
+            // A literal type argument (`Tuple[IntLiteral, String]`, the type
+            // of `(1, "a")`) names the instance its materialized form names.
+            let args: Vec<TyArg> = args
+                .into_iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(mojito_types::types::default_literal(&ty)),
+                    other => other,
+                })
+                .collect();
             // Every concrete application of a generic template takes its
             // instance symbol, so distinct instantiations get distinct output
             // declarations. Checker-specialized structs (empty `param_decls`)
             // and already-renamed instances keep their names; symbolic
             // applications stay for a later substitution or a contextual
             // rejection.
-            if name == mojito_types::types::TUPLE_TYPE_NAME
-                && let Some(specialized) = tuple_specialization(&args, bindings)
-            {
-                return Ok(Ty::Struct(specialized, original.reusing(args)));
-            }
             let concrete_name = if args.iter().any(arg_has_symbolic)
                 || nominal_template(name) != name
                 || !bindings.generic_templates.contains(name.as_str())
@@ -879,9 +905,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             };
             Ty::Struct(concrete_name, original.reusing(args))
         }
-        Ty::Tuple(v) => Ty::Tuple(sub_types(v, bindings)?),
-        Ty::RuntimePack(v) => Ty::RuntimePack(sub_types(v, bindings)?),
-        Ty::Variant(v) => Ty::Variant(sub_types(v, bindings)?),
+        Ty::Tuple(v) => Ty::Tuple(sub_spread_types(v, bindings)?),
+        Ty::RuntimePack(v) => Ty::RuntimePack(sub_spread_types(v, bindings)?),
+        Ty::Variant(v) => Ty::Variant(sub_spread_types(v, bindings)?),
         Ty::Overload(v) => Ty::Overload(sub_types(v, bindings)?),
         Ty::ComptimeList(v) => Ty::ComptimeList(Box::new(substitute_ty(v, bindings)?)),
         // A collector over a bound type pack is the tuple of its elements.
@@ -1026,12 +1052,43 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
     })
 }
 
+/// [`sub_types`] over an element list that may be one spread of a bound
+/// pack (`__RuntimeTuple[*Self.Ts]`): the spread is the pack's elements, as
+/// `expand_pack_spread` spells it.
+fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
+    match mojito_types::types::pack_spread(types) {
+        Some(Ty::Param { binder, .. })
+            if let Some(Ty::RuntimePack(elements)) = bindings.types.get(binder) =>
+        {
+            sub_types(elements, bindings)
+        }
+        _ => sub_types(types, bindings),
+    }
+}
+
 pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, MonoError> {
     Ok(match arg {
         TyArg::Ty(ty) => TyArg::Ty(substitute_ty(ty, bindings)?),
         // A residual closes under the mono environment or it is the
         // contextual unsupported boundary; nothing symbolic reaches lowering.
         TyArg::Val(CtValue::Expr(expr)) => TyArg::Val(eval_ct(expr, bindings)?),
+        // A pack bound as one list of types closes type by type, each
+        // materialized as an elementwise argument is.
+        TyArg::Val(CtValue::Tuple(values))
+            if values.iter().any(|value| matches!(value, CtValue::Type(_))) =>
+        {
+            TyArg::Val(CtValue::Tuple(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        CtValue::Type(ty) => substitute_ty(ty, bindings).map(|ty| {
+                            CtValue::Type(Box::new(mojito_types::types::default_literal(&ty)))
+                        }),
+                        other => Ok(other.clone()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        }
         TyArg::Val(value) => TyArg::Val(value.clone()),
         TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
     })
@@ -1204,26 +1261,6 @@ fn declared_associated_type(
         return Ok(None);
     };
     substitute_ty(member, &instance.bindings).map(Some)
-}
-
-/// The specialization a closed public `Tuple` over `args` names, when the
-/// source declares it.
-fn tuple_specialization(args: &[TyArg], bindings: &Bindings) -> Option<String> {
-    if args.iter().any(arg_has_symbolic) {
-        return None;
-    }
-    let elements = args
-        .iter()
-        .map(|arg| match arg {
-            TyArg::Ty(ty) => Some(ty.clone()),
-            TyArg::Val(_) | TyArg::Origin(_) => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let specialized = mojito_symbol::symbol::tuple_specialization_symbol(&elements);
-    bindings
-        .tuple_specializations
-        .contains(&specialized)
-        .then_some(specialized)
 }
 
 /// The type a nullary construction builds under `bindings`: the binder's

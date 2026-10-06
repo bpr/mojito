@@ -1262,7 +1262,7 @@ impl Checker {
                     }
                     self.check_consuming(value, ty, "Tuple display element")?;
                 }
-                let result = self.public_tuple_type(tys.clone());
+                let result = mojito_types::types::tuple_type(tys.clone());
                 self.check_tuple_literal_exclusivity(&result, elems, &tys)?;
                 self.record_collection_construction(expr.source_span(), &result);
                 Ok(result)
@@ -1339,7 +1339,7 @@ impl Checker {
                         }
                     }
                 }
-                Ok(self.public_tstring_type(elements))
+                Ok(mojito_types::types::tstring_type(elements))
             }
             // A parameterized type is not a runtime value; it is only valid as a
             // static-method receiver (`UnsafePointer[T].alloc(…)`), typed in
@@ -2458,7 +2458,7 @@ impl Checker {
                 .iter()
                 .map(|arg| self.tuple_element_ty(arg))
                 .collect::<Result<Vec<_>, _>>()
-                .map(|elements| self.public_tuple_type(elements));
+                .map(nominal_tuple_type);
         }
         let tuple = self.tuple_type(param_args)?;
         // `Tuple[T0, ...]()` is the default construction: the specialization's
@@ -2499,104 +2499,7 @@ impl Checker {
             }
             self.mark_reference_storage_uses(argument, expected);
         }
-        Ok(self.public_tuple_type(elements))
-    }
-
-    /// Select the concrete variadic-struct specialization after the compiler's
-    /// discovery pass has materialized it. During discovery no such declaration
-    /// exists yet, so the canonical `Tuple[T0, ...]` type remains available for
-    /// collecting the exact specialization request.
-    /// The checked type of a t-string occurrence: the concrete `TString`
-    /// specialization when the compiler's discovery pass has materialized it,
-    /// and the public nominal `TString[...]` spelling before that.
-    pub(super) fn public_tstring_type(&self, elements: Vec<Ty>) -> Ty {
-        let specialized = mojito_symbol::symbol::tstring_specialization_symbol(&elements);
-        let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
-        match self.structs.get(&specialized) {
-            Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
-                Ty::Struct(specialized, arguments.into())
-            }
-            _ if self.declared_structs.contains(&specialized) => {
-                Ty::Struct(specialized, arguments.into())
-            }
-            _ => mojito_types::types::tstring_type(elements),
-        }
-    }
-
-    pub(super) fn public_tuple_type(&self, elements: Vec<Ty>) -> Ty {
-        let specialized = mojito_symbol::symbol::tuple_specialization_symbol(&elements);
-        let arguments = elements.iter().cloned().map(TyArg::Ty).collect::<Vec<_>>();
-        match self.structs.get(&specialized) {
-            Some(info) if info.fixed_arguments.as_ref() == Some(&arguments) => {
-                Ty::Struct(specialized, arguments.into())
-            }
-            _ if self.declared_structs.contains(&specialized) => {
-                Ty::Struct(specialized, arguments.into())
-            }
-            _ => nominal_tuple_type(elements),
-        }
-    }
-
-    /// Replace every closed public Tuple nested in an instantiated generic
-    /// result with the concrete declaration materialized by the compiler's
-    /// discovery pass. Generic declarations themselves retain canonical
-    /// `Tuple[T, ...]`; only a substituted use can select an executable nominal
-    /// implementation.
-    pub(super) fn canonicalize_public_tuple_types(&self, ty: Ty) -> Ty {
-        if let Some(elements) = tuple_elements(&ty) {
-            let elements = elements
-                .into_iter()
-                .cloned()
-                .map(|element| self.canonicalize_public_tuple_types(element))
-                .collect();
-            return self.public_tuple_type(elements);
-        }
-        match ty {
-            Ty::Struct(name, arguments) => Ty::Struct(
-                name,
-                arguments
-                    .into_iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(self.canonicalize_public_tuple_types(ty)),
-                        value => value,
-                    })
-                    .collect(),
-            ),
-            Ty::ComptimeList(element) => {
-                Ty::ComptimeList(Box::new(self.canonicalize_public_tuple_types(*element)))
-            }
-            Ty::Tuple(elements) => Ty::Tuple(
-                elements
-                    .into_iter()
-                    .map(|element| self.canonicalize_public_tuple_types(element))
-                    .collect(),
-            ),
-            Ty::RuntimePack(elements) => Ty::RuntimePack(
-                elements
-                    .into_iter()
-                    .map(|element| self.canonicalize_public_tuple_types(element))
-                    .collect(),
-            ),
-            Ty::VariadicPack(element) => {
-                Ty::VariadicPack(Box::new(self.canonicalize_public_tuple_types(*element)))
-            }
-            Ty::Variant(alternatives) => Ty::Variant(
-                alternatives
-                    .into_iter()
-                    .map(|alternative| self.canonicalize_public_tuple_types(alternative))
-                    .collect(),
-            ),
-            Ty::Pointer { element, origin } => Ty::Pointer {
-                element: Box::new(self.canonicalize_public_tuple_types(*element)),
-                origin,
-            },
-            Ty::Ref(mut reference) => {
-                reference.referent =
-                    Box::new(self.canonicalize_public_tuple_types(*reference.referent));
-                Ty::Ref(reference)
-            }
-            other => other,
-        }
+        Ok(mojito_types::types::tuple_type(elements))
     }
 
     pub(super) fn infer_variant_construction(

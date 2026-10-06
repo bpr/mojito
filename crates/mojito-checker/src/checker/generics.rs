@@ -1312,6 +1312,69 @@ impl Checker {
         ))
     }
 
+    /// `signature` with each own value parameter's type closed under the
+    /// receiver's arguments, when one names a pack element of the struct's
+    /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`); `None`
+    /// when no declaration does.
+    pub(super) fn method_decls_at_receiver(
+        &self,
+        signature: &MethodSig,
+        info: &StructInfo,
+        targs: &[TyArg],
+    ) -> Option<MethodSig> {
+        struct CloseElements<'a> {
+            checker: &'a Checker,
+            decls: &'a [ParamDecl],
+            pack: &'a [TyArg],
+            closed: bool,
+        }
+
+        impl mojito_types::types::TyRewrite for CloseElements<'_> {
+            fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+                if !matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some()) {
+                    return None;
+                }
+                let closed = self
+                    .checker
+                    .close_pack_elements(ty.clone(), &[(self.decls, self.pack)]);
+                self.closed |= closed != *ty;
+                Some(closed)
+            }
+
+            fn expr(
+                &mut self,
+                expr: &ParamExpr,
+            ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+                Ok(expr.clone())
+            }
+        }
+
+        if targs.is_empty()
+            || !signature
+                .decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Value { .. }))
+        {
+            return None;
+        }
+        let pack = positional_pack_arguments(&info.decls, targs);
+        let mut rewrite = CloseElements {
+            checker: self,
+            decls: &info.decls,
+            pack: &pack,
+            closed: false,
+        };
+        let mut closed = signature.clone();
+        for decl in &mut closed.decls {
+            if let ParamDecl::Value { ty, .. } = decl
+                && let Ok(rewritten) = mojito_types::types::rewrite_ty(ty, &mut rewrite)
+            {
+                **ty = rewritten;
+            }
+        }
+        rewrite.closed.then_some(closed)
+    }
+
     /// `ty` with the method's own value binders closed at a call's solved
     /// arguments (`Scalar[dt]` at `dt = DType.int16` is `Int16`), as a
     /// generic `def`'s result closes; a binder the call leaves symbolic

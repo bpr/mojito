@@ -2141,6 +2141,11 @@ impl VmBackend {
                     self.drop_struct_fields(prog, &name, fields, ty.as_ref())?;
                 }
             }
+            // The place's value was moved out through pointers: what its
+            // storage still holds is a stale image no destructor may see.
+            MirInstr::MarkDestroyed { place } => {
+                *nav_mut(vars, regs, place)? = Value::Moved;
+            }
             MirInstr::ConsumePlace { place, .. } => {
                 let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
                 if let Value::Struct { name, fields, .. } = value {
@@ -2161,9 +2166,25 @@ impl VmBackend {
             MirInstr::MarkInitialized { place } => {
                 if place.proj.is_empty()
                     && matches!(vars[place.root as usize], Value::None)
-                    && let Some(Ty::Struct(name, _)) = &place.ty
-                    && let Some(skeleton) = Self::uninitialized_struct(prog, name)
+                    && let Some(Ty::Struct(name, arguments)) = &place.ty
+                    && let Some(mut skeleton) = Self::uninitialized_struct(prog, name)
                 {
+                    // An erased body names its result over the frame's packs
+                    // (`Tuple[*Self.Ts.reverse()]`): its storage has one
+                    // placeholder per element of the list the frame closes.
+                    if let Some(length) = erased_list_length(
+                        arguments,
+                        &prog.mir.functions[function].1,
+                        vars,
+                        comptime,
+                    ) && let Value::Struct { fields, .. } = &mut skeleton
+                    {
+                        for (_, field) in fields {
+                            if let Value::Tuple(slots) = field {
+                                slots.resize(length, Value::None);
+                            }
+                        }
+                    }
                     vars[place.root as usize] = skeleton;
                 }
             }

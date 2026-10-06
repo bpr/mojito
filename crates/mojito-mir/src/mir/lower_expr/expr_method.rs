@@ -503,12 +503,17 @@ impl Flatten<'_> {
         }
         // `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(p))`:
         // the place is defined from here, with nothing written.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::MarkInitialized
-            )
-        }) {
+        // `lit.ownership.mark_destroyed` over the same operand ends the
+        // place's value, with nothing destroyed.
+        let marked = self
+            .checked_adjustments(e)
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::MarkInitialized => Some(true),
+                mojito_checked::checked::SemanticAdjustment::MarkDestroyed => Some(false),
+                _ => None,
+            });
+        if let Some(initialized) = marked {
             let operand = match args {
                 [
                     Expr {
@@ -518,9 +523,13 @@ impl Flatten<'_> {
                 ] => args.first(),
                 _ => None,
             }
-            .expect("checked mark_initialized names a place");
+            .expect("a checked ownership mark names a place");
             let place = self.place(operand);
-            self.emit(MirInstr::MarkInitialized { place });
+            self.emit(if initialized {
+                MirInstr::MarkInitialized { place }
+            } else {
+                MirInstr::MarkDestroyed { place }
+            });
             let dest = self.fresh_typed(span(e), None, Ty::None);
             self.emit(MirInstr::Const {
                 dest,

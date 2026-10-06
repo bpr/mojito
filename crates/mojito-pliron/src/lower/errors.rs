@@ -23,7 +23,7 @@ impl FnLowering<'_> {
     pub(super) fn emit_trace_text(&mut self, ctx: &mut Context, kind: u32, text: &str) {
         // Lifecycle events name types as the VM logs them: the bare template
         // (`List`), never the backend's monomorphized instance spelling
-        // (`List$mono$TInt`). Checker-specialized names (`Tuple$t2[…]`) are
+        // (`List$mono$TInt`). Checker-specialized names (`Bag$t2[…]`) are
         // the runtime struct name on both sides and pass through.
         let text = text.split("$mono").next().unwrap_or(text);
         let global = self.shared.intern_string(ctx, text.as_bytes());

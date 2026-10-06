@@ -90,16 +90,6 @@ impl Checker {
                     kwargs: Vec::new(),
                 }
             }
-            // A generated Tuple specialization constructs through its own
-            // symbol, which carries its element types.
-            Ty::Struct(name, _) if mojito_symbol::symbol::is_tuple_specialization_symbol(name) => {
-                ExprKind::Call {
-                    name: name.clone(),
-                    param_args: Vec::new(),
-                    args,
-                    kwargs: Vec::new(),
-                }
-            }
             _ => {
                 let name = match mojito_types::ct::source_type(expected, expression.span) {
                     Some(SourceType::Named(name, param_args)) => {

@@ -259,29 +259,8 @@ impl FnLowering<'_> {
             }
             MirInstr::MovePlace { dest, place } => {
                 // Moving out of a projection leaves the variable partially
-                // initialized. A tracked top-level leaf clears its presence
-                // flag (later drops skip it, like the VM's `Value::Moved`
-                // tombstone); anything deeper records the blanket marker so
-                // a whole-variable drop refuses destructor work instead of
-                // double-freeing.
-                if !place.proj.is_empty() {
-                    let flagged = self.leaf_position(place).and_then(|position| {
-                        self.leaf_flags
-                            .get(&place.root)
-                            .and_then(|leaves| leaves.get(&position))
-                            .copied()
-                    });
-                    match flagged {
-                        Some(flag) => {
-                            let absent = self.bool_constant(ctx, false);
-                            let store = StoreOp::new(ctx, absent, flag);
-                            self.append(ctx, store.get_operation(), None);
-                        }
-                        None => {
-                            self.partially_moved.insert(place.root);
-                        }
-                    }
-                }
+                // initialized.
+                self.clear_presence(ctx, place);
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
                 // A move relocates the bytes — ownership transfers to the
                 // destination (the VM's `mem::replace`; no clone runs), so
@@ -455,6 +434,12 @@ impl FnLowering<'_> {
             // The receiver's alloca and its leaf drop flags already exist;
             // the marked storage is filled by the writes that follow.
             MirInstr::MarkInitialized { .. } => Ok(()),
+            // The marked place holds no value from here: its presence flag
+            // clears, as a move out of it would clear it.
+            MirInstr::MarkDestroyed { place } => {
+                self.clear_presence(ctx, place);
+                Ok(())
+            }
             MirInstr::ConsumePlace { marker, .. } => {
                 // Consumption skips the whole-value destructor and destroys
                 // only residual fields. MIR emits it only after a named

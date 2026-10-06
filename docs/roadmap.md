@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R357**.
+Next free ID: **R362**.
 
 ## Ordered Work
 
@@ -236,42 +236,71 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R4 (P3d) `Tuple`, `TString`, `Variant`, and the variadic structs
-  over them are specialized whole in the AST**
+- [ ] **R4 (P3d) `Variant` and the variadic structs over it are specialized
+  whole in the AST**
 
-  Problem: the cloner re-declares `Tuple`, `TString`, `Variant`, and every
-  variadic struct whose source names one of them per instance, from
-  requests the driver derives, where the pin elaborates each as an ordinary
-  struct generator.
-  - A struct keyed on a `DType`, a lane width, a vector value, or a
-    struct-typed value is a generator, and so is a variadic struct over none
-    of these (2026-10-05); `served_variadic_structs` (`comptime.rs`) is the
-    gate that leaves with this entry.
-  - Serving `Tuple` gets Hello World through the executable check once a
-    conformance assumes its `where` clause for the pack field: a `*Ts`
-    element must ask `ConformsPack` in `is_copyable_under_assumption`, and
-    `ImplicitlyCopyable` needs the same assumption.
-  - The MIR verifier must then admit the enclosing struct's binders in a
-    method's callable contract (`consume_elements`' `Self.Ts[index]`,
-    `validate_dependent_bindings`).
-  - Ownership stops next: `Tuple.__init__()` writes `self.storage[i] =
-    Self.Ts[i]()` in a kept `comptime for`, which reads as a use of
-    uninitialized storage; the pin marks the storage initialized first
-    (R161).
-  - `native::mono`'s `substitute_ty` must expand a spread in a field's
-    `__RuntimeTuple[*Self.Ts]`, in `Ty::Struct` arguments, and in
-    `Ty::Variant`, as `expand_pack_spread` does.
-  - `Tuple`'s synthesized `reverse` and `concat` (R209) and its value twins
-    (`__getitem_param_value__$k`) have no upstream counterpart.
+  Problem: the cloner re-declares `Variant`, and every variadic struct whose
+  source names it, per instance, from requests the driver derives, where the
+  pin elaborates each as an ordinary struct generator.
+  - `Tuple` and `TString` are generators, and so is a variadic struct over
+    them (2026-10-06). `served_variadic_structs` (`comptime.rs`) is the gate
+    that leaves with this entry.
   - A served `Variant.isa[T]` needs a symbolic alternative index in
-    `MakeVariant`, `VariantIs`, `VariantGet`, and `Proj::Variant`
-    (upstream's `_get_type_index`), failing the instantiation at a
-    non-member `T`.
-  - The `Tuple` and `TString` request types, `variadic_struct_requests`,
-    the driver's tuple requests, and Pliron's `Tuple$t` drop tests leave
-    with them.
-  - Depends on R161 and R209.
+    `MakeVariant`, `VariantIs`, `VariantGet`, `VariantSet`, `VariantReplace`,
+    and `Proj::Variant` (upstream's `_get_type_index`), failing the
+    instantiation at a non-member `T`.
+  - The ownership analysis keys a variant payload place by that index
+    (`Key::Variant`, `analysis/moves.rs`), so it must admit a symbolic one.
+  - `native::mono`'s `substitute_ty` already expands a spread in
+    `Ty::Variant` (`sub_spread_types`).
+  - `variant.mojo`'s `comptime if Self.Ts.contains[T](): pass` markers stand
+    in for upstream's `Self._check[T]()`, which needs `comptime assert`.
+  - `variadic_struct_requests`, `generate_struct_spec`, the per-index
+    accessor clones with their value twins (`__getitem_param_value__$k`),
+    and the variadic template shells leave with it.
+  - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R357 (P3d) A `t"…"` literal reaches its `TString` construction
+  through a request the driver derives**
+
+  Problem: the checker types a `t"…"` occurrence, the driver turns its
+  element types into a request, and the next discovery round rewrites the
+  occurrence into `TString(...)`, where the pin desugars the literal in one
+  pass.
+  - `TString` itself is a generator, so the request mints no struct. It only
+    carries which interpolation is a non-`Copyable` place, which the rewrite
+    formats to a `String` at creation.
+  - The checker can spell the construction itself and record it, as it does
+    an initializer list (`checker/initializer_list.rs`,
+    `SemanticAdjustment::InitializerList`).
+  - `TStringSpecializationRequest`, the driver's
+    `tstring_specialization_requests`, `ServedRequests::tstring_elements`,
+    and `Mono::tstring_call_targets` leave with it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R358 (P3d) Clone machinery for `Tuple` and `TString` is still in the
+  tree, though nothing reaches it**
+
+  Problem: both structs are served by their templates, but code that named
+  or derived their per-element-list clones remains.
+  - `Type::MaterializedCallable` (`mojito-ast`) and the checker's
+    `materialized_callables` map spelled a callable element of a cloned
+    `Tuple`.
+  - `Checker::infer_tuple_method` and the `$Tuple.declaration` shell
+    (`TUPLE_DECLARATION_SHELL`, `comptime/specialize.rs`) typed a member of
+    a `Tuple` no clone served yet. Only a check with no linked prelude still
+    takes that path.
+  - The frozen template-facts modules derive `Tuple` and `TString` clone
+    members (`template_facts/tuple_unpacks.rs`, `realization.rs`'s
+    `tstring_specialization`).
+  - Comments across `native::mono` and the census still cite `Tuple$tN`.
+  - Tests that pin a `Tuple` clone's derivation statistics are stale: four
+    in `tests/compiler_test.rs` were rewritten, and the nightly gate names
+    the rest.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
@@ -724,6 +753,28 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R361 (P5) The erased oracle cannot run several members of the
+  template-served `Tuple` and `TString`**
+
+  Problem: programs that ran under `--erased` while `Tuple` and `TString`
+  were cloned per element list now stop there, because the oracle runs the
+  templates' own bodies and an erased value carries no pack.
+  - A tuple an intrinsic or a named `out` result builds reifies no pack, so
+    a later member stops with "the erased oracle cannot decide the comptime
+    for stop" or "cannot evaluate the parameter constant
+    `TypeList[Ts.values]().length`" (`var r = t^.reverse()` then
+    `r^.concat((1,))`).
+  - The default initializer constructs `Self.Ts[i]()` from a reified type
+    name, which stops with "vm backend does not support the built-in or
+    callee 'UInt64'" for a scalar or a vector element.
+  - A constructed `Tuple` does reify its pack, which sizes its storage
+    (`size_pack_storage`, `backend/vm/values.rs`), and a named result's
+    storage is sized from the frame (`erased_list_length`, `backend/vm.rs`).
+  - Its `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`) cite this entry.
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R300 (P5) The erased oracle cannot run a vector whose width is a
   layout query**
 
@@ -812,18 +863,20 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R277 Native `Tuple.reverse` and `Tuple.concat` over a `String`
-  element double-free it**
+- [ ] **R277 Native `Tuple.concat` double-frees a `String` element of its
+  argument**
 
-  Problem: `var t = (1, String("x"))` then `t.reverse()` (or
-  `t.concat(Tuple(True))`) prints the result and then traps with "vm: double
-  free of Pointer allocation" natively, where the pin and the VM run to
-  completion.
-  - An `Int`/`Bool` tuple is clean; the `String` element is destroyed both in
-    the result and in the receiver the transform read.
-  - The transform result is built by the `TupleTransformRequest` clone, so
-    the suspect is the native lowering copying the element without the
-    `String` copy that the VM's clone performs.
+  Problem: `var c = u^.concat((String("x"), 3.5))` prints the result and
+  then traps with "vm: double free of Pointer allocation" natively, where the
+  pin and the VM run to completion.
+  - `reverse`, and `concat` over a `String` in the receiver, run natively
+    since the members move their elements out through pointers
+    (2026-10-06).
+  - An argument of `Int`s is clean, and so is one whose element is a struct
+    with a destructor (`assets/ok/named_result_transferred.mojo`).
+  - The member takes each element of `other` through a pointer and marks
+    `other.storage` destroyed, so the suspect is the presence flag of a
+    `deinit` parameter that is not the receiver.
   - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3866,6 +3919,40 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Ty::Simd`'s slots served by a nominal struct.
   - Depends on R160.
   - Model: Fable, Not Planned.
+
+- [ ] **R359 `Tuple`'s private storage destroys its elements, where
+  upstream's storage is trivially destructible**
+
+  Problem: Mojito's `Tuple` holds a `__RuntimeTuple[*Self.Ts]` whose
+  destruction destroys every element, where upstream's `!kgen.struct`
+  storage has a trivial destructor and `Tuple.__deinit__` destroys each
+  element through `Pointer(to=self[i]).unsafe_deinit_pointee()`.
+  - The consuming members (`reverse`, `concat`, `consume_elements`) take
+    each element with `Pointer(to=self[i]).unsafe_take_pointee()` and then
+    must end the storage with `lit.ownership.mark_destroyed`, which upstream
+    does not need.
+  - Upstream writes the moves as `unsafe_write_move_from` over a rebound
+    pointer, which Mojito does not have.
+  - `unsafe_take_pointee()` through an origin-bearing pointer to an element
+    with a destructor is admitted only in the bundled storage modules
+    (`checker/method_calls/builtin_types.rs`), because user code cannot end
+    the owner's storage.
+  - Depends on R341.
+  - Model: Fable, Planned.
+
+- [ ] **R360 `TString` owns a `Tuple` of its parts, where the pin's borrows
+  a pack beside its encoded literal text**
+
+  Problem: Mojito's `TString[*Ts: Movable & Writable]` stores every literal
+  segment and every interpolation in an owned `Tuple[*Self.Ts]`, where the
+  pin's `TString[origins: ImmOrigin, //, *Ts: Writable]` borrows a
+  `VariadicPack` of the interpolations and keeps the literal parts
+  NUL-encoded beside it (`__make_tstring`).
+  - A non-`Copyable` interpolated place is formatted to a `String` when the
+    t-string is created, where the pin borrows it.
+  - The pin's shape needs an origin-carrying struct over a borrowed pack.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R341 `Tuple`'s pack, copy, and move initializers store the private
   storage whole where upstream marks `self` initialized and writes each

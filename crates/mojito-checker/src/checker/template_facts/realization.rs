@@ -113,12 +113,6 @@ impl Checker {
         derived
     }
 
-    /// A retained type under an instance's arguments, naming the generated
-    /// Tuple the clone check selects for a closed public one.
-    pub(super) fn instance_ty(&self, ty: &Ty, substitution: &TySubst) -> Ty {
-        self.canonicalize_public_tuple_types(mojito_types::types::substitute(ty, substitution))
-    }
-
     /// [`TemplateObligation::ReplayedTransfers`]: replay the template's
     /// transfers for the instance.
     ///
@@ -804,16 +798,14 @@ impl Checker {
                     // The template's `Self` names this instance only when the
                     // resolved pack mangles back to it.
                     let own = template.id.owner.as_deref().map(|owner| {
-                        self.specialized_value_structs(
-                            &self.canonicalize_public_tuple_types(Ty::Struct(
-                                owner.to_string(),
-                                elements
-                                    .iter()
-                                    .cloned()
-                                    .map(mojito_types::types::TyArg::Ty)
-                                    .collect(),
-                            )),
-                        )
+                        self.specialized_value_structs(&Ty::Struct(
+                            owner.to_string(),
+                            elements
+                                .iter()
+                                .cloned()
+                                .map(mojito_types::types::TyArg::Ty)
+                                .collect(),
+                        ))
                     });
                     match own {
                         Some(Ty::Struct(name, arguments))
@@ -915,23 +907,6 @@ impl Checker {
     /// Int]`) names the specialization discovery minted for its elements by
     /// its symbol alone, as the clone check does; no annotation may spell it.
     fn trace_source_ty(&self, source: &mojito_ast::ast::Type) -> Result<Ty, TypeError> {
-        if let mojito_ast::ast::Type::Named(name, arguments) = source
-            && name == mojito_types::types::TSTRING_TYPE_NAME
-        {
-            let elements = arguments
-                .iter()
-                .map(|argument| match argument {
-                    mojito_ast::ast::ParamArg::Type(element) => self.trace_source_ty(element),
-                    _ => Err(TypeError::UnknownType(name.clone())),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let symbol = mojito_symbol::symbol::tstring_specialization_symbol(&elements);
-            return if self.structs.contains_key(&symbol) {
-                Ok(Ty::Struct(symbol, Vec::new().into()))
-            } else {
-                Err(TypeError::UnknownType(symbol))
-            };
-        }
         let generated = self.generated_declaration.replace(true);
         self.bare_string_literal_parameter.set(
             crate::checker::declarations::is_string_literal_annotation(source),
@@ -942,16 +917,12 @@ impl Checker {
         ty
     }
 
-    /// A substituted type as the clone check names it: a closed public
-    /// `Tuple` by the specialization selected for it
-    /// (`canonicalize_public_tuple_types`), a value-keyed or variadic struct
-    /// at closed arguments likewise (`specialized_value_structs`), and a
-    /// `TString`'s `Self` by its own symbol (`named_self`).
-    fn instance_names(&self, ty: Ty, named_self: &[(Ty, Ty)]) -> Ty {
-        fold_binder_views(
-            &self.specialized_value_structs(&self.canonicalize_public_tuple_types(ty)),
-            named_self,
-        )
+    /// A substituted type as the clone check names it: a value-keyed or
+    /// variadic struct at closed arguments by the specialization selected
+    /// for it (`specialized_value_structs`), and a clone's `Self` by its own
+    /// symbol (`named_self`).
+    fn instance_names(&self, ty: &Ty, named_self: &[(Ty, Ty)]) -> Ty {
+        fold_binder_views(&self.specialized_value_structs(ty), named_self)
     }
 
     /// The `TString` specialization a member instance belongs to, when its
@@ -960,7 +931,7 @@ impl Checker {
     /// storage pack no longer tells apart (`tstring_storage_elements`).
     fn tstring_specialization(&self, site: &BodySite<'_>, elements: &[Ty]) -> Option<Ty> {
         let owner = site.instance.owner.as_deref()?;
-        let storage = self.public_tuple_type(elements.to_vec());
+        let storage = mojito_types::types::tuple_type(elements.to_vec());
         let stored = self
             .structs
             .get(owner)?
@@ -1002,7 +973,7 @@ impl Checker {
             kept_values,
             named_self,
         } = instance;
-        let canonical = |ty: Ty| self.instance_names(ty, named_self.as_slice());
+        let canonical = |ty: Ty| self.instance_names(&ty, named_self.as_slice());
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
                 ty,

@@ -615,9 +615,14 @@ impl Checker {
 
     /// A read dunder reached through a bound reads a named operand of the
     /// parameter type where it lies, as [`Self::borrow_nominal_place_argument`]
-    /// reads a struct operand: the instance's dunder takes it by `read`.
+    /// reads a struct operand: the instance's dunder takes it by `read`. An
+    /// element an accessor returns by reference (`bag.storage[i]`) is read
+    /// through that reference likewise.
     pub(super) fn borrow_parameter_place_argument(&self, argument: &Expr, ty: &Ty) {
-        if matches!(argument.kind, ExprKind::Identifier(_)) && matches!(ty, Ty::Param { .. }) {
+        let named = matches!(argument.kind, ExprKind::Identifier(_));
+        let element = matches!(argument.kind, ExprKind::Index { .. })
+            && self.infer_reference_value(argument).is_some();
+        if (named || element) && matches!(ty, Ty::Param { .. }) {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .insert(argument.source_span());
@@ -1019,10 +1024,16 @@ impl Checker {
     pub(super) fn infer_divmod(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("divmod", 2, args)?;
         if let Some(common) = common_numeric(&tys[0], &tys[1]) {
-            return Ok(self.public_tuple_type(vec![common.clone(), common]));
+            return Ok(mojito_types::types::tuple_type(vec![
+                common.clone(),
+                common,
+            ]));
         }
         if tys[0] == tys[1] && param_has_bound(&tys[0], "DivModable") {
-            return Ok(self.public_tuple_type(vec![tys[0].clone(), tys[0].clone()]));
+            return Ok(mojito_types::types::tuple_type(vec![
+                tys[0].clone(),
+                tys[0].clone(),
+            ]));
         }
         Err(TypeError::BadOperator {
             op: "divmod".to_string(),

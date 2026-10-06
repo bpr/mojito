@@ -116,13 +116,12 @@ impl VmBackend {
         // `Tuple[T, T]`. There is deliberately no nominal implementation for an
         // open type. Keep the private pack transient through that boundary; the
         // direct-call instruction in the concrete caller carries the fully
-        // substituted destination type and materializes its exact generated
-        // Tuple specialization below. A closed missing specialization remains a
-        // compiler invariant error rather than falling back to runtime guessing.
-        if !prog.structs.contains_key(name)
-            && public_elements
-                .iter()
-                .any(|element| mojito_types::types::is_symbolic(element))
+        // substituted destination type and materializes its `Tuple` instance
+        // below. A closed missing instance remains a compiler invariant error
+        // rather than falling back to runtime guessing.
+        if public_elements
+            .iter()
+            .any(|element| mojito_types::types::is_symbolic(element))
         {
             return Ok(Value::Tuple(items));
         }
@@ -136,6 +135,14 @@ impl VmBackend {
                 "vm: public Tuple specialization '{name}' does not have one private runtime-pack field"
             )));
         };
+        // The erased template's storage is its pack, whatever its length.
+        if field == "storage" && mojito_types::types::pack_spread(storage_elements).is_some() {
+            return Ok(Value::Struct {
+                name: name.clone(),
+                fields: vec![(field.clone(), Value::Tuple(items))],
+                value_params: Vec::new(),
+            });
+        }
         if field != "storage"
             || storage_elements.len() != items.len()
             || public_elements.len() != items.len()

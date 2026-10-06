@@ -375,7 +375,22 @@ impl Flatten<'_> {
         evaluated: &[(SourceSpan, Reg)],
     ) -> Option<MirSubscriptCall> {
         let contract = self.checked_call_contract(expression)?;
-        Some(self.mir_subscript_call_contract(contract, evaluated))
+        let mut call = self.mir_subscript_call_contract(contract, evaluated);
+        // A compile-time index built from the enclosing binders
+        // (`self[Self.Ts.length - 1 - i]`) is recorded as the expression the
+        // checker solved it to, which the elaborator evaluates per instance.
+        if let ExprKind::Index { index, .. } = &expression.kind
+            && let [argument] = call.param_arg_regs.as_mut_slice()
+            && argument.value.is_some()
+        {
+            argument.expr = match self.instantiated_args(expression).as_slice() {
+                [TyArg::Val(mojito_types::ct::CtValue::Expr(solved))] => Some(solved.clone()),
+                _ => self
+                    .value_binder_expr(index)
+                    .filter(|value| value.as_constant().is_none()),
+            };
+        }
+        Some(call)
     }
 
     pub(super) fn mir_subscript_call_contract(

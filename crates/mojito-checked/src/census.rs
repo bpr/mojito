@@ -33,7 +33,7 @@ pub enum CloneClass {
     DTypeVectorStruct,
     /// A member of a struct specialized whole for any other value.
     ValueStruct,
-    /// A member of a variadic struct specialized whole (`Tuple$…`).
+    /// A member of a variadic struct specialized whole (`Variant$…`).
     VariadicStruct,
     /// A per-instantiation method clone whose template body holds no
     /// compile-time control flow.
@@ -151,7 +151,7 @@ pub struct InstantiationCensus {
     /// no `main` or monomorphization refuses it.
     pub erased_served: Option<ErasedServed>,
     /// Cloned bodies that are still parametric in MIR: a clone that keeps a
-    /// parameter of its own (`Tuple$t2[…].write_to`, generic in its writer).
+    /// parameter of its own (`Variant$t2[…].write_to`, generic in its writer).
     /// Each is counted in `cloned` and in no erased row.
     pub parametric_clones: usize,
     /// What `main` reaches of the parametric clones, as `erased_served` is

@@ -882,6 +882,12 @@ pub enum SemanticAdjustment {
     /// which its storage is written through pointers (`Tuple.__init__`). MIR
     /// carries it as `MarkInitialized` over the place.
     MarkInitialized,
+    /// The `__mlir_op` statement `lit.ownership.mark_destroyed` over
+    /// `__get_mvalue_as_litref(place)`: it ends a place's value without
+    /// destroying it, after its storage was moved out through pointers
+    /// (`Tuple.consume_elements`). MIR carries it as `MarkDestroyed` over
+    /// the place.
+    MarkDestroyed,
     /// An initializer list `{}` / `{a, b}` at the type its context expects:
     /// upstream's set-initializer literal emitted as the construction
     /// `T(a, b)` of that type. The checker spells and checks the
@@ -1001,6 +1007,12 @@ impl Eq for InitializerListConstruction {}
 pub struct CheckedTupleUnpackElement {
     pub ty: Ty,
     pub accessor: Option<String>,
+    /// The accessor's own compile-time parameters, which the element's
+    /// index binds (`Tuple.__getitem_param__[index: Int]`).
+    pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    /// The owner of the hidden slot an unpacked temporary lives in while
+    /// its elements are read through references into it.
+    pub temporary: Option<mojito_types::origin::OwnerId>,
     pub reference: Option<mojito_types::origin::RefTy>,
     /// The element's storage carries owner loans (a view or other
     /// origin-bearing value), so its binding inherits the unpacked value's

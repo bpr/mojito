@@ -1189,11 +1189,9 @@ pub fn is_initializer_symbol(symbol: &str) -> bool {
         })
 }
 
-/// Which identity a mangled type spelling serves. Overload keys spell a
-/// minted Tuple instance bare (its elements are baked into the symbol, and
-/// the declaration annotation carries no arguments); a generic instance name
-/// keeps the elements, so the checked `Tuple$t2[…]` with and without retained
-/// element arguments stay distinct native instances.
+/// Which identity a mangled type spelling serves: an overload key, or a
+/// generic instance name, which spells a minted instance (`W$mono$TInt`) as
+/// its own symbol.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KeyMode {
     Overload,
@@ -1262,13 +1260,6 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // selects the exact `StringLiteral` overload beside a `String` one).
         Ty::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
-        }
-        // A minted Tuple instance's overload key is its bare symbol (see
-        // `KeyMode`).
-        Ty::Struct(name, _)
-            if mode == KeyMode::Overload && is_tuple_specialization_symbol(name) =>
-        {
-            encode_identifier(name)
         }
         // A minted generic instance (`W$mono$TInt`) spells as its own symbol:
         // that symbol already carries every argument, so re-encoding it and
@@ -2106,40 +2097,11 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
 /// nor a specialization symbol.
 pub const TUPLE_DECLARATION_SHELL: &str = "$Tuple.declaration";
 
-/// Whether `name` is a minted `Tuple`/`TString` specialization symbol
-/// (`Tuple$t2[y3:Inty4:Bool]`): its element types are baked into the name.
-///
-/// The checked instance type also carries them as arguments while the
-/// annotation does not, so an overload key spells the bare symbol
-/// (`KeyMode::Overload`).
-pub fn is_tuple_specialization_symbol(name: &str) -> bool {
-    name.strip_prefix("Tuple$")
-        .or_else(|| name.strip_prefix("TString$"))
-        .is_some_and(|rest| rest.starts_with('t'))
-}
-
-/// The specialization-key spelling of a type.
-///
-/// A minted public-Tuple instance that carries its element arguments
-/// (`Tuple$t2[...]` over `[Int, Bool]`) spells as the canonical `Tuple[Int,
-/// Bool]` application, so a key nesting it is the same before and after that
-/// inner specialization is declared.
-///
-/// Argument-erased symbols (`Tuple$t2[...]` over `[]`) carry no elements to
-/// respell and stay verbatim.
+/// The specialization-key spelling of a type: a caller place a clone binder
+/// stands for spells as the first clone binder, at every depth.
 pub fn canonical_specialization_type(ty: &Ty) -> Ty {
     let respell = |inner: &Ty| canonical_specialization_type(inner);
     match ty {
-        Ty::Struct(name, args)
-            if !args.is_empty()
-                && name != mojito_types::types::TUPLE_TYPE_NAME
-                && mojito_types::types::tuple_elements(ty).is_some() =>
-        {
-            Ty::Struct(
-                mojito_types::types::TUPLE_TYPE_NAME.to_string(),
-                args.reusing(mojito_types::types::map_tyargs(args, respell)),
-            )
-        }
         Ty::Struct(name, args) => Ty::Struct(
             name.clone(),
             args.reusing(mojito_types::types::map_tyargs(args, respell)),
@@ -2168,51 +2130,6 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         }
         other => other.clone(),
     }
-}
-
-/// Canonical concrete symbol selected for public `Tuple[*Ts]` element types.
-///
-/// Checker inference probes this speculatively, so elements that are not
-/// closed name the unspecialized nominal type rather than a symbolic clone.
-pub fn tuple_specialization_symbol(elements: &[Ty]) -> String {
-    mangle(
-        mojito_types::types::TUPLE_TYPE_NAME,
-        &tuple_specialization_values(elements),
-    )
-    .unwrap_or_else(|_| mojito_types::types::TUPLE_TYPE_NAME.to_string())
-}
-
-/// [`tuple_specialization_symbol`] for `TString`.
-pub fn tstring_specialization_symbol(elements: &[Ty]) -> String {
-    mangle(
-        mojito_types::types::TSTRING_TYPE_NAME,
-        &tuple_specialization_values(elements),
-    )
-    .unwrap_or_else(|_| mojito_types::types::TSTRING_TYPE_NAME.to_string())
-}
-
-/// The storage pack of a `TString` specialization of the public `elements`.
-///
-/// A concrete `TString` owns every textual snapshot it stores, so a
-/// `StringLiteral` segment is stored as the nominal owning `String`. A nested
-/// t-string is stored as its own specialization, so the storage `Tuple` is
-/// closed the round the enclosing specialization is minted.
-pub fn tstring_storage_elements(elements: &[Ty]) -> Vec<Ty> {
-    elements
-        .iter()
-        .map(|element| match element {
-            Ty::StringLiteral => Ty::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new().into()),
-            Ty::Struct(name, _) if name == mojito_types::types::TSTRING_TYPE_NAME => {
-                let nested = mojito_types::types::tstring_elements(element)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                Ty::Struct(tstring_specialization_symbol(&nested), Vec::new().into())
-            }
-            _ => element.clone(),
-        })
-        .collect()
 }
 
 pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {

@@ -323,9 +323,13 @@ impl Checker {
         // Upstream `ContiguousSlice.indices` yields `(start, end)`; the
         // strided family keeps the three-element normalization.
         if kind == "ContiguousSlice" {
-            return Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int]));
+            return Ok(mojito_types::types::tuple_type(vec![Ty::Int, Ty::Int]));
         }
-        Ok(self.public_tuple_type(vec![Ty::Int, Ty::Int, Ty::Int]))
+        Ok(mojito_types::types::tuple_type(vec![
+            Ty::Int,
+            Ty::Int,
+            Ty::Int,
+        ]))
     }
 
     /// The raw-seam `Optional[Int]`, present only without the linked stdlib.

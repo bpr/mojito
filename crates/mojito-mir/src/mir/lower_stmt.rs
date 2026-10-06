@@ -2616,8 +2616,33 @@ impl Flatten<'_> {
                     targets.len(),
                     "checked tuple unpack arity matches its targets"
                 );
-                let base_place = self.simple_place(value);
+                let mut base_place = self.simple_place(value);
                 let tuple = self.expr(value);
+                // A temporary read through element references lives in a
+                // hidden slot under the owner the checker minted for it,
+                // the root those references name.
+                if base_place.is_none()
+                    && let Some(owner) = plan.first().and_then(|element| element.temporary)
+                    && !self.owner_vars.contains_key(&owner)
+                {
+                    let ty = self
+                        .f
+                        .reg_types
+                        .get(&tuple.0)
+                        .cloned()
+                        .or_else(|| self.checked_ty(value));
+                    let hidden = self.var(&format!("$mat_r{}", tuple.0));
+                    if let Some(ty) = ty.clone() {
+                        self.var_types.insert(hidden, ty);
+                    }
+                    self.emit(MirInstr::DefVar {
+                        var: hidden,
+                        src: tuple,
+                        binding_ty: ty.clone(),
+                    });
+                    self.owner_vars.insert(owner, hidden);
+                    base_place = Some(MirPlace::root(hidden, ty));
+                }
                 // A loan-carrying element (a view into the unpacked value's
                 // source) inherits the value's loans, exactly as binding the
                 // whole value would: otherwise the source dies at the call
@@ -2653,8 +2678,17 @@ impl Flatten<'_> {
                         arguments: Vec::new(),
                         capture_accesses: Vec::new(),
                         reference_result: extraction.reference.clone(),
-                        param_arg_regs: Vec::new(),
-                        param_decls: Vec::new(),
+                        param_arg_regs: extraction
+                            .param_decls
+                            .iter()
+                            .map(|_| MirParamArg {
+                                name: None,
+                                value: Some(idx),
+                                binder: None,
+                                expr: None,
+                            })
+                            .collect(),
+                        param_decls: extraction.param_decls.clone(),
                     });
                     let intrinsic = call
                         .is_none()

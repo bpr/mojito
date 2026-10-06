@@ -108,11 +108,7 @@ impl FnLowering<'_> {
                     let name = name.clone();
                     self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
                 }
-                let fully_drained_tuple = matches!(ty.as_ref(), Ty::Struct(name, _)
-                    if name.starts_with("Tuple$t")
-                        && (self.name.contains(".deinit_with")
-                            || self.name.contains(".consume_elements")));
-                if self.fields_need_drop(&ty) && !fully_drained_tuple {
+                if self.fields_need_drop(&ty) {
                     // The named explicit destructor owns the aggregate; its
                     // surviving fields receive their ordinary declaration-
                     // order destruction (the VM's `ConsumeVar`).
@@ -122,7 +118,7 @@ impl FnLowering<'_> {
                     if !matches!(
                         ty.as_ref(),
                         Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..)
-                    ) || (matches!(ty.as_ref(), Ty::Struct(name, _) if !name.starts_with("Tuple$t"))
+                    ) || (matches!(ty.as_ref(), Ty::Struct(..))
                         && self.partially_moved.contains(&var))
                     {
                         return Err(self.unsupported(
@@ -389,14 +385,37 @@ impl FnLowering<'_> {
                 .struct_decls
                 .get(name.as_str())
                 .and_then(|decl| decl.fields.iter().position(|(name, _)| name == field)),
-            (Ty::Struct(name, _), Proj::ConstIndex(index)) if name.starts_with("Tuple$t") => self
-                .struct_decls
-                .get(name.as_str())
-                .and_then(|decl| (*index < decl.fields.len()).then_some(*index)),
             (Ty::Tuple(elements) | Ty::RuntimePack(elements), Proj::ConstIndex(index)) => {
                 (*index < elements.len()).then_some(*index)
             }
             _ => None,
+        }
+    }
+
+    /// Record that the projection `place` no longer holds a value: a tracked
+    /// top-level leaf clears its presence flag (later drops skip it, like the
+    /// VM's `Value::Moved` tombstone); anything deeper records the blanket
+    /// marker, so a whole-variable drop refuses destructor work instead of
+    /// double-freeing. A whole variable has no flag to clear.
+    pub(super) fn clear_presence(&mut self, ctx: &mut Context, place: &MirPlace) {
+        if place.proj.is_empty() {
+            return;
+        }
+        let flagged = self.leaf_position(place).and_then(|position| {
+            self.leaf_flags
+                .get(&place.root)
+                .and_then(|leaves| leaves.get(&position))
+                .copied()
+        });
+        match flagged {
+            Some(flag) => {
+                let absent = self.bool_constant(ctx, false);
+                let store = StoreOp::new(ctx, absent, flag);
+                self.append(ctx, store.get_operation(), None);
+            }
+            None => {
+                self.partially_moved.insert(place.root);
+            }
         }
     }
 

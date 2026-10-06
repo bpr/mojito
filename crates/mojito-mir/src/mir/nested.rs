@@ -632,6 +632,9 @@ fn lower_nested_node(
     }
 }
 
+/// Return the named `out` result at every exit that returns nothing else:
+/// the result is transferred to the caller, so no destructor runs on it
+/// here.
 fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
     let slot = function
         .var_names
@@ -650,7 +653,7 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
             block.instrs.push(MirInstr::UseVar {
                 dest: register,
                 var: slot as VarId,
-                mode: UseMode::Copy,
+                mode: UseMode::Move,
             });
             match &mut block.term {
                 MirTerm::ReturnWithCleanup { value, .. } => *value = Some(register),

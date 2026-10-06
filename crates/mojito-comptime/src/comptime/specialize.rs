@@ -39,12 +39,10 @@ impl Elab<'_> {
     pub(super) fn monomorphize(
         &self,
         program: Vec<Stmt>,
-        tuple_requests: &[TupleSpecializationRequest],
         tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
     ) -> Result<Elaborated, ComptimeError> {
         if self.specializable.is_empty()
-            && tuple_requests.is_empty()
             && tstring_requests.is_empty()
             && self.instance_requests.is_empty()
         {
@@ -60,18 +58,6 @@ impl Elab<'_> {
                 ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
                 clones: mojito_checked::census::CloneCensus::default(),
             });
-        }
-        if !tuple_requests.is_empty() && !self.struct_template("Tuple") {
-            return Err(ComptimeError::NotComptime(
-                "checked Tuple specialization requests require a public variadic `Tuple[*Ts]` template"
-                    .to_string(),
-            ));
-        }
-        if !tstring_requests.is_empty() && !self.struct_template("TString") {
-            return Err(ComptimeError::NotComptime(
-                "checked TString specialization requests require the prelude's variadic `TString[*Ts]` template"
-                    .to_string(),
-            ));
         }
         let consts = self.top_consts.borrow().clone();
         let mut mono = Mono::default();
@@ -91,87 +77,14 @@ impl Elab<'_> {
                 .collect(),
         );
         mono.value_scopes.push(module_bindings);
-        for request in tuple_requests {
-            let vals = tuple_specialization_values(request.elements());
-            let output_name = tuple_specialization_symbol(request.elements());
-            if let Some(occurrence) = request.occurrence()
-                && let Some(existing) = mono
-                    .tuple_call_targets
-                    .insert(occurrence.clone().without_syntax(), output_name.clone())
-                && existing != output_name
-            {
-                return Err(ComptimeError::NotComptime(format!(
-                    "one bare Tuple call was assigned incompatible specializations '{existing}' and '{output_name}'"
-                )));
-            }
-            if mono.done.insert(output_name.clone()) {
-                mono.queue.push_back(Job {
-                    orig: "Tuple".to_string(),
-                    decl: None,
-                    vals,
-                    site: request.occurrence().map_or_else(
-                        || "a checked Tuple type".to_string(),
-                        |span| match &span.source {
-                            Some(source) => {
-                                format!("{source}:{}..{}", span.span.0, span.span.1)
-                            }
-                            None => format!("bytes {}..{}", span.span.0, span.span.1),
-                        },
-                    ),
-                    output_name,
-                    whole_pack_abi: false,
-                });
-            }
-        }
-        // Checker-discovered t-string occurrences: each one materializes the
-        // concrete `TString` specialization and records the occurrence target
-        // consumed by `mono_expr`'s rewrite of the `t"…"` node into that
-        // specialization's construction.
+        // Checker-discovered t-string occurrences: each records the element
+        // types `mono_expr` rewrites the `t"…"` node by, into a construction
+        // of the `TString` its template serves.
         for request in tstring_requests {
-            // StringLiteral remains a borrowed, drop-inert descriptor
-            // everywhere else; specialize textual fields to nominal String
-            // so the ordinary struct lifecycle owns their runtime buffers.
-            let vals = tuple_specialization_values(
-                &mojito_symbol::symbol::tstring_storage_elements(request.elements()),
+            mono.tstring_call_targets.insert(
+                request.occurrence().clone().without_syntax(),
+                request.elements().to_vec(),
             );
-            let output_name = tstring_specialization_symbol(request.elements());
-            let target = TStringTarget {
-                symbol: output_name.clone(),
-                elements: request.elements().to_vec(),
-            };
-            if let Some(existing) = mono
-                .tstring_call_targets
-                .insert(request.occurrence().clone().without_syntax(), target)
-                && existing.symbol != output_name
-            {
-                return Err(ComptimeError::NotComptime(format!(
-                    "one t-string occurrence was assigned incompatible specializations '{}' and '{output_name}'",
-                    existing.symbol
-                )));
-            }
-            if mono.done.insert(output_name.clone()) {
-                mono.queue.push_back(Job {
-                    orig: "TString".to_string(),
-                    decl: None,
-                    vals,
-                    site: match &request.occurrence().source {
-                        Some(source) => {
-                            format!(
-                                "{source}:{}..{}",
-                                request.occurrence().span.0,
-                                request.occurrence().span.1
-                            )
-                        }
-                        None => format!(
-                            "bytes {}..{}",
-                            request.occurrence().span.0,
-                            request.occurrence().span.1
-                        ),
-                    },
-                    output_name,
-                    whole_pack_abi: false,
-                });
-            }
         }
         self.seed_def_call_targets(def_requests, &mut mono);
         // Rewrite call sites in every non-template statement, seeding the
@@ -1367,7 +1280,7 @@ impl Elab<'_> {
         let source_types = semantic_types
             .iter()
             .map(|ty| {
-                source_type_from_ty_with_origins(ty, &origin_names, &self.materialized_callables)
+                source_type_from_ty_with_origins(ty, &origin_names)
                     .map(|source| self.insert_origin_placeholders(source))
             })
             .collect::<Option<Vec<_>>>()
@@ -1433,15 +1346,6 @@ impl Elab<'_> {
         let mut elaborated_methods = Vec::with_capacity(methods.len());
         let mut members = Vec::new();
         for method in methods {
-            // The declared transforms are instantiated where a checked call
-            // asks for them. `reverse` on every specialization would close
-            // the set of tuple types under reversal, and `concat` would add
-            // a member no call reaches to each.
-            if orig == "Tuple"
-                && !self.tuple_transform_is_demanded(method, vals, &semantic_types)?
-            {
-                continue;
-            }
             let template_body = traced_template_body(method);
             let mut method = method.clone();
             // An Int-indexed accessor unrolls per element below, as does any
@@ -1951,33 +1855,6 @@ impl Elab<'_> {
             },
         );
         Ok(spec)
-    }
-
-    /// Whether the `Tuple` specialization at `vals` keeps `method`: every
-    /// member but the two transforms, `reverse` where a checked call
-    /// reverses a tuple of `elements`, and `concat` where a checked call on
-    /// the specialization requests an instance of it.
-    fn tuple_transform_is_demanded(
-        &self,
-        method: &mojito_ast::ast::Method,
-        vals: &[CtValue],
-        elements: &[Ty],
-    ) -> Result<bool, ComptimeError> {
-        Ok(match method.name.as_str() {
-            "reverse" => self
-                .reversed_tuples
-                .iter()
-                .any(|reversed| reversed == elements),
-            "concat" => self
-                .method_requests
-                .get(&mangle("Tuple", vals)?)
-                .is_some_and(|requests| {
-                    requests
-                        .iter()
-                        .any(|request| request.selects(method, "Tuple", &self.method_binder_owners))
-                }),
-            _ => true,
-        })
     }
 
     /// Fold the pack-valued `conforms_to(Ts.values, Trait)` atoms used by

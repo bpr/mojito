@@ -984,6 +984,36 @@ pub fn binds_pack_elementwise(name: &str) -> bool {
     })
 }
 
+/// The canonical argument list of an application of the struct `name`.
+///
+/// A pack bound as one list of types is spread element by element for a
+/// struct that [`binds_pack_elementwise`], so `Tuple[Int, Bool]` is one
+/// type however its pack was solved.
+pub fn canonical_pack_arguments(name: &str, arguments: Vec<TyArg>) -> Vec<TyArg> {
+    if !binds_pack_elementwise(name) {
+        return arguments;
+    }
+    let bound = arguments.iter().position(|argument| {
+        matches!(argument, TyArg::Val(CtValue::Tuple(values))
+            if values.iter().all(|value| matches!(value, CtValue::Type(_))))
+    });
+    let Some(position) = bound else {
+        return arguments;
+    };
+    let mut canonical = arguments;
+    let TyArg::Val(CtValue::Tuple(values)) = canonical.remove(position) else {
+        unreachable!("the bound pack was matched above");
+    };
+    canonical.splice(
+        position..position,
+        values.into_iter().map(|value| match value {
+            CtValue::Type(ty) => TyArg::Ty(*ty),
+            _ => unreachable!("every element is a type"),
+        }),
+    );
+    canonical
+}
+
 pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
     let Ty::Struct(name, arguments) = ty else {
         return None;

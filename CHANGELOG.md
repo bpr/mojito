@@ -8,6 +8,39 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The public `Tuple` and the lazy `TString` are struct generators, as in
+  the pin: each is one template in the bundled library, checked once with
+  its pack symbolic and instantiated by `native::mono` for both backends,
+  where the cloner re-declared each per element list from requests the
+  driver derived. A user variadic struct over either (`Pair[*Ts]` holding a
+  `Tuple[*Self.Ts]`) is served by its own template too, and Hello World's
+  instantiation census reads 0 clones, from 175. A tuple's type is the
+  nominal `Tuple[Int, String]` in every phase: `Tuple$t…` names, the
+  driver's tuple requests, the generated-tuple predeclaration, and the
+  per-index accessor clones with their value twins are gone for it. `t[k]`
+  is the template's `__getitem_param__[k]`, and a temporary tuple lends
+  that reference from a hidden slot, so `var a, b = make()` and
+  `make()[1]` read through it. The consuming members (`reverse`, `concat`,
+  `consume_elements`, `deinit_with`) move each element out with
+  `Pointer(to=self[i]).unsafe_take_pointee()`, as upstream moves it through
+  a pointer, and end the storage with upstream's
+  `__mlir_op.`lit.ownership.mark_destroyed``, a new `MarkDestroyed`
+  instruction (MIR schema 1.30); both spellings are admitted only in the
+  bundled modules that reach compiler-private storage. A `t"…"` occurrence
+  is rewritten into a `TString(...)` construction of the template. Four
+  things that were rejected or wrong now run: a method of a variadic struct
+  that decides a `comptime if` over a pack-element alias (`comptime T =
+  Self.Ts[i]`), which aborted at run time as an unspecialized stub; a
+  module `comptime i` no longer reaches a `comptime for i` the template
+  keeps; a method's own value argument computed from an open pack
+  (`self[Self.Ts.length - 1 - i]`) types its result at that index; and
+  `Tuple.reverse`, and `Tuple.concat` over a `String` element of its
+  receiver, no longer double-free it natively (a `String` in `concat`'s
+  argument still does, roadmap R277). `Variant` and the variadic structs over it are
+  still specialized whole (roadmap R4)
+  (`assets/ok/tuple_template_served.mojo`,
+  `assets/ok/pack_struct_element_alias_condition.mojo`).
+
 - `Tuple.reverse` and `Tuple.concat` are now declared in
   `std/builtin/tuple.mojo` with upstream's signatures, as in the pin, where
   the checker typed both in Rust from the element list and the elaborator
@@ -586,6 +619,15 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- A named `out` result is transferred to the caller. The implicit return
+  copied the result and then destroyed the callee's own binding, so a
+  result with a destructor ran it once in the callee and again at the
+  caller, on the VM and natively: `def make(out result: Loud)` printed the
+  destructor's line before the caller's first use, and `Tuple.reverse` and
+  `Tuple.concat`, which build a named result, destroyed every element
+  twice on the VM. The return now moves the result
+  (`assets/ok/named_result_transferred.mojo`).
 
 - A pack element's `.copy()` in a served pack-keyed body (`var x =
   a[i].copy()` under `comptime for i in range(Ts.length)`) calls the

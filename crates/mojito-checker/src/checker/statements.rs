@@ -25,37 +25,6 @@ impl Checker {
                 } if mojito_ast::ast::is_nested_origins_read_only(decorators) => Some(name.clone()),
                 _ => None,
             }));
-        // Phase one for generated public Tuples: recover every concrete pack
-        // identity from its materialized `element_types` member before any
-        // declaration body is checked. Reverse transforms can be requested in
-        // both directions, so no sequential declaration order can make both
-        // result types complete. The forward-type gate remains compiler-owned;
-        // user declarations are still checked in source order below.
-        let saved_forward_types =
-            std::mem::replace(&mut self.allow_generated_tuple_forward_types, true);
-        for statement in stmts {
-            let StmtKind::Struct {
-                name,
-                type_params,
-                associated,
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            if !(name.starts_with("Tuple$") || name.contains("$Tuple$")) {
-                continue;
-            }
-            let saved_type_params =
-                std::mem::replace(&mut self.enclosing_type_params, type_params.clone());
-            let arguments = self.generated_tuple_arguments(name, associated);
-            self.enclosing_type_params = saved_type_params;
-            if let Some(arguments) = arguments? {
-                self.predeclared_generated_tuple_arguments
-                    .insert(name.clone(), arguments);
-            }
-        }
-        self.allow_generated_tuple_forward_types = saved_forward_types;
         drop(phase);
         let phase = timing::span("declarations.shells");
         // Same-module declarations resolve order-independently: every
@@ -584,11 +553,34 @@ impl Checker {
             .map(|ty| mojito_checked::checked::CheckedTupleUnpackElement {
                 ty,
                 accessor: None,
+                param_decls: Vec::new(),
+                temporary: None,
                 reference: None,
                 carries_loans: false,
             })
             .collect::<Vec<_>>();
-        if let Some((name, info, family)) = self.generated_tuple_accessors(vt) {
+        // The nominal `Tuple` reads each element through its
+        // compile-time-index accessor, `__getitem_param__[index]`, on the
+        // reference the unpacked place (or materialized temporary) yields.
+        if let Some((name, accessor)) = self.tuple_index_accessor(vt)
+            && let Some(source) = source
+        {
+            for element in &mut plan {
+                element.accessor = Some(format!("{name}.__getitem_param__"));
+                element.param_decls.clone_from(&accessor.decls);
+                let reference = match &element.ty {
+                    // A reference-valued element forwards its own handle.
+                    Ty::Ref(reference) => reference.clone(),
+                    referent => mojito_types::origin::RefTy {
+                        referent: Box::new(referent.clone()),
+                        origin: source.origin.clone(),
+                        mutability: source.mutability,
+                    },
+                };
+                element.ty = (*reference.referent).clone();
+                element.reference = Some(reference);
+            }
+        } else if let Some((name, info, family)) = self.generated_tuple_accessors(vt) {
             for (index, element) in plan.iter_mut().enumerate() {
                 let method = if place {
                     format!("{}${index}", family.place)
@@ -652,6 +644,28 @@ impl Checker {
             element.carries_loans = self.type_carries_loans(&element.ty);
         }
         Ok(plan)
+    }
+
+    /// The nominal `Tuple` `vt` names, with its compile-time-index accessor
+    /// (`__getitem_param__[index: Int](ref self)`).
+    pub(super) fn tuple_index_accessor<'s>(
+        &'s self,
+        vt: &'s Ty,
+    ) -> Option<(&'s str, &'s MethodSig)> {
+        let Ty::Struct(name, _) = vt else {
+            return None;
+        };
+        tuple_elements(vt)?;
+        let [accessor] = self
+            .structs
+            .get(name)?
+            .methods
+            .get("__getitem_param__")?
+            .as_slice()
+        else {
+            return None;
+        };
+        Some((name.as_str(), accessor))
     }
 
     /// The generated Tuple declaration `vt` names, with its dependent index
@@ -1417,14 +1431,42 @@ impl Checker {
                 // A place is read element by element through the reference it
                 // yields; a generated Tuple's place accessors demand it.
                 let place = is_place_expr(value);
+                let served = self.tuple_index_accessor(&vt).is_some();
                 let source = match place.then(|| self.reference_actual(value)).transpose() {
                     Ok(source) => source,
-                    Err(error) if self.generated_tuple_accessors(&vt).is_some() => {
+                    Err(error) if served || self.generated_tuple_accessors(&vt).is_some() => {
                         return Err(error);
                     }
                     Err(_) => None,
                 };
-                let unpack_plan = self.tuple_unpack_plan(&vt, place, source.as_ref())?;
+                // A temporary `Tuple` lives in a hidden slot for the
+                // statement, and its elements are read through references
+                // into it, as a place's are. The slot's owner is the root of
+                // each element reference the plan records.
+                let source = match source {
+                    None if served && !place => {
+                        let owner = self.fresh_owner()?;
+                        Some(mojito_types::origin::RefTy {
+                            referent: Box::new(vt.clone()),
+                            origin: mojito_types::origin::Origin::Place(
+                                mojito_types::origin::OriginPlace {
+                                    root: owner,
+                                    path: Vec::new(),
+                                },
+                            ),
+                            mutability: mojito_types::origin::Mutability::Immutable,
+                        })
+                    }
+                    source => source,
+                };
+                let mut unpack_plan = self.tuple_unpack_plan(&vt, place, source.as_ref())?;
+                if let (false, true, Some(mojito_types::origin::Origin::Place(temporary))) =
+                    (place, served, source.as_ref().map(|source| &source.origin))
+                {
+                    for element in &mut unpack_plan {
+                        element.temporary = Some(temporary.root);
+                    }
+                }
                 if !place || source.is_some() {
                     let named = targets
                         .iter()

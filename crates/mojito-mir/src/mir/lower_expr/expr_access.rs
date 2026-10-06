@@ -7,7 +7,10 @@ use mojito_ast::ast::SubscriptArg;
 impl Flatten<'_> {
     /// The parameter expression the checker recorded for `e`, a compile-time
     /// query read as a runtime value.
-    pub(super) fn param_value(&self, e: &Expr) -> Option<mojito_types::param_expr::ParamExpr> {
+    pub(in crate::mir) fn param_value(
+        &self,
+        e: &Expr,
+    ) -> Option<mojito_types::param_expr::ParamExpr> {
         self.checked_adjustments(e)
             .into_iter()
             .find_map(|adjustment| match adjustment {

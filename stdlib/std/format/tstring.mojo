@@ -1,8 +1,8 @@
-# Self-hosted lazy template string.  A `t"…"` literal desugars during
-# whole-program elaboration into a TString construction whose interleaved
-# pack captures the literal segments (as compile-time strings) and the
-# interpolation snapshots (typed values; non-Copyable places arrive
-# pre-formatted as strings).  Formatting is deferred: write_to streams the
+# Self-hosted lazy template string, an ordinary variadic struct generator.
+# A `t"…"` literal desugars during whole-program elaboration into a
+# `TString(...)` construction whose interleaved pack captures the literal
+# segments (as `String`s) and the interpolation snapshots (typed values;
+# non-Copyable places arrive pre-formatted as strings).  Formatting is deferred: write_to streams the
 # captured elements in source order, so print/String() consume a TString
 # through the ordinary Writable machinery.
 struct TString[*Ts: Movable & Writable](Movable, Writable):

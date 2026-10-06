@@ -22,8 +22,8 @@ use std::collections::{HashMap, HashSet};
 /// What the template-served bodies of a compilation demand across its
 /// discovery rounds.
 pub(super) struct TemplateDemand {
-    /// Structs specialized whole by the AST cloner (`Tuple`, a value-keyed
-    /// struct): an application of one over a struct's parameter has no
+    /// Structs specialized whole by the AST cloner (`Variant`, a variadic
+    /// struct over it): an application of one over a struct's parameter has no
     /// template the elaborator could instantiate.
     specialized: HashSet<String>,
     /// Template methods that still clone per instance because of what their

@@ -1,6 +1,7 @@
-# Public heterogeneous tuple.  `__RuntimeTuple` is a compiler-private pack
-# aggregate: users see this nominal struct, while the private field gives the
-# compiler exact per-index storage and move tracking.
+# Public heterogeneous tuple, an ordinary variadic struct generator: this one
+# template serves every element list.  `__RuntimeTuple` is a compiler-private
+# pack aggregate: users see this nominal struct, while the private field gives
+# the compiler exact per-index storage and move tracking.
 
 from std.reflection.type_info import _unqualified_type_name
 
@@ -135,14 +136,18 @@ struct Tuple[*Ts: Movable](
             writer.write(repr(self.storage[i]))
         writer.write(")")
 
-    # Upstream's signatures. Each element is transferred out of the private
-    # storage, where upstream moves it through a rebound pointer.
+    # Upstream's signatures. Each element is moved out through a pointer, as
+    # upstream moves it; the storage, whose destruction would reach the moved
+    # elements again, is then marked destroyed.
     def reverse(deinit self, out result: Tuple[*Self.Ts.reverse()]):
         __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))
         comptime for i in range(Self.Ts.length):
             Pointer(to=result[i]).unsafe_write(
-                self.storage[Self.Ts.length - 1 - i]^
+                Pointer(to=self[Self.Ts.length - 1 - i]).unsafe_take_pointee()
             )
+        __mlir_op.`lit.ownership.mark_destroyed`(
+            __get_mvalue_as_litref(self.storage)
+        )
 
     def concat[*OtherTs: Movable](
         deinit self,
@@ -153,28 +158,34 @@ struct Tuple[*Ts: Movable](
         comptime self_len = Self.Ts.length
         comptime for i in range(self_len):
             Pointer(to=rebind[Self.Ts[i]](result[i])).unsafe_write(
-                self.storage[i]^
+                Pointer(to=self[i]).unsafe_take_pointee()
             )
         comptime for i in range(OtherTs.length):
             Pointer(to=rebind[OtherTs[i]](result[self_len + i])).unsafe_write(
-                other.storage[i]^
+                Pointer(to=other[i]).unsafe_take_pointee()
             )
+        __mlir_op.`lit.ownership.mark_destroyed`(
+            __get_mvalue_as_litref(self.storage)
+        )
+        __mlir_op.`lit.ownership.mark_destroyed`(
+            __get_mvalue_as_litref(other.storage)
+        )
 
     def consume_elements[
         elt_handler: def[index: Int](
             var element: Self.Ts[index]
         ) capturing
     ](deinit self):
-        # Indexed transfer is legal only through this compiler-private storage
-        # field.  A user-facing `tuple[index]^` remains rejected.
         comptime for i in range(len(Self.Ts)):
-            elt_handler[i](self.storage[i]^)
+            elt_handler[i](Pointer(to=self[i]).unsafe_take_pointee())
+        __mlir_op.`lit.ownership.mark_destroyed`(
+            __get_mvalue_as_litref(self.storage)
+        )
 
     # Current Mojo's family spelling for the same consuming teardown.
     def deinit_with[
-        elt_handler: def[index: Int](
+        deinit_func: def[index: Int](
             var element: Self.Ts[index]
         ) capturing
     ](deinit self):
-        comptime for i in range(len(Self.Ts)):
-            elt_handler[i](self.storage[i]^)
+        self^.consume_elements[deinit_func]()

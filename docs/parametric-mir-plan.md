@@ -667,9 +667,12 @@ branch for the class is deleted, and so is its certificate class.
   elaborator freezes a computed struct argument to its fieldwise
   construction. A variadic struct whose source names no struct still
   specialized whole followed (`served_variadic_structs`), `native::mono`
-  binding its pack per instance. Hello World reads `struct_dtype_vector 0`
-  and total 175; its `struct_variadic 128` is `Tuple`, `TString`, `Variant`,
-  and the bundled variadic structs over them, which stay on the cloner
+  binding its pack per instance. Hello World read `struct_dtype_vector 0`
+  and total 175; its `struct_variadic 128` was `Tuple`, `TString`, and
+  their unrolled members. `Tuple` and `TString` followed on 2026-10-06:
+  both are templates `native::mono` instantiates, the tuple requests and
+  the `Tuple$t…` spellings are gone, and Hello World's census reads 0
+  clones. `Variant` and the variadic structs over it stay on the cloner
   (R4).
 - **P3e.** Three steps: a method's own compile-time parameters, nested
   definitions and their captures, and clones minted during CTFE. The first
