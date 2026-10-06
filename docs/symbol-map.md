@@ -1205,10 +1205,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   thunks at each request's own result type), which `verify/scope.rs` admits
   as a loop sequence of list meta. A local `comptime` binding of such a
   display is typed by `Checker::evaluated_display_binding` from
-  `bind_template_comptime`, which records
-  `SemanticAdjustment::ComptimeDisplay` on the display, declares the name at
-  the display's type, and keeps a `BoundDisplay` in
-  `local_comptime_displays`; a loop over the name records
+  `bind_template_comptime`, which declares the name at the display's type,
+  records `SemanticAdjustment::ComptimeDisplay` on the display with the
+  sequence the binding denotes (`record_display_binding`,
+  `display_sequence` over `binders_in_scope`), and keeps a `BoundDisplay` in
+  `local_comptime_displays` (source validation notes one too,
+  `note_validated_display`); an element or the length in a type or a
+  parameter argument is a parameter expression over that sequence
+  (`Checker::display_read`, `display_element_argument` for the capitalized
+  spelling, `checker/constraints.rs`, from `eval_associated_ct` and
+  `compile_dependent_ct_expr`; `BoundDisplay::element` and `length` over
+  `ParamContext::list_get` and `list_length`, whose
+  `LIST_LENGTH_FUNCTION` application `builtin_application_value` answers);
+  a loop over the name records
   `ComptimeSource::Bound` (`record_bound_iteration`), a `range` bound the
   check does not close records `ComptimeSource::EvaluatedRange`
   (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
@@ -1218,10 +1227,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
   binding with its checked facts (`DisplayBinding`,
   `ComptimeThunks::bind_display`, `Flatten::copy_facts`) and gives it no
-  runtime form; `lower_term` reads a header's sequence back, lifting the
-  display on the first loop over the name
+  runtime form, lifting the display under the name and over the binders
+  the check's sequence spells; `lower_term` reads a header's sequence back
   (`ComptimeThunks::bound_sequence`), and lifts an evaluated bound
-  (`ComptimeThunks::request_value`). `Flatten::display_read` (`mir.rs`)
+  (`ComptimeThunks::request_value`). A bracket argument that reads a
+  display is lowered by `Flatten::param_arg_reg` through `display_read`, or
+  `display_element_argument` for the capitalized spelling, and an inferred
+  one by `inferred_value_register`. `Flatten::display_read` (`mir.rs`)
   lowers a compile-time expression that reads a display (`displays_read`):
   an `Int` or `Bool` as a parameter constant over its thunk's application,
   any other value in place after `build_display`;
@@ -1235,8 +1247,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `EnclosingBinders::lifted`). `native::mono` evaluates an application
   wherever it meets one: `Specializer::applied`
   (`mono/specializer.rs`, over `ParamContext::answer_applications`) serves
-  `answer_param_constants` and a range bound in `trip_elements`
-  (`ComptimeThunks::bound_sequence`). A thunk reads an enclosing local
+  `answer_param_constants` (a parameter constant, and a bracket argument's
+  expression through `mojito_mir::mir::instruction_param_args_mut`), a
+  condition operand in `resolve_application`, and a range bound in
+  `trip_elements`. An application in a type or a parameter argument is
+  answered where substitution evaluates it: `eval_ct` (`mono/symbolic.rs`)
+  reads `Bindings::applications` (`Applications`, `mono.rs`), which records
+  one it has no value for, and `Specializer::materialize_body` demands
+  those and substitutes the template again (`substituted`,
+  `answer_pending`). A thunk reads an enclosing local
   `comptime` value (`comptime k = n + 1`) as its parameter expression:
   `lower_comptime_binding` records it (`ComptimeThunks::bind_value`), each
   request carries the bindings so far (`EnclosingBinders::comptime_bindings`),
@@ -1313,8 +1332,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`def_value_pack_names`), its reflected lists (`ReflectedLists`), its
   local bindings of a display over the binders
   (`served_display_bindings` over `mojito_ast::visit::display_bindings`,
-  none when `display_in_argument` finds one spelled in a type or parameter
-  argument, which the elaborator holds per open template body in
+  none when `display_in_unserved_argument` finds a type or parameter
+  argument that computes over one by anything but an element, the length,
+  and integer arithmetic, which the elaborator holds per open template body in
   `TemplateLoopNames`), and
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,

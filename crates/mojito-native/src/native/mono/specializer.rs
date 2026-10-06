@@ -59,6 +59,15 @@ impl<'a> Specializer<'a> {
             states: Vec::new(),
             demand_stack: Vec::new(),
             evaluations: HashMap::new(),
+            applications: Rc::new(Applications {
+                declared: source
+                    .declarations
+                    .functions
+                    .iter()
+                    .map(|declaration| declaration.lowered_name.clone())
+                    .collect(),
+                ..Applications::default()
+            }),
             fuel: mojito_vm::crossing::CTFE_FUEL,
             vm: VmBackend::new(),
             discovered_types: HashSet::new(),
@@ -410,7 +419,7 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
         let name = self.instance_name(key).to_string();
-        let mut function = self
+        let template = self
             .functions
             .get(key.template.as_str())
             .copied()
@@ -419,8 +428,7 @@ impl<'a> Specializer<'a> {
                     Some(&key.template),
                     format!("callee `{}` has no MIR body", key.template),
                 )
-            })?
-            .clone();
+            })?;
         let scope = self
             .declarations
             .get(key.template.as_str())
@@ -428,20 +436,20 @@ impl<'a> Specializer<'a> {
             .map_or(&[][..], |declaration| &declaration.param_decls);
         let bindings = &Bindings {
             layout: self.layout_oracle(),
+            applications: Some(Rc::clone(&self.applications)),
             ..bindings.clone()
         };
-        default_construct_parameters(
-            &mut function.blocks,
-            &mut function.n_regs,
-            &mut function.reg_types,
-            bindings,
-        )?;
-        self.unroll_comptime_loops(&key.template, &mut function, scope, bindings)?;
-        let reified = reification_slots(&function, scope);
-        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
-            e.function.get_or_insert_with(|| key.template.clone());
-            e
-        })?;
+        // A type or a parameter argument may carry the application of a
+        // lowered function (`SIMD[dt, L[0]]`), which only running it
+        // answers: each one a substitution meets is demanded, and the
+        // template is substituted again with its value.
+        let (mut function, reified) = loop {
+            self.applications.pending.borrow_mut().clear();
+            let substituted = self.substituted(&key.template, template, scope, bindings);
+            if !self.answer_pending(&key.template, bindings)? {
+                break substituted?;
+            }
+        };
         retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
@@ -528,11 +536,54 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// A copy of `template` with its `comptime for` loops unrolled and
+    /// `bindings` substituted through it, beside the slots its parameter
+    /// reads reified.
+    fn substituted(
+        &mut self,
+        name: &str,
+        template: &MirFunction,
+        scope: &[ParamDecl],
+        bindings: &Bindings,
+    ) -> Result<(MirFunction, BTreeSet<mojito_hir::hir::VarId>), MonoError> {
+        let mut function = template.clone();
+        default_construct_parameters(
+            &mut function.blocks,
+            &mut function.n_regs,
+            &mut function.reg_types,
+            bindings,
+        )?;
+        self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
+        let reified = reification_slots(&function, scope);
+        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
+            e.function.get_or_insert_with(|| name.to_string());
+            e
+        })?;
+        Ok((function, reified))
+    }
+
+    /// Demand every application the last substitution met with no value
+    /// ([`Applications::answer`]) and record its value. Whether one was
+    /// answered, so that substituting again gets further.
+    fn answer_pending(&mut self, template: &str, bindings: &Bindings) -> Result<bool, MonoError> {
+        let pending = std::mem::take(&mut *self.applications.pending.borrow_mut());
+        let mut answered = false;
+        for (function, args) in pending {
+            let value = self.demand_application(template, &function, &args, bindings)?;
+            self.applications
+                .answered
+                .borrow_mut()
+                .insert((function, args), value);
+            answered = true;
+        }
+        Ok(answered)
+    }
+
     /// The condition with every compile-time application in it evaluated:
     /// an application under the instance's bindings is demanded and run on
-    /// the VM, a layout query is answered under the target. The
-    /// application is the operand itself (`f(n) == True`, `size_of[T]()`);
-    /// one nested in an arithmetic operand waits for a later entry.
+    /// the VM, a layout query is answered under the target, whether the
+    /// application is the operand itself (`f(n) == True`, `size_of[T]()`)
+    /// or sits under the operand's arithmetic (`L[0] + 1`).
     fn resolve_applications(
         &mut self,
         template: &str,
@@ -591,26 +642,10 @@ impl<'a> Specializer<'a> {
             evaluated: None,
         } = expr.kind()
         else {
-            let mut nested = false;
-            expr.visit(&mut |node| {
-                nested |= matches!(
-                    node.kind(),
-                    ParamKind::Apply {
-                        evaluated: None,
-                        ..
-                    }
-                );
-            });
-            if nested {
-                return Err(self.error(
-                    Some(template),
-                    format!(
-                        "compile-time application nested in `{expr}`, which the elaborator \
-                         evaluates only as a whole operand"
-                    ),
-                ));
-            }
-            return Ok(None);
+            let answered = self.applied(template, expr, bindings)?;
+            return Ok((answered != *expr)
+                .then(|| eval_ct(&answered, bindings).ok())
+                .flatten());
         };
         if function == SIZE_OF_FUNCTION {
             let [subject] = args.as_slice() else {
@@ -998,7 +1033,8 @@ impl<'a> Specializer<'a> {
         Ok(decided)
     }
 
-    /// Fold every parameter constant of the instance to the value its
+    /// Fold every parameter constant of the instance, and every bracket
+    /// argument's expression, to the value its
     /// expression denotes under the bindings: a pack's length by
     /// replacement, a pack's membership, conformance, or predicate by the
     /// oracle that decides a `comptime if`, and a compile-time application
@@ -1030,6 +1066,14 @@ impl<'a> Specializer<'a> {
                         self.answer_param_constants(template, region, bindings)?;
                     }
                     continue;
+                }
+                // A bracket argument read off a local `comptime` binding
+                // (`g[e]()` after `comptime e = L[1]`) is the application
+                // the callee's instance is keyed by.
+                for argument in mojito_mir::mir::instruction_param_args_mut(instruction) {
+                    if let Some(expr) = &argument.expr {
+                        argument.expr = Some(self.applied(template, expr, bindings)?);
+                    }
                 }
                 let MirInstr::Const {
                     dest,

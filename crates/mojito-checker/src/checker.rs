@@ -1298,6 +1298,8 @@ impl Checker {
         let mut types = Vec::with_capacity(1 + param_args.len() + args.len() + kwargs.len());
         types.push(callable.clone());
         for expression in self.runtime_param_arg_expressions(param_args) {
+            // A bracket argument is a compile-time position.
+            let _position = self.comptime_position();
             types.push(checked_argument_type(expression)?);
         }
         for argument in args {
@@ -1317,6 +1319,8 @@ impl Checker {
         &self,
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(), TypeError> {
+        // A bracket argument is a compile-time position.
+        let _position = self.comptime_position();
         for expression in self.runtime_param_arg_expressions(param_args) {
             if !self
                 .expression_types

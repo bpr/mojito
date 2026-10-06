@@ -247,6 +247,42 @@ struct Bindings {
     /// instance carries: the target, and the struct declarations known when
     /// the layout is asked. `None` where no layout is answered.
     layout: Option<Rc<LayoutOracle>>,
+    /// What answers the application of a lowered function a type or a
+    /// parameter argument of the instance carries (`SIMD[dt, L[0]]` over a
+    /// local display binding). `None` where no application is answered.
+    applications: Option<Rc<Applications>>,
+}
+
+/// The compile-time applications of lowered functions the elaboration's
+/// substitutions have met at constant arguments, each keyed by its function
+/// and arguments: the values demanded so far, and the applications a
+/// substitution met with no value yet, which the specializer demands before
+/// it substitutes again ([`Specializer::answer_pending`]).
+#[derive(Default)]
+struct Applications {
+    declared: HashSet<String>,
+    answered: RefCell<HashMap<(String, Vec<ParamExpr>), CtValue>>,
+    pending: RefCell<Vec<(String, Vec<ParamExpr>)>>,
+}
+
+impl Applications {
+    /// The value of `function` applied to `args`, recording the application
+    /// as pending when it is a lowered function's at constant arguments
+    /// that nothing has run yet.
+    fn answer(&self, function: &str, args: &[ParamExpr]) -> Option<CtValue> {
+        if !self.declared.contains(function) || args.iter().any(|arg| arg.as_constant().is_none()) {
+            return None;
+        }
+        let key = (function.to_string(), args.to_vec());
+        let answer = self.answered.borrow().get(&key).cloned();
+        if answer.is_none() {
+            let mut pending = self.pending.borrow_mut();
+            if !pending.contains(&key) {
+                pending.push(key);
+            }
+        }
+        answer
+    }
 }
 
 /// The layout answers available to one instance's substitution.
@@ -305,6 +341,9 @@ struct Specializer<'a> {
     /// Every compile-time application evaluated so far, by instance name:
     /// the same application under the same bindings runs once.
     evaluations: HashMap<String, CtValue>,
+    /// The applications the instances' types and parameter arguments carry
+    /// ([`Bindings::applications`]).
+    applications: Rc<Applications>,
     /// The compile-time execution steps left to this compilation.
     fuel: usize,
     /// The executor of compile-time applications, as upstream's elaborator

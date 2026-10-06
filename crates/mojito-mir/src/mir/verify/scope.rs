@@ -647,7 +647,13 @@ impl ScopeCx<'_> {
                 ParamKind::Hole { .. } => {
                     findings.push(format!("{slot} `{expr}` holds an unbound hole"));
                 }
-                ParamKind::Apply { .. } if !matches!(node.meta(), MetaTy::Value(_)) => {
+                // A list of values is the sequence of a local display
+                // binding, which an element or a length query reads.
+                ParamKind::Apply { .. }
+                    if !matches!(node.meta(), MetaTy::Value(_))
+                        && !matches!(node.meta(), MetaTy::ParamList(element)
+                            if matches!(**element, MetaTy::Value(_))) =>
+                {
                     findings.push(format!(
                         "{slot} `{expr}` applies to a `{}` result, not a value",
                         node.meta()

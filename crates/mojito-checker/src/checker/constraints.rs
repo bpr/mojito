@@ -243,6 +243,7 @@ impl Checker {
         associated: &HashMap<String, CtValue>,
     ) -> Result<CtValue, TypeError> {
         match &expr.kind {
+            _ if let Some(read) = self.display_read(expr) => read.map(CtValue::Expr),
             ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
@@ -838,6 +839,7 @@ impl Checker {
             }
             ExprKind::TupleLit(values) => constant(CtValue::Tuple(aggregate(values)?)),
             ExprKind::ListLit(values) => constant(CtValue::List(aggregate(values)?)),
+            _ if let Some(read) = self.display_read(expr) => read,
             // The length of a pack that is still a parameter, which the
             // instance's elements fix.
             _ if let Some(pack) = self.pack_length_query(expr) => Ok(pack),
@@ -877,6 +879,58 @@ impl Checker {
                 )),
             },
         }
+    }
+
+    /// The parameter expression of an element or the length of a local
+    /// display binding (`L[0]`, `len(L)`), which the elaborator evaluates:
+    /// a query on the binding's sequence. `None` for any other expression.
+    fn display_read(&self, expr: &Expr) -> Option<Result<ParamExpr, TypeError>> {
+        match &expr.kind {
+            ExprKind::Index { object, index } => {
+                self.display_element(self.bound_display(object)?, index)
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+                let [list] = args.as_slice() else {
+                    return None;
+                };
+                Some(self.bound_display(list)?.length(&self.param_context))
+            }
+            _ => None,
+        }
+    }
+
+    /// The parameter expression of element `index` of `display`, when a
+    /// subscript reads it by position.
+    fn display_element(
+        &self,
+        display: &super::comptime_validation::BoundDisplay,
+        index: &Expr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        match self.compile_dependent_ct_expr(index) {
+            Ok(index) => display.element(&self.param_context, &index),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    /// The element of a local display binding a type-shaped argument spells
+    /// (`L[0]`, which parses as a type application under a capitalized
+    /// name). `None` for any other type.
+    pub(super) fn display_element_argument(
+        &self,
+        ty: &SourceType,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let SourceType::Named(name, args) = ty else {
+            return None;
+        };
+        let [mojito_ast::ast::ParamArg::Value(index)] = args.as_slice() else {
+            return None;
+        };
+        self.display_element(self.display_named(name)?, index)
     }
 
     /// The projection of `field` out of `object` when `object` compiles to a

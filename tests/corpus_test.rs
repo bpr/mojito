@@ -371,6 +371,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "reflection_template_served",
     // R366, the erased oracle: an erased frame runs no thunk for a
     // `comptime for` display over a binder.
+    "comptime_display_binding_arguments",
     "comptime_display_binding_reads",
     "comptime_for_display_binding",
     "comptime_for_display_over_binder",

@@ -1154,8 +1154,10 @@ fn lower_expression_thunk(
 /// indices — and its branch, loop header, or parameter constant carries the
 /// application of that thunk, which the elaborator demands and runs. A local
 /// `comptime` binding of such a display has no runtime form: it is lifted
-/// once, for the loop headers over its name, and a thunk that reads the name
-/// begins by binding the display.
+/// once, under the name the check gave its sequence, for the loop headers
+/// over its name and the types and parameter arguments that read an element
+/// or the length, and a thunk that reads the name begins by binding the
+/// display.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
@@ -1168,8 +1170,8 @@ struct ComptimeThunks {
     /// with its statement, in declaration order ([`Self::bind_evaluated`]):
     /// a thunk that reads one begins by binding it.
     evaluated: Vec<(mojito_types::origin::OwnerId, Stmt)>,
-    /// The sequence of each display binding a loop has iterated, by the
-    /// display's span ([`Self::bound_sequence`]).
+    /// The sequence of each display binding, by the display's span
+    /// ([`Self::bound_sequence`]).
     bound_sequences: HashMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
     /// The owner's local `comptime` bindings of a parameter expression
     /// lowered so far ([`Self::bind_value`]), which every thunk requested
@@ -1191,7 +1193,6 @@ struct DisplayBinding {
     display: std::rc::Rc<Expr>,
     facts: std::rc::Rc<HashMap<usize, ExprFacts>>,
     ty: Ty,
-    element: mojito_types::param_expr::MetaTy,
     /// The binders in scope where the binding is declared.
     binders: EnclosingBinders,
     /// How many evaluated bindings were declared before it.
@@ -1261,10 +1262,63 @@ impl ComptimeThunks {
     }
 
     /// Record a local `comptime` binding of a display, declared by
-    /// `statement`.
-    fn bind_display(&mut self, statement: &Stmt, binding: DisplayBinding) {
+    /// `statement`, and lift the display as the function the check named in
+    /// `sequence`, its application to the binders in scope at the binding:
+    /// the loops over the name iterate that sequence, and a type or a
+    /// parameter argument that reads an element or the length carries it.
+    /// The function's parameters are the binders the application names, in
+    /// its argument order.
+    fn bind_display(
+        &mut self,
+        statement: &Stmt,
+        binding: DisplayBinding,
+        sequence: &mojito_types::param_expr::ParamExpr,
+    ) -> Result<(), String> {
+        let mojito_types::param_expr::ParamKind::Apply { function, args, .. } = sequence.kind()
+        else {
+            return Err(format!(
+                "comptime display `{}` denotes `{sequence}`, not an application",
+                binding.name
+            ));
+        };
+        let declarations = args
+            .iter()
+            .map(|arg| {
+                arg.as_decl_ref()
+                    .and_then(|reference| {
+                        binding
+                            .binders
+                            .declarations
+                            .iter()
+                            .find(|declaration| declaration.binder().id == reference.id)
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "comptime display `{}` is applied to `{arg}`, which is no binder \
+                             in scope",
+                            binding.name
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.requests.push(ThunkRequest {
+            name: function.clone(),
+            expression: (*binding.display).clone(),
+            binders: EnclosingBinders {
+                declarations,
+                comptime_bindings: self.bound_values.clone(),
+                lifted: true,
+                ..binding.binders.clone()
+            },
+            ty: binding.ty.clone(),
+            evaluated: self.evaluated[..binding.preceding].to_vec(),
+        });
+        self.bound_sequences
+            .insert(binding.display.source_span(), sequence.clone());
         self.bind_evaluated(binding.owner, statement);
         self.displays.push(binding);
+        Ok(())
     }
 
     /// Record that the local `comptime` binding `owner`, declared by
@@ -1279,31 +1333,10 @@ impl ComptimeThunks {
         self.displays.iter().find(|display| display.owner == owner)
     }
 
-    /// The sequence of the binding whose display sits at `display`: its
-    /// thunk, requested by the first loop over the name, over the binders in
-    /// scope where the binding is declared.
-    fn bound_sequence(
-        &mut self,
-        display: &SourceSpan,
-    ) -> Option<mojito_types::param_expr::ParamExpr> {
-        if let Some(sequence) = self.bound_sequences.get(display) {
-            return Some(sequence.clone());
-        }
-        let binding = self
-            .displays
-            .iter()
-            .find(|binding| binding.display.source_span() == *display)?
-            .clone();
-        let sequence = self.application(
-            &binding.display,
-            &binding.binders,
-            binding.ty,
-            mojito_types::param_expr::MetaTy::ParamList(Box::new(binding.element)),
-            binding.preceding,
-        );
-        self.bound_sequences
-            .insert(display.clone(), sequence.clone());
-        Some(sequence)
+    /// The sequence of the binding whose display sits at `display`: the
+    /// application of its thunk ([`Self::bind_display`]).
+    fn bound_sequence(&self, display: &SourceSpan) -> Option<mojito_types::param_expr::ParamExpr> {
+        self.bound_sequences.get(display).cloned()
     }
 
     /// Record that the local `comptime` binding `owner` denotes `value`
@@ -2563,6 +2596,9 @@ impl Flatten<'_> {
             {
                 return Some(reg);
             }
+            ParamArg::Type(t) if let Some(element) = self.display_element_argument(t) => {
+                return Some(element);
+            }
             ParamArg::Type(t) => return self.reified_type_argument(t, site),
         };
         let adjustments = self.checked_adjustments(expression);
@@ -2590,7 +2626,12 @@ impl Flatten<'_> {
         }) {
             None
         } else {
-            Some(self.expr(expression))
+            // An argument read off a local display binding (`g[L[0]]()`) is
+            // the application the elaborator runs.
+            Some(match self.display_read(expression) {
+                Some((value, _)) => value,
+                None => self.expr(expression),
+            })
         }
     }
 
@@ -2835,6 +2876,33 @@ impl Flatten<'_> {
         ))
     }
 
+    /// The element of a local display binding a type-shaped bracket
+    /// argument spells (`g[L[0]]()`, which parses as a type application
+    /// under a capitalized name): the element of the binding's sequence at
+    /// the index over the binders, which the elaborator evaluates.
+    fn display_element_argument(&mut self, ty: &mojito_ast::ast::Type) -> Option<Reg> {
+        let mojito_ast::ast::Type::Named(name, args) = ty else {
+            return None;
+        };
+        let [ParamArg::Value(index)] = args.as_slice() else {
+            return None;
+        };
+        let display = self
+            .comptime_thunks
+            .displays
+            .iter()
+            .rev()
+            .find(|display| display.name == *name)?
+            .display
+            .source_span();
+        let sequence = self.comptime_thunks.bound_sequence(&display)?;
+        let position = self.value_binder_expr(index)?;
+        let element = ParamContext::detached()
+            .list_get(&sequence, &position)
+            .ok()?;
+        Some(self.param_value_register(index, element))
+    }
+
     /// Build a local display binding into its slot, for the crossing that
     /// reads it next.
     fn build_display(&mut self, binding: &DisplayBinding) {
@@ -3018,8 +3086,9 @@ impl Flatten<'_> {
     }
 
     /// The evaluation of an `Int` parameter expression over the enclosing
-    /// value binders: its constants, binder reads, and the `+`, `*`, `-`, and
-    /// negation it is built from. `None` for any other shape.
+    /// value binders: its constants, binder reads, the applications the
+    /// elaborator answers, and the `+`, `*`, `-`, and negation it is built
+    /// from. `None` for any other shape.
     fn inferred_value_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
         // A binder of any scalar type reads its own slot; a `DType` constant
         // is its own; the arithmetic below is over `Int` alone.
@@ -3034,6 +3103,21 @@ impl Flatten<'_> {
             self.emit(MirInstr::Const {
                 dest,
                 k: Const::Dtype(*dtype),
+            });
+            return Some(dest);
+        }
+        // An element or the length of a local display binding is a
+        // parameter constant the elaborator answers.
+        if let (
+            mojito_types::param_expr::ParamKind::ListGet { .. }
+            | mojito_types::param_expr::ParamKind::Apply { .. },
+            Some(ty),
+        ) = (expr.kind(), expr.meta().as_value())
+        {
+            let dest = self.fresh_typed(site.clone(), None, ty.clone());
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::Param(expr.clone()),
             });
             return Some(dest);
         }

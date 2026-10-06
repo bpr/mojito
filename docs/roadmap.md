@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R379**.
+Next free ID: **R384**.
 
 ## Ordered Work
 
@@ -135,23 +135,27 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R373 (P3) A type or parameter argument that reads a local
-  `comptime` display binding has no template form**
+- [ ] **R379 (P3) A type or parameter argument that computes over a local
+  `comptime` display binding by a call or a comparison has no template
+  form**
 
-  Problem: `comptime L = [n, n * 2]` then `SIMD[DType.int32, L[0]](1)`, or
-  `comptime e = L[1]` then `g[e]()`, in `def f[n: Int]()` is rejected with
-  "not a compile-time Int constant: e", where the pin runs it.
-  - An element or the length of such a binding is the application of a
-    function the elaborator runs (`Flatten::display_read`, `mir.rs`), and
-    the check compiles no such application into a type or a parameter
-    argument (`compile_dependent_ct_expr`).
-  - `native::mono` evaluates an application in a parameter constant, a
-    `comptime if` condition, and a loop header (`Specializer::applied`), not
-    in a type.
-  - A `def` that also iterates the binding still keys a clone for this
-    (`display_in_argument`, `comptime.rs`), which runs.
-  - A method of a generic struct has no clone, so it is rejected there with
-    or without a loop.
+  Problem: `comptime L = [n, n * 2]` then `g[h(L[0])]()` in `def f[n: Int]()`
+  is rejected with "not a compile-time Int constant: not an associated
+  comptime expression", where the pin runs it.
+  - The check denotes an element or the length of such a binding, alone or
+    under integer arithmetic, as a parameter expression over the binding's
+    sequence (`Checker::display_read`, `checker/constraints.rs`).
+  - Any other expression over one (`h(L[0])`, `L[0] > 2` for a `Bool`
+    parameter, `min(L[0], L[1])`) compiles to no parameter expression
+    (`compile_dependent_ct_expr`).
+  - MIR already lifts such an expression as a function the elaborator runs
+    when it is read as a runtime value (`Flatten::display_read`, `mir.rs`).
+    The check would have to name that function, as it names the display's.
+  - A `def` that also iterates the binding keys a clone for this
+    (`display_in_unserved_argument`, `comptime.rs`), which fails the same
+    way.
+  - Found while landing a display binding read in a type or a parameter
+    argument (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -1896,6 +1900,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R382 An `Int` binder is not inferred from a vector width spelled by
+  an `Int` expression**
+
+  Problem: `show[w: Int](x: SIMD[DType.int32, w])` called as `show(a)` with
+  `a = SIMD[DType.int32, n](1)` in `def f[n: Int]()` is rejected with
+  "cannot infer type parameter 'w' of 'show' from the arguments", where the
+  pin binds `w` to `n` and prints.
+  - `solve_value_args` (`checker/generics.rs`) solves a vector's width slot
+    only for a binder declared `SIMDLength`.
+  - That is right for a width that is a literal, which the pin leaves an
+    `Int` binder unresolved against.
+  - A width spelled by an `Int` expression (`n`, an element of a local
+    `comptime` display) converts the same way on both sides, so the pin
+    solves the binder.
+  - Found while landing a display binding read in a type or a parameter
+    argument (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 
   Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports
@@ -2436,6 +2459,58 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     to `1`, since the name is capitalized.
   - A lower-case name (`vals[1]`) is parsed as a subscript and runs.
   - Found while landing reads of a local display binding (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R381 A capitalized subscript followed by an operator does not parse
+  in a parameter argument**
+
+  Problem: `comptime L = [n, n * 2]` then `SIMD[DType.int32, L[0] * 2](5)`
+  in `def f[n: Int]()` stops with "Expected ']' after a subscript", where
+  the pin prints an eight-lane vector for `f[4]()`.
+  - The parser reads `L[0]` in a parameter argument as the type `L` applied
+    to `0`, since the name is capitalized, and a type takes no operator.
+  - The bare `L[0]` is accepted: the check and MIR read the type
+    application as the element (`display_element_argument`).
+  - A lower-case name (`vals[0] * 2`) is parsed as a subscript and runs.
+  - Found while landing a display binding read in a type or a parameter
+    argument (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R380 Two local `comptime` bindings of one display are different
+  values in a type**
+
+  Problem: `comptime L = [n, n * 2]` and `comptime M = [n, n * 2]`, then
+  `var a: SIMD[DType.int32, L[0]] = SIMD[DType.int32, M[0]](1)`, in `def
+  f[n: Int]()` is rejected with "type mismatch for variable 'a'", where the
+  pin runs it.
+  - The check denotes each binding by the application of its own lifted
+    function, named by the binding (`record_display_binding`,
+    `checker/comptime_validation.rs`), so `L[0]` and `M[0]` are two
+    expressions.
+  - The pin identifies the two reads by structure. It still tells `L[0]`
+    from `n`, which `assets/type_error/comptime_display_element_identity.mojo`
+    pins for `L[0] * 2` against `L[1]`.
+  - Found while landing a display binding read in a type or a parameter
+    argument (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R383 A vector width that mismatches a display element is reported as
+  a missing constant**
+
+  Problem: `comptime vals = [n, n * 2]` then `var a: SIMD[DType.int32,
+  vals[0]] = SIMD[DType.int32, n](1)` in `def f[n: Int]()` is rejected with
+  "not a compile-time Int constant: vals", where the pin reports that
+  `SIMD[.int32, n]` does not convert to the annotated type.
+  - Both compilers reject the program. Only the diagnostic differs.
+  - Source validation reports it, on the conversion it tries after the two
+    types differ.
+  - The capitalized spelling `L[0]` reports "SIMD width must be a positive
+    power of two, got a type" instead.
+  - Found while landing a display binding read in a type or a parameter
+    argument (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

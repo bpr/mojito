@@ -6,8 +6,9 @@ use mojito_types::param_expr::{ParamError, ReflectQuery};
 
 /// The constant a parameter expression denotes under the mono environment:
 /// the shared replacement, every reflection query the instance's types
-/// answer and every builtin application its constants answer, then explicit
-/// concrete extraction. Monomorphization holds no
+/// answer, every application of a lowered function the specializer has run
+/// ([`Applications`]), and every builtin application its constants answer,
+/// then explicit concrete extraction. Monomorphization holds no
 /// arithmetic of its own. A query with no answer at the instance
 /// (`field_index["z"]()` of a struct lacking `z`) fails the instantiation,
 /// as at the pin, as does a `DType` float query at a non-float dtype.
@@ -19,6 +20,27 @@ pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, 
             context.answer_reflections(&replaced, &mut |subject, query| {
                 reflection_answer(subject, query, bindings)
             })
+        })
+        .and_then(|answered| match &bindings.applications {
+            // A type binder among the arguments is the type the instance
+            // binds it to.
+            Some(applications) => context.answer_applications(&answered, &mut |function, args| {
+                let args: Option<Vec<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| match arg.kind() {
+                        ParamKind::DeclRef(binder) => bindings
+                            .types
+                            .get(binder)
+                            .filter(|ty| !is_symbolic(ty))
+                            .and_then(|ty| {
+                                context.constant(CtValue::Type(Box::new(ty.clone()))).ok()
+                            }),
+                        _ => Some(arg.clone()),
+                    })
+                    .collect();
+                Ok(args.and_then(|args| applications.answer(function, &args)))
+            }),
+            None => Ok(answered),
         })
         .and_then(|answered| context.answer_builtin_applications(&answered))
         .map_err(|error| MonoError {

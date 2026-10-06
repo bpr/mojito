@@ -631,9 +631,12 @@ branch for the class is deleted, and so is its certificate class.
   another binding or crossing are each lifted as a thunk that begins by
   binding the display, which the elaborator demands in a condition, a loop
   header, or a parameter constant, and `materialize[L]()` builds the display
-  where it crosses. A binding spelled in a type or parameter argument, an
+  where it crosses. An element or the length of the binding in a type or a
+  parameter argument is a parameter expression over the binding's sequence,
+  which the check names and the elaborator runs when a substitution meets
+  it (2026-10-06). An argument that applies a function to a binding, an
   alias of one, an element that applies a function, and a loop constructing
-  a reflected field type still key a clone (R373, R375, R363, R364). The second landed 2026-10-03 for a module-level
+  a reflected field type still key a clone (R379, R375, R363, R364). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's

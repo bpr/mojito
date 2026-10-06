@@ -60,6 +60,7 @@ assets/ok/comptime_annotated_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_applied_constant_in_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_display_binding_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_body_binding_served.mojo	-	ineligible	no-scalar-entry-shape

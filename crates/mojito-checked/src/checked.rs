@@ -796,17 +796,21 @@ pub enum SemanticAdjustment {
     /// loop header, and the elaborator unrolls it.
     ComptimeIteration(Box<ComptimeIteration>),
     /// The display a local `comptime` binding of a template body holds
-    /// (`comptime L = [n, n + 1]`), typed and not closed by the check, whose
-    /// value is a sequence of `element`s. The binding has no runtime form:
-    /// MIR lifts the display as a function over the binders in scope at the
-    /// binding for the loops that iterate the name, and binds it at the head
-    /// of each function lifted for a compile-time expression that reads it.
+    /// (`comptime L = [n, n + 1]`), typed and not closed by the check. The
+    /// binding has no runtime form: MIR lifts the display as a function
+    /// over the binders in scope at the binding, and binds it at the head of
+    /// each function lifted for a compile-time expression that reads it.
     ///
     /// `construction` is the display's own checked construction, which this
-    /// record stands in for on the display's span.
+    /// record stands in for on the display's span. `sequence` is what the
+    /// binding denotes in the parameter domain, a list of its elements: the
+    /// application of the function MIR lifts, by the name the check gave
+    /// it, to the binders in scope. A loop over the name iterates it, and a
+    /// type or a parameter argument reading an element or the length
+    /// carries it.
     ComptimeDisplay {
-        element: mojito_types::param_expr::MetaTy,
         construction: Box<Self>,
+        sequence: mojito_types::param_expr::ParamExpr,
     },
     Move,
     ExplicitDestroy,

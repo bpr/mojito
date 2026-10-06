@@ -103,6 +103,28 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
     }
 }
 
+/// Every compile-time argument slot an instruction carries, mutably.
+///
+/// They are a call's bracket arguments, a subscript call's, and a
+/// constructed element, and none of a `try` region's blocks, which the
+/// caller walks itself.
+pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirParamArg> {
+    match instruction {
+        MirInstr::ConstructTypeParam { element, .. } => element.iter_mut().collect(),
+        MirInstr::Call { param_arg_regs, .. }
+        | MirInstr::CallIndirect { param_arg_regs, .. }
+        | MirInstr::MethodCall { param_arg_regs, .. } => param_arg_regs.iter_mut().collect(),
+        MirInstr::Index { call, .. }
+        | MirInstr::Slice { call, .. }
+        | MirInstr::MultiIndex { call, .. } => call
+            .iter_mut()
+            .flat_map(|call| call.param_arg_regs.iter_mut())
+            .collect(),
+        MirInstr::MultiSet { call, .. } => call.param_arg_regs.iter_mut().collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Every register an instruction defines or reads, mutably.
 ///
 /// The registers of its places and subscript arguments are included, and

@@ -21,6 +21,39 @@ pub(in crate::checker) struct BoundDisplay {
     element: Ty,
     /// The display's own type, which a runtime read would materialize.
     ty: Ty,
+    /// What the binding denotes in a type or a parameter argument: the
+    /// application of the function MIR lifts for the display to the binders
+    /// in scope, a list of `element`s.
+    sequence: ParamExpr,
+    /// Whether a subscript reads an element by position, as a list
+    /// display's does.
+    positional: bool,
+}
+
+impl BoundDisplay {
+    /// The parameter expression of element `index` of the binding
+    /// (`L[0]`), for a display a subscript indexes by position.
+    pub(in crate::checker) fn element(
+        &self,
+        context: &ParamContext,
+        index: &ParamExpr,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        self.positional.then(|| {
+            context
+                .list_get(&self.sequence, index)
+                .map_err(super::annotations::param_error)
+        })
+    }
+
+    /// The parameter expression of the binding's length (`len(L)`).
+    pub(in crate::checker) fn length(
+        &self,
+        context: &ParamContext,
+    ) -> Result<ParamExpr, TypeError> {
+        context
+            .list_length(&self.sequence)
+            .map_err(super::annotations::param_error)
+    }
 }
 
 /// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
@@ -351,7 +384,10 @@ impl Checker {
         let iter = self.inline_local_comptime_values(iter);
         // A local binding of an evaluated display is iterated where it is
         // declared.
-        let bound = self.bound_display(&iter).cloned();
+        let bound = self
+            .bound_display(&iter)
+            .filter(|_| !self.source_validation)
+            .cloned();
         // A reflected field-name list is its own sequence of strings: the
         // names of a registered struct, or the query over a subject that is
         // still a parameter.
@@ -675,12 +711,13 @@ impl Checker {
         {
             scope.insert(name.to_string(), (level, expression));
         }
-        if let Some(display) = self.evaluated_display_binding(value) {
+        if let Some((element, ty, construction)) = self.evaluated_display_binding(value) {
             // The name is typed for the compile-time expressions that read
             // it, and its statement binding is the one a lifted function
             // binds the display to.
-            self.declare_immutable(name, display.ty.clone())?;
+            self.declare_immutable(name, ty.clone())?;
             self.record_statement_binding(stmt, name);
+            let display = self.record_display_binding(name, value, element, ty, construction)?;
             self.local_comptime_displays
                 .last_mut()
                 .ok_or_else(|| {
@@ -709,47 +746,199 @@ impl Checker {
     }
 
     /// Type the display a local `comptime` binding of a template body holds
-    /// (`comptime L = [n, n + 1]`) and record it for MIR to lift
-    /// (`SemanticAdjustment::ComptimeDisplay`): a collection display of
-    /// scalar elements, which the elaborator evaluates per instance as it
-    /// does one written in a loop header. It is a compile-time value with no
-    /// runtime form: a `comptime for` iterates it, any other compile-time
-    /// expression reads it in a function the elaborator runs, and
-    /// `materialize[L]()` builds it where it is written. `None` for any
-    /// other binding, which the ordinary path types.
-    fn evaluated_display_binding(&self, value: &Expr) -> Option<BoundDisplay> {
+    /// (`comptime L = [n, n + 1]`): a collection display of scalar elements,
+    /// which the elaborator evaluates per instance as it does one written in
+    /// a loop header. Gives the element a loop over it binds, the display's
+    /// own type, and its checked construction; `None` for any other
+    /// binding, which the ordinary path types.
+    fn evaluated_display_binding(
+        &self,
+        value: &Expr,
+    ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
         let element = self.comptime_iteration_element(value).ok()?;
         if !evaluated_display(value, &element) {
             return None;
         }
         let ty = self.infer(value).ok()?;
+        let construction = self
+            .operation_adjustments
+            .borrow()
+            .get(&value.source_span())
+            .cloned()?;
+        Some((string_element_binder(element), ty, construction))
+    }
+
+    /// Record the display the declared local `comptime` binding `name` holds
+    /// for MIR to lift (`SemanticAdjustment::ComptimeDisplay`). It is a
+    /// compile-time value with no runtime form: a `comptime for` iterates
+    /// it, a type or a parameter argument reads an element or the length as
+    /// a parameter expression over its sequence, any other compile-time
+    /// expression reads it in a function the elaborator runs, and
+    /// `materialize[L]()` builds it where it is written.
+    ///
+    /// The sequence is the application of the function MIR lifts for the
+    /// display, named here by the binding, to every binder in scope: the pin
+    /// keeps a read of the binding symbolic the same way, so `L[0]` is not
+    /// the element the display spells.
+    fn record_display_binding(
+        &self,
+        name: &str,
+        value: &Expr,
+        element: Ty,
+        ty: Ty,
+        construction: mojito_checked::checked::SemanticAdjustment,
+    ) -> Result<BoundDisplay, TypeError> {
+        let owner = self.lookup_owner(name).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("comptime binding '{name}' has no owner"))
+        })?;
+        let sequence = self.display_sequence(name, owner.0, &element);
         let span = value.source_span();
-        let construction = self.operation_adjustments.borrow().get(&span).cloned()?;
-        // A string element binds as a `String` value parameter does.
-        let element = match element {
-            Ty::Struct(name, args)
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
-            {
-                Ty::StringLiteral
-            }
-            element => element,
-        };
         self.operation_adjustments.borrow_mut().insert(
             span.clone(),
             mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
-                element: mojito_types::param_expr::MetaTy::value(element.clone()),
                 construction: Box::new(construction),
+                sequence: sequence.clone(),
             },
         );
-        Some(BoundDisplay { span, element, ty })
+        Ok(BoundDisplay {
+            span,
+            element,
+            ty,
+            sequence,
+            positional: matches!(value.kind, ExprKind::ListLit(_)),
+        })
+    }
+
+    /// The sequence the display binding `name` denotes, a list of
+    /// `element`s: the application of the function named by the binding and
+    /// `identity`, which tells two bindings of one name apart, to every
+    /// binder in scope.
+    fn display_sequence(
+        &self,
+        name: &str,
+        identity: impl std::fmt::Display,
+        element: &Ty,
+    ) -> ParamExpr {
+        use mojito_types::param_expr::MetaTy;
+        self.param_context.apply(
+            &format!("$comptime${name}${identity}"),
+            &self.binders_in_scope(),
+            MetaTy::ParamList(Box::new(MetaTy::value(element.clone()))),
+        )
+    }
+
+    /// Under source validation, note that the local `comptime` binding
+    /// `name` holds a display the elaborator evaluates per instance, for
+    /// the types and parameter arguments that read an element or the
+    /// length. The binding itself stays the ordinary path's; the executable
+    /// check binds the display ([`Self::bind_template_comptime`]).
+    fn note_validated_display(&mut self, name: &str, value: &Expr) {
+        if self.tparams.is_empty() {
+            return;
+        }
+        let Some((element, ty)) = self
+            .comptime_iteration_element(value)
+            .ok()
+            .filter(|element| evaluated_display(value, element))
+            .zip(self.infer(value).ok())
+        else {
+            return;
+        };
+        let element = string_element_binder(element);
+        let display = BoundDisplay {
+            span: value.source_span(),
+            sequence: self.display_sequence(name, format_args!("at{}", value.span.0), &element),
+            element,
+            ty,
+            positional: matches!(value.kind, ExprKind::ListLit(_)),
+        };
+        if let Some(scope) = self.local_comptime_displays.last_mut() {
+            scope.insert(name.to_string(), display);
+        }
+    }
+
+    /// Every binder in scope as the reference a parameter expression names
+    /// it by, outermost declaration first: the enclosing struct's
+    /// parameters, then each open declaration's type parameters and
+    /// non-callable value parameters, a `comptime for` index among them.
+    fn binders_in_scope(&self) -> Vec<ParamExpr> {
+        use mojito_types::param_expr::MetaTy;
+        let mut binders: Vec<ParamExpr> = self
+            .self_decls
+            .iter()
+            .filter_map(|decl| match decl {
+                ParamDecl::Type { name, variadic, .. } => Some(self.param_context.decl_ref(
+                    decl.id().clone(),
+                    name.trim_start_matches('*'),
+                    if *variadic {
+                        MetaTy::type_list()
+                    } else {
+                        MetaTy::Type
+                    },
+                )),
+                ParamDecl::Value {
+                    ty,
+                    callable_default: None,
+                    ..
+                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+                    Some(super::annotations::value_parameter_expr(decl, ty))
+                }
+                ParamDecl::Value { .. } => None,
+            })
+            .collect();
+        for (level, types) in self.tparams.iter().enumerate() {
+            let packs = self.pack_params.get(level);
+            let mut types: Vec<ParamExpr> = types
+                .values()
+                .filter_map(|ty| match ty {
+                    Ty::Param { binder, .. } => Some(
+                        packs
+                            .and_then(|packs| packs.get(binder.name.trim_start_matches('*')))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.param_context.decl_ref(
+                                    binder.id.clone(),
+                                    &binder.name,
+                                    MetaTy::Type,
+                                )
+                            }),
+                    ),
+                    _ => None,
+                })
+                .collect();
+            types.sort();
+            binders.extend(types);
+            let mut values: Vec<ParamExpr> = self
+                .vparams
+                .get(level)
+                .into_iter()
+                .flat_map(HashMap::values)
+                .filter(|value| value.as_decl_ref().is_some())
+                .cloned()
+                .collect();
+            values.sort();
+            binders.extend(values);
+        }
+        let mut seen = HashSet::new();
+        binders.retain(|binder| {
+            binder
+                .as_decl_ref()
+                .is_some_and(|reference| seen.insert(reference.id.clone()))
+        });
+        binders
     }
 
     /// The local binding of an evaluated display `expr` names: the binding
     /// its name resolves to, when that one is a display's.
-    fn bound_display(&self, expr: &Expr) -> Option<&BoundDisplay> {
+    pub(super) fn bound_display(&self, expr: &Expr) -> Option<&BoundDisplay> {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
+        self.display_named(name)
+    }
+
+    /// The local binding of an evaluated display `name` resolves to.
+    pub(super) fn display_named(&self, name: &str) -> Option<&BoundDisplay> {
         self.local_comptime_displays
             .get(self.binding_scope(name)?)?
             .get(name)
@@ -817,6 +1006,7 @@ impl Checker {
             scope.insert(name.to_string(), (level, expression));
         }
         if self.infer(&value).is_ok() {
+            self.note_validated_display(name, &value);
             return Ok(false);
         }
         // A nominal construction the elaborator evaluates itself (a
@@ -1080,7 +1270,10 @@ impl Checker {
         }
         let _position = self.comptime_position();
         let ty = self.infer(operand)?;
-        match self.bound_display(operand) {
+        match self
+            .bound_display(operand)
+            .filter(|_| !self.source_validation)
+        {
             Some(display) => Err(TypeError::ComptimeCrossing(
                 materialized_collection_spelling(&display.ty),
             )),
@@ -2284,6 +2477,19 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
         && (matches!(element, Ty::Int | Ty::Bool)
             || matches!(element, Ty::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
+}
+
+/// The element a display of `element`s binds: a string element binds as a
+/// `String` value parameter does.
+fn string_element_binder(element: Ty) -> Ty {
+    match element {
+        Ty::Struct(name, args)
+            if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
+        {
+            Ty::StringLiteral
+        }
+        element => element,
+    }
 }
 
 /// Whether `binder` is a `comptime for` variable of `Bool` elements

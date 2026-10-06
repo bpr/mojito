@@ -2808,11 +2808,11 @@ impl Flatten<'_> {
             .into_iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
-                    element, ..
-                } => Some(element),
+                    sequence, ..
+                } => Some(sequence),
                 _ => None,
             });
-        if let Some(element) = display
+        if let Some(sequence) = display
             && !self.enclosing_binders.lifted
         {
             if let Some((owner, ty)) = statement_binding.zip(self.checked_ty(value)) {
@@ -2825,11 +2825,15 @@ impl Flatten<'_> {
                     display,
                     facts: std::rc::Rc::new(facts),
                     ty,
-                    element,
                     binders: self.enclosing_binders.clone(),
                     preceding: self.comptime_thunks.evaluated.len(),
                 };
-                self.comptime_thunks.bind_display(statement, binding);
+                if let Err(finding) = self
+                    .comptime_thunks
+                    .bind_display(statement, binding, &sequence)
+                {
+                    self.emit(MirInstr::Unsupported(finding));
+                }
             }
             return;
         }

@@ -1963,6 +1963,20 @@ impl Checker {
                         .map(TyArg::Val)
                         .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
                 }
+                ParamArg::Type(source)
+                    if let Some(element) = self.display_element_argument(source) =>
+                {
+                    let element = element?;
+                    let actual = element.meta().as_value().cloned().unwrap_or(Ty::Error);
+                    if !coerces(&actual, ty) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: ty.to_string(),
+                            found: actual.to_string(),
+                            context: format!("value parameter '{name}'"),
+                        });
+                    }
+                    Ok(TyArg::Val(CtValue::Expr(element)))
+                }
                 // A bare parameter name, or `Self.<field>`, in a value slot.
                 ParamArg::Type(ty) if let Some(error) = self.bare_or_field_in_value_slot(ty) => {
                     Err(error)
@@ -2897,6 +2911,11 @@ impl Checker {
                     }),
                     &HashMap::new(),
                 )?
+            }
+            mojito_ast::ast::ParamArg::Type(ty)
+                if let Some(element) = self.display_element_argument(ty) =>
+            {
+                CtValue::Expr(element?)
             }
             // A lowercase name parses as a type argument: the enclosing
             // struct's own value parameter spelled bare, or `Self.<field>`.

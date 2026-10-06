@@ -1927,43 +1927,111 @@ pub(super) fn served_display_bindings(packs: &HashSet<String>, body: &[Stmt]) ->
         }
         served = kept;
     }
-    if display_in_argument(body, &served) {
+    if display_in_unserved_argument(body, &served, &bindings) {
         served.clear();
     }
     served
 }
 
 /// Whether `body` spells one of its `displays`, or a local `comptime` value
-/// read off one, in a type or parameter argument (`SIMD[DType.int32,
-/// L[0]]`, `f[e]()` after `comptime e = L[0]`): a type over a value the
-/// elaborator evaluates has no template form. `materialize[L]()` is a
-/// crossing, not an argument.
-fn display_in_argument(body: &[Stmt], displays: &HashSet<String>) -> bool {
-    struct Finder {
+/// read off one, in a type or parameter argument the template does not
+/// serve. An element by position or the length, alone or under integer
+/// arithmetic (`SIMD[DType.int32, L[0]]`, `g[len(L) + 1]()`), is a parameter
+/// expression over the binding's sequence, and so is a local `comptime`
+/// value bound to one (`f[e]()` after `comptime e = L[0]`). Any other read
+/// (`g[h(L[0])]()`, the display whole) is a value only an instantiation's
+/// elaboration computes. `materialize[L]()` is a crossing, not an argument.
+fn display_in_unserved_argument(
+    body: &[Stmt],
+    displays: &HashSet<String>,
+    bindings: &HashMap<String, Expr>,
+) -> bool {
+    struct Finder<'a> {
+        displays: &'a HashSet<String>,
+        /// The displays a subscript reads by position.
+        positional: HashSet<&'a str>,
         /// The displays, and each local `comptime` value read off them.
         derived: HashSet<String>,
+        /// The derived values that are no parameter expression.
+        evaluated: HashSet<String>,
         found: bool,
     }
 
-    impl Finder {
-        fn names(&self, argument: &ParamArg) -> bool {
-            match argument {
-                ParamArg::Value(value) => elab::expression_names_any(value, &self.derived),
-                ParamArg::Type(Type::Named(name, arguments)) => {
-                    self.derived.contains(name)
-                        || arguments.iter().any(|argument| self.names(argument))
+    impl Finder<'_> {
+        fn display<'e>(&self, expression: &'e Expr) -> Option<&'e str> {
+            match &expression.kind {
+                ExprKind::Identifier(name) if self.displays.contains(name) => Some(name),
+                _ => None,
+            }
+        }
+
+        /// Whether `expression` is a parameter expression over the
+        /// displays' sequences, or reads none of them.
+        fn denotes(&self, expression: &Expr) -> bool {
+            match &expression.kind {
+                ExprKind::Identifier(name) => {
+                    !self.displays.contains(name) && !self.evaluated.contains(name)
                 }
-                ParamArg::Type(_) => false,
-                ParamArg::Named { value, .. } => self.names(value),
+                ExprKind::Prefix(PrefixOp::Neg, value) => self.denotes(value),
+                ExprKind::Infix(
+                    InfixOp::Add
+                    | InfixOp::Sub
+                    | InfixOp::Mul
+                    | InfixOp::FloorDiv
+                    | InfixOp::Mod
+                    | InfixOp::Pow
+                    | InfixOp::Shl,
+                    left,
+                    right,
+                ) => self.denotes(left) && self.denotes(right),
+                ExprKind::Index { object, index } if let Some(name) = self.display(object) => {
+                    self.positional.contains(name) && self.denotes(index)
+                }
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args,
+                    kwargs,
+                } if name == "len"
+                    && param_args.is_empty()
+                    && kwargs.is_empty()
+                    && matches!(args.as_slice(), [list] if self.display(list).is_some()) =>
+                {
+                    true
+                }
+                _ => !elab::expression_names_any(expression, &self.derived),
+            }
+        }
+
+        fn serves(&self, argument: &ParamArg) -> bool {
+            match argument {
+                ParamArg::Value(value) => self.denotes(value),
+                // `L[0]` parses as a type application under a capitalized
+                // name.
+                ParamArg::Type(Type::Named(name, arguments)) if self.displays.contains(name) => {
+                    self.positional.contains(name.as_str())
+                        && matches!(arguments.as_slice(),
+                            [ParamArg::Value(index)] if self.denotes(index))
+                }
+                ParamArg::Type(Type::Named(name, arguments)) => {
+                    !self.evaluated.contains(name)
+                        && arguments.iter().all(|argument| self.serves(argument))
+                }
+                ParamArg::Type(_) => true,
+                ParamArg::Named { value, .. } => self.serves(value),
             }
         }
     }
 
-    impl mojito_ast::visit::Visitor for Finder {
+    impl mojito_ast::visit::Visitor for Finder<'_> {
         fn visit_stmt(&mut self, statement: &Stmt) {
             if let StmtKind::Comptime { name, value, .. } = &statement.kind
+                && !self.displays.contains(name)
                 && elab::expression_names_any(value, &self.derived)
             {
+                if !self.denotes(value) {
+                    self.evaluated.insert(name.clone());
+                }
                 self.derived.insert(name.clone());
             }
         }
@@ -1977,12 +2045,14 @@ fn display_in_argument(body: &[Stmt], displays: &HashSet<String>) -> bool {
                 ExprKind::TypeApply { args, .. } => args,
                 _ => return,
             };
-            self.found |= arguments.iter().any(|argument| self.names(argument));
+            self.found |= !arguments.iter().all(|argument| self.serves(argument));
         }
 
         fn visit_type(&mut self, ty: &Type) {
-            if let Type::Named(_, arguments) = ty {
-                self.found |= arguments.iter().any(|argument| self.names(argument));
+            if let Type::Named(name, arguments) = ty
+                && !self.displays.contains(name)
+            {
+                self.found |= !arguments.iter().all(|argument| self.serves(argument));
             }
         }
     }
@@ -1991,7 +2061,14 @@ fn display_in_argument(body: &[Stmt], displays: &HashSet<String>) -> bool {
         return false;
     }
     let mut finder = Finder {
+        displays,
+        positional: bindings
+            .iter()
+            .filter(|(_, display)| matches!(display.kind, ExprKind::ListLit(_)))
+            .map(|(name, _)| name.as_str())
+            .collect(),
         derived: displays.clone(),
+        evaluated: HashSet::new(),
         found: false,
     };
     mojito_ast::visit::walk_block(&mut finder, body);

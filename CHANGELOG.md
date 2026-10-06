@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type or a parameter argument can now read a local `comptime` display
+  binding over a generic body's parameters (`comptime L = [n, n * 2]`): an
+  element by position or the length, alone or under integer arithmetic, and
+  a local `comptime` value bound to one. `SIMD[DType.int32, L[0]](1)`,
+  `Buf[vals[1]]()`, `g[len(vals) + 1]()`, and `comptime e = L[1]` then
+  `g[e]()` were rejected with "not a compile-time Int constant" in a generic
+  struct's method and in a `def` with no `comptime for` beside them, and
+  cloned the `def` per instantiation otherwise. The binding denotes one
+  symbolic value in a type, as upstream's does: `L[0]` twice is one type,
+  `L[0] + 0` is `L[0]`, and `L[0]` is not `n`. The elaborator evaluates the
+  display once per instance, when a type or an argument of that instance
+  needs it.
 - A local `comptime` binding of a display over a generic body's parameters
   (`comptime L = [n, n * 2]`) is now served by the template whatever reads
   it, where a body that read an element or the length, or materialized the

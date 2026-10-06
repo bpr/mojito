@@ -498,28 +498,44 @@ upstream runs the display on its interpreter per instance. A local
 form, whatever reads it: the check types the name, records the binding on
 the display (`SemanticAdjustment::ComptimeDisplay`) and each loop over the
 name as `ComptimeSource::Bound`, and rejects a read outside every
-compile-time position as the pin does. MIR keeps the binding beside the
-function's thunks (`DisplayBinding`): the first loop over the name lifts the
-display over the binders in scope where it is declared
-(`ComptimeThunks::bound_sequence`), and every header over the name carries
-that one application. Every other compile-time read is lifted where it
-stands, as upstream runs `L[0]` or `len(L)` on its interpreter: a `comptime
+compile-time position as the pin does. The binding denotes one value in the
+parameter domain, its sequence: the application of the function MIR lifts
+for the display, which the check names by the binding and applies to every
+binder in scope (`Checker::record_display_binding`). MIR keeps the binding
+beside the function's thunks (`DisplayBinding`) and lifts the display under
+that name where it is declared (`ComptimeThunks::bind_display`), and every
+header over the name carries that one application. A type or a parameter
+argument reads the sequence: an element by position is `param_list.get`
+over it and the length is the builtin application `param_list.length`
+(`Checker::display_read`), alone or under integer arithmetic, so
+`SIMD[DType.int32, L[0]]`, `g[len(L)]()`, a `range` bound, and a local
+`comptime` value bound to one (`comptime e = L[1]`, then `g[e]()`) are
+parameter expressions the template carries. Two reads are one expression by
+structure and none is the element the display spells, as at the pin, which
+keeps `L[0]` distinct from `n`. `native::mono` runs the function when a
+substitution meets its application at an instance's arguments
+(`Applications`, `Specializer::answer_pending`) and folds what stands above
+it. Every other compile-time read is lifted where it
+stands, as upstream runs it on its interpreter: a `comptime
 if` condition as any uncompiled condition is, a `range` bound the check does
-not close (`ComptimeSource::EvaluatedRange`), and an `Int` or `Bool` another
-binding or a crossing reads (`comptime e = L[1]`, `comptime(len(L))`), which
+not close (`ComptimeSource::EvaluatedRange`), and an `Int` or `Bool` a
+runtime position, another binding, or a crossing reads (`print(L[0])`,
+`comptime(len(L))`), which
 MIR carries as a parameter constant holding the application
 (`Flatten::display_read`). Each thunk begins with the statements of the
 local `comptime` bindings its expression reads that denote no parameter
 expression — the displays, and a value such as `comptime b = n > 2`
 (`ComptimeThunks::bind_evaluated`, `thunk_prologue`) — and `native::mono` demands an
 application wherever it evaluates one — a condition, a loop header, a
-parameter constant (`Specializer::applied`). `materialize[L]()`, and a value
+parameter constant, a bracket argument's expression
+(`Specializer::applied`). `materialize[L]()`, and a value
 read off the display that is no `Int` or `Bool`, build the display where
 they cross to runtime (`Flatten::crossing_display`, `build_display`). The
 cloner serves such a binding by syntax alone
 (`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
-keeps the clone only where the body spells the binding in a type or
-parameter argument. Evaluating such a binding again per reader is roadmap
+keeps the clone only where a type or parameter argument computes over the
+binding by anything but an element, the length, and integer arithmetic
+(`display_in_unserved_argument`). Evaluating such a binding again per reader is roadmap
 R378, where upstream evaluates a `comptime`
 alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
@@ -537,10 +553,10 @@ reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
 for the pruning. Every other `comptime for` — over a local `comptime`
-display the body also spells in a type or parameter argument, an alias of
-one, a display with an element that applies a function, a loop that
+display a type or parameter argument of the body applies a function to, an
+alias of one, a display with an element that applies a function, a loop that
 constructs a reflected field type, and every one outside a generic `def` or
-a generic struct's method — is unrolled in the AST as before (roadmap R373,
+a generic struct's method — is unrolled in the AST as before (roadmap R379,
 R375, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every

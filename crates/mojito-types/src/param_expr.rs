@@ -550,8 +550,9 @@ impl ParamContext {
     }
 
     /// The length of a parameter list, as an `Int` expression: a constant
-    /// list's count, a pack's length query, a tabulation's count, or the sum
-    /// of a concatenation's.
+    /// list's count, a pack's length query, a tabulation's count, the sum of
+    /// a concatenation's, or the builtin application
+    /// ([`LIST_LENGTH_FUNCTION`]) to a list that is itself an application.
     pub fn list_length(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
         match list.kind() {
             ParamKind::Constant(CtValue::Tuple(values)) => {
@@ -571,6 +572,14 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.op(ParamOp::Add, &lengths)
             }
+            // A list the elaborator evaluates (a local display binding's
+            // sequence) has the length its value will have.
+            ParamKind::Apply { .. } if matches!(list.meta(), MetaTy::ParamList(_)) => Ok(self
+                .apply(
+                    LIST_LENGTH_FUNCTION,
+                    std::slice::from_ref(list),
+                    MetaTy::int(),
+                )),
             _ => Err(ParamError::TypeMismatch {
                 operation: "parameter list length".to_string(),
                 expected: "a parameter list".to_string(),
@@ -1017,6 +1026,12 @@ impl ParamContext {
             _ => return Ok(expr.clone()),
         };
         match answer(&rebuilt)? {
+            // A parameter list's answer is the list of its elements.
+            Some(value) if matches!(rebuilt.meta(), MetaTy::ParamList(_)) => self.constant(
+                value
+                    .comptime_iteration_elements()
+                    .map_or(value, CtValue::Tuple),
+            ),
             Some(value) => self.constant(value),
             None => Ok(rebuilt),
         }
@@ -1588,6 +1603,10 @@ impl ParamContext {
 /// The callable symbol of a layout query ([`ParamContext::size_of`]).
 pub const SIZE_OF_FUNCTION: &str = "size_of";
 
+/// The callable symbol of the length of a parameter list the elaborator
+/// evaluates ([`ParamContext::list_length`]).
+pub const LIST_LENGTH_FUNCTION: &str = "param_list.length";
+
 /// The answer to an application of a builtin compile-time function.
 ///
 /// `None` for an application this policy does not own or whose arguments are
@@ -1598,6 +1617,17 @@ pub fn builtin_application_value(
     function: &str,
     args: &[ParamExpr],
 ) -> Option<Result<CtValue, ParamError>> {
+    if function == LIST_LENGTH_FUNCTION {
+        let [list] = args else {
+            return None;
+        };
+        let CtValue::Tuple(values) = list.as_constant()? else {
+            return None;
+        };
+        return Some(i64::try_from(values.len()).map(CtValue::Int).map_err(|_| {
+            ParamError::Arithmetic("parameter list is too long to count".to_string())
+        }));
+    }
     let query = function
         .strip_prefix("DType.")
         .filter(|query| mojito_ast::ast::DTYPE_FLOAT_QUERIES.contains(query))?;
