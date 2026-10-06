@@ -2524,7 +2524,7 @@ impl Flatten<'_> {
                 self.emit(MirInstr::Raise { src });
             }
             StmtKind::Comptime { name, value, .. } => {
-                self.lower_comptime_binding(name, value, statement_binding);
+                self.lower_comptime_binding(s, name, value, statement_binding);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
@@ -2794,10 +2794,11 @@ impl Flatten<'_> {
     /// alias (`comptime U = T` over a template's binder) lives in the
     /// checker's scope alone: it records no binding and its value no type.
     /// A display the elaborator evaluates (`comptime L = [n, n + 1]`) has no
-    /// runtime form either: it is lifted here, once, for the loops that
-    /// name the binding.
+    /// runtime form either: it is recorded here for the loops that iterate
+    /// the name and the thunks that read it, and only a thunk binds it.
     fn lower_comptime_binding(
         &mut self,
+        statement: &Stmt,
         name: &str,
         value: &Expr,
         statement_binding: Option<mojito_types::origin::OwnerId>,
@@ -2811,11 +2812,24 @@ impl Flatten<'_> {
                 } => Some(element),
                 _ => None,
             });
-        if let Some(element) = display {
-            if let Some(ty) = self.checked_ty(value) {
-                let binders = &self.enclosing_binders;
-                self.comptime_thunks
-                    .bind_sequence(value, binders, ty, element);
+        if let Some(element) = display
+            && !self.enclosing_binders.lifted
+        {
+            if let Some((owner, ty)) = statement_binding.zip(self.checked_ty(value)) {
+                let display = std::rc::Rc::new(value.clone());
+                let mut facts = HashMap::new();
+                self.copy_facts(value, &display, &mut facts);
+                let binding = DisplayBinding {
+                    owner,
+                    name: name.to_string(),
+                    display,
+                    facts: std::rc::Rc::new(facts),
+                    ty,
+                    element,
+                    binders: self.enclosing_binders.clone(),
+                    preceding: self.comptime_thunks.evaluated.len(),
+                };
+                self.comptime_thunks.bind_display(statement, binding);
             }
             return;
         }
@@ -2824,11 +2838,53 @@ impl Flatten<'_> {
         }
         // A thunk lifted after the binding reads it as the expression over
         // the binders it denotes (`comptime k = n + 1`).
-        if let Some((binding, denoted)) = statement_binding.zip(self.value_binder_expr(value)) {
-            self.comptime_thunks.bind_value(binding, denoted);
-        }
+        let mut denoted = self.value_binder_expr(value);
         let materialized = self.literal_materialization(value);
-        let src = self.expr(value);
+        // An `Int` or a `Bool` read off a display binding (`comptime e =
+        // L[1]`) is the application of its thunk, which later thunks read
+        // as well.
+        let src = match self.display_read(value) {
+            Some((src, applied)) => {
+                denoted = applied;
+                src
+            }
+            None => self.expr(value),
+        };
+        // A binding that denotes no parameter expression (`comptime b = n >
+        // 2`, `comptime t = (L[0], L[1])`) is evaluated again by each thunk
+        // that reads it.
+        if let Some(binding) = statement_binding
+            && !self.enclosing_binders.lifted
+        {
+            match denoted {
+                Some(denoted) => self.comptime_thunks.bind_value(binding, denoted),
+                None => self.comptime_thunks.bind_evaluated(binding, statement),
+            }
+        }
+        self.bind_comptime_register(name, value, statement_binding, materialized, src);
+    }
+
+    /// Bind `src`, the lowered `value` of a `comptime` binding, to the
+    /// binding's slot.
+    pub(in crate::mir) fn bind_comptime_value(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        statement_binding: Option<mojito_types::origin::OwnerId>,
+        src: Reg,
+    ) {
+        let materialized = self.literal_materialization(value);
+        self.bind_comptime_register(name, value, statement_binding, materialized, src);
+    }
+
+    fn bind_comptime_register(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        statement_binding: Option<mojito_types::origin::OwnerId>,
+        materialized: Option<Ty>,
+        src: Reg,
+    ) {
         let var = match statement_binding {
             Some(binding) => self.declare_binding_var(binding, name),
             None => self.var(name),
@@ -2972,6 +3028,35 @@ impl Flatten<'_> {
                             mojito_checked::checked::ComptimeSequence::Elements(
                                 self.comptime_thunks.bound_sequence(&display)?,
                             )
+                        }
+                        ComptimeSource::EvaluatedRange { bounds } => {
+                            let ExprKind::Call { args, .. } = &iter.syntax.kind else {
+                                return None;
+                            };
+                            let bounds: Vec<ParamExpr> = bounds
+                                .into_iter()
+                                .zip(args)
+                                .map(|(bound, written)| {
+                                    bound.unwrap_or_else(|| {
+                                        let binders = &self.enclosing_binders;
+                                        self.comptime_thunks.request_value(
+                                            written,
+                                            binders,
+                                            Ty::Int,
+                                        )
+                                    })
+                                })
+                                .collect();
+                            let constant = |value: i64| {
+                                ParamContext::detached().constant(CtValue::Int(value)).ok()
+                            };
+                            let (start, stop, step) = match bounds.as_slice() {
+                                [stop] => (constant(0)?, stop.clone(), constant(1)?),
+                                [start, stop] => (start.clone(), stop.clone(), constant(1)?),
+                                [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
+                                _ => return None,
+                            };
+                            mojito_checked::checked::ComptimeSequence::Range { start, stop, step }
                         }
                     };
                     Some((iteration.binder, source))

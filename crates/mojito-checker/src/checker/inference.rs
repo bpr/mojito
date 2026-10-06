@@ -1067,6 +1067,7 @@ impl Checker {
                 }),
             ExprKind::Identifier(name) => {
                 self.check_capture_access(name, false)?;
+                self.reject_display_crossing(expr)?;
                 if let Some(owner) = self.lookup_owner(name) {
                     self.expression_bindings
                         .borrow_mut()

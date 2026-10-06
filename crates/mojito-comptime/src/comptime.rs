@@ -1014,6 +1014,7 @@ pub fn elaborate_prepared(
         fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
         template_loop_names: RefCell::new(Vec::new()),
+        crossing_templates: Cell::new(0),
         def_traces: RefCell::new(Vec::new()),
         method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
@@ -1451,14 +1452,18 @@ pub(super) fn comptime_for_is_template_served(
     let packs = names.packs;
     let sequence = match &iter.kind {
         ExprKind::Call { name, args, .. } if name == "range" => {
-            !args.is_empty() && args.iter().all(|bound| parameter_shaped(bound, packs))
+            !args.is_empty()
+                && args.iter().all(|bound| {
+                    parameter_shaped(bound, packs)
+                        || display_read_shaped(bound, packs, names.displays)
+                })
         }
         ExprKind::ListLit(items) => {
             (!items.is_empty() && items.iter().all(literal_element))
-                || evaluated_display_shaped(iter, packs)
+                || evaluated_display_shaped(iter, packs, names.displays)
         }
         ExprKind::BraceLit(entries) => {
-            literal_entries(entries) || evaluated_display_shaped(iter, packs)
+            literal_entries(entries) || evaluated_display_shaped(iter, packs, names.displays)
         }
         ExprKind::Identifier(name) => {
             names.value_packs.contains(name)
@@ -1488,7 +1493,8 @@ pub(super) fn comptime_for_is_template_served(
                     && (literal_element(value)
                         || parameter_shaped(value, packs)
                         || element
-                        || names.displays.contains(name)))
+                        || names.displays.contains(name)
+                        || display_read_shaped(value, packs, names.displays)))
                     && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
             }
             StmtKind::Comptime { .. } => true,
@@ -1625,15 +1631,27 @@ fn reflection_count(expression: &Expr) -> bool {
 
 /// Whether `expression` is spelled as a scalar a loop binder takes (`Int`,
 /// `Bool`, `String`) over the binders: a literal, a name, a `Self.` member,
-/// a pack length ([`pack_length`]), or an arithmetic, comparison, or boolean
-/// operator over those. A call, a subscript, a float, or a nested display
-/// does not show its type.
-fn scalar_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
-    let shaped = |operand: &Expr| scalar_shaped(operand, packs);
+/// a pack length ([`pack_length`]), an element or the length of one of the
+/// body's display bindings (`L[0]`, `len(L)`), or an arithmetic, comparison,
+/// or boolean operator over those. Any other call or subscript, a float, or
+/// a nested display does not show its type.
+fn scalar_shaped(expression: &Expr, packs: &HashSet<String>, displays: &HashSet<String>) -> bool {
+    let shaped = |operand: &Expr| scalar_shaped(operand, packs, displays);
+    let display = |operand: &Expr| matches!(&operand.kind, ExprKind::Identifier(name) if displays.contains(name));
     match &expression.kind {
         ExprKind::Int(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::Identifier(_) => true,
         ExprKind::Member { object, .. } => {
             matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                || pack_length(expression, packs)
+        }
+        ExprKind::Index { object, index } => display(object) && shaped(index),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+            matches!(args.as_slice(), [measured] if display(measured))
                 || pack_length(expression, packs)
         }
         ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
@@ -1665,24 +1683,36 @@ fn scalar_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
 }
 
 /// Whether `expression` is spelled as a list, set, or dictionary display of
-/// scalars over the binders ([`scalar_shaped`]), which the elaborator below
-/// MIR evaluates per instance.
-fn evaluated_display_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
+/// scalars over the binders and the body's display bindings
+/// ([`scalar_shaped`]), which the elaborator below MIR evaluates per
+/// instance.
+fn evaluated_display_shaped(
+    expression: &Expr,
+    packs: &HashSet<String>,
+    displays: &HashSet<String>,
+) -> bool {
+    let shaped = |item: &Expr| scalar_shaped(item, packs, displays);
     match &expression.kind {
-        ExprKind::ListLit(items) => {
-            !items.is_empty() && items.iter().all(|item| scalar_shaped(item, packs))
-        }
+        ExprKind::ListLit(items) => !items.is_empty() && items.iter().all(shaped),
         ExprKind::BraceLit(entries) => {
             !entries.is_empty()
-                && entries.iter().all(|(key, value)| {
-                    scalar_shaped(key, packs)
-                        && value
-                            .as_ref()
-                            .is_none_or(|value| scalar_shaped(value, packs))
-                })
+                && entries
+                    .iter()
+                    .all(|(key, value)| shaped(key) && value.as_ref().is_none_or(shaped))
         }
         _ => false,
     }
+}
+
+/// Whether `expression` is spelled as a scalar read off one of the body's
+/// display bindings (`len(L)`, `L[i] + 1`): the check does not close it, and
+/// the elaborator below MIR evaluates it per instance.
+fn display_read_shaped(
+    expression: &Expr,
+    packs: &HashSet<String>,
+    displays: &HashSet<String>,
+) -> bool {
+    elab::expression_names_any(expression, displays) && scalar_shaped(expression, packs, displays)
 }
 
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
@@ -1875,19 +1905,97 @@ pub(super) fn def_value_pack_names(type_params: &[TypeParam], owner: &str) -> Ha
 }
 
 /// The local `comptime` bindings of a generic `def` body its template
-/// serves as sequences: `comptime L = [n, n * 2]`, a display of scalars over
-/// the binders ([`evaluated_display_shaped`]) that the body reads only as
-/// the iterable of a `comptime for` ([`mojito_ast::visit::iterated_displays`]).
-/// The check types the display with the binders symbolic, MIR lifts it where
-/// it is declared, and the elaborator below MIR evaluates it once per
-/// instance for every loop over the name. Any other read — an element
-/// (`L[0]`), a length, a `materialize[L]()` — has no template form.
+/// serves as compile-time displays: `comptime L = [n, n * 2]`, a display of
+/// scalars over the binders and the other served displays
+/// ([`evaluated_display_shaped`]) under a name the body binds once
+/// ([`mojito_ast::visit::display_bindings`]). The check types the display
+/// with the binders symbolic and gives it no runtime form; MIR lifts it, and
+/// each compile-time expression that reads it, as a function the elaborator
+/// below MIR runs per instance.
 pub(super) fn served_display_bindings(packs: &HashSet<String>, body: &[Stmt]) -> HashSet<String> {
-    mojito_ast::visit::iterated_displays(body)
-        .into_iter()
-        .filter(|(_, display)| evaluated_display_shaped(display, packs))
-        .map(|(name, _)| name)
-        .collect()
+    let bindings = mojito_ast::visit::display_bindings(body);
+    let mut served: HashSet<String> = bindings.keys().cloned().collect();
+    // A display that reads an unserved one is unserved too.
+    loop {
+        let kept: HashSet<String> = served
+            .iter()
+            .filter(|name| evaluated_display_shaped(&bindings[*name], packs, &served))
+            .cloned()
+            .collect();
+        if kept.len() == served.len() {
+            break;
+        }
+        served = kept;
+    }
+    if display_in_argument(body, &served) {
+        served.clear();
+    }
+    served
+}
+
+/// Whether `body` spells one of its `displays`, or a local `comptime` value
+/// read off one, in a type or parameter argument (`SIMD[DType.int32,
+/// L[0]]`, `f[e]()` after `comptime e = L[0]`): a type over a value the
+/// elaborator evaluates has no template form. `materialize[L]()` is a
+/// crossing, not an argument.
+fn display_in_argument(body: &[Stmt], displays: &HashSet<String>) -> bool {
+    struct Finder {
+        /// The displays, and each local `comptime` value read off them.
+        derived: HashSet<String>,
+        found: bool,
+    }
+
+    impl Finder {
+        fn names(&self, argument: &ParamArg) -> bool {
+            match argument {
+                ParamArg::Value(value) => elab::expression_names_any(value, &self.derived),
+                ParamArg::Type(Type::Named(name, arguments)) => {
+                    self.derived.contains(name)
+                        || arguments.iter().any(|argument| self.names(argument))
+                }
+                ParamArg::Type(_) => false,
+                ParamArg::Named { value, .. } => self.names(value),
+            }
+        }
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::Comptime { name, value, .. } = &statement.kind
+                && elab::expression_names_any(value, &self.derived)
+            {
+                self.derived.insert(name.clone());
+            }
+        }
+
+        fn visit_expr(&mut self, expression: &Expr) {
+            let arguments = match &expression.kind {
+                ExprKind::Call {
+                    name, param_args, ..
+                } if name != "materialize" => param_args,
+                ExprKind::Invoke { param_args, .. } => param_args,
+                ExprKind::TypeApply { args, .. } => args,
+                _ => return,
+            };
+            self.found |= arguments.iter().any(|argument| self.names(argument));
+        }
+
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(_, arguments) = ty {
+                self.found |= arguments.iter().any(|argument| self.names(argument));
+            }
+        }
+    }
+
+    if displays.is_empty() {
+        return false;
+    }
+    let mut finder = Finder {
+        derived: displays.clone(),
+        found: false,
+    };
+    mojito_ast::visit::walk_block(&mut finder, body);
+    finder.found
 }
 
 /// The names a `def` binds itself, so that a bare name outside them is a
@@ -3098,6 +3206,8 @@ struct Elab<'a> {
     /// The loop names of each generic `def` body open in
     /// [`Self::template_binders`].
     template_loop_names: RefCell<Vec<TemplateLoopNames>>,
+    /// How many generic bodies the runtime-crossing pass has descended into.
+    crossing_templates: Cell<usize>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.

@@ -1204,15 +1204,38 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ComptimeThunks::request_sequence`, `mir.rs`, lowered with the condition
   thunks at each request's own result type), which `verify/scope.rs` admits
   as a loop sequence of list meta. A local `comptime` binding of such a
-  display, read only by loops (`mojito_ast::visit::iterated_displays`,
-  `visit.rs`, computed per block by `Checker::check_block`), is typed by
-  `Checker::evaluated_display_binding` from `bind_template_comptime`, which
-  records `SemanticAdjustment::ComptimeDisplay` on the display and keeps a
-  `BoundDisplay` in `local_comptime_displays`; a loop over the name records
-  `ComptimeSource::Bound` (`record_bound_iteration`).
-  `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) lifts the display
-  once (`ComptimeThunks::bind_sequence`) and gives the binding no runtime
-  form, and `lower_term` reads the header's sequence back
+  display is typed by `Checker::evaluated_display_binding` from
+  `bind_template_comptime`, which records
+  `SemanticAdjustment::ComptimeDisplay` on the display, declares the name at
+  the display's type, and keeps a `BoundDisplay` in
+  `local_comptime_displays`; a loop over the name records
+  `ComptimeSource::Bound` (`record_bound_iteration`), a `range` bound the
+  check does not close records `ComptimeSource::EvaluatedRange`
+  (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
+  `comptime_binding_owners`), a condition naming an evaluated binding is
+  left uncompiled (`names_evaluated_binding`), and a runtime read is
+  rejected (`reject_display_crossing`, from `inference.rs`).
+  `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
+  binding with its checked facts (`DisplayBinding`,
+  `ComptimeThunks::bind_display`, `Flatten::copy_facts`) and gives it no
+  runtime form; `lower_term` reads a header's sequence back, lifting the
+  display on the first loop over the name
+  (`ComptimeThunks::bound_sequence`), and lifts an evaluated bound
+  (`ComptimeThunks::request_value`). `Flatten::display_read` (`mir.rs`)
+  lowers a compile-time expression that reads a display (`displays_read`):
+  an `Int` or `Bool` as a parameter constant over its thunk's application,
+  any other value in place after `build_display`;
+  `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
+  operand of a kept `materialize[X]()` or `comptime(e)`
+  (`Checker::infer_template_materialize`, `infer_template_comptime`), a
+  whole display through `crossing_display`. Every thunk begins with the
+  local `comptime` bindings its expression reads that denote no parameter
+  expression (`ComptimeThunks::bind_evaluated`, `thunk_prologue`,
+  `bindings_read`, lowered by `lower_expression_thunk` under
+  `EnclosingBinders::lifted`). `native::mono` evaluates an application
+  wherever it meets one: `Specializer::applied`
+  (`mono/specializer.rs`, over `ParamContext::answer_applications`) serves
+  `answer_param_constants` and a range bound in `trip_elements`
   (`ComptimeThunks::bound_sequence`). A thunk reads an enclosing local
   `comptime` value (`comptime k = n + 1`) as its parameter expression:
   `lower_comptime_binding` records it (`ComptimeThunks::bind_value`), each
@@ -1288,16 +1311,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   not serve (`comptime_for_is_template_served`, `comptime.rs`, over the
   `LoopNames` of the `def`: its packs, its value packs
   (`def_value_pack_names`), its reflected lists (`ReflectedLists`), its
-  local bindings of a display over the binders that only loops read
-  (`served_display_bindings`, which the elaborator holds per open template
-  body in `TemplateLoopNames`), and
+  local bindings of a display over the binders
+  (`served_display_bindings` over `mojito_ast::visit::display_bindings`,
+  none when `display_in_argument` finds one spelled in a type or parameter
+  argument, which the elaborator holds per open template body in
+  `TemplateLoopNames`), and
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,
-  `scalar_shaped`, `reflection_count`, and `reflected_names` are the
-  admitted spellings), on a reflected list materialized whole
+  `scalar_shaped`, `display_read_shaped`, `reflection_count`, and
+  `reflected_names` are the admitted spellings), on a reflected list materialized whole
   (`ReflectedLists::materialized_in`), or a nested `def` holding a
   `rebind`. The crossing pass spells a named collection as its display in
-  a kept header (`cross_stmt`, `comptime/crossing.rs`);
+  a kept header (`cross_stmt`, `comptime/crossing.rs`), and leaves a
+  `comptime(e)` it cannot evaluate in a generic body for the check
+  (`in_template_body`);
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).

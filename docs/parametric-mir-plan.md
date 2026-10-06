@@ -625,10 +625,15 @@ branch for the class is deleted, and so is its certificate class.
   the index, and a display over the binders, which MIR lifts as a thunk the
   elaborator runs per instance. A local `comptime` binding of such a
   display followed the same day: MIR lifts it once, where it is declared,
-  and every loop over the name iterates that one application. A binding
-  read for an element or a length, an element that applies a function, and
-  a loop constructing a reflected field type still key a clone (R370, R363,
-  R364). The second landed 2026-10-03 for a module-level
+  and every loop over the name iterates that one application. The other
+  reads of such a binding followed the same day, with no schema change: a
+  `comptime if` condition, a `range` bound, and an `Int` or `Bool` read by
+  another binding or crossing are each lifted as a thunk that begins by
+  binding the display, which the elaborator demands in a condition, a loop
+  header, or a parameter constant, and `materialize[L]()` builds the display
+  where it crosses. A binding spelled in a type or parameter argument, an
+  alias of one, an element that applies a function, and a loop constructing
+  a reflected field type still key a clone (R373, R375, R363, R364). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's

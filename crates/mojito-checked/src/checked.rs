@@ -460,6 +460,13 @@ pub enum ComptimeSource {
         element: mojito_types::param_expr::MetaTy,
         display: SourceSpan,
     },
+    /// A `range(...)` with a bound the check does not close (`range(len(L))`
+    /// over a local display binding): each bound as written is its
+    /// parameter expression, or `None` for one MIR lifts as a function over
+    /// the binders in scope, which the elaborator evaluates per instance.
+    EvaluatedRange {
+        bounds: Vec<Option<mojito_types::param_expr::ParamExpr>>,
+    },
 }
 
 impl ComptimeSource {
@@ -468,6 +475,7 @@ impl ComptimeSource {
         match self {
             Self::Sequence(sequence) => sequence.binder_meta(),
             Self::Evaluated { element, .. } | Self::Bound { element, .. } => element.clone(),
+            Self::EvaluatedRange { .. } => mojito_types::param_expr::MetaTy::int(),
         }
     }
 }
@@ -789,9 +797,10 @@ pub enum SemanticAdjustment {
     ComptimeIteration(Box<ComptimeIteration>),
     /// The display a local `comptime` binding of a template body holds
     /// (`comptime L = [n, n + 1]`), typed and not closed by the check, whose
-    /// value is a sequence of `element`s: MIR lifts the display as a function
-    /// over the binders in scope at the binding, which the elaborator
-    /// evaluates once per instance, and gives the binding no runtime form.
+    /// value is a sequence of `element`s. The binding has no runtime form:
+    /// MIR lifts the display as a function over the binders in scope at the
+    /// binding for the loops that iterate the name, and binds it at the head
+    /// of each function lifted for a compile-time expression that reads it.
     ///
     /// `construction` is the display's own checked construction, which this
     /// record stands in for on the display's span.

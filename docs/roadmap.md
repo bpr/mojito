@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R373**.
+Next free ID: **R379**.
 
 ## Ordered Work
 
@@ -135,29 +135,38 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R370 (P3b) A local `comptime` display over a binder that is read
-  for an element or a length, or materialized, keys a clone**
+- [ ] **R373 (P3) A type or parameter argument that reads a local
+  `comptime` display binding has no template form**
 
-  Problem: `comptime L = [n, n * 2]` then `comptime if L[0] == 3:`,
-  `range(len(L))`, or `materialize[L]()` beside `comptime for x in L:` in
-  `def f[n: Int]()` keeps the `def` on the cloner, where a body that only
-  iterates `L` is served by its template.
-  - The template binds such a display as a sequence alone: MIR lifts it as
-    a thunk the loop headers iterate (`ComptimeThunks::bind_sequence`,
-    `mir.rs`).
-  - No parameter expression reads an element or the length of a thunk's
-    value, and no MIR form builds runtime storage from it.
-  - The cloner and the check pick the served bindings by syntax
-    (`mojito_ast::visit::iterated_displays`).
-  - A method of a generic struct has no clone to fall back on, so the same
-    body fails there with "'L' is not a compile-time type", where the pin
-    prints the elements.
-  - With no loop over it, `comptime if L[0] == 2:` in a generic `def` stops
-    with "unsupported VM CTFE failed": the condition's thunk reads the
-    binding as a runtime local.
-  - Found while landing the loop over such a binding (2026-10-06).
+  Problem: `comptime L = [n, n * 2]` then `SIMD[DType.int32, L[0]](1)`, or
+  `comptime e = L[1]` then `g[e]()`, in `def f[n: Int]()` is rejected with
+  "not a compile-time Int constant: e", where the pin runs it.
+  - An element or the length of such a binding is the application of a
+    function the elaborator runs (`Flatten::display_read`, `mir.rs`), and
+    the check compiles no such application into a type or a parameter
+    argument (`compile_dependent_ct_expr`).
+  - `native::mono` evaluates an application in a parameter constant, a
+    `comptime if` condition, and a loop header (`Specializer::applied`), not
+    in a type.
+  - A `def` that also iterates the binding still keys a clone for this
+    (`display_in_argument`, `comptime.rs`), which runs.
+  - A method of a generic struct has no clone, so it is rejected there with
+    or without a loop.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R375 (P3b) An alias of a local `comptime` display binding keys a
+  clone**
+
+  Problem: `comptime A = L` over `comptime L = [n, n * 2]`, then `comptime
+  for x in A:`, in `def f[n: Int]()` is unrolled in the AST on a clone.
+  - The cloner serves a display binding by its own name
+    (`mojito_ast::visit::display_bindings`), and the check binds no alias of
+    one (`bind_template_comptime`, `checker/comptime_validation.rs`).
+  - A method of a generic struct has no clone, so the loop fails there with
+    "'A' is not a compile-time type", where the pin prints the elements.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R371 (P3b) A `comptime for` the template does not serve fails when
   it is nested in a kept `comptime if` arm or a served loop**
@@ -2400,6 +2409,36 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R376 A compile-time application under an untaken `comptime if` arm
+  is evaluated**
+
+  Problem: `comptime if n > 100:` holding `comptime for z in [10 // (n -
+  4)]:` in `def f[n: Int]()` stops `f[4]()` with "integer division or modulo
+  by zero", where the pin skips the arm and runs.
+  - `native::mono` unrolls every loop header of an instance before it
+    selects a branch (`unroll_comptime_loops`, then
+    `select_comptime_branches`, `mono/specializer.rs`), so the header's
+    thunk runs in an arm the instance never takes.
+  - A nested `comptime if` whose condition applies a function fails the
+    same way.
+  - A local `comptime` display binding read in such an arm does too.
+  - Found while landing reads of a local display binding (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R377 `materialize[L[1]]()` over a capitalized name is parsed as a
+  type application**
+
+  Problem: `comptime L = [1, 2]` then `print(materialize[L[1]]())` in `main`
+  is rejected with "materialize[...]() takes one compile-time value", where
+  the pin prints `2`.
+  - The parser reads `L[1]` in a parameter argument as the type `L` applied
+    to `1`, since the name is capitalized.
+  - A lower-case name (`vals[1]`) is parsed as a subscript and runs.
+  - Found while landing reads of a local display binding (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R325 A value pack read as a runtime value is rejected**
 
   Problem: `for v in values:` and `values[i]` with a runtime `i`, over
@@ -3880,24 +3919,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R372 A runtime read of a local `comptime` display over a binder is
-  accepted in a template-served body**
-
-  Problem: `comptime L = [n, n * 2]` then `print(L[1])` in `def f[n: Int]()`
-  prints `4`, where the pin stops with "cannot materialize comptime value of
-  type 'Array[Int, Int(2)]' to runtime because it is not
-  'ImplicitlyCopyable'".
-  - The elaborator keeps the binding for the template because it names a
-    binder (`keep_template_comptime_binding`, `comptime/elab.rs`).
-  - The executable check then binds it as an ordinary runtime list, since
-    the body does not only iterate it.
-  - A body that also iterates `L` with a `comptime for` is a clone's, whose
-    crossing pass rejects the read as the pin does.
-  - A method of a generic struct accepts the read the same way.
-  - `materialize[L]()` over such a binding runs, as at the pin.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R349 Two packs in one parameter list are accepted**
 
   Problem: `def joined_len[*As: Movable, *Bs: Movable](a: Tuple[*As], b:
@@ -3978,6 +3999,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     iterator, the element bound as `paramfor_next_value(it)`, with each
     step a compile-time application the elaborator runs.
   - Depends on R246.
+  - Model: Fable, Not Planned.
+
+- [ ] **R378 A function lifted for a compile-time expression evaluates
+  again each local `comptime` binding it reads**
+
+  Problem: `comptime L = [n, n * 2]` read by `comptime if L[0] == 3:` and by
+  `range(len(L))` in `def f[n: Int]()` is evaluated once for each of the
+  two, where the pin evaluates a `comptime` alias once per instance and
+  every read names that value.
+  - A thunk begins with the statement of each local `comptime` binding it
+    reads that denotes no parameter expression (`thunk_prologue`, `mir.rs`):
+    a display, and any value that is not arithmetic over the binders
+    (`comptime b = n > 2`, `comptime t = (L[0], L[1])`).
+  - `materialize[L]()`, and a value read off a display that is no `Int` or
+    `Bool`, build the display again where they cross
+    (`Flatten::build_display`).
+  - The bindings served are pure, so the values agree with the pin's and
+    only the work is repeated.
+  - Bind each such binding's one application in the instance, and read an
+    element of it as a parameter expression over that value.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R159 `Float64` and `Float32` print different text from the pin

@@ -110,7 +110,21 @@ impl Flatten<'_> {
                 && kwargs.is_empty()
                 && let [mojito_ast::ast::ParamArg::Value(operand)] = param_args.as_slice() =>
             {
-                self.expr(operand)
+                self.crossing_operand(operand)
+            }
+            // `comptime(e)` left the same way.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "comptime"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && let [operand] = args.as_slice()
+                && self.checked_ty(operand).is_some() =>
+            {
+                self.crossing_operand(operand)
             }
             // NOTE: keyword args + default-slot matching (`call::match_call_slots`)
             // are a follow-up; the checker has already validated them, so only the

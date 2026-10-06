@@ -893,6 +893,26 @@ impl ParamContext {
         })
     }
 
+    /// Rebuild `expr` with every unevaluated application `oracle` answers
+    /// replaced by its answer, through the folding constructors, so what
+    /// sits above an answered application closes too. The oracle takes the
+    /// applied function and its arguments; one it leaves (`Ok(None)`) is
+    /// rebuilt as it is.
+    pub fn answer_applications(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut ApplicationOracle<'_>,
+    ) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| match node.kind() {
+            ParamKind::Apply {
+                function,
+                args,
+                evaluated: None,
+            } => oracle(function, args),
+            _ => Ok(None),
+        })
+    }
+
     /// Re-home `expr` (and its operands) into this context. Importing re-uses
     /// binder identities as they are; it never merges same-spelled binders.
     pub fn intern(&self, expr: &ParamExpr) -> ParamExpr {
@@ -2541,6 +2561,12 @@ impl fmt::Display for ReflectQuery {
 /// `Ok(None)` leaves the query as it is.
 pub type ReflectOracle<'a> =
     dyn FnMut(&ParamExpr, &ReflectQuery) -> Result<Option<CtValue>, ParamError> + 'a;
+
+/// What answers a compile-time application for
+/// [`ParamContext::answer_applications`]: the applied function and its
+/// arguments, to its value, or `None` to leave the application as it is.
+pub type ApplicationOracle<'a> =
+    dyn FnMut(&str, &[ParamExpr]) -> Result<Option<CtValue>, ParamError> + 'a;
 
 /// Why a reflection query over a closed subject has no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -494,14 +494,33 @@ condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
 (`VmBackend::freeze`) into the list, set, or dictionary it iterates, as
 upstream runs the display on its interpreter per instance. A local
-`comptime` binding of such a display that the body reads only as a loop's
-iterable (`mojito_ast::visit::iterated_displays`, which the cloner and the
-check both ask) is a sequence with no runtime form: the check records it on
+`comptime` binding of such a display is a compile-time value with no runtime
+form, whatever reads it: the check types the name, records the binding on
 the display (`SemanticAdjustment::ComptimeDisplay`) and each loop over the
-name as `ComptimeSource::Bound`, MIR lifts the display once, at the binding,
-over the binders in scope there (`ComptimeThunks::bind_sequence`), and every
-header over the name carries that one application, so the elaborator
-evaluates the binding once per instance, as upstream evaluates a `comptime`
+name as `ComptimeSource::Bound`, and rejects a read outside every
+compile-time position as the pin does. MIR keeps the binding beside the
+function's thunks (`DisplayBinding`): the first loop over the name lifts the
+display over the binders in scope where it is declared
+(`ComptimeThunks::bound_sequence`), and every header over the name carries
+that one application. Every other compile-time read is lifted where it
+stands, as upstream runs `L[0]` or `len(L)` on its interpreter: a `comptime
+if` condition as any uncompiled condition is, a `range` bound the check does
+not close (`ComptimeSource::EvaluatedRange`), and an `Int` or `Bool` another
+binding or a crossing reads (`comptime e = L[1]`, `comptime(len(L))`), which
+MIR carries as a parameter constant holding the application
+(`Flatten::display_read`). Each thunk begins with the statements of the
+local `comptime` bindings its expression reads that denote no parameter
+expression — the displays, and a value such as `comptime b = n > 2`
+(`ComptimeThunks::bind_evaluated`, `thunk_prologue`) — and `native::mono` demands an
+application wherever it evaluates one — a condition, a loop header, a
+parameter constant (`Specializer::applied`). `materialize[L]()`, and a value
+read off the display that is no `Int` or `Bool`, build the display where
+they cross to runtime (`Flatten::crossing_display`, `build_display`). The
+cloner serves such a binding by syntax alone
+(`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
+keeps the clone only where the body spells the binding in a type or
+parameter argument. Evaluating such a binding again per reader is roadmap
+R378, where upstream evaluates a `comptime`
 alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
 (`EnclosingBinders::comptime_bindings`). HIR lowers the
@@ -518,10 +537,11 @@ reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
 for the pruning. Every other `comptime for` — over a local `comptime`
-display the body also reads for an element or a length, a display with an
-element that applies a function, a loop that constructs a reflected field
-type, and every one outside a generic `def` or a generic struct's method —
-is unrolled in the AST as before (roadmap R370, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
+display the body also spells in a type or parameter argument, an alias of
+one, a display with an element that applies a function, a loop that
+constructs a reflected field type, and every one outside a generic `def` or
+a generic struct's method — is unrolled in the AST as before (roadmap R373,
+R375, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

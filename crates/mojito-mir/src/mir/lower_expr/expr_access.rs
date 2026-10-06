@@ -19,10 +19,24 @@ impl Flatten<'_> {
             })
     }
 
+    /// The runtime value of a compile-time `operand` crossing explicitly
+    /// (`materialize[X]()`, `comptime(e)`): a local display binding is built
+    /// here, where it crosses; an `Int` or a `Bool` read off one is the
+    /// application of its thunk; any other operand is lowered in place.
+    pub(in crate::mir) fn crossing_operand(&mut self, operand: &Expr) -> Reg {
+        if let Some(binding) = self.named_display(operand) {
+            return self.crossing_display(&binding);
+        }
+        match self.display_read(operand) {
+            Some((value, _)) => value,
+            None => self.expr(operand),
+        }
+    }
+
     /// Lower `e`'s recorded parameter value: a closed one is its constant,
     /// and one a generator names is a parameter constant the elaborator
     /// folds per instance.
-    pub(super) fn param_value_register(
+    pub(in crate::mir) fn param_value_register(
         &mut self,
         e: &Expr,
         value: mojito_types::param_expr::ParamExpr,
@@ -31,6 +45,11 @@ impl Flatten<'_> {
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Int(n)) => {
                 Const::Int(*n)
             }
+            // A literal a local `comptime` binding denotes (`comptime c =
+            // 3`), read in a lifted thunk.
+            mojito_types::param_expr::ParamKind::Constant(
+                mojito_types::ct::CtValue::IntLiteral(n),
+            ) => Const::IntLiteral(n.clone()),
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Bool(b)) => {
                 Const::Bool(*b)
             }

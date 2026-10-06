@@ -60,6 +60,7 @@ assets/ok/comptime_annotated_scalar.mojo	main	exe-differential	sanitized
 assets/ok/comptime_applied_constant_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
+assets/ok/comptime_display_binding_reads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_binding_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_scope.mojo	main	exe-differential	sanitized

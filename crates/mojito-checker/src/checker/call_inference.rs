@@ -414,6 +414,12 @@ impl Checker {
                 "comptime" if self.source_validation && args.len() == 1 => {
                     return self.infer(&args[0]);
                 }
+                // One the elaborator left is over a binder of a template
+                // body (`comptime(len(L))`): the runtime value of its
+                // compile-time operand, as `materialize[...]()` is.
+                "comptime" if args.len() == 1 && param_args.is_empty() && kwargs.is_empty() => {
+                    return self.infer_template_comptime(&args[0]);
+                }
                 // `Int(copy=x)`: a built-in value type's `Copyable`
                 // initializer.
                 _ if args.is_empty()

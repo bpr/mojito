@@ -272,7 +272,7 @@ impl Specializer<'_> {
             &iteration,
         )?;
         substitute_blocks_metadata(&mut blocks[first..], &iteration)?;
-        self.answer_param_constants(&mut blocks[first..], &iteration)?;
+        self.answer_param_constants(frame.template, &mut blocks[first..], &iteration)?;
         self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
         Ok(())
     }
@@ -301,6 +301,9 @@ impl Specializer<'_> {
             ComptimeSequence::Range { start, stop, step } => {
                 let mut evaluated = [0i64; 3];
                 for (value, bound) in evaluated.iter_mut().zip([start, stop, step]) {
+                    // A bound the check left to evaluate (`len(L)`) is the
+                    // application of its thunk.
+                    let bound = &self.applied(template, bound, bindings)?;
                     *value = eval_ct(bound, bindings)
                         .ok()
                         .as_ref()

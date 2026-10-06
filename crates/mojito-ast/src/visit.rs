@@ -559,31 +559,22 @@ pub fn walk_trait_comptime<V: Visitor>(visitor: &mut V, member: &TraitComptime) 
     walk_exprs(visitor, &member.where_clauses);
 }
 
-/// The local `comptime` display bindings `statements` only iterate, each
-/// with its display.
+/// The local `comptime` display bindings of `statements`, each with its
+/// display.
 ///
 /// Such a binding is `comptime L = [a, b]`, a list, set, or dictionary
 /// display at any depth, unannotated and with no parameters of its own,
-/// under a name nothing else in `statements` binds, whose every read is the
-/// iterable of a `comptime for`. It is a compile-time sequence and nothing
-/// more; an element read (`L[0]`), a length, or a `materialize[L]()` makes
-/// it a value.
-pub fn iterated_displays(statements: &[Stmt]) -> HashMap<String, Expr> {
+/// under a name nothing else in `statements` binds.
+pub fn display_bindings(statements: &[Stmt]) -> HashMap<String, Expr> {
     #[derive(Default)]
     struct Names {
         displays: HashMap<String, Expr>,
         bindings: HashMap<String, usize>,
-        reads: HashMap<String, usize>,
-        iterated: HashMap<String, usize>,
     }
 
     impl Names {
         fn bind(&mut self, name: &str) {
             *self.bindings.entry(name.to_string()).or_default() += 1;
-        }
-
-        fn read(&mut self, name: &str) {
-            *self.reads.entry(name.to_string()).or_default() += 1;
         }
     }
 
@@ -610,31 +601,7 @@ pub fn iterated_displays(statements: &[Stmt]) -> HashMap<String, Expr> {
                 | StmtKind::RefDecl { name, .. }
                 | StmtKind::Assign { name, .. }
                 | StmtKind::Def { name, .. } => self.bind(name),
-                StmtKind::ComptimeFor {
-                    iter:
-                        Expr {
-                            kind: ExprKind::Identifier(name),
-                            ..
-                        },
-                    ..
-                } => *self.iterated.entry(name.clone()).or_default() += 1,
-                // An unpack target is reported as a read of its name too.
                 _ => {}
-            }
-        }
-
-        fn visit_expr(&mut self, expr: &Expr) {
-            if let ExprKind::Identifier(name)
-            | ExprKind::Call { name, .. }
-            | ExprKind::TypeApply { name, .. } = &expr.kind
-            {
-                self.read(name);
-            }
-        }
-
-        fn visit_type(&mut self, ty: &Type) {
-            if let Type::Named(name, _) = ty {
-                self.read(name);
             }
         }
 
@@ -652,11 +619,8 @@ pub fn iterated_displays(statements: &[Stmt]) -> HashMap<String, Expr> {
     let Names {
         mut displays,
         bindings,
-        reads,
-        iterated,
     } = found;
-    displays
-        .retain(|name, _| bindings.get(name) == Some(&1) && reads.get(name) == iterated.get(name));
+    displays.retain(|name, _| bindings.get(name) == Some(&1));
     displays
 }
 

@@ -48,6 +48,29 @@ impl Elab<'_> {
         self.cross_block(body, env, &shadowed)
     }
 
+    /// Cross the body of a `def` or a method, a `generic` one as a template
+    /// body ([`Self::in_template_body`]).
+    fn cross_declaration_body(
+        &self,
+        generic: bool,
+        params: &[FnParam],
+        body: &mut [Stmt],
+        env: &HashMap<String, CtValue>,
+        shadowed: &HashSet<String>,
+    ) -> Result<(), ComptimeError> {
+        let depth = self.crossing_templates.get();
+        self.crossing_templates.set(depth + usize::from(generic));
+        let crossed = self.cross_body(params, body, env, shadowed);
+        self.crossing_templates.set(depth);
+        crossed
+    }
+
+    /// Whether the statement being crossed sits in a generic body: one being
+    /// elaborated as a template, or one this pass has descended into.
+    fn in_template_body(&self) -> bool {
+        self.crossing_templates.get() > 0 || !self.template_binders.borrow().is_empty()
+    }
+
     fn cross_stmt(
         &self,
         stmt: &mut Stmt,
@@ -140,10 +163,25 @@ impl Elab<'_> {
                 }
                 self.cross_block(body, env, shadowed)
             }
-            StmtKind::Def { params, body, .. } => self.cross_body(params, body, env, shadowed),
-            StmtKind::Struct { methods, .. } => {
+            StmtKind::Def {
+                type_params,
+                params,
+                body,
+                ..
+            } => self.cross_declaration_body(!type_params.is_empty(), params, body, env, shadowed),
+            StmtKind::Struct {
+                type_params,
+                methods,
+                ..
+            } => {
                 for method in methods {
-                    self.cross_body(&method.params, &mut method.body, env, shadowed)?;
+                    self.cross_declaration_body(
+                        !type_params.is_empty() || !method.type_params.is_empty(),
+                        &method.params,
+                        &mut method.body,
+                        env,
+                        shadowed,
+                    )?;
                 }
                 Ok(())
             }
@@ -277,7 +315,14 @@ impl Elab<'_> {
                 && param_args.is_empty()
                 && kwargs.is_empty() =>
             {
-                let value = self.eval(&args[0], env)?;
+                let value = match self.eval(&args[0], env) {
+                    Ok(value) => value,
+                    // An operand over the binders of a generic body is the
+                    // check's to type and the elaborator below MIR's to
+                    // evaluate per instance.
+                    Err(_) if self.in_template_body() => return Ok(()),
+                    Err(error) => return Err(error),
+                };
                 if value.is_runtime_collection() {
                     return Err(not_implicitly_copyable(&value));
                 }

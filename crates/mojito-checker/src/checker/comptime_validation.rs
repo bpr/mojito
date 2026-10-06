@@ -10,8 +10,6 @@ use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
-/// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
-/// while the pack is still a parameter.
 /// A local `comptime` binding of a display the elaborator evaluates per
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
@@ -21,8 +19,12 @@ pub(in crate::checker) struct BoundDisplay {
     span: SourceSpan,
     /// What a `comptime for` over the binding binds.
     element: Ty,
+    /// The display's own type, which a runtime read would materialize.
+    ty: Ty,
 }
 
+/// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
+/// while the pack is still a parameter.
 pub(super) struct ForwardedPack {
     /// The collector binding the spread names.
     pub(super) binding: String,
@@ -259,6 +261,12 @@ impl Checker {
                     .map(|()| constraint)
             });
         match constraint {
+            // A local `comptime` binding the elaborator evaluates (`comptime
+            // e = L[1]`) is no parameter: the condition runs with it.
+            Ok(constraint) if self.names_evaluated_binding(&constraint) => {
+                self.expect_bool(cond, "comptime if condition")?;
+                Ok(None)
+            }
             Ok(constraint) => {
                 self.record_comptime_condition(cond, &constraint);
                 Ok(Some(constraint))
@@ -502,8 +510,24 @@ impl Checker {
         let bounds = args
             .iter()
             .map(|arg| self.compile_dependent_ct_expr(arg))
-            .collect::<Result<Vec<_>, _>>();
-        let bounds = match bounds {
+            .collect::<Vec<_>>();
+        // A bound the compiler does not close that reads compile-time
+        // bindings alone (`len(L)` over a local display binding) is
+        // evaluated per instance.
+        if !self.source_validation
+            && (1..=3).contains(&args.len())
+            && bounds.iter().any(Result::is_err)
+            && bounds
+                .iter()
+                .zip(args)
+                .all(|(bound, arg)| bound.is_ok() || self.reads_compile_time_alone(arg))
+        {
+            record_source(ComptimeSource::EvaluatedRange {
+                bounds: bounds.into_iter().map(Result::ok).collect(),
+            });
+            return Ok(());
+        }
+        let bounds = match bounds.into_iter().collect::<Result<Vec<_>, _>>() {
             Ok(bounds) => bounds,
             Err(_) if self.source_validation => return Ok(()),
             Err(error) => {
@@ -525,6 +549,31 @@ impl Checker {
         };
         record(mojito_checked::checked::ComptimeSequence::Range { start, stop, step });
         Ok(())
+    }
+
+    /// Whether every local `expr` names is a compile-time binding: a value
+    /// binder, a `comptime for` variable, or a local `comptime` constant or
+    /// display. Such an expression can run in a function the elaborator
+    /// evaluates per instance.
+    fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
+        struct Names(Vec<String>);
+        impl mojito_ast::visit::Visitor for Names {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Identifier(name) = &expr.kind {
+                    self.0.push(name.clone());
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        mojito_ast::visit::walk_expr(&mut names, expr);
+        names.0.iter().all(|name| {
+            self.binding_scope(name).is_none_or(|scope| scope == 0)
+                || self.is_compile_time_binding(name)
+                || self.lookup_owner(name).is_some_and(|owner| {
+                    self.value_parameter_owners.contains(&owner)
+                        || self.comptime_binding_owners.contains(&owner)
+                })
+        })
     }
 
     /// Record the header of a loop over a local binding of an evaluated
@@ -604,6 +653,7 @@ impl Checker {
     /// reads.
     pub(super) fn bind_template_comptime(
         &mut self,
+        stmt: &Stmt,
         name: &str,
         value: &Expr,
     ) -> Result<bool, TypeError> {
@@ -625,7 +675,12 @@ impl Checker {
         {
             scope.insert(name.to_string(), (level, expression));
         }
-        if let Some(display) = self.evaluated_display_binding(name, value) {
+        if let Some(display) = self.evaluated_display_binding(value) {
+            // The name is typed for the compile-time expressions that read
+            // it, and its statement binding is the one a lifted function
+            // binds the display to.
+            self.declare_immutable(name, display.ty.clone())?;
+            self.record_statement_binding(stmt, name);
             self.local_comptime_displays
                 .last_mut()
                 .ok_or_else(|| {
@@ -656,22 +711,18 @@ impl Checker {
     /// Type the display a local `comptime` binding of a template body holds
     /// (`comptime L = [n, n + 1]`) and record it for MIR to lift
     /// (`SemanticAdjustment::ComptimeDisplay`): a collection display of
-    /// scalar elements, read only as the iterable of a `comptime for`
-    /// ([`Self::iterated_displays`]), which the elaborator evaluates per
-    /// instance as it does one written in a loop header. `None` for any
+    /// scalar elements, which the elaborator evaluates per instance as it
+    /// does one written in a loop header. It is a compile-time value with no
+    /// runtime form: a `comptime for` iterates it, any other compile-time
+    /// expression reads it in a function the elaborator runs, and
+    /// `materialize[L]()` builds it where it is written. `None` for any
     /// other binding, which the ordinary path types.
-    fn evaluated_display_binding(&self, name: &str, value: &Expr) -> Option<BoundDisplay> {
-        if !self
-            .iterated_displays
-            .last()
-            .is_some_and(|displays| displays.contains(name))
-        {
-            return None;
-        }
+    fn evaluated_display_binding(&self, value: &Expr) -> Option<BoundDisplay> {
         let element = self.comptime_iteration_element(value).ok()?;
         if !evaluated_display(value, &element) {
             return None;
         }
+        let ty = self.infer(value).ok()?;
         let span = value.source_span();
         let construction = self.operation_adjustments.borrow().get(&span).cloned()?;
         // A string element binds as a `String` value parameter does.
@@ -690,24 +741,30 @@ impl Checker {
                 construction: Box::new(construction),
             },
         );
-        Some(BoundDisplay { span, element })
+        Some(BoundDisplay { span, element, ty })
     }
 
-    /// The local binding of an evaluated display `expr` names, innermost
-    /// scope first, unless a variable of the name shadows it.
+    /// The local binding of an evaluated display `expr` names: the binding
+    /// its name resolves to, when that one is a display's.
     fn bound_display(&self, expr: &Expr) -> Option<&BoundDisplay> {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
-        self.lookup(name)
-            .is_none()
-            .then(|| {
-                self.local_comptime_displays
-                    .iter()
-                    .rev()
-                    .find_map(|scope| scope.get(name))
-            })
-            .flatten()
+        self.local_comptime_displays
+            .get(self.binding_scope(name)?)?
+            .get(name)
+    }
+
+    /// Reject a read of a local display binding outside every compile-time
+    /// position: it would materialize the whole collection, which is not
+    /// implicitly copyable, as the pin rejects it.
+    pub(super) fn reject_display_crossing(&self, expr: &Expr) -> Result<(), TypeError> {
+        match self.bound_display(expr) {
+            Some(display) if self.crosses_to_runtime() => Err(TypeError::ComptimeCrossing(
+                materialized_collection_spelling(&display.ty),
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// Bind a `comptime NAME = value` constant under source validation. A
@@ -1009,6 +1066,26 @@ impl Checker {
         }
         let _position = self.comptime_position();
         self.infer(operand)
+    }
+
+    /// `comptime(e)` in the executable check: one the crossing pass left is
+    /// over a binder of a template body, and the call is the runtime value
+    /// of its compile-time operand, which reads compile-time bindings alone.
+    /// A display binding does not cross whole this way.
+    pub(super) fn infer_template_comptime(&self, operand: &Expr) -> Result<Ty, TypeError> {
+        if !self.reads_compile_time_alone(operand) {
+            return Err(TypeError::NotComptime(
+                "a 'comptime(...)' operand that reads a runtime value".to_string(),
+            ));
+        }
+        let _position = self.comptime_position();
+        let ty = self.infer(operand)?;
+        match self.bound_display(operand) {
+            Some(display) => Err(TypeError::ComptimeCrossing(
+                materialized_collection_spelling(&display.ty),
+            )),
+            None => Ok(ty),
+        }
     }
 
     /// The parameter-list reference of the variadic pack a spread names: a
@@ -1625,9 +1702,39 @@ impl Checker {
     /// binding, type, trait, or alias in scope: the constraint compiler
     /// reads any bare identifier as a parameter name.
     fn constraint_operands_resolve(&self, constraint: &GenericConstraint) -> Result<(), TypeError> {
+        Self::each_constraint_parameter(constraint, &|name| self.comptime_name_resolves(name))
+    }
+
+    /// Whether a compiled condition names, as a parameter, a local
+    /// `comptime` binding of the executable check that denotes no parameter
+    /// expression.
+    fn names_evaluated_binding(&self, constraint: &GenericConstraint) -> bool {
+        Self::each_constraint_parameter(constraint, &|name| {
+            let evaluated = self
+                .lookup_owner(name)
+                .is_some_and(|owner| self.comptime_binding_owners.contains(&owner))
+                && !self
+                    .local_comptime_parameters
+                    .iter()
+                    .any(|scope| scope.contains_key(name));
+            if evaluated {
+                Err(TypeError::NotComptime(name.to_string()))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err()
+    }
+
+    /// Visit the name of every `Param` operand of a compiled condition,
+    /// stopping at the first one `visit` rejects.
+    fn each_constraint_parameter(
+        constraint: &GenericConstraint,
+        visit: &dyn Fn(&str) -> Result<(), TypeError>,
+    ) -> Result<(), TypeError> {
         let operand = |operand: &ConstraintOperand| match operand {
             ConstraintOperand::Param(param) | ConstraintOperand::PackLength(param) => {
-                self.comptime_name_resolves(&param.name)
+                visit(&param.name)
             }
             // An arithmetic operand resolved its names when it was compiled.
             ConstraintOperand::Value(_)
@@ -1636,15 +1743,13 @@ impl Checker {
         };
         match constraint {
             GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {
-                self.constraint_operands_resolve(inner)
+                Self::each_constraint_parameter(inner, visit)
             }
             GenericConstraint::Conforms { param, .. }
             | GenericConstraint::ConformsPack { param, .. }
-            | GenericConstraint::PackPredicate { param, .. } => {
-                self.comptime_name_resolves(&param.name)
-            }
+            | GenericConstraint::PackPredicate { param, .. } => visit(&param.name),
             GenericConstraint::PackContains { param, element } => {
-                self.comptime_name_resolves(&param.name)?;
+                visit(&param.name)?;
                 operand(element)
             }
             GenericConstraint::Trivial(_, value) => operand(value),
@@ -1658,8 +1763,8 @@ impl Checker {
                 operand(b)
             }
             GenericConstraint::And(a, b) | GenericConstraint::Or(a, b) => {
-                self.constraint_operands_resolve(a)?;
-                self.constraint_operands_resolve(b)
+                Self::each_constraint_parameter(a, visit)?;
+                Self::each_constraint_parameter(b, visit)
             }
             GenericConstraint::Bool(_) => Ok(()),
         }
@@ -2007,6 +2112,35 @@ fn stmt_has_comptime(stmt: &Stmt) -> bool {
         }
         _ => false,
     }
+}
+
+/// The spelling of a compile-time collection's type in the rejection of its
+/// runtime read, as the pin spells it: a list display is a fixed-size
+/// `Array[Int, Int(2)]`, a set `Set[Int]`, a dictionary `Dict[String, Int]`.
+fn materialized_collection_spelling(ty: &Ty) -> String {
+    let scalar = |element: &Ty| match element {
+        Ty::Int | Ty::IntLiteral => "Int".to_string(),
+        Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
+        Ty::StringLiteral => "String".to_string(),
+        other => mojito_types::types::unqualified_type_name(other),
+    };
+    if let Some((key, value)) = mojito_types::types::dict_elements(ty) {
+        return format!("Dict[{}, {}]", scalar(key), scalar(value));
+    }
+    if let Some(element) = mojito_types::types::set_element(ty) {
+        return format!("Set[{}]", scalar(element));
+    }
+    if let Ty::Struct(name, args) = ty
+        && name == mojito_types::types::ARRAY_TYPE_NAME
+    {
+        let mut arguments = args.iter();
+        if let (Some(TyArg::Ty(element)), Some(TyArg::Val(length))) =
+            (arguments.next(), arguments.next())
+        {
+            return format!("Array[{}, Int({length})]", scalar(element));
+        }
+    }
+    mojito_types::types::unqualified_type_name(ty)
 }
 
 /// The element spelling of a materialized compile-time tuple: a literal

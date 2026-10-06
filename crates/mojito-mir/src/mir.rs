@@ -1035,6 +1035,7 @@ fn lower_default(
             checked,
             overloads,
             name: &function,
+            prologue: &[],
             expression: default,
             binders: &binders,
             ty,
@@ -1048,20 +1049,22 @@ fn lower_default(
 /// A zero-parameter function returning one checked expression over the
 /// binders in scope: an evaluated default (`$default$…`), or a `comptime if`
 /// condition or a `comptime for` display the elaborator runs
-/// (`$comptime$…`).
+/// (`$comptime$…`). `prologue` holds the local `comptime` display bindings
+/// the expression reads, which the function binds before it returns.
 #[derive(Clone, Copy)]
 struct ExpressionThunk<'a> {
     checked: &'a CheckedProgram,
     overloads: &'a mojito_symbol::symbol::OverloadSets,
     name: &'a str,
+    prologue: &'a [Stmt],
     expression: &'a Expr,
     binders: &'a EnclosingBinders,
     ty: &'a Ty,
 }
 
-/// Lower `return <expression>` as the function `name`, whose compile-time
-/// parameters are the binders and whose value binders are frame locals, and
-/// declare it.
+/// Lower `<prologue>; return <expression>` as the function `name`, whose
+/// compile-time parameters are the binders and whose value binders are frame
+/// locals, and declare it.
 fn lower_expression_thunk(
     thunk: ExpressionThunk<'_>,
     functions: &mut Vec<(String, MirFunction)>,
@@ -1071,6 +1074,7 @@ fn lower_expression_thunk(
         checked,
         overloads,
         name,
+        prologue,
         expression,
         binders,
         ty,
@@ -1080,12 +1084,13 @@ fn lower_expression_thunk(
         .iter()
         .map(|(name, _)| name.clone())
         .collect();
-    let body = [Stmt {
+    let mut body = prologue.to_vec();
+    body.push(Stmt {
         kind: StmtKind::Return(Some(expression.clone())),
         span: expression.span,
         module: expression.source.clone(),
         syntax_id: mojito_common::token::SyntaxId::derived(expression.syntax_id, DEFAULT_RETURN),
-    }];
+    });
     lower_fn_nested(
         FunctionLowering {
             checked,
@@ -1141,20 +1146,30 @@ fn lower_expression_thunk(
 
 /// The compile-time expressions one function's lowering lifts as thunks: a
 /// `comptime if` condition the checker compiled to no constraint (it applies
-/// a function, or reads a `Bool` binding), or a `comptime for` display the
-/// checker did not close (`[n, n + 1]`), becomes the zero-parameter function
-/// `$comptime$<owner>$<k>` over the binders in scope at the expression — the
-/// owner's, then the enclosing `comptime for` indices — and its branch or
-/// loop header carries the application of that thunk, which the elaborator
-/// demands and runs. A local `comptime` binding of such a display is lifted
-/// once, at the binding, and every loop header over its name carries that
-/// one application.
+/// a function, or reads a `Bool` binding), a `comptime for` display the
+/// checker did not close (`[n, n + 1]`), or a range bound or scalar that
+/// reads a local display binding (`len(L)`, `L[0]`) becomes the
+/// zero-parameter function `$comptime$<owner>$<k>` over the binders in scope
+/// at the expression — the owner's, then the enclosing `comptime for`
+/// indices — and its branch, loop header, or parameter constant carries the
+/// application of that thunk, which the elaborator demands and runs. A local
+/// `comptime` binding of such a display has no runtime form: it is lifted
+/// once, for the loop headers over its name, and a thunk that reads the name
+/// begins by binding the display.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
     requests: Vec<ThunkRequest>,
-    /// The sequence each local `comptime` binding of a display holds, by the
-    /// display's span ([`Self::bind_sequence`]).
+    /// The owner's local `comptime` display bindings lowered so far, in
+    /// declaration order ([`Self::bind_display`]).
+    displays: Vec<DisplayBinding>,
+    /// The owner's local `comptime` bindings lowered so far that denote no
+    /// parameter expression, the displays among them, each checked binding
+    /// with its statement, in declaration order ([`Self::bind_evaluated`]):
+    /// a thunk that reads one begins by binding it.
+    evaluated: Vec<(mojito_types::origin::OwnerId, Stmt)>,
+    /// The sequence of each display binding a loop has iterated, by the
+    /// display's span ([`Self::bound_sequence`]).
     bound_sequences: HashMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
     /// The owner's local `comptime` bindings of a parameter expression
     /// lowered so far ([`Self::bind_value`]), which every thunk requested
@@ -1165,13 +1180,33 @@ struct ComptimeThunks {
     )>,
 }
 
+/// A local `comptime` binding of a display the elaborator evaluates
+/// (`comptime L = [n, n + 1]`).
+#[derive(Clone)]
+struct DisplayBinding {
+    owner: mojito_types::origin::OwnerId,
+    name: String,
+    /// The display and its checked facts, for a `materialize[L]()` that
+    /// builds it in place.
+    display: std::rc::Rc<Expr>,
+    facts: std::rc::Rc<HashMap<usize, ExprFacts>>,
+    ty: Ty,
+    element: mojito_types::param_expr::MetaTy,
+    /// The binders in scope where the binding is declared.
+    binders: EnclosingBinders,
+    /// How many evaluated bindings were declared before it.
+    preceding: usize,
+}
+
 /// One lifted expression: the thunk's name, the expression it returns at
-/// `ty`, and the binders in scope there.
+/// `ty`, the binders in scope there, and the evaluated bindings declared
+/// before it.
 struct ThunkRequest {
     name: String,
     expression: Expr,
     binders: EnclosingBinders,
     ty: Ty,
+    evaluated: Vec<(mojito_types::origin::OwnerId, Stmt)>,
 }
 
 impl ComptimeThunks {
@@ -1186,14 +1221,23 @@ impl ComptimeThunks {
     /// the thunk applied to every binder in scope, equal to `True`.
     fn request(&mut self, condition: &Expr, binders: &EnclosingBinders) -> GenericConstraint {
         GenericConstraint::Eq(
-            ConstraintOperand::Expr(self.application(
-                condition,
-                binders,
-                Ty::Bool,
-                mojito_types::param_expr::MetaTy::bool(),
-            )),
+            ConstraintOperand::Expr(self.request_value(condition, binders, Ty::Bool)),
             ConstraintOperand::Value(CtValue::Bool(true)),
         )
+    }
+
+    /// Register a scalar `expression` of type `ty` and give back the
+    /// parameter expression that denotes its value: the thunk applied to
+    /// every binder in scope.
+    fn request_value(
+        &mut self,
+        expression: &Expr,
+        binders: &EnclosingBinders,
+        ty: Ty,
+    ) -> mojito_types::param_expr::ParamExpr {
+        let meta = mojito_types::param_expr::MetaTy::value(ty.clone());
+        let visible = self.evaluated.len();
+        self.application(expression, binders, ty, meta, visible)
     }
 
     /// Register a `comptime for` `display` of checked type `ty` and give
@@ -1206,33 +1250,60 @@ impl ComptimeThunks {
         ty: Ty,
         element: mojito_types::param_expr::MetaTy,
     ) -> mojito_types::param_expr::ParamExpr {
+        let visible = self.evaluated.len();
         self.application(
             display,
             binders,
             ty,
             mojito_types::param_expr::MetaTy::ParamList(Box::new(element)),
+            visible,
         )
     }
 
-    /// Register the `display` a local `comptime` binding holds, as
-    /// [`Self::request_sequence`] does a loop header's, and keep its
-    /// sequence for the loops that name the binding
-    /// ([`Self::bound_sequence`]): one thunk per binding, over the binders
-    /// in scope where it is declared.
-    fn bind_sequence(
-        &mut self,
-        display: &Expr,
-        binders: &EnclosingBinders,
-        ty: Ty,
-        element: mojito_types::param_expr::MetaTy,
-    ) {
-        let sequence = self.request_sequence(display, binders, ty, element);
-        self.bound_sequences.insert(display.source_span(), sequence);
+    /// Record a local `comptime` binding of a display, declared by
+    /// `statement`.
+    fn bind_display(&mut self, statement: &Stmt, binding: DisplayBinding) {
+        self.bind_evaluated(binding.owner, statement);
+        self.displays.push(binding);
     }
 
-    /// The sequence of the binding whose display sits at `display`.
-    fn bound_sequence(&self, display: &SourceSpan) -> Option<mojito_types::param_expr::ParamExpr> {
-        self.bound_sequences.get(display).cloned()
+    /// Record that the local `comptime` binding `owner`, declared by
+    /// `statement`, denotes no parameter expression: a thunk that reads it
+    /// evaluates the statement first.
+    fn bind_evaluated(&mut self, owner: mojito_types::origin::OwnerId, statement: &Stmt) {
+        self.evaluated.push((owner, statement.clone()));
+    }
+
+    /// The display binding `owner` is, if it is one.
+    fn display(&self, owner: mojito_types::origin::OwnerId) -> Option<&DisplayBinding> {
+        self.displays.iter().find(|display| display.owner == owner)
+    }
+
+    /// The sequence of the binding whose display sits at `display`: its
+    /// thunk, requested by the first loop over the name, over the binders in
+    /// scope where the binding is declared.
+    fn bound_sequence(
+        &mut self,
+        display: &SourceSpan,
+    ) -> Option<mojito_types::param_expr::ParamExpr> {
+        if let Some(sequence) = self.bound_sequences.get(display) {
+            return Some(sequence.clone());
+        }
+        let binding = self
+            .displays
+            .iter()
+            .find(|binding| binding.display.source_span() == *display)?
+            .clone();
+        let sequence = self.application(
+            &binding.display,
+            &binding.binders,
+            binding.ty,
+            mojito_types::param_expr::MetaTy::ParamList(Box::new(binding.element)),
+            binding.preceding,
+        );
+        self.bound_sequences
+            .insert(display.clone(), sequence.clone());
+        Some(sequence)
     }
 
     /// Record that the local `comptime` binding `owner` denotes `value`
@@ -1254,13 +1325,15 @@ impl ComptimeThunks {
     }
 
     /// Register `expression`, returned at `ty`, and give back its thunk
-    /// applied to every binder in scope, a value of `meta`.
+    /// applied to every binder in scope, a value of `meta`. The first
+    /// `visible` evaluated bindings are the ones declared before it.
     fn application(
         &mut self,
         expression: &Expr,
         binders: &EnclosingBinders,
         ty: Ty,
         meta: mojito_types::param_expr::MetaTy,
+        visible: usize,
     ) -> mojito_types::param_expr::ParamExpr {
         let name = format!("$comptime${}${}", self.owner, self.requests.len());
         self.requests.push(ThunkRequest {
@@ -1268,9 +1341,11 @@ impl ComptimeThunks {
             expression: expression.clone(),
             binders: EnclosingBinders {
                 comptime_bindings: self.bound_values.clone(),
+                lifted: true,
                 ..binders.clone()
             },
             ty,
+            evaluated: self.evaluated[..visible].to_vec(),
         });
         let context = mojito_types::param_expr::ParamContext::detached();
         let args: Vec<_> = binders
@@ -1289,7 +1364,8 @@ impl ComptimeThunks {
     }
 
     /// Lower every requested thunk, each `return <expression>` at its type
-    /// over the binders its request recorded.
+    /// over the binders its request recorded, after the evaluated bindings
+    /// the expression reads.
     fn lower(
         self,
         checked: &CheckedProgram,
@@ -1298,11 +1374,13 @@ impl ComptimeThunks {
         declarations: &mut MirDeclarations,
     ) {
         for request in &self.requests {
+            let prologue = thunk_prologue(checked, &request.expression, &request.evaluated);
             lower_expression_thunk(
                 ExpressionThunk {
                     checked,
                     overloads,
                     name: &request.name,
+                    prologue: &prologue,
                     expression: &request.expression,
                     binders: &request.binders,
                     ty: &request.ty,
@@ -1312,6 +1390,58 @@ impl ComptimeThunks {
             );
         }
     }
+}
+
+/// The statements of the `evaluated` bindings a thunk returning `expression`
+/// reads, in declaration order: the ones the expression names, and the ones
+/// their values name in turn.
+fn thunk_prologue(
+    checked: &CheckedProgram,
+    expression: &Expr,
+    evaluated: &[(mojito_types::origin::OwnerId, Stmt)],
+) -> Vec<Stmt> {
+    let mut read = bindings_read(checked, expression);
+    let mut statements = Vec::new();
+    for (owner, statement) in evaluated.iter().rev() {
+        if read.contains(owner) {
+            if let StmtKind::Comptime { value, .. } = &statement.kind {
+                read.extend(bindings_read(checked, value));
+            }
+            statements.push(statement.clone());
+        }
+    }
+    statements.reverse();
+    statements
+}
+
+/// The checked bindings `expression` reads by name.
+fn bindings_read(
+    checked: &CheckedProgram,
+    expression: &Expr,
+) -> HashSet<mojito_types::origin::OwnerId> {
+    struct Read<'a> {
+        checked: &'a CheckedProgram,
+        owners: HashSet<mojito_types::origin::OwnerId>,
+    }
+    impl mojito_ast::visit::Visitor for Read<'_> {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if matches!(expression.kind, ExprKind::Identifier(_)) {
+                self.owners.extend(
+                    self.checked
+                        .expression_ids_at(&expression.source_span())
+                        .iter()
+                        .filter_map(|id| self.checked.expression(*id))
+                        .filter_map(|node| node.binding),
+                );
+            }
+        }
+    }
+    let mut read = Read {
+        checked,
+        owners: HashSet::new(),
+    };
+    mojito_ast::visit::walk_expr(&mut read, expression);
+    read.owners
 }
 
 /// The derivation ordinal of an evaluated default's `return` statement under
@@ -2624,6 +2754,132 @@ impl Flatten<'_> {
         expr.as_constant().is_none().then_some(expr)
     }
 
+    /// The local display bindings of this function `expression` reads by
+    /// name, in declaration order, with the ones those displays read in
+    /// turn. Such a binding has no runtime form here.
+    fn displays_read(&self, expression: &Expr) -> Vec<DisplayBinding> {
+        if self.comptime_thunks.displays.is_empty() {
+            return Vec::new();
+        }
+        let mut read = self.bindings_named(expression, None);
+        let mut found = Vec::new();
+        for display in self.comptime_thunks.displays.iter().rev() {
+            if read.contains(&display.owner) {
+                read.extend(self.bindings_named(&display.display, Some(&display.facts)));
+                found.push(display.clone());
+            }
+        }
+        found.reverse();
+        found
+    }
+
+    /// The checked bindings `expression` reads by name, under `facts` when
+    /// it is a recorded display's copy and the active facts otherwise.
+    fn bindings_named(
+        &self,
+        expression: &Expr,
+        facts: Option<&HashMap<usize, ExprFacts>>,
+    ) -> HashSet<mojito_types::origin::OwnerId> {
+        struct Names(Vec<usize>);
+        impl mojito_ast::visit::Visitor for Names {
+            fn visit_expr(&mut self, expression: &Expr) {
+                if matches!(expression.kind, ExprKind::Identifier(_)) {
+                    self.0.push(std::ptr::from_ref::<Expr>(expression) as usize);
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        mojito_ast::visit::walk_expr(&mut names, expression);
+        names
+            .0
+            .iter()
+            .filter_map(|key| match facts {
+                Some(facts) => facts.get(key),
+                None => self
+                    .active_semantics
+                    .iter()
+                    .rev()
+                    .find_map(|index| index.get(key)),
+            })
+            .filter_map(|facts| facts.owner)
+            .collect()
+    }
+
+    /// Lower a compile-time `expression` of this function's body that reads
+    /// a local display binding, with the parameter expression it denotes.
+    /// An `Int` or a `Bool` (`L[0]`, `len(L) + 1`) is the application of the
+    /// thunk lifted for it, which the elaborator runs per instance. Any
+    /// other value (`(L[0], L[1])`) is computed here, where it crosses to
+    /// runtime, from the displays built in place, and denotes no parameter
+    /// expression. `None` for an expression that reads no display.
+    fn display_read(&mut self, expression: &Expr) -> Option<(Reg, Option<ParamExpr>)> {
+        let displays = self.displays_read(expression);
+        if displays.is_empty() {
+            return None;
+        }
+        let ty = match self.checked_ty(expression) {
+            Some(Ty::Int | Ty::IntLiteral) => Ty::Int,
+            Some(Ty::Bool) => Ty::Bool,
+            _ => {
+                for display in &displays {
+                    self.build_display(display);
+                }
+                return Some((self.expr(expression), None));
+            }
+        };
+        let binders = &self.enclosing_binders;
+        let denoted = self.comptime_thunks.request_value(expression, binders, ty);
+        Some((
+            self.param_value_register(expression, denoted.clone()),
+            Some(denoted),
+        ))
+    }
+
+    /// Build a local display binding into its slot, for the crossing that
+    /// reads it next.
+    fn build_display(&mut self, binding: &DisplayBinding) {
+        self.active_semantics.push((*binding.facts).clone());
+        let built = self.expr(&binding.display);
+        self.bind_comptime_value(&binding.name, &binding.display, Some(binding.owner), built);
+        self.active_semantics.pop();
+    }
+
+    /// The runtime value of a local display binding crossing whole
+    /// (`materialize[L]()`): the display built where it crosses, after the
+    /// displays it reads.
+    fn crossing_display(&mut self, binding: &DisplayBinding) -> Reg {
+        self.active_semantics.push((*binding.facts).clone());
+        for read in self.displays_read(&binding.display) {
+            self.build_display(&read);
+        }
+        let built = self.expr(&binding.display);
+        self.active_semantics.pop();
+        built
+    }
+
+    /// The local display binding `expression` names.
+    fn named_display(&self, expression: &Expr) -> Option<DisplayBinding> {
+        matches!(expression.kind, ExprKind::Identifier(_))
+            .then(|| self.checked_owner(expression))
+            .flatten()
+            .and_then(|owner| self.comptime_thunks.display(owner))
+            .cloned()
+    }
+
+    /// Copy the checked facts of `expression`'s tree to its clone `copy`,
+    /// keyed for a later lowering of the clone.
+    fn copy_facts(&self, expression: &Expr, copy: &Expr, facts: &mut HashMap<usize, ExprFacts>) {
+        if let Some(found) = self.facts(expression) {
+            facts.insert(std::ptr::from_ref::<Expr>(copy) as usize, found.clone());
+        }
+        for (child, child_copy) in expression_children(expression)
+            .into_iter()
+            .zip(expression_children(copy))
+        {
+            self.copy_facts(child, child_copy, facts);
+        }
+    }
+
     /// `expression` over the enclosing value binders, through the shared
     /// typed builder: names resolve here, operator semantics and canonical
     /// form are [`ParamContext`]'s.
@@ -3814,6 +4070,9 @@ struct EnclosingBinders {
     /// expression in the function it was lifted from (`comptime k = n +
     /// 1`), each checked binding with the expression it denotes.
     comptime_bindings: Vec<(mojito_types::origin::OwnerId, ParamExpr)>,
+    /// Whether these are a lifted thunk's binders: its body binds each
+    /// local `comptime` binding it begins with as an ordinary value.
+    lifted: bool,
 }
 
 impl EnclosingBinders {

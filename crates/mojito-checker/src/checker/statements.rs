@@ -208,26 +208,16 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(), TypeError> {
-        // Only the executable check binds a display as a sequence
-        // ([`Self::bind_template_comptime`]).
-        let binds_display = !self.source_validation
-            && stmts.iter().any(|stmt| {
-                matches!(&stmt.kind, StmtKind::Comptime { value, .. }
-                    if matches!(value.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)))
-            });
-        let displays = if binds_display {
-            mojito_ast::visit::iterated_displays(stmts)
-                .into_keys()
-                .collect()
-        } else {
-            HashSet::new()
-        };
-        self.iterated_displays.push(displays);
-        let result = stmts
-            .iter()
-            .try_for_each(|stmt| self.check_stmt(stmt, ret, in_loop));
-        self.iterated_displays.pop();
-        result
+        for stmt in stmts {
+            self.check_stmt(stmt, ret, in_loop)?;
+            if let StmtKind::Comptime { name, .. } = &stmt.kind
+                && !self.source_validation
+                && let Some(owner) = self.lookup_owner(name)
+            {
+                self.comptime_binding_owners.insert(owner);
+            }
+        }
+        Ok(())
     }
 
     /// Check a block in a fresh nested scope (the body of an `if`/`elif`/`else`
@@ -1828,7 +1818,7 @@ impl Checker {
                 }
                 if !self.source_validation
                     && type_params.is_empty()
-                    && self.bind_template_comptime(name, value)?
+                    && self.bind_template_comptime(stmt, name, value)?
                 {
                     self.mark_compile_time_binding(name);
                     return Ok(());

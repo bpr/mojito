@@ -446,7 +446,7 @@ impl<'a> Specializer<'a> {
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_rebinds(&key.template, &mut function)?;
-        self.answer_param_constants(&mut function.blocks, bindings)
+        self.answer_param_constants(&key.template, &mut function.blocks, bindings)
             .map_err(|mut error| {
                 error.function.get_or_insert_with(|| key.template.clone());
                 error
@@ -637,6 +637,44 @@ impl<'a> Specializer<'a> {
         }
         self.demand_application(template, function, args, bindings)
             .map(Some)
+    }
+
+    /// `expr` with every compile-time application of a lowered function in
+    /// it evaluated under `bindings`, each demanded and run on the VM
+    /// ([`Self::demand_application`]): a scalar read off a local display
+    /// binding (`L[0]`, `len(L)`) is such an application, alone or under
+    /// arithmetic.
+    pub(super) fn applied(
+        &mut self,
+        template: &str,
+        expr: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<ParamExpr, MonoError> {
+        let mut pending = false;
+        expr.visit(&mut |node| {
+            pending |= matches!(node.kind(), ParamKind::Apply {
+                function,
+                evaluated: None,
+                ..
+            } if self.declarations.contains_key(function.as_str()));
+        });
+        if !pending {
+            return Ok(expr.clone());
+        }
+        let mut failure = None;
+        let answered = ParamContext::detached().answer_applications(expr, &mut |function, args| {
+            if failure.is_some() || !self.declarations.contains_key(function) {
+                return Ok(None);
+            }
+            Ok(self
+                .demand_application(template, function, args, bindings)
+                .map_err(|error| failure = Some(error))
+                .ok())
+        });
+        match failure {
+            Some(error) => Err(error),
+            None => answered.map_err(|error| self.error(Some(template), error.to_string())),
+        }
     }
 
     /// Evaluate the application of `function` to `args` under `bindings` by
@@ -962,13 +1000,15 @@ impl<'a> Specializer<'a> {
 
     /// Fold every parameter constant of the instance to the value its
     /// expression denotes under the bindings: a pack's length by
-    /// replacement, and a pack's membership, conformance, or predicate by the
-    /// oracle that decides a `comptime if`. One the bindings leave open stays for
+    /// replacement, a pack's membership, conformance, or predicate by the
+    /// oracle that decides a `comptime if`, and a compile-time application
+    /// by demanding it. One the bindings leave open stays for
     /// the verifier's concrete mode to name; one the bindings close with no
     /// answer (a reflection query of a field the struct lacks) fails the
     /// instantiation.
     pub(super) fn answer_param_constants(
-        &self,
+        &mut self,
+        template: &str,
         blocks: &mut [MirBlock],
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
@@ -987,7 +1027,7 @@ impl<'a> Specializer<'a> {
                         .chain(orelse.iter_mut())
                         .chain(finalbody.iter_mut());
                     for region in regions {
-                        self.answer_param_constants(region, bindings)?;
+                        self.answer_param_constants(template, region, bindings)?;
                     }
                     continue;
                 }
@@ -998,7 +1038,8 @@ impl<'a> Specializer<'a> {
                 else {
                     continue;
                 };
-                if let Some(k) = self.param_constant(value, bindings)? {
+                let value = self.applied(template, value, bindings)?;
+                if let Some(k) = self.param_constant(&value, bindings)? {
                     *instruction = MirInstr::Const { dest: *dest, k };
                 }
             }

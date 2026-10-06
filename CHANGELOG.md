@@ -9,6 +9,21 @@ to evolve under the `0.x` compatibility rules.
 ### Added
 
 - A local `comptime` binding of a display over a generic body's parameters
+  (`comptime L = [n, n * 2]`) is now served by the template whatever reads
+  it, where a body that read an element or the length, or materialized the
+  binding, beside a `comptime for` over it was cloned per instantiation. The
+  binding is a compile-time value with no runtime form, as upstream's
+  `comptime` alias is: a `comptime if` condition (`L[0] == 3`), a `range`
+  bound (`range(len(L))`), and an `Int` or `Bool` another binding or
+  crossing reads (`comptime e = L[1]`, `comptime(len(L))`) are each lifted
+  as a function the elaborator runs per instance, and `materialize[L]()`
+  builds the display where it crosses to runtime. Programs that failed now
+  run: any of these reads in a generic struct's method, a `comptime if` over
+  an element with no loop beside it, a display that reads another,
+  `comptime(expr)` over a generic body's parameters (`comptime(n + 1)`), and
+  a `comptime if` over a local `comptime` value that is not arithmetic over
+  the parameters (`comptime big = n > 2`, then `comptime if big:`).
+- A local `comptime` binding of a display over a generic body's parameters
   (`comptime L = [n, n * 2]`) that the body only iterates with `comptime
   for` is now served by the template, where the cloner unrolled each loop in
   the AST per instantiation: MIR lifts the display once, where the binding
@@ -650,6 +665,13 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- A runtime read of a local `comptime` display over a generic body's
+  parameters (`comptime L = [n, n * 2]`, then `print(L[1])` or `len(L)`) is
+  now rejected with upstream's "cannot materialize comptime value of type
+  'Array[Int, Int(2)]' to runtime because it is not 'ImplicitlyCopyable'",
+  where a body with no `comptime for` over the binding ran it as an ordinary
+  list.
 
 - A named `out` result is transferred to the caller. The implicit return
   copied the result and then destroyed the callee's own binding, so a

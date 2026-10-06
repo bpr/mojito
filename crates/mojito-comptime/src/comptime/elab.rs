@@ -1305,7 +1305,7 @@ fn asks_layout(expression: &Expr) -> bool {
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a
 /// type, or a `Self.`-qualified parameter (an entry [`self_qualified`]).
-fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
+pub(super) fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
     struct Finder<'a> {
         names: &'a HashSet<String>,
         found: bool,
