@@ -934,6 +934,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &EnclosingBinders::default(),
             &mut thunks,
         );
+        thunks.request_applications(checked, &toplevel);
         thunks.lower(checked, &overloads, &mut functions, &mut declarations);
         function
     };
@@ -1157,7 +1158,10 @@ fn lower_expression_thunk(
 /// once, under the name the check gave its sequence, for the loop headers
 /// over its name and the types and parameter arguments that read an element
 /// or the length, and a thunk that reads the name begins by binding the
-/// display.
+/// display. An `Int` or a `Bool` the check lifted from a type or a parameter
+/// argument, or from a local `comptime` value (`h(L[0])`, `n > 2`), is
+/// lifted under the name the check gave it too, once the owner's body is
+/// lowered ([`Self::request_applications`]).
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
@@ -1180,6 +1184,10 @@ struct ComptimeThunks {
         mojito_types::origin::OwnerId,
         mojito_types::param_expr::ParamExpr,
     )>,
+    /// The binders in scope at each block lowered so far, one entry per
+    /// distinct set ([`Self::enter_scope`]): the owner's, and those under
+    /// each nest of `comptime for` loops.
+    scopes: Vec<EnclosingBinders>,
 }
 
 /// A local `comptime` binding of a display the elaborator evaluates
@@ -1357,6 +1365,104 @@ impl ComptimeThunks {
         comptime_binding_value(&self.bound_values, owner)
     }
 
+    /// Record the binders in scope at a block being lowered.
+    fn enter_scope(&mut self, binders: &EnclosingBinders) {
+        let known = |scope: &EnclosingBinders| {
+            scope.declarations.len() == binders.declarations.len()
+                && scope
+                    .declarations
+                    .iter()
+                    .zip(&binders.declarations)
+                    .all(|(known, entered)| known.binder().id == entered.binder().id)
+        };
+        if !self.scopes.iter().any(known) {
+            self.scopes.push(binders.clone());
+        }
+    }
+
+    /// Request the function of each expression of the owner's `body` the
+    /// check lifted by name (`SemanticAdjustment::ComptimeApplication`): a
+    /// type or a parameter argument, or a local `comptime` value, that
+    /// computes an `Int` or a `Bool` some way the parameter domain does not
+    /// express. The function's parameters are the binders the application
+    /// names, in its argument order, out of the narrowest scope that
+    /// declares them all; it reads every local `comptime` binding of the
+    /// body. An application over binders no scope of the owner declares is
+    /// a nested declaration's.
+    fn request_applications(&mut self, checked: &CheckedProgram, body: &[Stmt]) {
+        struct Applied<'a> {
+            checked: &'a CheckedProgram,
+            found: Vec<(Expr, ParamExpr)>,
+        }
+        impl mojito_ast::visit::Visitor for Applied<'_> {
+            fn visit_expr(&mut self, expression: &Expr) {
+                let application = self
+                    .checked
+                    .expression_ids_at(&expression.source_span())
+                    .iter()
+                    .filter_map(|id| self.checked.expression(*id))
+                    .find_map(|node| lifted_application(&node.adjustments));
+                if let Some(application) = application {
+                    self.found.push((expression.clone(), application));
+                }
+            }
+        }
+        let mut applied = Applied {
+            checked,
+            found: Vec::new(),
+        };
+        mojito_ast::visit::walk_block(&mut applied, body);
+        for (expression, application) in applied.found {
+            let mojito_types::param_expr::ParamKind::Apply { function, args, .. } =
+                application.kind()
+            else {
+                continue;
+            };
+            if self
+                .requests
+                .iter()
+                .any(|request| request.name == *function)
+            {
+                continue;
+            }
+            let Some(ty) = application.meta().as_value().cloned() else {
+                continue;
+            };
+            let declared = |scope: &EnclosingBinders| {
+                args.iter()
+                    .map(|arg| {
+                        let reference = arg.as_decl_ref()?;
+                        scope
+                            .declarations
+                            .iter()
+                            .find(|declaration| declaration.binder().id == reference.id)
+                            .cloned()
+                    })
+                    .collect::<Option<Vec<_>>>()
+            };
+            let Some((scope, declarations)) = self
+                .scopes
+                .iter()
+                .filter_map(|scope| Some((scope, declared(scope)?)))
+                .min_by_key(|(scope, _)| scope.declarations.len())
+            else {
+                continue;
+            };
+            self.requests.push(ThunkRequest {
+                name: function.clone(),
+                expression,
+                binders: EnclosingBinders {
+                    declarations,
+                    comptime_bindings: self.bound_values.clone(),
+                    lifted: true,
+                    ..scope.clone()
+                },
+                ty,
+                evaluated: self.evaluated.clone(),
+            });
+        }
+    }
+
     /// Register `expression`, returned at `ty`, and give back its thunk
     /// applied to every binder in scope, a value of `meta`. The first
     /// `visible` evaluated bindings are the ones declared before it.
@@ -1407,6 +1513,15 @@ impl ComptimeThunks {
         declarations: &mut MirDeclarations,
     ) {
         for request in &self.requests {
+            // A function the check named is lifted by the first owner that
+            // spells its expression.
+            if declarations
+                .functions
+                .iter()
+                .any(|declared| declared.lowered_name == request.name)
+            {
+                continue;
+            }
             let prologue = thunk_prologue(checked, &request.expression, &request.evaluated);
             lower_expression_thunk(
                 ExpressionThunk {
@@ -1445,6 +1560,19 @@ fn thunk_prologue(
     }
     statements.reverse();
     statements
+}
+
+/// The application the check lifted an expression as, among the
+/// expression's `adjustments`.
+fn lifted_application(
+    adjustments: &[mojito_checked::checked::SemanticAdjustment],
+) -> Option<ParamExpr> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        mojito_checked::checked::SemanticAdjustment::ComptimeApplication {
+            application, ..
+        } => Some(application.clone()),
+        _ => None,
+    })
 }
 
 /// The checked bindings `expression` reads by name.
@@ -2847,7 +2975,9 @@ impl Flatten<'_> {
     }
 
     /// Lower a compile-time `expression` of this function's body that reads
-    /// a local display binding, with the parameter expression it denotes.
+    /// a local display binding, or that the check lifted by name
+    /// ([`Self::comptime_application`]), with the parameter expression it
+    /// denotes.
     /// An `Int` or a `Bool` (`L[0]`, `len(L) + 1`) is the application of the
     /// thunk lifted for it, which the elaborator runs per instance. Any
     /// other value (`(L[0], L[1])`) is computed here, where it crosses to
@@ -2855,6 +2985,16 @@ impl Flatten<'_> {
     /// expression. `None` for an expression that reads no display.
     fn display_read(&mut self, expression: &Expr) -> Option<(Reg, Option<ParamExpr>)> {
         let displays = self.displays_read(expression);
+        // An expression the check lifted denotes its application; one that
+        // reads no display is computed here as well.
+        if let Some(application) = self.comptime_application(expression) {
+            let value = if displays.is_empty() {
+                self.expr(expression)
+            } else {
+                self.param_value_register(expression, application.clone())
+            };
+            return Some((value, Some(application)));
+        }
         if displays.is_empty() {
             return None;
         }
@@ -2874,6 +3014,17 @@ impl Flatten<'_> {
             self.param_value_register(expression, denoted.clone()),
             Some(denoted),
         ))
+    }
+
+    /// The application the check lifted `expression` as, by the name of the
+    /// function [`ComptimeThunks::request_applications`] lifts for it.
+    /// `None` inside that function, which computes the expression.
+    fn comptime_application(&self, expression: &Expr) -> Option<ParamExpr> {
+        lifted_application(&self.checked_adjustments(expression)).filter(|application| {
+            !matches!(application.kind(),
+                mojito_types::param_expr::ParamKind::Apply { function, .. }
+                    if *function == self.comptime_thunks.owner)
+        })
     }
 
     /// The element of a local display binding a type-shaped bracket
@@ -2954,7 +3105,10 @@ impl Flatten<'_> {
     fn value_binder_expr(&self, expression: &Expr) -> Option<ParamExpr> {
         // A compile-time query the checker recorded (`Self.Ts.length`, a
         // `comptime for` index) is its parameter expression.
-        if let Some(value) = self.param_value(expression) {
+        if let Some(value) = self
+            .param_value(expression)
+            .or_else(|| self.comptime_application(expression))
+        {
             return Some(value);
         }
         let context = ParamContext::detached();
@@ -3356,6 +3510,7 @@ fn lower_cfg_nested(
             // so a bracket argument built from it (`g[i]()`) resolves.
             fl.enclosing_binders =
                 enclosing_binders.with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
+            fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
             for instr in &cfg.g[hb].instrs {
                 // At the function level the "outer" map is this function's own map
                 // (a `try`'s escape targets are this function's loop blocks).

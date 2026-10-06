@@ -524,18 +524,34 @@ runtime position, another binding, or a crossing reads (`print(L[0])`,
 MIR carries as a parameter constant holding the application
 (`Flatten::display_read`). Each thunk begins with the statements of the
 local `comptime` bindings its expression reads that denote no parameter
-expression — the displays, and a value such as `comptime b = n > 2`
+expression — the displays, and a value such as `comptime t = (L[0], L[1])`
 (`ComptimeThunks::bind_evaluated`, `thunk_prologue`) — and `native::mono` demands an
 application wherever it evaluates one — a condition, a loop header, a
 parameter constant, a bracket argument's expression
 (`Specializer::applied`). `materialize[L]()`, and a value
 read off the display that is no `Int` or `Bool`, build the display where
-they cross to runtime (`Flatten::crossing_display`, `build_display`). The
-cloner serves such a binding by syntax alone
+they cross to runtime (`Flatten::crossing_display`, `build_display`). An `Int` or a `Bool` that a type or a parameter argument, or a local
+`comptime` value, computes some way the parameter domain does not express
+(`g[h(L[0])]()`, `flag[n > 2]()`, `SIMD[DType.int32, h(n)]`, `comptime e =
+h(n)`) is an application too, of a function the check names for the
+expression (`Checker::lifted_application`, from `eval_associated_ct` and
+`compile_dependent_ct_expr` inside a `lifting_position`, recorded as
+`SemanticAdjustment::ComptimeApplication`): the function is applied to the
+binders the expression reads (`binders_read`), two occurrences of one
+expression over the same bindings share it, as the pin identifies them by
+structure, and arithmetic over applications stays arithmetic. MIR lifts each
+such function once the body that spells its expression is lowered
+(`ComptimeThunks::request_applications`), over the narrowest scope that
+declares its binders, and reads the expression as that application wherever
+it denotes one (`Flatten::comptime_application`). The checked arena holds a
+node for such an expression inside an annotation, which has none otherwise
+(`type_applications`, `checked.rs`). A closed one in a plain `def`
+(`g[h(3)]()`) is lifted the same way, over no binder. The
+cloner serves a display binding by syntax alone
 (`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
-keeps the clone only where a type or parameter argument computes over the
-binding by anything but an element, the length, and integer arithmetic
-(`display_in_unserved_argument`). Evaluating such a binding again per reader is roadmap
+keeps the clone only where a type or parameter argument is the display
+itself, or a collection built from it (`display_in_unserved_argument`).
+Evaluating such a binding again per reader is roadmap
 R378, where upstream evaluates a `comptime`
 alias. A thunk reads a local `comptime` value bound before it (`comptime k
 = n + 1`) as the parameter expression it denotes
@@ -552,12 +568,11 @@ dominates — is copied once per element with fresh registers, the binder's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
-for the pruning. Every other `comptime for` — over a local `comptime`
-display a type or parameter argument of the body applies a function to, an
-alias of one, a display with an element that applies a function, a loop that
-constructs a reflected field type, and every one outside a generic `def` or
-a generic struct's method — is unrolled in the AST as before (roadmap R379,
-R375, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
+for the pruning. Every other `comptime for` — over an alias of a local
+`comptime` display, a display with an element that applies a function, a
+loop that constructs a reflected field type, and every one outside a generic
+`def` or a generic struct's method — is unrolled in the AST as before
+(roadmap R375, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

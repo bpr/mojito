@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R384**.
+Next free ID: **R391**.
 
 ## Ordered Work
 
@@ -135,27 +135,24 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R379 (P3) A type or parameter argument that computes over a local
-  `comptime` display binding by a call or a comparison has no template
-  form**
+- [ ] **R384 (P3) A signature or a struct field type that applies a
+  function to a parameter is rejected**
 
-  Problem: `comptime L = [n, n * 2]` then `g[h(L[0])]()` in `def f[n: Int]()`
-  is rejected with "not a compile-time Int constant: not an associated
-  comptime expression", where the pin runs it.
-  - The check denotes an element or the length of such a binding, alone or
-    under integer arithmetic, as a parameter expression over the binding's
-    sequence (`Checker::display_read`, `checker/constraints.rs`).
-  - Any other expression over one (`h(L[0])`, `L[0] > 2` for a `Bool`
-    parameter, `min(L[0], L[1])`) compiles to no parameter expression
-    (`compile_dependent_ct_expr`).
-  - MIR already lifts such an expression as a function the elaborator runs
-    when it is read as a runtime value (`Flatten::display_read`, `mir.rs`).
-    The check would have to name that function, as it names the display's.
-  - A `def` that also iterates the binding keys a clone for this
-    (`display_in_unserved_argument`, `comptime.rs`), which fails the same
-    way.
-  - Found while landing a display binding read in a type or a parameter
-    argument (2026-10-06).
+  Problem: `def make[n: Int]() -> SIMD[DType.int32, h(n)]:` and the field
+  `var v: SIMD[DType.int32, h(Self.n)]` of `struct Wrap[n: Int]` are
+  rejected with "not a compile-time Int constant: not an associated comptime
+  expression", where the pin runs both.
+  - Inside a body the check names a function for such an expression and MIR
+    lifts it from the body that spells it (`Checker::lifted_application`,
+    `checker/comptime_validation.rs`; `ComptimeThunks::request_applications`,
+    `mir.rs`).
+  - A signature or a field has no body to lift the function from, so the
+    check leaves the expression uncompiled there.
+  - The function would have to be lifted with the declaration, over the
+    declaration's own binders, and a body spelling the same expression
+    would have to name that one function.
+  - Found while landing an application in a type or a parameter argument
+    (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -806,6 +803,24 @@ correctness fix to existing behavior is allowed.
     runs (`trip_elements`, `mono/unroll.rs`), and an erased frame runs no
     thunk.
   - `assets/ok/comptime_for_display_over_binder.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R385 (P5) The erased oracle cannot run a type over a lifted
+  application**
+
+  Problem: `var a = SIMD[DType.int32, h(n)](1)` in a template-served `def
+  f[n: Int]()` prints on concrete MIR and stops under `--erased` with "a
+  SIMD instruction over the symbolic slots `SIMD[DType.int32,
+  $comptime$$…(2)]` reached the VM".
+  - The width is the application of a function the elaborator demands and
+    runs per instance (`Specializer::applied`, `mono/specializer.rs`), and
+    an erased frame runs no such function.
+  - A parameter argument alone (`g[h(n)]()`) runs erased, since the body
+    computes the value where it stands.
+  - `assets/ok/comptime_application_argument.mojo` is the
     `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and this row with it.
   - Depends on nothing.
@@ -2497,6 +2512,80 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R390 Two spellings of an application are one value only when
+  their names resolve to the same bindings**
+
+  Problem: `comptime vals = [n, n * 2]` and `comptime other = [n, n * 2]`,
+  then `var a: SIMD[DType.int32, h(vals[0])] = SIMD[DType.int32,
+  h(other[0])](1)`, in `def f[n: Int]()` is rejected with "type mismatch for
+  variable 'a'", where the pin runs it.
+  - The check gives one lifted function to two occurrences of an expression
+    when their syntax is equal and each name resolves to the same binding
+    (`Checker::lifted_application`, `checker/comptime_validation.rs`).
+  - The pin identifies the two by the structure of what they compute.
+  - A tuple binding is the second case: `comptime t = (n, n * 2)` then
+    `h(t[0])` outside a `comptime for` and inside it are two functions,
+    since the binders a value that denotes no parameter expression reads
+    are not known (`Checker::binders_read`).
+  - The check still tells `h(n)` from `n * 2`, which
+    `assets/type_error/comptime_application_identity.mojo` pins.
+  - Found while landing an application in a type or a parameter argument
+    (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R386 A parameter argument that computes a `String` or a float from
+  a parameter is rejected**
+
+  Problem: `label[pick(n)]()` for `def label[s: String]()` and
+  `scale[half(n)]()` for `def scale[x: Float64]()`, in `def f[n: Int]()`,
+  are rejected with "not a compile-time Int constant: not an associated
+  comptime expression", where the pin prints both.
+  - The check lifts an `Int` or a `Bool` expression only
+    (`Checker::lifted_application`, `checker/comptime_validation.rs`).
+  - A lifted function returning a `String` or a `Float64` already serves a
+    `comptime for` display, so the elaborator can freeze either value.
+  - The parameter domain needs a value meta for each, and `UInt` and the
+    sized integers want the same.
+  - Found while landing an application in a type or a parameter argument
+    (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R387 A function applied in a parameter argument cannot print**
+
+  Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
+  it returns, is rejected with "is not safe for VM-backed compile-time
+  execution: it reaches `print`", where the pin prints once while compiling
+  and runs.
+  - The elaborator refuses to run a lifted function that reaches `print` or
+    `input` (`effectful_callee`, `mono/specializer.rs`).
+  - The pin's interpreter writes compile-time output when the instance is
+    elaborated.
+  - Decide where an elaboration-time `print` writes on each backend before
+    lifting the refusal.
+  - Found while landing an application in a type or a parameter argument
+    (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R388 A type over a lifted application is spelled by its function's
+  name in a diagnostic**
+
+  Problem: `var a: SIMD[DType.int32, h(n)] = SIMD[DType.int32, n * 2](1)` in
+  `def f[n: Int]()` is rejected with "expected SIMD[DType.int32,
+  $comptime$$2016(n)], found SIMD[DType.int32, 2 * n]", where the pin
+  spells the expected type `SIMD[.int32, h(n)]`.
+  - Both compilers reject the program. Only the spelling differs.
+  - The application names the function MIR lifts, not the expression it
+    computes (`Checker::lifted_application`,
+    `checker/comptime_validation.rs`).
+  - `assets/type_error/comptime_application_identity.mojo` is the fixture.
+  - Found while landing an application in a type or a parameter argument
+    (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R383 A vector width that mismatches a display element is reported as
   a missing constant**
 
@@ -4094,6 +4183,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     only the work is repeated.
   - Bind each such binding's one application in the instance, and read an
     element of it as a parameter expression over that value.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R389 One compile-time expression is lifted as more than one
+  function**
+
+  Problem: `comptime if h(n) > 4:` and `flag[h(n) > 4]()` in `def f[n:
+  Int]()` evaluate two functions for the one expression, where the pin holds
+  one parameter expression and every read names it.
+  - The check names the function of an expression in a type or a parameter
+    argument, or bound by a local `comptime` (`Checker::lifted_application`,
+    `checker/comptime_validation.rs`).
+  - MIR names its own for a condition, a `range` bound, and a runtime read
+    of a display (`ComptimeThunks::request_value`, `mir.rs`).
+  - An operand the check lifted before the whole expression failed to
+    compile keeps its function too: `flag[h(vals[0]) > 2]()` lifts
+    `h(vals[0])` and the comparison.
+  - The values agree, and an unread function is never instantiated. Only
+    the source MIR and the elaborator's work grow.
+  - Let the check name every lifted expression, and drop a function nothing
+    applies.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

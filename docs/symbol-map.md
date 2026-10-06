@@ -1233,7 +1233,29 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ComptimeThunks::request_value`). A bracket argument that reads a
   display is lowered by `Flatten::param_arg_reg` through `display_read`, or
   `display_element_argument` for the capitalized spelling, and an inferred
-  one by `inferred_value_register`. `Flatten::display_read` (`mir.rs`)
+  one by `inferred_value_register`. An `Int` or a `Bool` such an
+  argument, or a local `comptime` value, computes some way the parameter
+  domain does not express (`h(L[0])`, `n > 2`) is lifted by
+  `Checker::lifted_application` (`checker/comptime_validation.rs`), reached
+  from `eval_associated_ct` and `compile_dependent_ct_expr`
+  (`positioned_application`) inside a `Checker::lifting_position`
+  (`checker/scopes.rs`), which a value parameter argument, a SIMD width
+  (`simd_width`), and a local `comptime` value
+  (`comptime_value_expression`) open: it names the function, applies it to
+  the binders the expression reads (`binders_read`), shares it between
+  equal occurrences (`LiftedApplication`), and keeps the application by the
+  expression (`lifted_expressions`, a body-carried store) for
+  `record_lifted_applications`, which `into_carry` runs to record
+  `SemanticAdjustment::ComptimeApplication` beside the expression's own
+  operation. The arena builder gives such an expression inside an
+  annotation a node (`type_applications`, `checked.rs`).
+  `ComptimeThunks::request_applications` (`mir.rs`, from `lower_fn_nested`
+  and the nested-`def` lowering once the body is lowered) lifts each named
+  function over the narrowest recorded scope (`enter_scope`) that declares
+  its binders, `ComptimeThunks::lower` skipping a name another owner
+  already lifted, and `Flatten::comptime_application` reads the expression
+  back as its application in `display_read` and `value_binder_expr`.
+  `Flatten::display_read` (`mir.rs`)
   lowers a compile-time expression that reads a display (`displays_read`):
   an `Int` or `Bool` as a parameter constant over its thunk's application,
   any other value in place after `build_display`;
@@ -1333,8 +1355,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   local bindings of a display over the binders
   (`served_display_bindings` over `mojito_ast::visit::display_bindings`,
   none when `display_in_unserved_argument` finds a type or parameter
-  argument that computes over one by anything but an element, the length,
-  and integer arithmetic, which the elaborator holds per open template body in
+  argument that is a display itself or a collection built from one, which
+  the elaborator holds per open template body in
   `TemplateLoopNames`), and
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,

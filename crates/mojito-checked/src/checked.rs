@@ -812,6 +812,21 @@ pub enum SemanticAdjustment {
         construction: Box<Self>,
         sequence: mojito_types::param_expr::ParamExpr,
     },
+    /// A compile-time `Int` or `Bool` expression of a body that the check
+    /// compiles to no parameter expression (`h(L[0])`, `n > 2`), written in
+    /// a type or a parameter argument or bound by a local `comptime`. MIR
+    /// lifts it as a function over the binders it reads, by the name the
+    /// check gave it, and `application` is what the expression denotes in
+    /// the parameter domain: that function applied to those binders. Two
+    /// spellings of one expression over the same bindings carry one
+    /// application, as the pin identifies them by structure.
+    ///
+    /// `operation` is the expression's own checked operation, which this
+    /// record stands beside on the expression's span.
+    ComptimeApplication {
+        operation: Option<Box<Self>>,
+        application: mojito_types::param_expr::ParamExpr,
+    },
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),
@@ -2069,12 +2084,12 @@ fn build_checked_expressions(
                     for argument in param_args {
                         match argument {
                             mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => {
-                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
-                                    add(self, value);
-                                }
-                            }
-                            mojito_ast::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                                mojito_ast::ast::ParamArg::Named { .. } => {}
+                            },
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
                         }
                     }
                     for value in args {
@@ -2094,12 +2109,12 @@ fn build_checked_expressions(
                     for argument in param_args {
                         match argument {
                             mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => {
-                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
-                                    add(self, value);
-                                }
-                            }
-                            mojito_ast::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                                mojito_ast::ast::ParamArg::Named { .. } => {}
+                            },
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
                         }
                     }
                     for value in args {
@@ -2236,7 +2251,8 @@ fn build_checked_expressions(
                 // body belongs to that definition's own checked declaration,
                 // not to the enclosing expression tree.
                 Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | EmptySubscript
-                | Identifier(_) | TypeValue(_) => {}
+                | Identifier(_) => {}
+                TypeValue(ty) => self.type_applications(ty),
                 // A lambda expression node has no expression children of its
                 // own, but its hidden definition's body must be built exactly
                 // like a nested `def` statement's body so the body's checked
@@ -2246,12 +2262,12 @@ fn build_checked_expressions(
                     for argument in args {
                         match argument {
                             mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => {
-                                if let mojito_ast::ast::ParamArg::Value(value) = &**value {
-                                    add(self, value);
-                                }
-                            }
-                            mojito_ast::ast::ParamArg::Type(_) => {}
+                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                                mojito_ast::ast::ParamArg::Named { .. } => {}
+                            },
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
                         }
                     }
                 }
@@ -2354,8 +2370,11 @@ fn build_checked_expressions(
             }
             if let Some(operation) = self.operation_adjustments.get(&span) {
                 adjustments.push(operation.clone());
-                if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) } =
-                    operation
+                if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) }
+                | SemanticAdjustment::ComptimeApplication {
+                    operation: Some(inner),
+                    ..
+                } = operation
                 {
                     adjustments.push((**inner).clone());
                 }
@@ -2447,6 +2466,40 @@ fn build_checked_expressions(
             id
         }
 
+        /// Build the node of each expression inside `ty` the check named a
+        /// lifted function for ([`SemanticAdjustment::ComptimeApplication`]):
+        /// MIR lowers it in that function, away from the annotation that
+        /// spells it. Any other expression of an annotation has no node.
+        fn type_applications(&mut self, ty: &mojito_ast::ast::Type) {
+            struct Applied<'a> {
+                operations: &'a HashMap<SourceSpan, SemanticAdjustment>,
+                found: Vec<Expr>,
+            }
+            impl mojito_ast::visit::Visitor for Applied<'_> {
+                fn visit_expr(&mut self, expression: &Expr) {
+                    let nested = self.found.last().is_some_and(|outer| {
+                        outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
+                    });
+                    if !nested
+                        && matches!(
+                            self.operations.get(&expression.source_span()),
+                            Some(SemanticAdjustment::ComptimeApplication { .. })
+                        )
+                    {
+                        self.found.push(expression.clone());
+                    }
+                }
+            }
+            let mut applied = Applied {
+                operations: self.operation_adjustments,
+                found: Vec::new(),
+            };
+            mojito_ast::visit::walk_type(&mut applied, ty);
+            for expression in &applied.found {
+                self.expr(expression);
+            }
+        }
+
         fn block(&mut self, statements: &[Stmt]) {
             use mojito_ast::ast::StmtKind::{
                 Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr,
@@ -2455,11 +2508,13 @@ fn build_checked_expressions(
             };
             for statement in statements {
                 match &statement.kind {
-                    VarDecl { value, .. }
-                    | RefDecl { value, .. }
-                    | Assign { value, .. }
-                    | Raise(value)
-                    | Expr(value) => {
+                    VarDecl { ty, value, .. } => {
+                        if let Some(ty) = ty {
+                            self.type_applications(ty);
+                        }
+                        self.expr(value);
+                    }
+                    RefDecl { value, .. } | Assign { value, .. } | Raise(value) | Expr(value) => {
                         self.expr(value);
                     }
                     Comptime {

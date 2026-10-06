@@ -634,9 +634,11 @@ branch for the class is deleted, and so is its certificate class.
   where it crosses. An element or the length of the binding in a type or a
   parameter argument is a parameter expression over the binding's sequence,
   which the check names and the elaborator runs when a substitution meets
-  it (2026-10-06). An argument that applies a function to a binding, an
-  alias of one, an element that applies a function, and a loop constructing
-  a reflected field type still key a clone (R379, R375, R363, R364). The second landed 2026-10-03 for a module-level
+  it (2026-10-06). An argument that applies a function to a binding, or
+  compares one, is the application of a function the check names and MIR
+  lifts (2026-10-06). An alias of a binding, an element that applies a
+  function, and a loop constructing a reflected field type still key a
+  clone (R375, R363, R364). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's

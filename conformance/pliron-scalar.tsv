@@ -57,6 +57,7 @@ assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-
 assets/ok/comptime_alias_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_alias_value_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_annotated_scalar.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_application_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_applied_constant_in_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape

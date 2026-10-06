@@ -591,6 +591,18 @@ pub struct Checker {
     /// by its binding: a compile-time expression the elaborator evaluates
     /// per instance may read them.
     comptime_binding_owners: HashSet<mojito_types::origin::OwnerId>,
+    /// How many type or parameter arguments, or local `comptime` values,
+    /// the check is evaluating: an `Int` or `Bool` expression there that
+    /// compiles to no parameter expression is lifted as a function
+    /// ([`Self::lifted_application`]).
+    lifting_positions: std::rc::Rc<std::cell::Cell<usize>>,
+    /// The expressions lifted so far, each with the application it denotes.
+    lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
+    /// The application each lifted expression of the executable check
+    /// denotes, by the expression: the pass records them on the checked
+    /// operations when it ends ([`Self::record_lifted_applications`]), after
+    /// every inference of the expression has recorded its own.
+    lifted_expressions: RefCell<FactMap<SourceSpan, ParamExpr>>,
     /// The retypings the erased `rebind[Dest](value)` calls left behind (see
     /// `rebind.rs`).
     rebind_targets: RebindTargets,
@@ -1050,6 +1062,9 @@ impl Checker {
             local_comptime_parameters: vec![HashMap::new()],
             local_comptime_displays: vec![HashMap::new()],
             comptime_binding_owners: HashSet::new(),
+            lifting_positions: std::rc::Rc::default(),
+            lifted_applications: RefCell::new(Vec::new()),
+            lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),
             rebind_keyed_bodies: HashSet::new(),
             no_verdict_bodies: FactSet::default(),

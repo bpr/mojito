@@ -56,6 +56,19 @@ impl BoundDisplay {
     }
 }
 
+/// A compile-time expression the check named a lifted function for
+/// ([`Checker::lifted_application`]), with what tells it from another
+/// occurrence of the same syntax: the binders it is applied to and the
+/// bindings its names resolve to.
+#[derive(Debug)]
+pub(in crate::checker) struct LiftedApplication {
+    expression: Expr,
+    binders: Vec<ParamExpr>,
+    bindings: Vec<Option<mojito_types::origin::OwnerId>>,
+    validated: bool,
+    application: ParamExpr,
+}
+
 /// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
 /// while the pack is still a parameter.
 pub(super) struct ForwardedPack {
@@ -592,17 +605,7 @@ impl Checker {
     /// display. Such an expression can run in a function the elaborator
     /// evaluates per instance.
     fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
-        struct Names(Vec<String>);
-        impl mojito_ast::visit::Visitor for Names {
-            fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Identifier(name) = &expr.kind {
-                    self.0.push(name.clone());
-                }
-            }
-        }
-        let mut names = Names(Vec::new());
-        mojito_ast::visit::walk_expr(&mut names, expr);
-        names.0.iter().all(|name| {
+        names_read(expr).iter().all(|name| {
             self.binding_scope(name).is_none_or(|scope| scope == 0)
                 || self.is_compile_time_binding(name)
                 || self.lookup_owner(name).is_some_and(|owner| {
@@ -610,6 +613,189 @@ impl Checker {
                         || self.comptime_binding_owners.contains(&owner)
                 })
         })
+    }
+
+    /// [`Self::lifted_application`] where the check stands in a lifting
+    /// position ([`Self::lifting_position`]).
+    pub(super) fn positioned_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        (self.lifting_positions.get() > 0)
+            .then(|| self.lifted_application(expr))
+            .flatten()
+    }
+
+    /// The parameter expression of a compile-time `Int` or `Bool`
+    /// expression of a body that compiles to none (`h(L[0])`, `n > 2`,
+    /// `min(L[0], L[1])`), written in a type or a parameter argument or
+    /// bound by a local `comptime`: the application of the function MIR
+    /// lifts for it, named here, to the binders it reads
+    /// (`SemanticAdjustment::ComptimeApplication`, [`Self::binders_read`]).
+    /// The expression reads compile-time bindings alone. Source validation
+    /// lifts one that names a binder or a local binding, and leaves a
+    /// closed one to the elaborator.
+    ///
+    /// Two occurrences of one expression over the same bindings denote one
+    /// application, as the pin identifies them by structure, and it is not
+    /// the value it computes: `h(n)` is not `n * 2`. `None` for any other
+    /// expression.
+    pub(super) fn lifted_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        // A signature has no body to lift the function from.
+        if self.scopes.len() < 2 {
+            return None;
+        }
+        let names = names_read(expr);
+        let symbolic = names.iter().any(|name| {
+            name == "Self"
+                || self.binding_scope(name).is_some_and(|scope| scope > 0)
+                || self.value_parameter_in_scope(name).is_some()
+        });
+        if (!symbolic && self.source_validation) || !self.reads_compile_time_alone(expr) {
+            return None;
+        }
+        // The function is over the binders the expression reads, so that it
+        // is one function under a `comptime for` and outside it.
+        let mut binders = self.binders_in_scope();
+        if let Some(read) = self.binders_read(expr, &names) {
+            binders.retain(|binder| {
+                binder
+                    .as_decl_ref()
+                    .is_some_and(|reference| read.contains(&reference.id))
+            });
+        }
+        // The expression's own arguments are typed where they stand.
+        let lifting = self.lifting_positions.replace(0);
+        let ty = {
+            let _position = self.comptime_position();
+            self.infer(expr)
+        };
+        self.lifting_positions.set(lifting);
+        let ty = match ty.ok()? {
+            Ty::Int | Ty::IntLiteral => Ty::Int,
+            Ty::Bool => Ty::Bool,
+            _ => return None,
+        };
+        let bindings: Vec<_> = names.iter().map(|name| self.lookup_owner(name)).collect();
+        let validated = self.source_validation;
+        let known = self
+            .lifted_applications
+            .borrow()
+            .iter()
+            .find(|known| {
+                known.validated == validated
+                    && known.expression == *expr
+                    && known.binders == binders
+                    && known.bindings == bindings
+            })
+            .map(|known| known.application.clone());
+        let application = known.or_else(|| {
+            // An identity of its own names the function, as a binding's
+            // names its display's; the empty owner keeps the name apart
+            // from one MIR gives a function it lifts itself.
+            let name = if validated {
+                format!("$comptime$$at{}", expr.span.0)
+            } else {
+                format!("$comptime$${}", self.fresh_owner().ok()?.0)
+            };
+            let application = self.param_context.apply(
+                &name,
+                &binders,
+                mojito_types::param_expr::MetaTy::value(ty),
+            );
+            self.lifted_applications
+                .borrow_mut()
+                .push(LiftedApplication {
+                    expression: expr.clone(),
+                    binders,
+                    bindings,
+                    validated,
+                    application: application.clone(),
+                });
+            Some(application)
+        })?;
+        if !validated {
+            self.lifted_expressions
+                .borrow_mut()
+                .insert(expr.source_span(), application.clone());
+        }
+        Some(application)
+    }
+
+    /// The binders `expr` reads through the `names` it spells: each binder
+    /// it names, those a local display binding or a local `comptime`
+    /// parameter expression it names is over, and the enclosing struct's
+    /// for `Self`. `None` when the binders are not known (a type-shaped
+    /// argument, a local value that denotes no parameter expression), where
+    /// every binder in scope stands in.
+    fn binders_read(
+        &self,
+        expr: &Expr,
+        names: &[String],
+    ) -> Option<HashSet<mojito_types::param_expr::ParamId>> {
+        struct Types(bool);
+        impl mojito_ast::visit::Visitor for Types {
+            fn visit_type(&mut self, _ty: &SourceType) {
+                self.0 = true;
+            }
+        }
+        let mut types = Types(false);
+        mojito_ast::visit::walk_expr(&mut types, expr);
+        if types.0 {
+            return None;
+        }
+        let mut read = HashSet::new();
+        for name in names {
+            if name == "Self" {
+                read.extend(self.self_decls.iter().map(|decl| decl.id().clone()));
+                continue;
+            }
+            // A bare type argument (`width[T]()`) names its binder.
+            let type_parameter = self.tparams.iter().rev().find_map(|scope| scope.get(name));
+            match type_parameter {
+                Some(Ty::Param { binder, .. }) => {
+                    read.insert(binder.id.clone());
+                    continue;
+                }
+                Some(_) => return None,
+                None => {}
+            }
+            let denoted = match self.display_named(name) {
+                Some(display) => Some(display.sequence.clone()),
+                None => self.value_parameter_in_scope(name),
+            };
+            match denoted {
+                Some(denoted) => read.extend(
+                    denoted
+                        .free_parameters()
+                        .into_iter()
+                        .map(|reference| reference.id),
+                ),
+                None if self.binding_scope(name).is_none_or(|scope| scope == 0) => {}
+                None => return None,
+            }
+        }
+        Some(read)
+    }
+
+    /// Record on each expression the executable check lifted the
+    /// application it denotes, beside the expression's own checked
+    /// operation (`SemanticAdjustment::ComptimeApplication`).
+    pub(super) fn record_lifted_applications(&self) {
+        use mojito_checked::checked::SemanticAdjustment;
+        let mut operations = self.operation_adjustments.borrow_mut();
+        for (span, application) in self.lifted_expressions.borrow().iter() {
+            let operation = match operations.get(span) {
+                Some(SemanticAdjustment::ComptimeApplication { operation, .. }) => {
+                    operation.clone()
+                }
+                operation => operation.cloned().map(Box::new),
+            };
+            operations.insert(
+                span.clone(),
+                SemanticAdjustment::ComptimeApplication {
+                    operation,
+                    application: application.clone(),
+                },
+            );
+        }
     }
 
     /// Record the header of a loop over a local binding of an evaluated
@@ -705,8 +891,7 @@ impl Checker {
                 .insert(name.to_string(), ty);
             return Ok(true);
         }
-        if let Ok(expression) = self.compile_dependent_ct_expr(value)
-            && expression.as_constant().is_none()
+        if let Some(expression) = self.comptime_value_expression(value)
             && let Some(scope) = self.local_comptime_parameters.last_mut()
         {
             scope.insert(name.to_string(), (level, expression));
@@ -743,6 +928,19 @@ impl Checker {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// What the value of a local `comptime` binding over a template body's
+    /// binders denotes wherever the body reads it at compile time: its
+    /// parameter expression, or the application of the function lifted for
+    /// an `Int` or a `Bool` that compiles to none (`comptime e = h(n)`).
+    /// `None` for a constant, or a value that denotes nothing.
+    fn comptime_value_expression(&self, value: &Expr) -> Option<ParamExpr> {
+        let _lifting = self.lifting_position();
+        self.compile_dependent_ct_expr(value)
+            .ok()
+            .or_else(|| self.lifted_application(value))
+            .filter(|expression| expression.as_constant().is_none())
     }
 
     /// Type the display a local `comptime` binding of a template body holds
@@ -999,8 +1197,7 @@ impl Checker {
         // names its parameter expression in a compile-time position, as it
         // does in the executable check ([`Self::bind_template_comptime`]).
         if let Some(level) = self.tparams.len().checked_sub(1)
-            && let Ok(expression) = self.compile_dependent_ct_expr(&value)
-            && expression.as_constant().is_none()
+            && let Some(expression) = self.comptime_value_expression(&value)
             && let Some(scope) = self.local_comptime_parameters.last_mut()
         {
             scope.insert(name.to_string(), (level, expression));
@@ -2513,4 +2710,19 @@ fn record_agreed<V: PartialEq>(recorded: &mut HashMap<String, V>, name: &str, va
             recorded.insert(name.to_string(), value);
         }
     }
+}
+
+/// Every name `expr` reads, in source order.
+fn names_read(expr: &Expr) -> Vec<String> {
+    struct Names(Vec<String>);
+    impl mojito_ast::visit::Visitor for Names {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Identifier(name) = &expr.kind {
+                self.0.push(name.clone());
+            }
+        }
+    }
+    let mut names = Names(Vec::new());
+    mojito_ast::visit::walk_expr(&mut names, expr);
+    names.0
 }

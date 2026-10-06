@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	516
+# swept-count	518
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -195,6 +195,8 @@ assets/type_error/collection_display_default_element_mismatch.mojo	compile-rejec
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/comptime_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[1]' value to 'String'
+assets/type_error/comptime_application_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (n * Int(2))]' value to 'SIMD[.int32, h(n)]'
+assets/type_error/comptime_application_runtime_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer

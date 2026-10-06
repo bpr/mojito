@@ -1794,6 +1794,7 @@ impl Flatten<'_> {
                 fl.enclosing_binders = self
                     .enclosing_binders
                     .with_loops(loop_scopes.get(&hb).map_or(&[], Vec::as_slice));
+                fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
                 for instr in &region_cfg.g[hb].instrs {
                     fl.lower_instr(instr, outer_map);
                 }
@@ -2845,8 +2846,8 @@ impl Flatten<'_> {
         let mut denoted = self.value_binder_expr(value);
         let materialized = self.literal_materialization(value);
         // An `Int` or a `Bool` read off a display binding (`comptime e =
-        // L[1]`) is the application of its thunk, which later thunks read
-        // as well.
+        // L[1]`), or one the check lifted (`comptime b = n > 2`), is the
+        // application of its thunk, which later thunks read as well.
         let src = match self.display_read(value) {
             Some((src, applied)) => {
                 denoted = applied;
@@ -2854,9 +2855,8 @@ impl Flatten<'_> {
             }
             None => self.expr(value),
         };
-        // A binding that denotes no parameter expression (`comptime b = n >
-        // 2`, `comptime t = (L[0], L[1])`) is evaluated again by each thunk
-        // that reads it.
+        // A binding that denotes no parameter expression (`comptime t =
+        // (L[0], L[1])`) is evaluated again by each thunk that reads it.
         if let Some(binding) = statement_binding
             && !self.enclosing_binders.lifted
         {

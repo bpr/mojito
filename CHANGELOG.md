@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type or a parameter argument can now compute an `Int` or a `Bool` from a
+  generic body's parameters by a call, a comparison, a boolean operator, or
+  a conditional, as it can at the pin: `g[h(n)]()`, `flag[n > 2]()`,
+  `SIMD[DType.int32, h(n)](1)`, `Buf[h(n)]()`, and the same over a local
+  `comptime` display binding (`g[h(L[0])]()`, `g[min(L[0], L[1])]()`) or a
+  local `comptime` value (`comptime e = h(n)` then `g[e]()`) were rejected
+  with "not a compile-time Int constant", and a `def` that also iterated the
+  display was cloned per instantiation and failed the same way. The check
+  names a function for the expression, the template carries its application
+  to the parameters the expression reads, and the elaborator runs it once
+  per instance. Two spellings of one expression are one type, arithmetic
+  over applications stays arithmetic (`h(L[0]) + h(L[1])`), and an
+  application is not the value it computes: `SIMD[DType.int32, h(n)]` does
+  not take a `SIMD[DType.int32, n * 2]`. A closed application in a plain
+  `def` (`g[h(3)]()`, `SIMD[DType.int32, h(2)]`) runs the same way.
 - A type or a parameter argument can now read a local `comptime` display
   binding over a generic body's parameters (`comptime L = [n, n * 2]`): an
   element by position or the length, alone or under integer arithmetic, and

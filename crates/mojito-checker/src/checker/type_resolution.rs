@@ -1891,9 +1891,14 @@ impl Checker {
                     // (`self[Self.Ts.length - 1 - i]`) is that expression,
                     // and a binder in scope shadows a module constant of its
                     // name (a `comptime for i` under a module `comptime i`).
+                    // An `Int` or a `Bool` computed some other way from them
+                    // (`h(L[0])`, `n > 2`) is the application of the function
+                    // lifted for it.
+                    let _lifting = self.lifting_position();
                     let open = || {
                         self.compile_dependent_ct_expr(expr)
                             .ok()
+                            .or_else(|| self.lifted_application(expr))
                             .filter(|expression| expression.as_constant().is_none())
                     };
                     let value = match self.eval_associated_ct(expr, &HashMap::new()) {
@@ -2880,7 +2885,11 @@ impl Checker {
     ) -> Result<SimdWidth, TypeError> {
         let value = match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
-                self.eval_associated_ct(expr, &HashMap::new())?
+                let _lifting = self.lifting_position();
+                match self.eval_associated_ct(expr, &HashMap::new()) {
+                    Ok(value) => value,
+                    Err(error) => CtValue::Expr(self.lifted_application(expr).ok_or(error)?),
+                }
             }
             mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param))
                 if let Some(value) = self.self_param_value(param) =>

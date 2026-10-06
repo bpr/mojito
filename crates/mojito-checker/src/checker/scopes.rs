@@ -192,6 +192,14 @@ impl Checker {
         ComptimePosition(std::rc::Rc::clone(&self.comptime_positions))
     }
 
+    /// Open a position whose compile-time expressions are lifted when they
+    /// compile to no parameter expression ([`Self::lifted_application`]),
+    /// closed when the guard drops.
+    pub(super) fn lifting_position(&self) -> ComptimePosition {
+        self.lifting_positions.set(self.lifting_positions.get() + 1);
+        ComptimePosition(std::rc::Rc::clone(&self.lifting_positions))
+    }
+
     /// Whether a compile-time collection read where the check stands would
     /// cross to runtime: the executable check, outside every compile-time
     /// position. Source validation leaves the crossing to the elaborator.
@@ -524,7 +532,8 @@ impl Checker {
     }
 }
 
-/// An open compile-time position ([`Checker::comptime_position`]).
+/// An open compile-time position ([`Checker::comptime_position`]) or
+/// lifting position ([`Checker::lifting_position`]).
 pub(super) struct ComptimePosition(std::rc::Rc<std::cell::Cell<usize>>);
 
 impl Drop for ComptimePosition {

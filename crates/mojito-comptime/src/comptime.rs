@@ -1933,14 +1933,17 @@ pub(super) fn served_display_bindings(packs: &HashSet<String>, body: &[Stmt]) ->
     served
 }
 
-/// Whether `body` spells one of its `displays`, or a local `comptime` value
-/// read off one, in a type or parameter argument the template does not
-/// serve. An element by position or the length, alone or under integer
-/// arithmetic (`SIMD[DType.int32, L[0]]`, `g[len(L) + 1]()`), is a parameter
-/// expression over the binding's sequence, and so is a local `comptime`
-/// value bound to one (`f[e]()` after `comptime e = L[0]`). Any other read
-/// (`g[h(L[0])]()`, the display whole) is a value only an instantiation's
-/// elaboration computes. `materialize[L]()` is a crossing, not an argument.
+/// Whether `body` spells one of its `displays` whole, or a local `comptime`
+/// collection built from one, as a type or parameter argument, which the
+/// template does not serve. An `Int` or a `Bool` read off a display is
+/// served however it is computed: an element by position or the length,
+/// alone or under integer arithmetic (`SIMD[DType.int32, L[0]]`, `g[len(L) +
+/// 1]()`), is a parameter expression over the binding's sequence, and any
+/// other one (`g[h(L[0])]()`, `flag[L[0] > 2]()`) is the application of a
+/// function lifted for it, as is a local `comptime` value bound to either
+/// (`f[e]()` after `comptime e = h(L[0])`). The display itself (`g[L]()`)
+/// is a value only an instantiation's elaboration computes.
+/// `materialize[L]()` is a crossing, not an argument.
 fn display_in_unserved_argument(
     body: &[Stmt],
     displays: &HashSet<String>,
@@ -1952,26 +1955,32 @@ fn display_in_unserved_argument(
         positional: HashSet<&'a str>,
         /// The displays, and each local `comptime` value read off them.
         derived: HashSet<String>,
-        /// The derived values that are no parameter expression.
-        evaluated: HashSet<String>,
+        /// The derived values that are collections.
+        collections: HashSet<String>,
         found: bool,
     }
 
     impl Finder<'_> {
-        fn display<'e>(&self, expression: &'e Expr) -> Option<&'e str> {
+        /// Whether `expression` is one of the displays, or a collection
+        /// derived from them, by its name or as a display of its own.
+        fn collection(&self, expression: &Expr) -> bool {
             match &expression.kind {
-                ExprKind::Identifier(name) if self.displays.contains(name) => Some(name),
-                _ => None,
+                ExprKind::Identifier(name) => {
+                    self.displays.contains(name) || self.collections.contains(name)
+                }
+                ExprKind::ListLit(_) | ExprKind::TupleLit(_) | ExprKind::BraceLit(_) => {
+                    elab::expression_names_any(expression, &self.derived)
+                }
+                _ => false,
             }
         }
 
-        /// Whether `expression` is a parameter expression over the
+        /// Whether the index of a capitalized subscript (`L[0]`, which
+        /// parses as a type application) is a parameter expression over the
         /// displays' sequences, or reads none of them.
         fn denotes(&self, expression: &Expr) -> bool {
             match &expression.kind {
-                ExprKind::Identifier(name) => {
-                    !self.displays.contains(name) && !self.evaluated.contains(name)
-                }
+                ExprKind::Identifier(name) => !self.derived.contains(name),
                 ExprKind::Prefix(PrefixOp::Neg, value) => self.denotes(value),
                 ExprKind::Infix(
                     InfixOp::Add
@@ -1984,28 +1993,13 @@ fn display_in_unserved_argument(
                     left,
                     right,
                 ) => self.denotes(left) && self.denotes(right),
-                ExprKind::Index { object, index } if let Some(name) = self.display(object) => {
-                    self.positional.contains(name) && self.denotes(index)
-                }
-                ExprKind::Call {
-                    name,
-                    param_args,
-                    args,
-                    kwargs,
-                } if name == "len"
-                    && param_args.is_empty()
-                    && kwargs.is_empty()
-                    && matches!(args.as_slice(), [list] if self.display(list).is_some()) =>
-                {
-                    true
-                }
                 _ => !elab::expression_names_any(expression, &self.derived),
             }
         }
 
         fn serves(&self, argument: &ParamArg) -> bool {
             match argument {
-                ParamArg::Value(value) => self.denotes(value),
+                ParamArg::Value(value) => !self.collection(value),
                 // `L[0]` parses as a type application under a capitalized
                 // name.
                 ParamArg::Type(Type::Named(name, arguments)) if self.displays.contains(name) => {
@@ -2014,7 +2008,7 @@ fn display_in_unserved_argument(
                             [ParamArg::Value(index)] if self.denotes(index))
                 }
                 ParamArg::Type(Type::Named(name, arguments)) => {
-                    !self.evaluated.contains(name)
+                    !self.collections.contains(name)
                         && arguments.iter().all(|argument| self.serves(argument))
                 }
                 ParamArg::Type(_) => true,
@@ -2029,8 +2023,8 @@ fn display_in_unserved_argument(
                 && !self.displays.contains(name)
                 && elab::expression_names_any(value, &self.derived)
             {
-                if !self.denotes(value) {
-                    self.evaluated.insert(name.clone());
+                if self.collection(value) {
+                    self.collections.insert(name.clone());
                 }
                 self.derived.insert(name.clone());
             }
@@ -2068,7 +2062,7 @@ fn display_in_unserved_argument(
             .map(|(name, _)| name.as_str())
             .collect(),
         derived: displays.clone(),
-        evaluated: HashSet::new(),
+        collections: HashSet::new(),
         found: false,
     };
     mojito_ast::visit::walk_block(&mut finder, body);

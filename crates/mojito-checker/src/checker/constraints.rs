@@ -475,9 +475,12 @@ impl Checker {
                 .map(|e| self.eval_associated_ct(e, associated))
                 .collect::<Result<Vec<_>, _>>()
                 .map(CtValue::List),
-            _ => self.eval_reflection_expr(expr)?.ok_or_else(|| {
-                TypeError::NotComptime("not an associated comptime expression".to_string())
-            }),
+            _ => self
+                .eval_reflection_expr(expr)?
+                .or_else(|| self.positioned_application(expr).map(CtValue::Expr))
+                .ok_or_else(|| {
+                    TypeError::NotComptime("not an associated comptime expression".to_string())
+                }),
         }
     }
 
@@ -874,9 +877,9 @@ impl Checker {
             _ => match self.eval_reflection_expr(expr)? {
                 Some(CtValue::Expr(query)) => Ok(context.intern(&query)),
                 Some(value) => constant(value),
-                None => Err(TypeError::Unsupported(
-                    "unsupported dependent parameter expression".to_string(),
-                )),
+                None => self.positioned_application(expr).ok_or_else(|| {
+                    TypeError::Unsupported("unsupported dependent parameter expression".to_string())
+                }),
             },
         }
     }

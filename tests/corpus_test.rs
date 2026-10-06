@@ -375,6 +375,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_display_binding_reads",
     "comptime_for_display_binding",
     "comptime_for_display_over_binder",
+    // R385, the erased oracle: an erased frame runs no function lifted for
+    // an application a type spells.
+    "comptime_application_argument",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",
