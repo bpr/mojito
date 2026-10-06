@@ -614,6 +614,12 @@ pub struct Checker {
     /// substitutes each as a literal, so a nested function or lambda reading
     /// one captures nothing.
     compile_time_bindings: Vec<HashSet<String>>,
+    /// How many compile-time positions enclose the expression being typed: a
+    /// `comptime` binding's value, a `comptime if` condition, a `comptime
+    /// for` iterable, a `materialize[...]` operand
+    /// ([`Self::comptime_position`]). A compile-time collection is read
+    /// freely there and crosses nowhere else.
+    comptime_positions: std::rc::Rc<std::cell::Cell<usize>>,
     enclosing_type_params: Vec<mojito_ast::ast::TypeParam>,
     /// The `Ty` denoted by a bare `Self` while checking a struct's members (the
     /// struct type) or a trait's requirements (`Ty::SelfType`). `None` elsewhere.
@@ -1041,6 +1047,7 @@ impl Checker {
             owned_collectors: HashMap::new(),
             collector_names: HashMap::new(),
             compile_time_bindings: vec![HashSet::new()],
+            comptime_positions: std::rc::Rc::default(),
             enclosing_type_params: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),

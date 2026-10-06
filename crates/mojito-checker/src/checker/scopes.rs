@@ -183,6 +183,20 @@ impl Checker {
             .is_some_and(|bindings| bindings.contains(name))
     }
 
+    /// Open a compile-time position, closed when the guard drops.
+    pub(super) fn comptime_position(&self) -> ComptimePosition {
+        self.comptime_positions
+            .set(self.comptime_positions.get() + 1);
+        ComptimePosition(std::rc::Rc::clone(&self.comptime_positions))
+    }
+
+    /// Whether a compile-time collection read where the check stands would
+    /// cross to runtime: the executable check, outside every compile-time
+    /// position. Source validation leaves the crossing to the elaborator.
+    pub(super) fn crosses_to_runtime(&self) -> bool {
+        !self.source_validation && self.comptime_positions.get() == 0
+    }
+
     /// Record, under source validation, that the innermost scope's `name` is
     /// a compile-time binding: the elaborator folds its uses before the
     /// executable check.
@@ -505,5 +519,14 @@ impl Checker {
                     mojito_ast::ast::CaptureKind::Imm
                 }
             })
+    }
+}
+
+/// An open compile-time position ([`Checker::comptime_position`]).
+pub(super) struct ComptimePosition(std::rc::Rc<std::cell::Cell<usize>>);
+
+impl Drop for ComptimePosition {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
     }
 }

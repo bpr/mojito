@@ -562,14 +562,29 @@ impl<'a> Specializer<'a> {
         }))
     }
 
-    /// The value of a condition operand that is a compile-time application
-    /// not yet evaluated, or `None` for any other operand.
-    fn resolve_application(
+    /// The value of a condition operand or a loop sequence that is a
+    /// compile-time application not yet evaluated, or a conformance
+    /// proposition the instance decides; `None` for any other expression.
+    pub(super) fn resolve_application(
         &mut self,
         template: &str,
         expr: &ParamExpr,
         bindings: &Bindings,
     ) -> Result<Option<CtValue>, MonoError> {
+        // A conformance proposition over a dependent element the instance
+        // closes (`conforms_to(types[i], Writable)`).
+        if let ParamKind::Conforms {
+            subject,
+            trait_name,
+        } = expr.kind()
+        {
+            let Ok(CtValue::Type(ty)) = eval_ct(subject, bindings) else {
+                return Ok(None);
+            };
+            return Ok(self
+                .type_conforms(&ty, trait_name, &mut HashSet::new())
+                .map(CtValue::Bool));
+        }
         let ParamKind::Apply {
             function,
             args,

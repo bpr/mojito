@@ -367,7 +367,11 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_for_template_served",
     // R323, the erased oracle: an erased frame carries no type argument to
     // answer a reflection query over a type parameter from.
+    "reflection_comptime_for_served",
     "reflection_template_served",
+    // R366, the erased oracle: an erased frame runs no thunk for a
+    // `comptime for` display over a binder.
+    "comptime_for_display_over_binder",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",

@@ -98,6 +98,20 @@ impl Flatten<'_> {
             {
                 self.param_value_register(e, value)
             }
+            // `materialize[X]()` the elaborator above MIR left, over a
+            // binder: the runtime value of its compile-time operand.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "materialize"
+                && args.is_empty()
+                && kwargs.is_empty()
+                && let [mojito_ast::ast::ParamArg::Value(operand)] = param_args.as_slice() =>
+            {
+                self.expr(operand)
+            }
             // NOTE: keyword args + default-slot matching (`call::match_call_slots`)
             // are a follow-up; the checker has already validated them, so only the
             // positional `args` are flattened here.

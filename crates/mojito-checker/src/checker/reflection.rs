@@ -39,6 +39,7 @@ impl Checker {
             }
             ExprKind::Index { object, index } => match self.reflection_list(object)? {
                 Some((ReflectQuery::FieldNames, list)) => {
+                    self.reject_bound_list_crossing(object, &list)?;
                     let index = self.reflection_index(index)?;
                     if let Ok(list) = self.param_context.constant(list)
                         && let Ok(element) = self.param_context.list_get(&list, &index)
@@ -112,13 +113,31 @@ impl Checker {
         })
     }
 
-    /// The compile-time value of a reflection query, for the constant and
-    /// dependent-expression evaluators. `None` when `expr` is no query.
+    /// The compile-time value of a reflection query, or of the length of a
+    /// reflected list (`len(names)`, `names.length`), for the constant and
+    /// dependent-expression evaluators. `None` when `expr` is neither.
     pub(super) fn eval_reflection_expr(&self, expr: &Expr) -> Result<Option<CtValue>, TypeError> {
-        match self.reflection_query_of(expr)? {
-            Some((subject, query)) => self.eval_reflection(&subject, query).map(Some),
-            None => Ok(None),
+        if let Some((subject, query)) = self.reflection_query_of(expr)? {
+            return self.eval_reflection(&subject, query).map(Some);
         }
+        let measured = match &expr.kind {
+            ExprKind::Member { object, field } if field == "length" => object,
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
+                match args.as_slice() {
+                    [list] => list,
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        };
+        Ok(self
+            .reflection_list(measured)?
+            .and_then(|(_, list)| self.reflection_list_count(list)))
     }
 
     /// The type a reflection handle chain denotes in a compile-time position
@@ -396,7 +415,10 @@ impl Checker {
     }
 
     /// A `field_names()` or `field_types()` read, with its value.
-    fn reflection_list(&self, expr: &Expr) -> Result<Option<(ReflectQuery, CtValue)>, TypeError> {
+    pub(super) fn reflection_list(
+        &self,
+        expr: &Expr,
+    ) -> Result<Option<(ReflectQuery, CtValue)>, TypeError> {
         match self.reflection_query_of(expr)? {
             Some((subject, query @ (ReflectQuery::FieldNames | ReflectQuery::FieldTypes))) => {
                 let value = self.eval_reflection(&subject, query.clone())?;
@@ -410,10 +432,39 @@ impl Checker {
     /// `expr`: an `Int`, which over a symbolic subject is its field count,
     /// as upstream sizes both lists by `_field_types_of[T]().length`.
     fn reflection_list_length(&self, expr: &Expr, list: &Expr) -> Result<Option<Ty>, TypeError> {
-        let Some((_, value)) = self.reflection_list(list)? else {
+        let Some((query, value)) = self.reflection_list(list)? else {
             return Ok(None);
         };
-        let count = match value {
+        if query == ReflectQuery::FieldNames {
+            self.reject_bound_list_crossing(list, &value)?;
+        }
+        if let Some(count) = self.reflection_list_count(value) {
+            self.record_reflection_value(expr, count);
+        }
+        Ok(Some(Ty::Int))
+    }
+
+    /// A runtime read through a `comptime` binding of a field-name list
+    /// (`names[i]`, `len(names)`) would materialize the whole list, which is
+    /// not implicitly copyable, as the pin rejects any compile-time `Array`
+    /// read at runtime. A query spelled in place is a runtime call, and a
+    /// compile-time position reads the binding where it stands.
+    fn reject_bound_list_crossing(&self, list: &Expr, value: &CtValue) -> Result<(), TypeError> {
+        if !matches!(list.kind, ExprKind::Identifier(_)) || !self.crosses_to_runtime() {
+            return Ok(());
+        }
+        let length = self
+            .reflection_list_count(value.clone())
+            .map_or_else(|| "_".to_string(), |count| count.to_string());
+        Err(TypeError::ComptimeCrossing(format!(
+            "Array[String, Int({length})]"
+        )))
+    }
+
+    /// The element count of a reflected list value: a closed list's length,
+    /// a symbolic one's field count query.
+    fn reflection_list_count(&self, list: CtValue) -> Option<CtValue> {
+        match list {
             CtValue::Expr(value) => match value.kind() {
                 ParamKind::Reflect { subject, .. } => Some(CtValue::Expr(
                     self.param_context
@@ -423,11 +474,7 @@ impl Checker {
             },
             CtValue::Tuple(elements) => Some(CtValue::Int(elements.len() as i64)),
             _ => None,
-        };
-        if let Some(count) = count {
-            self.record_reflection_value(expr, count);
         }
-        Ok(Some(Ty::Int))
     }
 
     /// Record the answer to a query read as a runtime value at `expr`, as the

@@ -2922,7 +2922,31 @@ impl Flatten<'_> {
                 exit,
                 ..
             } => {
-                if let Some(iteration) = comptime_iteration(iter) {
+                let sequence = comptime_iteration(iter).and_then(|iteration| {
+                    use mojito_checked::checked::ComptimeSource;
+                    let source = match iteration.source {
+                        ComptimeSource::Sequence(sequence) => sequence,
+                        ComptimeSource::Evaluated { element, .. } => {
+                            let mut index = HashMap::new();
+                            index_hir_expression(&iter.syntax, iter, &mut index);
+                            self.active_semantics.push(index);
+                            let ty = self.checked_ty(&iter.syntax);
+                            self.active_semantics.pop();
+                            let ty = ty?;
+                            let binders = &self.enclosing_binders;
+                            mojito_checked::checked::ComptimeSequence::Elements(
+                                self.comptime_thunks.request_sequence(
+                                    &iter.syntax,
+                                    binders,
+                                    ty,
+                                    element,
+                                ),
+                            )
+                        }
+                    };
+                    Some((iteration.binder, source))
+                });
+                if let Some((binder, source)) = sequence {
                     // The slot the body's reads of the variable resolve to:
                     // the one HIR declared for the checked binding, which a
                     // second loop of one name holds under a shadow spelling.
@@ -2931,13 +2955,13 @@ impl Flatten<'_> {
                     });
                     // Typed even when no body read types it: each unrolled
                     // copy stores its element there.
-                    if let Some(ty) = iteration.source.binder_meta().as_value() {
+                    if let Some(ty) = source.binder_meta().as_value() {
                         self.var_types.entry(slot).or_insert_with(|| ty.clone());
                     }
                     MirTerm::ComptimeFor {
-                        binder: iteration.binder,
+                        binder,
                         slot,
-                        source: iteration.source,
+                        source,
                         body: map[body],
                         exit: map[exit],
                     }

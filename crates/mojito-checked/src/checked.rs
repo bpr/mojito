@@ -430,7 +430,35 @@ pub struct InteriorInvalidation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComptimeIteration {
     pub binder: mojito_types::param_expr::ParamRef,
-    pub source: ComptimeSequence,
+    pub source: ComptimeSource,
+}
+
+/// How the check leaves a `comptime for` iterable to the phases below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComptimeSource {
+    /// A sequence the check compiled over the binders in scope.
+    Sequence(ComptimeSequence),
+    /// A collection display the check typed and did not close (`[n, n +
+    /// 1]`), whose value binds `element`s: MIR lifts the display as a
+    /// function over the binders in scope, and the loop header iterates its
+    /// application, which the elaborator evaluates per instance.
+    ///
+    /// `construction` is the display's own checked construction, which this
+    /// record stands in for on the display's span.
+    Evaluated {
+        element: mojito_types::param_expr::MetaTy,
+        construction: Box<SemanticAdjustment>,
+    },
+}
+
+impl ComptimeSource {
+    /// The meta-type of the loop's binder.
+    pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
+        match self {
+            Self::Sequence(sequence) => sequence.binder_meta(),
+            Self::Evaluated { element, .. } => element.clone(),
+        }
+    }
 }
 
 /// What a `comptime for` iterates, as upstream's `kgen.param.for` iterates

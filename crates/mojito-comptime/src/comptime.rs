@@ -1013,6 +1013,7 @@ pub fn elaborate_prepared(
         conformance,
         fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
+        template_loop_names: RefCell::new(Vec::new()),
         def_traces: RefCell::new(Vec::new()),
         method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
@@ -1272,113 +1273,398 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
 }
 
 /// Whether a block directly contains a `comptime for` its template does not
-/// serve, under the same scope rule as [`block_has_comptime`]; `packs`
-/// names the `def`'s packs as [`comptime_for_is_template_served`] reads them.
-fn block_has_unkept_comptime_for(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
+/// serve, under the same scope rule as [`block_has_comptime`].
+fn block_has_unkept_comptime_for(stmts: &[Stmt], names: &LoopNames<'_>) -> bool {
     block_has_statement(stmts, &|kind| {
         matches!(kind, StmtKind::ComptimeFor { iter, body, .. }
-            if !comptime_for_is_template_served(iter, body, packs))
+            if !comptime_for_is_template_served(iter, body, names))
     })
 }
 
-/// Whether a generic `def`'s template serves a `comptime for`: the iterable
-/// is a `range` whose bounds are parameter expressions — literals, names,
-/// `Self.` members, the length of one of the `def`'s `packs` as the pin
-/// spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
-/// `len(args)` is a runtime value there), and arithmetic over them — or a
-/// list, set, or dictionary display of literals, and the body declares no
-/// `comptime` binding of its own, which the elaborator above MIR would have
-/// to evaluate with the loop variable unknown, other than an alias of a pack
-/// element ([`pack_element_alias`]). Such a loop is checked once with the
-/// variable symbolic, carried by MIR as a loop header, and unrolled below
-/// MIR; any other — over a named collection, a display over a parameter, a
-/// value pack, a reflection query — is unrolled in the AST, on a clone per
+/// The names a `comptime for` reads that decide whether its template serves
+/// it ([`comptime_for_is_template_served`]).
+pub(super) struct LoopNames<'a> {
+    /// The `def`'s type packs and their collectors ([`def_pack_names`]), an
+    /// enclosing struct's as `Self.Ts`. The elaborator passes every binder
+    /// in scope, which holds them.
+    pub(super) packs: &'a HashSet<String>,
+    /// The `def`'s value packs (`*vals: Int`), bare.
+    pub(super) value_packs: &'a HashSet<String>,
+    /// The body's reflected lists ([`ReflectedLists`]).
+    pub(super) reflected: &'a ReflectedLists,
+    /// Whether a bare name is a closed collection constant: a module
+    /// `comptime` constant, or a local `comptime` binding of a literal
+    /// display.
+    pub(super) collection: &'a dyn Fn(&str) -> bool,
+}
+
+/// The names a `def` body binds to a reflected list, by its query:
+/// `comptime names = r.field_names()`, `comptime types = r.field_types()`.
+#[derive(Default, Clone)]
+pub(super) struct ReflectedLists {
+    names: HashSet<String>,
+    types: HashSet<String>,
+}
+
+impl ReflectedLists {
+    pub(super) fn of(body: &[Stmt]) -> Self {
+        let mut lists = Self::default();
+        mojito_ast::visit::walk_block(&mut lists, body);
+        lists
+    }
+
+    /// Whether a block materializes one of these lists whole
+    /// (`materialize[names]()`), which needs the list as runtime storage: no
+    /// template carries that, so the body is a clone's.
+    fn materialized_in(&self, body: &[Stmt]) -> bool {
+        struct Finder<'a> {
+            lists: &'a ReflectedLists,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.found |= matches!(&expr.kind, ExprKind::Call { name, param_args, args, .. }
+                    if name == "materialize"
+                        && args.is_empty()
+                        && matches!(param_args.as_slice(),
+                            [ParamArg::Value(Expr { kind: ExprKind::Identifier(list), .. })]
+                                if self.lists.names.contains(list)
+                                    || self.lists.types.contains(list)));
+            }
+        }
+
+        let mut finder = Finder {
+            lists: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_block(&mut finder, body);
+        finder.found
+    }
+
+    /// Whether a loop body spells a reflected field type as a callee or an
+    /// annotation — `types[i]()`, or `FT()` and `x: FT` over an alias
+    /// `comptime FT = types[i]`. MIR has no form constructing a type a
+    /// reflection query selects, so such a loop is a clone's.
+    fn type_spelled_in(&self, body: &[Stmt]) -> bool {
+        struct Finder<'a> {
+            types: &'a HashSet<String>,
+            aliases: HashSet<String>,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_stmt(&mut self, statement: &Stmt) {
+                if let StmtKind::Comptime { name, value, .. } = &statement.kind
+                    && let ExprKind::Index { object, .. } = &value.kind
+                    && matches!(&object.kind, ExprKind::Identifier(list) if self.types.contains(list))
+                {
+                    self.aliases.insert(name.clone());
+                }
+            }
+
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.found |= matches!(&expr.kind, ExprKind::Call { name, .. }
+                    if self.types.contains(name) || self.aliases.contains(name));
+            }
+
+            fn visit_type(&mut self, ty: &Type) {
+                self.found |= matches!(ty, Type::Named(name, _)
+                    if self.types.contains(name) || self.aliases.contains(name));
+            }
+        }
+
+        if self.types.is_empty() {
+            return false;
+        }
+        let mut finder = Finder {
+            types: &self.types,
+            aliases: HashSet::new(),
+            found: false,
+        };
+        mojito_ast::visit::walk_block(&mut finder, body);
+        finder.found
+    }
+}
+
+impl mojito_ast::visit::Visitor for ReflectedLists {
+    fn visit_stmt(&mut self, statement: &Stmt) {
+        let StmtKind::Comptime { name, value, .. } = &statement.kind else {
+            return;
+        };
+        if reflection_method(value, &["field_names"]) {
+            self.names.insert(name.clone());
+        } else if reflection_method(value, &["field_types"]) {
+            self.types.insert(name.clone());
+        }
+    }
+}
+
+/// Whether a generic `def`'s template serves a `comptime for`. Its iterable
+/// is one of:
+///
+/// - a `range` whose bounds are parameter expressions — literals, names,
+///   `Self.` members, the length of one of the `def`'s packs as the pin
+///   spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
+///   `len(args)` is a runtime value there), a reflection count
+///   ([`reflection_count`]), and arithmetic over them;
+/// - a list, set, or dictionary display of literals, which the check
+///   closes, or of scalar expressions over the binders — literals, names,
+///   `Self.` members, a pack length, and arithmetic, comparison, and boolean
+///   operators over them ([`scalar_shaped`]) — which it leaves for the
+///   elaborator below MIR to evaluate per instance;
+/// - a named closed collection ([`LoopNames::collection`]);
+/// - one of the `def`'s value packs;
+/// - a reflected field-name list ([`reflected_names`]).
+///
+/// And each `comptime` binding its body declares is an alias of a pack
+/// element ([`pack_element_alias`]), a literal, a parameter expression over
+/// the binders and the loop variable, or an element of a named compile-time
+/// list at one, which the check binds with them symbolic; and the body
+/// spells no reflected field type as a callee or an annotation
+/// ([`ReflectedLists::type_spelled_in`]). Such a loop is checked once with
+/// the variable symbolic, carried by MIR as a loop header, and unrolled
+/// below MIR; any other is unrolled in the AST, on a clone per
 /// instantiation.
 pub(super) fn comptime_for_is_template_served(
     iter: &Expr,
     body: &[Stmt],
-    packs: &HashSet<String>,
+    names: &LoopNames<'_>,
 ) -> bool {
-    fn pack_length(expression: &Expr, packs: &HashSet<String>) -> bool {
-        // A `def`'s pack is named bare, an enclosing struct's as `Self.Ts`.
-        let names_pack = |expression: &Expr| match &expression.kind {
-            ExprKind::Identifier(name) => packs.contains(name),
-            ExprKind::Member { object, field } => {
-                matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                    && packs.contains(&format!("Self.{field}"))
-            }
-            _ => false,
-        };
-        match &expression.kind {
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } => {
-                name == "len"
-                    && param_args.is_empty()
-                    && kwargs.is_empty()
-                    && matches!(args.as_slice(), [pack] if names_pack(pack))
-            }
-            ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                kwargs,
-            } => method == "__len__" && args.is_empty() && kwargs.is_empty() && names_pack(object),
-            ExprKind::Member { object, field } => field == "length" && names_pack(object),
-            _ => false,
-        }
-    }
-    fn parameter_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
-        match &expression.kind {
-            ExprKind::Int(_) | ExprKind::Identifier(_) => true,
-            ExprKind::Member { object, .. } => {
-                matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                    || pack_length(expression, packs)
-            }
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
-            ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner, packs),
-            ExprKind::Infix(
-                InfixOp::Add
-                | InfixOp::Sub
-                | InfixOp::Mul
-                | InfixOp::FloorDiv
-                | InfixOp::Mod
-                | InfixOp::Pow
-                | InfixOp::Shl,
-                left,
-                right,
-            ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
-            _ => false,
-        }
-    }
-    fn literal(expression: &Expr) -> bool {
-        match &expression.kind {
-            ExprKind::Int(_) | ExprKind::Str(_) | ExprKind::Bool(_) => true,
-            ExprKind::Prefix(PrefixOp::Neg, inner) => matches!(inner.kind, ExprKind::Int(_)),
-            _ => false,
-        }
-    }
+    let packs = names.packs;
     let sequence = match &iter.kind {
         ExprKind::Call { name, args, .. } if name == "range" => {
             !args.is_empty() && args.iter().all(|bound| parameter_shaped(bound, packs))
         }
-        ExprKind::ListLit(items) => items.iter().all(literal),
-        ExprKind::BraceLit(entries) => {
-            !entries.is_empty()
-                && entries
-                    .iter()
-                    .all(|(key, value)| literal(key) && value.as_ref().is_none_or(literal))
+        ExprKind::ListLit(items) => {
+            !items.is_empty()
+                && (items.iter().all(literal_element)
+                    || items.iter().all(|item| scalar_shaped(item, packs)))
         }
+        ExprKind::BraceLit(entries) => {
+            literal_entries(entries)
+                || (!entries.is_empty()
+                    && entries.iter().all(|(key, value)| {
+                        scalar_shaped(key, packs)
+                            && value
+                                .as_ref()
+                                .is_none_or(|value| scalar_shaped(value, packs))
+                    }))
+        }
+        ExprKind::Identifier(name) => names.value_packs.contains(name) || (names.collection)(name),
+        ExprKind::MethodCall { .. } => reflected_names(iter),
         _ => false,
     };
     sequence
-        && !block_has_statement(body, &|kind| {
-            matches!(kind, StmtKind::Comptime { .. })
-                && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
+        && !names.reflected.type_spelled_in(body)
+        && !block_has_statement(body, &|kind| match kind {
+            StmtKind::Comptime {
+                type_params,
+                ty: None,
+                where_clauses,
+                value,
+                ..
+            } => {
+                // An element of a named compile-time list at a parameter
+                // expression (`names[i]`, `types[i]`).
+                let element = matches!(&value.kind, ExprKind::Index { object, index }
+                    if matches!(object.kind, ExprKind::Identifier(_))
+                        && parameter_shaped(index, packs));
+                !(type_params.is_empty()
+                    && where_clauses.is_empty()
+                    && (literal_element(value) || parameter_shaped(value, packs) || element))
+                    && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
+            }
+            StmtKind::Comptime { .. } => true,
+            _ => false,
         })
+}
+
+/// Whether `expression` is the length of one of `packs` as the pin spells it
+/// at compile time. A `def`'s pack is named bare, an enclosing struct's as
+/// `Self.Ts`.
+fn pack_length(expression: &Expr, packs: &HashSet<String>) -> bool {
+    let names_pack = |expression: &Expr| match &expression.kind {
+        ExprKind::Identifier(name) => packs.contains(name),
+        ExprKind::Member { object, field } => {
+            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                && packs.contains(&format!("Self.{field}"))
+        }
+        _ => false,
+    };
+    match &expression.kind {
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            name == "len"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [pack] if names_pack(pack))
+        }
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } => method == "__len__" && args.is_empty() && kwargs.is_empty() && names_pack(object),
+        ExprKind::Member { object, field } => field == "length" && names_pack(object),
+        _ => false,
+    }
+}
+
+/// Whether `expression` is spelled as a parameter expression: literals,
+/// names, `Self.` members, a pack length ([`pack_length`]), and arithmetic
+/// over them.
+fn parameter_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
+    match &expression.kind {
+        ExprKind::Int(_) | ExprKind::Identifier(_) => true,
+        ExprKind::Member { object, .. } => {
+            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                || pack_length(expression, packs)
+        }
+        ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
+            pack_length(expression, packs) || reflection_count(expression)
+        }
+        ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner, packs),
+        ExprKind::Infix(
+            InfixOp::Add
+            | InfixOp::Sub
+            | InfixOp::Mul
+            | InfixOp::FloorDiv
+            | InfixOp::Mod
+            | InfixOp::Pow
+            | InfixOp::Shl,
+            left,
+            right,
+        ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
+        _ => false,
+    }
+}
+
+/// Whether `expression` is spelled as a reflection handle: `reflect[T]`, or
+/// a name bound to one.
+fn reflection_handle_shaped(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Identifier(_) => true,
+        ExprKind::TypeApply { name, .. } => name == "reflect",
+        _ => false,
+    }
+}
+
+/// Whether `expression` is spelled as a handle's query `method`, called with
+/// no argument.
+fn reflection_method(expression: &Expr, wanted: &[&str]) -> bool {
+    matches!(&expression.kind, ExprKind::MethodCall { object, method, args, kwargs }
+        if wanted.contains(&method.as_str())
+            && args.is_empty()
+            && kwargs.is_empty()
+            && reflection_handle_shaped(object))
+}
+
+/// Whether `expression` is spelled as a reflected field-name list:
+/// `X.field_names()` over a handle `X`.
+fn reflected_names(expression: &Expr) -> bool {
+    reflection_method(expression, &["field_names"])
+}
+
+/// Whether `expression` is spelled as a reflection count: `X.field_count()`
+/// or `X.field_index["name"]()` over a handle `X`, or the length of a
+/// reflected list, `len(L)` over a name or over `X.field_names()` /
+/// `X.field_types()`.
+fn reflection_count(expression: &Expr) -> bool {
+    let list = |expression: &Expr| {
+        matches!(expression.kind, ExprKind::Identifier(_))
+            || reflection_method(expression, &["field_names", "field_types"])
+    };
+    match &expression.kind {
+        ExprKind::MethodCall { .. } => reflection_method(expression, &["field_count"]),
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => {
+            args.is_empty()
+                && kwargs.is_empty()
+                && matches!(&callee.kind, ExprKind::Member { object, field }
+                    if field == "field_index" && reflection_handle_shaped(object))
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            name == "len"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && matches!(args.as_slice(), [measured] if list(measured))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expression` is spelled as a scalar a loop binder takes (`Int`,
+/// `Bool`, `String`) over the binders: a literal, a name, a `Self.` member,
+/// a pack length ([`pack_length`]), or an arithmetic, comparison, or boolean
+/// operator over those. A call, a subscript, a float, or a nested display
+/// does not show its type.
+fn scalar_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
+    let shaped = |operand: &Expr| scalar_shaped(operand, packs);
+    match &expression.kind {
+        ExprKind::Int(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::Identifier(_) => true,
+        ExprKind::Member { object, .. } => {
+            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
+                || pack_length(expression, packs)
+        }
+        ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
+        ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Not, inner) => shaped(inner),
+        ExprKind::Infix(
+            InfixOp::Add
+            | InfixOp::Sub
+            | InfixOp::Mul
+            | InfixOp::FloorDiv
+            | InfixOp::Mod
+            | InfixOp::Pow
+            | InfixOp::Shl
+            | InfixOp::Eq
+            | InfixOp::Ne
+            | InfixOp::Lt
+            | InfixOp::Le
+            | InfixOp::Gt
+            | InfixOp::Ge
+            | InfixOp::And
+            | InfixOp::Or,
+            left,
+            right,
+        ) => shaped(left) && shaped(right),
+        ExprKind::Compare { first, rest } => {
+            shaped(first) && rest.iter().all(|(_, operand)| shaped(operand))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expression` is a literal of a scalar type a loop binder takes.
+fn literal_element(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_) => true,
+        ExprKind::Prefix(PrefixOp::Neg, inner) => {
+            matches!(inner.kind, ExprKind::Int(_) | ExprKind::Float(_))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a brace display is a set or dictionary of literals.
+fn literal_entries(entries: &[(Expr, Option<Expr>)]) -> bool {
+    !entries.is_empty()
+        && entries
+            .iter()
+            .all(|(key, value)| literal_element(key) && value.as_ref().is_none_or(literal_element))
 }
 
 /// The alias a `comptime NAME = Ts[index]` statement declares of an element
@@ -1463,15 +1749,33 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
 }
 
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
-/// unrolls a `comptime for` over a compile-time list or a pack, or a `def`
-/// nested in it asserts a `rebind` — that nested body specializes per call,
-/// so the body holding it reaches it through a clone of its own. A `comptime
-/// if`, a `comptime for` over a `range` — of a pack's length included — and
-/// a `rebind` of its own do not: the template keeps the region or the
-/// assertion, the check types it with the binders symbolic, and the
-/// elaborator below MIR selects, unrolls, or judges it.
-fn def_body_keys_specialization(stmts: &[Stmt], packs: &HashSet<String>) -> bool {
-    block_has_unkept_comptime_for(stmts, packs) || nested_def_has_rebind(stmts)
+/// holds a `comptime for` its template does not serve
+/// ([`comptime_for_is_template_served`]), it materializes a reflected list
+/// whole ([`ReflectedLists::materialized_in`]), or a `def` nested in it
+/// asserts a `rebind` — that nested body specializes per call, so the body
+/// holding it reaches it through a clone of its own. A `comptime if`, a served
+/// `comptime for`, and a `rebind` of its own do not: the template keeps the
+/// region or the assertion, the check types it with the binders symbolic,
+/// and the elaborator below MIR selects, unrolls, or judges it.
+fn def_body_keys_specialization(
+    type_params: &[TypeParam],
+    params: &[FnParam],
+    owner: &str,
+    body: &[Stmt],
+) -> bool {
+    let packs = def_pack_names(type_params, params);
+    let value_packs = def_value_pack_names(type_params, owner);
+    let bound = def_bound_names(type_params, params, body);
+    let reflected = ReflectedLists::of(body);
+    let names = LoopNames {
+        packs: &packs,
+        value_packs: &value_packs,
+        reflected: &reflected,
+        collection: &|name| !bound.contains(name),
+    };
+    block_has_unkept_comptime_for(body, &names)
+        || reflected.materialized_in(body)
+        || nested_def_has_rebind(body)
 }
 
 /// Whether a `def` (or a lambda) nested anywhere in a block names
@@ -1513,6 +1817,94 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
         .map(|binder| (*binder).to_string())
         .chain(collectors)
         .collect()
+}
+
+/// The names a `def`'s value packs go by in its body: each `*vals: Int`
+/// binder, bare.
+pub(super) fn def_value_pack_names(type_params: &[TypeParam], owner: &str) -> HashSet<String> {
+    type_params
+        .iter()
+        .filter(|parameter| {
+            matches!(
+                classify_ct_param(parameter, type_params, owner),
+                Some(ParamDecl::Value { variadic: true, .. })
+            )
+        })
+        .filter_map(|parameter| parameter.name.strip_prefix('*'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The names a `def` binds itself, so that a bare name outside them is a
+/// module's: its compile-time and runtime parameters, the locals and loop
+/// variables its body declares, a nested `def`'s included, and each local
+/// `comptime` binding other than one of a literal display, which is a closed
+/// collection wherever the body names it.
+fn def_bound_names(
+    type_params: &[TypeParam],
+    params: &[FnParam],
+    body: &[Stmt],
+) -> HashSet<String> {
+    #[derive(Default)]
+    struct Bound {
+        names: HashSet<String>,
+    }
+
+    impl mojito_ast::visit::Visitor for Bound {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            match &statement.kind {
+                StmtKind::Comptime {
+                    type_params,
+                    ty: None,
+                    value,
+                    ..
+                } if type_params.is_empty()
+                    && match &value.kind {
+                        ExprKind::ListLit(items) => items.iter().all(literal_element),
+                        ExprKind::BraceLit(entries) => literal_entries(entries),
+                        _ => false,
+                    } => {}
+                StmtKind::Comptime { name, .. }
+                | StmtKind::VarDecl { name, .. }
+                | StmtKind::RefDecl { name, .. }
+                | StmtKind::Assign { name, .. }
+                | StmtKind::Def { name, .. } => {
+                    self.names.insert(name.clone());
+                }
+                StmtKind::For { var, .. } | StmtKind::ComptimeFor { var, .. } => {
+                    self.names.insert(var.clone());
+                }
+                StmtKind::Unpack { targets, .. } => {
+                    self.names
+                        .extend(targets.iter().filter_map(|target| match &target.kind {
+                            ExprKind::Identifier(name) => Some(name.clone()),
+                            _ => None,
+                        }));
+                }
+                StmtKind::Try {
+                    except: Some((name, _)),
+                    ..
+                } => self.names.extend(name.clone()),
+                StmtKind::With { items, .. } => {
+                    self.names
+                        .extend(items.iter().filter_map(|item| item.var.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut bound = Bound::default();
+    bound.names.extend(
+        type_params
+            .iter()
+            .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
+    );
+    bound
+        .names
+        .extend(params.iter().map(|parameter| parameter.name.clone()));
+    mojito_ast::visit::walk_block(&mut bound, body);
+    bound.names
 }
 
 /// Whether a top-level `def` keyed on a type pack is served by its template:
@@ -1812,7 +2204,7 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
     };
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, params, name)
-        && !def_body_keys_specialization(body, &packs)
+        && !def_body_keys_specialization(type_params, params, name, body)
         && value_packs_read_as_parameters(type_params, name, body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
@@ -1820,22 +2212,29 @@ fn pack_def_shape_served(statement: &Stmt) -> Option<Vec<String>> {
 /// Whether every read of a value pack (`*values: Int`) in a `def`'s body is
 /// one its template serves: its length (`len(values)`, `values.__len__()`)
 /// or an element (`values[i]`), which the check records as the parameter
-/// constant the elaborator folds per instance. A read of the whole pack as a
-/// runtime value keeps the clone.
+/// constant the elaborator folds per instance, or the iterable of a
+/// `comptime for`, which the loop header carries as its sequence. A read of
+/// the whole pack as a runtime value keeps the clone.
 fn value_packs_read_as_parameters(type_params: &[TypeParam], owner: &str, body: &[Stmt]) -> bool {
-    struct Reads<'a> {
-        packs: Vec<&'a str>,
+    struct Reads {
+        packs: HashSet<String>,
         uses: usize,
         served: usize,
     }
 
-    impl Reads<'_> {
+    impl Reads {
         fn names_pack(&self, expr: &Expr) -> bool {
-            matches!(&expr.kind, ExprKind::Identifier(name) if self.packs.contains(&name.as_str()))
+            matches!(&expr.kind, ExprKind::Identifier(name) if self.packs.contains(name))
         }
     }
 
-    impl mojito_ast::visit::Visitor for Reads<'_> {
+    impl mojito_ast::visit::Visitor for Reads {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.served += usize::from(
+                matches!(&statement.kind, StmtKind::ComptimeFor { iter, .. } if self.names_pack(iter)),
+            );
+        }
+
         fn visit_expr(&mut self, expr: &Expr) {
             self.served += usize::from(match &expr.kind {
                 ExprKind::Identifier(_) => {
@@ -1871,16 +2270,7 @@ fn value_packs_read_as_parameters(type_params: &[TypeParam], owner: &str, body: 
     }
 
     let mut reads = Reads {
-        packs: type_params
-            .iter()
-            .filter(|parameter| {
-                matches!(
-                    classify_ct_param(parameter, type_params, owner),
-                    Some(ParamDecl::Value { variadic: true, .. })
-                )
-            })
-            .filter_map(|parameter| parameter.name.strip_prefix('*'))
-            .collect(),
+        packs: def_value_pack_names(type_params, owner),
         uses: 0,
         served: 0,
     };
@@ -2512,7 +2902,7 @@ fn is_specializable_declaration(
             ..
         } => {
             !type_params.is_empty()
-                && (def_body_keys_specialization(body, &def_pack_names(type_params, params))
+                && (def_body_keys_specialization(type_params, params, name, body)
                     // A type pack keys a clone per call unless the template
                     // serves the body (`pack_def_template_served`).
                     || (type_params
@@ -2650,6 +3040,9 @@ struct Elab<'a> {
     /// whose condition names one is kept for the check: its arms are the
     /// template's, and the elaborator below MIR selects.
     template_binders: RefCell<Vec<HashSet<String>>>,
+    /// The value packs (`*vals: Int`, bare) and the reflected lists of each
+    /// generic `def` body open in [`Self::template_binders`].
+    template_loop_names: RefCell<Vec<(HashSet<String>, ReflectedLists)>>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.
@@ -3268,6 +3661,7 @@ fn dtype_keyed_declaration(statement: &Stmt) -> bool {
 /// compile-time-keyed class's per-declaration predicate.
 fn comptime_keyed_declaration(statement: &Stmt) -> bool {
     let StmtKind::Def {
+        name,
         type_params,
         params,
         body,
@@ -3276,7 +3670,7 @@ fn comptime_keyed_declaration(statement: &Stmt) -> bool {
     else {
         return false;
     };
-    def_body_keys_specialization(body, &def_pack_names(type_params, params))
+    def_body_keys_specialization(type_params, params, name, body)
         && admits_comptime_keying(statement)
         && type_params
             .iter()

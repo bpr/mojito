@@ -949,12 +949,18 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     0,
                 )
                 .map_err(|error| unsupported(error.to_string()))?;
-                if matches!(closed, Ty::Dependent(_)) {
-                    return Err(unsupported(format!(
-                        "dependent type `{ty}` has no concrete MIR declaration fact"
-                    )));
+                if !matches!(closed, Ty::Dependent(_)) {
+                    return substitute_ty(&closed, bindings);
                 }
-                return substitute_ty(&closed, bindings);
+                // An element of a reflected field-type list
+                // (`reflect[T].field_types()[i]`) closes once the instance
+                // answers the query.
+                return match eval_ct(dependent.expr(), bindings) {
+                    Ok(CtValue::Type(element)) => substitute_ty(&element, bindings),
+                    _ => Err(unsupported(format!(
+                        "dependent type `{ty}` has no concrete MIR declaration fact"
+                    ))),
+                };
             };
             let value = eval_ct(index, bindings)?;
             let index = match value {
@@ -1102,6 +1108,7 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
 pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
+        CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
         CtValue::Dtype(value) => Some(Const::Dtype(*value)),
         CtValue::Str(value)

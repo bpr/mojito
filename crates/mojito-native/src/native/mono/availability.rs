@@ -220,7 +220,7 @@ impl Specializer<'_> {
     /// Whether the concrete type `ty` conforms to `trait_name`: a struct by
     /// its template's row under the instance's arguments, any other type by
     /// its shape.
-    fn type_conforms(
+    pub(super) fn type_conforms(
         &self,
         ty: &Ty,
         trait_name: &str,

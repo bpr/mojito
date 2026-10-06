@@ -477,13 +477,24 @@ which it reads as parameter references (`Const::Param`) — (`ComptimeThunks`,
 `lower_expression_thunk`), and its branch carries the
 thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
-template keeps a `comptime for` over a `range` of parameter expressions, or
-over a list, set, or dictionary display of literals, whose body declares no
-local `comptime` binding (`comptime_for_is_template_served`,
+template keeps a `comptime for` over a `range` of parameter expressions
+(a reflection count among them), a list, set, or dictionary display of
+scalars, a named closed collection, the `def`'s own value pack, or a
+reflected field-name list, whose body binds by `comptime` only parameter
+expressions over the binders (`comptime_for_is_template_served`,
 `comptime/elab.rs::keep_template_comptime_for`): the checker types the body
 once with the variable a symbolic binder of the loop's own, of the element's
-type, and records the sequence (`SemanticAdjustment::ComptimeIteration`, its
-`ComptimeSequence` a range or the display's elements), HIR lowers it as a
+type, and records what the loop iterates
+(`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
+`ComptimeSequence` — a range, a closed display's elements, a value pack, a
+reflection query — or `Evaluated` for a display over the binders, which the
+check types and does not close). MIR lifts an evaluated display as a
+function over the binders in scope at the header, as it lifts an uncompiled
+condition, and the header's sequence is that function's application, which
+`native::mono` demands, runs on the VM, and freezes
+(`VmBackend::freeze`) into the list, set, or dictionary it iterates, as
+upstream runs the display on its interpreter per instance. HIR lowers the
+loop as a
 loop whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
 terminator — the binder, the slot the body reads it through, and the
 sequence, as upstream's `kgen.param.for` iterates a compile-time sequence —
@@ -495,11 +506,11 @@ dominates — is copied once per element with fresh registers, the binder's
 reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
-for the pruning. Every other `comptime for` — over a named collection, a
-display over a parameter, a pack's elements themselves, a reflection query,
-or with a local `comptime` binding in its body, and every one outside a
-generic `def` or a generic struct's method — is unrolled in the AST as
-before. A type pack crosses the waist the same way: a pack-keyed `def`
+for the pruning. Every other `comptime for` — over a local `comptime`
+binding of a display over a binder, a display with an element that applies
+a function, a loop that constructs a reflected field type, and every one
+outside a generic `def` or a generic struct's method — is unrolled in the
+AST as before (roadmap R362–R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

@@ -337,13 +337,27 @@ impl ScopeCx<'_> {
                     let role = format!("block {index} compile-time loop");
                     self.reference(&role, &binder.id, &binder.name, None, &[]);
                     for expression in source.expressions() {
-                        let mut nested = Vec::new();
-                        self.expr_nodes(
-                            &role,
-                            "compile-time loop sequence",
-                            expression,
-                            &mut nested,
-                        );
+                        // A sequence the elaborator evaluates is the
+                        // application of its thunk, a list of values; its
+                        // arguments are held to every expression's rules.
+                        let operands: Vec<&ParamExpr> = match expression.kind() {
+                            ParamKind::Apply { args, .. }
+                                if matches!(expression.meta(), MetaTy::ParamList(element)
+                                    if matches!(**element, MetaTy::Value(_))) =>
+                            {
+                                args.iter().collect()
+                            }
+                            _ => vec![expression],
+                        };
+                        for operand in operands {
+                            let mut nested = Vec::new();
+                            self.expr_nodes(
+                                &role,
+                                "compile-time loop sequence",
+                                operand,
+                                &mut nested,
+                            );
+                        }
                     }
                 }
                 _ => {}

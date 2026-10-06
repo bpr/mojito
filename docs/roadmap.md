@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R362**.
+Next free ID: **R370**.
 
 ## Ordered Work
 
@@ -135,34 +135,77 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R246 (P3b) A `comptime for` over a named collection, a display
-  over a parameter, a value pack, or a reflection query, or with a local
-  `comptime` binding in its body, still keys a clone**
+- [ ] **R362 (P3b) A local `comptime` binding of a display over a binder,
+  iterated by a `comptime for`, keys a clone**
 
-  Problem: the template serves a `comptime for` only over a `range` of
-  parameter expressions or a list, set, or dictionary display of literals,
-  with no `comptime` binding in its body (`comptime_for_is_template_served`);
-  every other loop of a generic `def` is unrolled in the AST on a clone per
-  instantiation.
-  - A module collection constant (`comptime L = [10, 20]`, then `comptime
-    for x in L` in `def f[n: Int]()`) fails on the clone path with "cannot
-    materialize comptime value of type 'Array[Int, Int(2)]'", where the pin
-    prints `11`, `21`; serving it needs the cloner's predicate to know the
-    module's constants, as `Elab::top_consts` does.
-  - A display over a binder (`[n, n + 1]`) needs the elements as a thunk
-    the elaborator runs (`ComptimeThunks` with a non-`Bool` result); one
-    over an enclosing loop's variable also needs R248.
-  - A variadic value pack (`comptime for v in vals`, `*vals: Int`) waits on
-    its `def` being served at all (R318).
-  - A body binding (`comptime j = i * 2`) is R290's, and a reflection bound
-    or sequence (`range(reflect[T].field_count())`, `field_names()`) is
-    R267's, with R290 for the bound `comptime r = reflect[T]` form
-    (`assets/ok/reflection_symbolic_fields.mojo`,
-    `assets/ok/reflection_field_name_materialize.mojo`).
-  - The header already iterates a sequence (`ComptimeSequence::Elements`,
-    schema 1.25), so each shape needs only its sequence compiled.
-  - Depends on R290, R267, and R318.
-  - Model: Fable, Planned.
+  Problem: `comptime L = [n, n * 2]` then `comptime for x in L:` in `def
+  f[n: Int]()` is unrolled in the AST on a clone per instantiation, where
+  the same display written in the loop header is served by the template.
+  - The check binds no value for `L`: a display over a binder compiles to
+    no parameter expression, so the loop has no sequence to record.
+  - The display in the header is lifted as a thunk MIR names
+    (`ComptimeThunks::request_sequence`), which the check cannot name for a
+    binding it meets before the loop.
+  - The cloner keeps such a `def` by name (`def_bound_names`,
+    `comptime.rs`), and the clone prints the pin's `3`, `6`.
+  - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R363 (P3b) A `comptime for` display whose element applies a
+  function, subscripts a value, or computes a float keys a clone**
+
+  Problem: `comptime for x in [twice(n), n]:` in `def f[n: Int]()` is
+  unrolled in the AST on a clone, where `[n * 2, n]` is served by the
+  template.
+  - The cloner decides before the check, from syntax alone, and a call or a
+    subscript does not show a scalar type (`scalar_shaped`, `comptime.rs`).
+  - The check and MIR already serve any display of `Int`, `Bool`, or
+    `String` elements: the thunk lifted for the display runs the call.
+  - A float element computed from a binder (`[n * 0.5]`) also needs the
+    check to mint a `Float64` binder for an evaluated display
+    (`evaluated_display`, `checker/comptime_validation.rs`).
+  - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R364 (P3) MIR cannot construct a reflected field type, so a loop
+  that spells one keys a clone**
+
+  Problem: `comptime FT = types[i]` then `FT()`, or `types[i]()`, over
+  `comptime types = reflect[T].field_types()` in a `comptime for` keeps the
+  generic `def` on the cloner (`assets/ok/reflection_symbolic_fields.mojo`).
+  - `MirInstr::ConstructTypeParam` names a type parameter or a pack
+    element, and has no form for a type a reflection query selects.
+  - Kept in a template, the construction lowers as a call of the alias and
+    the VM stops with "does not support the built-in or callee 'FT'".
+  - The cloner excludes the loop by syntax
+    (`ReflectedLists::type_spelled_in`, `comptime.rs`), an annotation `x:
+    FT` included.
+  - A `comptime if` over the field type (`types[i] == Int`,
+    `conforms_to(types[i], Writable)`) is already served.
+  - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R365 (P3) A reflected list materialized whole over a type parameter
+  has no template form**
+
+  Problem: `var all = materialize[names]()` over `comptime names =
+  reflect[T].field_names()` keeps a generic `def` on the cloner
+  (`assets/ok/reflection_field_name_materialize.mojo`), and in a method of a
+  generic struct it is rejected, where the pin prints the list's length.
+  - The method reports "materialize[...]() of a reflected list over a type
+    parameter", since a generic struct's method has no clone to fall back
+    on.
+  - A template would need MIR to build runtime storage from a parameter
+    list, the form R325 lacks for a value pack.
+  - One element crosses already: `materialize[names[i]]()` is served.
+  - The cloner keeps the `def` by syntax (`ReflectedLists::materialized_in`,
+    `comptime.rs`).
+  - Found while landing R246 (2026-10-06).
+  - Depends on R325, which needs the same runtime list.
+  - Model: Opus, Not Planned.
 
 - [ ] **R261 (P3c) A local `comptime` binding in a lane-keyed `def` keys a
   clone**
@@ -711,6 +754,21 @@ correctness fix to existing behavior is allowed.
     it from.
   - `assets/ok/reflection_template_served.mojo` is the `ERASED_VM_RESIDUE`
     row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R366 (P5) The erased oracle cannot evaluate a `comptime for`
+  display over a binder**
+
+  Problem: `comptime for x in [n, n + 1]:` in a template-served `def f[n:
+  Int]()` prints on concrete MIR and stops under `--erased` with "the
+  erased oracle cannot decide the comptime for sequence".
+  - The sequence is the application of a thunk the elaborator demands and
+    runs (`trip_elements`, `mono/unroll.rs`), and an erased frame runs no
+    thunk.
+  - `assets/ok/comptime_for_display_over_binder.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and this row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2275,17 +2333,45 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R320 A `comptime for` directly over `reflect[P].field_names()` is
-  rejected**
+- [ ] **R367 A `comptime for` over tuple- or struct-valued elements in a
+  generic `def` is rejected**
 
-  Problem: `comptime for name in reflect[P].field_names():` fails with
-  "'reflect[P].field_names()' is a compile-time list; bind it with
-  'comptime' and index it", even in a plain `main` over a concrete struct,
-  where the pin prints each field name.
-  - The iterable path does not accept the reflection list unbound, while
-    `comptime names = reflect[P].field_names()` indexed by a `range` loop
-    runs.
-  - Found while planning R246 (2026-10-05).
+  Problem: `comptime PAIRS = [(1, 2), (3, 4)]` then `comptime for p in
+  PAIRS:` in `def f[n: Int]()` fails with "'comptime for' over elements of
+  type 'Tuple[Int, Int]' in a generic body", where the pin runs the body
+  once per pair.
+  - A loop variable is a binder MIR carries, and a binder holds an `Int`, a
+    `Float64`, a `Bool`, or a `String` (`check_comptime_for`,
+    `checker/comptime_validation.rs`).
+  - A display of such elements written in the header still runs, on a
+    clone.
+  - The same loop in a plain `def` runs, unrolled in the AST.
+  - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R368 A module `comptime` constant declared after the `def` that
+  iterates it is undefined**
+
+  Problem: `def f(): comptime for x in L: print(x)` followed by `comptime L
+  = [10, 20]` fails with "Undefined variable 'L'", where the pin prints
+  `10`, `20`.
+  - The elaborator evaluates module constants in source order
+    (`Elab::top_consts`), so the loop meets a name it has not bound yet.
+  - With the constant declared first the loop runs, in a generic `def` too.
+  - Found while landing R246 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R369 A struct's value pack cannot be read in its methods**
+
+  Problem: `Self.vals[0]` and `comptime for v in Self.vals:` in a method of
+  `struct S[*vals: Int]` fail with "'Self.vals' is not a type parameter of
+  the enclosing struct", where the pin prints the element.
+  - A `def`'s own value pack reads both ways (`value_pack_named`,
+    `checker/comptime_validation.rs`), which looks only at the `def`'s
+    binders.
+  - Found while landing R246 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

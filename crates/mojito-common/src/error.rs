@@ -358,6 +358,10 @@ pub enum TypeError {
     /// An expression used in a compile-time position (`comptime NAME = …`, or a
     /// value-parameter argument) is not a constant `Int` expression.
     NotComptime(String),
+    /// A compile-time collection read as a runtime value: `Array`, `Dict`,
+    /// and `Set` are not implicitly copyable, so they cross only through
+    /// `materialize[...]()`. Carries the collection's type as written.
+    ComptimeCrossing(String),
     /// A parameter default names runtime storage (an enclosing local or a
     /// parameter): a default is evaluated at compile time.
     DynamicDefault(String),
@@ -833,6 +837,11 @@ impl fmt::Display for TypeError {
             Self::NotComptime(what) => {
                 write!(f, "not a compile-time Int constant: {what}")
             }
+            Self::ComptimeCrossing(ty) => write!(
+                f,
+                "cannot materialize comptime value of type '{ty}' to runtime because it is not \
+                 'ImplicitlyCopyable'; use materialize[...]() to cross explicitly"
+            ),
             Self::DynamicDefault(name) => {
                 write!(
                     f,

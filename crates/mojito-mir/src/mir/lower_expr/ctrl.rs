@@ -211,7 +211,7 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Option<(Ty, Option<String>)> {
-        self.checked_adjustments(expression)
+        self.display_adjustments(expression)
             .into_iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ConstructCollection {
@@ -226,7 +226,7 @@ impl Flatten<'_> {
     /// checker: the concrete target type and the exact lowered `__init__`
     /// overload symbol of the variadic literal constructor.
     pub(in crate::mir) fn array_literal_plan(&self, expression: &Expr) -> Option<(Ty, String)> {
-        self.checked_adjustments(expression)
+        self.display_adjustments(expression)
             .into_iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
@@ -235,6 +235,29 @@ impl Flatten<'_> {
                 } => Some((target, constructor)),
                 _ => None,
             })
+    }
+
+    /// The checked adjustments of a collection display. A `comptime for`
+    /// display the elaborator evaluates carries its construction under the
+    /// loop's record, which holds the display's span.
+    fn display_adjustments(
+        &self,
+        expression: &Expr,
+    ) -> Vec<mojito_checked::checked::SemanticAdjustment> {
+        use mojito_checked::checked::{ComptimeIteration, ComptimeSource, SemanticAdjustment};
+        self.checked_adjustments(expression)
+            .into_iter()
+            .map(|adjustment| match adjustment {
+                SemanticAdjustment::ComptimeIteration(iteration) => match *iteration {
+                    ComptimeIteration {
+                        source: ComptimeSource::Evaluated { construction, .. },
+                        ..
+                    } => *construction,
+                    sequence => SemanticAdjustment::ComptimeIteration(Box::new(sequence)),
+                },
+                other => other,
+            })
+            .collect()
     }
 
     /// Install the caller-side loans a callee's transfer effects imply at

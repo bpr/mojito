@@ -1040,7 +1040,12 @@ impl Elab<'_> {
                 .map(|parameter| self_qualified(&parameter.name)),
         );
         self.template_binders.borrow_mut().push(binders);
+        self.template_loop_names.borrow_mut().push((
+            def_value_pack_names(type_params, ""),
+            ReflectedLists::of(body),
+        ));
         let body = self.block(body, env, true);
+        self.template_loop_names.borrow_mut().pop();
         self.template_binders.borrow_mut().pop();
         body
     }
@@ -1157,7 +1162,13 @@ impl Elab<'_> {
     ) -> Result<(), ComptimeError> {
         let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
             if env.contains_key(&pack_binding_marker(name)));
+        // A reflected field-name list is a list of strings, which this
+        // evaluator holds as a tuple.
+        let reflected = matches!(&iter.kind, ExprKind::MethodCall { method, .. }
+            if method == "field_names")
+            && super::crossing::reflection_query(iter, &|name| env.get(name)).is_some();
         if !is_pack
+            && !reflected
             && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
             && let CtValue::Tuple(elements) = self.eval(iter, env)?
         {
@@ -1232,7 +1243,21 @@ impl Elab<'_> {
         let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
             return Ok(false);
         };
-        if !in_fn || !comptime_for_is_template_served(iter, body, &binders) {
+        let (value_packs, reflected) = self
+            .template_loop_names
+            .borrow()
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        let names = LoopNames {
+            packs: &binders,
+            value_packs: &value_packs,
+            reflected: &reflected,
+            collection: &|name| {
+                !binders.contains(name) && env.get(name).is_some_and(CtValue::is_runtime_collection)
+            },
+        };
+        if !in_fn || !comptime_for_is_template_served(iter, body, &names) {
             return Ok(false);
         }
         binders.insert(var.clone());

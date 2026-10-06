@@ -323,8 +323,11 @@ impl Specializer<'_> {
                 }
                 return Ok(values);
             }
-            ComptimeSequence::Elements(expression) => eval_ct(expression, bindings)
-                .ok()
+            // A display the check left to evaluate is the application of
+            // its thunk, demanded and run here.
+            ComptimeSequence::Elements(expression) => self
+                .resolve_application(template, expression, bindings)?
+                .or_else(|| eval_ct(expression, bindings).ok())
                 .as_ref()
                 .and_then(CtValue::comptime_iteration_elements)
                 .ok_or_else(|| undecided(self, expression))?,

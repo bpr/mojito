@@ -525,11 +525,15 @@ impl VmBackend {
     }
 
     /// A compile-time evaluation's result as a compile-time value: a nominal
-    /// `String` becomes its text, anything else crosses as
-    /// [`crate::crossing::vm_to_ct`] admits it.
+    /// `String` becomes its text, a nominal collection (a display's value)
+    /// its frozen elements ([`Self::freeze_collection`]), and anything else
+    /// crosses as [`crate::crossing::vm_to_ct`] admits it.
     pub fn freeze(&self, value: Value) -> Result<CtValue, RuntimeError> {
-        match self.nominal_string_text(&value) {
-            Some(text) => Ok(CtValue::Str(text)),
+        if let Some(text) = self.nominal_string_text(&value) {
+            return Ok(CtValue::Str(text));
+        }
+        match self.freeze_collection(&value)? {
+            Some(collection) => Ok(collection),
             None => crate::crossing::vm_to_ct(value),
         }
     }
@@ -542,6 +546,100 @@ impl VmBackend {
     /// Final top-level bindings, for the CLI `run` dump.
     pub fn bindings(&self) -> Vec<(String, Value)> {
         self.bindings.clone()
+    }
+
+    /// A nominal stdlib collection value whose storage lives in this VM's
+    /// heap as the compile-time collection it holds, in insertion order: an
+    /// `Array` or a `List` as a list, a `Set` as a set, a `Dict` as a
+    /// dictionary. `None` for any other value.
+    fn freeze_collection(&self, value: &Value) -> Result<Option<CtValue>, RuntimeError> {
+        use mojito_types::types::{ARRAY_TYPE_NAME, DICT_TYPE_NAME, LIST_TYPE_NAME, SET_TYPE_NAME};
+        let Value::Struct { name, fields, .. } = value else {
+            return Ok(None);
+        };
+        let template = name
+            .split_once("$mono$")
+            .map_or(name.as_str(), |(base, _)| base);
+        let instance_of = |nominal: &str| {
+            template
+                .strip_suffix(nominal)
+                .is_some_and(|module| module.is_empty() || module.ends_with('$'))
+        };
+        let field = |wanted: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| field == wanted)
+                .map(|(_, value)| value)
+        };
+        let buffer = |size: &str| match (field("data"), field(size)) {
+            (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) => (0..*size)
+                .map(|index| self.heap_read(*allocation, *offset, index))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            _ => Ok(None),
+        };
+        let frozen = |values: Vec<Value>| {
+            values
+                .into_iter()
+                .map(|element| self.freeze(element))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        if instance_of(ARRAY_TYPE_NAME) {
+            return buffer("_size")?
+                .map(|elements| frozen(elements).map(CtValue::List))
+                .transpose();
+        }
+        if instance_of(LIST_TYPE_NAME) {
+            return buffer("size")?
+                .map(|elements| frozen(elements).map(CtValue::List))
+                .transpose();
+        }
+        if instance_of(SET_TYPE_NAME) {
+            let Some(CtValue::List(elements)) = field("items")
+                .map(|items| self.freeze_collection(items))
+                .transpose()?
+                .flatten()
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(CtValue::set(None, elements)));
+        }
+        if instance_of(DICT_TYPE_NAME) {
+            let Some(Value::Struct { fields: list, .. }) = field("entries") else {
+                return Ok(None);
+            };
+            let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) = (
+                list.iter()
+                    .find(|(name, _)| name == "data")
+                    .map(|(_, value)| value),
+                list.iter()
+                    .find(|(name, _)| name == "size")
+                    .map(|(_, value)| value),
+            ) else {
+                return Ok(None);
+            };
+            let mut entries = Vec::new();
+            for index in 0..*size {
+                let Value::Struct { fields: entry, .. } =
+                    self.heap_read(*allocation, *offset, index)?
+                else {
+                    return Ok(None);
+                };
+                let part = |wanted: &str| {
+                    entry
+                        .iter()
+                        .find(|(name, _)| name == wanted)
+                        .map(|(_, value)| self.freeze(value.clone()))
+                        .transpose()
+                };
+                let (Some(key), Some(value)) = (part("key")?, part("value")?) else {
+                    return Ok(None);
+                };
+                entries.push((key, value));
+            }
+            return Ok(Some(CtValue::dict(None, entries)));
+        }
+        Ok(None)
     }
 
     /// The text of a nominal stdlib `String` value whose bytes live in this

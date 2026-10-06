@@ -1194,7 +1194,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::record_comptime_iteration` inside `check_comptime_for`,
   `checker/comptime_validation.rs`, a range's bounds compiled by
   `compile_dependent_ct_expr`, a literal display's elements by
-  `closed_iteration_elements`), its `source` the
+  `closed_iteration_elements`, a value pack by `value_pack_named`, a
+  reflected name list by `reflection_list`, and a display over the binders
+  left as `ComptimeSource::Evaluated` when `evaluated_display` admits its
+  elements, carrying the display's own construction, which the record
+  displaces on the display's span and `Flatten::display_adjustments`,
+  `mir/lower_expr/ctrl.rs`, reads back). `lower_term` turns an evaluated
+  source into the application of a thunk
+  (`ComptimeThunks::request_sequence`, `mir.rs`, lowered with the condition
+  thunks at each request's own result type), which `verify/scope.rs` admits
+  as a loop sequence of list meta. The header's `source` is the
   `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
   or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
@@ -1213,13 +1222,36 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   1.16) and `comptime_for.elements` for any other sequence (schema 1.25). A
   `Bool` loop binder is a `comptime if` condition of its own
   (`is_bool_loop_binder`, `check_ct_bool`).
+- Reflection in a served loop: `Checker::eval_reflection_expr`
+  (`checker/reflection.rs`) answers a reflected list's length (`len(names)`,
+  through `reflection_list_count`) for a loop bound;
+  `bind_template_comptime` inlines a bound reflected list;
+  `infer_template_materialize` (`checker/comptime_validation.rs`) types
+  `materialize[X]()` over a binder, which `Flatten::expr`
+  (`mir/lower_expr/expr.rs`) lowers as its operand; `check_ct_bool` compiles
+  `conforms_to` over a dependent element to `ParamKind::Conforms`
+  propositions, which `Specializer::resolve_application`
+  (`mono/specializer.rs`) decides through `type_conforms`; and
+  `substitute_ty` (`mono/substitute.rs`) closes a reflected field type by
+  evaluating its expression. A runtime read through a bound name list
+  (`print(names[i])`) is `TypeError::ComptimeCrossing`
+  (`reject_bound_list_crossing`), outside the compile-time positions
+  `Checker::comptime_position` opens (`checker/scopes.rs`): a `comptime`
+  binding's value, a `comptime if` condition, a `comptime for` iterable, a
+  `materialize` operand. `substitute_identifiers`
+  (`checker/comptime_validation.rs`) keeps each rebuilt node's syntax id, so
+  a fact recorded on an inlined local `comptime` value is the original
+  occurrence's.
 - `mir/ir.rs` gained `instruction_regs_mut`, `terminator_regs_mut`,
   `terminator_targets`, and `terminator_targets_mut`, the register and
   target visitors a copied block is renumbered through, and
   `block_successors` is public.
 - `native::mono::unroll` (`mono/unroll.rs`): `unroll_comptime_loops` runs
   before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
-  pick a loop and its body, `trip_elements` evaluates its sequence, and
+  pick a loop and its body, `trip_elements` evaluates its sequence — a
+  thunk's application through `Specializer::resolve_application`, whose
+  result `VmBackend::freeze` (`freeze_collection`, `backend/vm.rs`) reads
+  out of a nominal `Array`, `List`, `Set`, or `Dict` — and
   `copy_body` appends one finished copy per
   iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
@@ -1239,8 +1271,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`backend/vm.rs`) runs the header on the erased path from the slot and a
   per-frame cursor (`VmBackend::comptime_cursors`).
 - The cloner keys a top-level `def` on a `comptime for` its template does
-  not serve (`comptime_for_is_template_served`, `comptime.rs`) or a nested
-  `def` holding a `rebind`;
+  not serve (`comptime_for_is_template_served`, `comptime.rs`, over the
+  `LoopNames` of the `def`: its packs, its value packs
+  (`def_value_pack_names`), its reflected lists (`ReflectedLists`), and
+  which bare names are closed collections, `def_bound_names` telling a
+  module constant from a name the `def` binds; `parameter_shaped`,
+  `scalar_shaped`, `reflection_count`, and `reflected_names` are the
+  admitted spellings), on a reflected list materialized whole
+  (`ReflectedLists::materialized_in`), or a nested `def` holding a
+  `rebind`. The crossing pass spells a named collection as its display in
+  a kept header (`cross_stmt`, `comptime/crossing.rs`);
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).

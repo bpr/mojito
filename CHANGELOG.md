@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def`'s template now serves the remaining `comptime for`
+  sequences, where the cloner unrolled each in the AST per instantiation: a
+  module `comptime` collection constant or a local binding of a literal
+  display, a `def`'s own value pack, a reflected field-name list and a loop
+  bounded by a reflection count, and a list, set, or dictionary display of
+  scalar expressions over the binders (`[n, n + 1]`), which MIR lifts as a
+  function the elaborator runs per instance, as upstream evaluates the
+  display. A `comptime` binding over the loop variable in the body, and a
+  `Float64` element, are served too. Five programs that failed now run: a
+  module collection iterated in a generic `def`, a display over an enclosing
+  loop's variable, a display over `Self.n` in a generic struct's method, a
+  body binding over the index in such a method, and `comptime for name in
+  reflect[P].field_names()`. In a template-served body,
+  `materialize[names[i]]()` over a type parameter and a `comptime if` over a
+  bound reflection handle (`r.field_count() == 2`) now compile, and a
+  condition `conforms_to(types[i], Trait)` over a reflected field type is
+  decided per instance, and a runtime read through a bound name list
+  (`print(len(names))`) is rejected as at the pin. A module constant of
+  tuple-valued elements iterated in a generic `def` reports its element type
+  instead of a materialization error.
+
 - The public `Tuple` and the lazy `TString` are struct generators, as in
   the pin: each is one template in the bundled library, checked once with
   its pack symbolic and instantiated by `native::mono` for both backends,

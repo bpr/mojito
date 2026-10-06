@@ -1046,8 +1046,9 @@ fn lower_default(
 }
 
 /// A zero-parameter function returning one checked expression over the
-/// binders in scope: an evaluated default (`$default$…`) or a `comptime if`
-/// condition the elaborator runs (`$comptime$…`).
+/// binders in scope: an evaluated default (`$default$…`), or a `comptime if`
+/// condition or a `comptime for` display the elaborator runs
+/// (`$comptime$…`).
 #[derive(Clone, Copy)]
 struct ExpressionThunk<'a> {
     checked: &'a CheckedProgram,
@@ -1138,17 +1139,27 @@ fn lower_expression_thunk(
     });
 }
 
-/// The `comptime if` conditions one function's lowering lifts as thunks: a
-/// condition the checker compiled to no constraint (it applies a function,
-/// or reads a `Bool` binding) becomes the zero-parameter function
-/// `$comptime$<owner>$<k>` over the binders in scope at the condition — the
-/// owner's, then the enclosing `comptime for` indices — and its branch
-/// carries the application of that thunk, which the elaborator demands and
-/// runs.
+/// The compile-time expressions one function's lowering lifts as thunks: a
+/// `comptime if` condition the checker compiled to no constraint (it applies
+/// a function, or reads a `Bool` binding), or a `comptime for` display the
+/// checker did not close (`[n, n + 1]`), becomes the zero-parameter function
+/// `$comptime$<owner>$<k>` over the binders in scope at the expression — the
+/// owner's, then the enclosing `comptime for` indices — and its branch or
+/// loop header carries the application of that thunk, which the elaborator
+/// demands and runs.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
-    requests: Vec<(String, Expr, EnclosingBinders)>,
+    requests: Vec<ThunkRequest>,
+}
+
+/// One lifted expression: the thunk's name, the expression it returns at
+/// `ty`, and the binders in scope there.
+struct ThunkRequest {
+    name: String,
+    expression: Expr,
+    binders: EnclosingBinders,
+    ty: Ty,
 }
 
 impl ComptimeThunks {
@@ -1162,9 +1173,51 @@ impl ComptimeThunks {
     /// Register `condition` and give back the constraint its branch carries:
     /// the thunk applied to every binder in scope, equal to `True`.
     fn request(&mut self, condition: &Expr, binders: &EnclosingBinders) -> GenericConstraint {
+        GenericConstraint::Eq(
+            ConstraintOperand::Expr(self.application(
+                condition,
+                binders,
+                Ty::Bool,
+                mojito_types::param_expr::MetaTy::bool(),
+            )),
+            ConstraintOperand::Value(CtValue::Bool(true)),
+        )
+    }
+
+    /// Register a `comptime for` `display` of checked type `ty` and give
+    /// back the sequence its loop header iterates: the thunk applied to
+    /// every binder in scope, a list of `element`s.
+    fn request_sequence(
+        &mut self,
+        display: &Expr,
+        binders: &EnclosingBinders,
+        ty: Ty,
+        element: mojito_types::param_expr::MetaTy,
+    ) -> mojito_types::param_expr::ParamExpr {
+        self.application(
+            display,
+            binders,
+            ty,
+            mojito_types::param_expr::MetaTy::ParamList(Box::new(element)),
+        )
+    }
+
+    /// Register `expression`, returned at `ty`, and give back its thunk
+    /// applied to every binder in scope, a value of `meta`.
+    fn application(
+        &mut self,
+        expression: &Expr,
+        binders: &EnclosingBinders,
+        ty: Ty,
+        meta: mojito_types::param_expr::MetaTy,
+    ) -> mojito_types::param_expr::ParamExpr {
         let name = format!("$comptime${}${}", self.owner, self.requests.len());
-        self.requests
-            .push((name.clone(), condition.clone(), binders.clone()));
+        self.requests.push(ThunkRequest {
+            name: name.clone(),
+            expression: expression.clone(),
+            binders: binders.clone(),
+            ty,
+        });
         let context = mojito_types::param_expr::ParamContext::detached();
         let args: Vec<_> = binders
             .declarations
@@ -1178,17 +1231,10 @@ impl ComptimeThunks {
                 )
             })
             .collect();
-        GenericConstraint::Eq(
-            ConstraintOperand::Expr(context.apply(
-                &name,
-                &args,
-                mojito_types::param_expr::MetaTy::bool(),
-            )),
-            ConstraintOperand::Value(CtValue::Bool(true)),
-        )
+        context.apply(&name, &args, meta)
     }
 
-    /// Lower every requested thunk, each `return <condition>` typed `Bool`
+    /// Lower every requested thunk, each `return <expression>` at its type
     /// over the binders its request recorded.
     fn lower(
         self,
@@ -1197,15 +1243,15 @@ impl ComptimeThunks {
         functions: &mut Vec<(String, MirFunction)>,
         declarations: &mut MirDeclarations,
     ) {
-        for (name, condition, binders) in &self.requests {
+        for request in &self.requests {
             lower_expression_thunk(
                 ExpressionThunk {
                     checked,
                     overloads,
-                    name,
-                    expression: condition,
-                    binders,
-                    ty: &Ty::Bool,
+                    name: &request.name,
+                    expression: &request.expression,
+                    binders: &request.binders,
+                    ty: &request.ty,
                 },
                 functions,
                 declarations,

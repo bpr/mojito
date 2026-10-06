@@ -99,8 +99,25 @@ impl Elab<'_> {
                 self.cross_block(body, env, shadowed)?;
                 self.cross_opt_block(orelse, env, shadowed)
             }
+            // The iterable is a compile-time position: a named collection
+            // is its literal display there, which the check closes into the
+            // loop header's sequence.
             StmtKind::ComptimeFor { iter, body, .. } => {
-                self.cross_expr(iter, env, shadowed)?;
+                let collection = match &iter.kind {
+                    ExprKind::Identifier(name) if !shadowed.contains(name) => {
+                        env.get(name).filter(|value| value.is_runtime_collection())
+                    }
+                    _ => None,
+                };
+                match collection {
+                    Some(value) => {
+                        let mut literal = lit_result(value, iter.span)?;
+                        literal.source.clone_from(&iter.source);
+                        literal.syntax_id = iter.syntax_id;
+                        *iter = literal;
+                    }
+                    None => self.cross_expr(iter, env, shadowed)?,
+                }
                 self.cross_block(body, env, shadowed)
             }
             StmtKind::Try {
@@ -453,7 +470,7 @@ fn not_implicitly_copyable(value: &CtValue) -> ComptimeError {
 /// The reflection handle `expr` calls a `Reflected[T]` method on —
 /// `is_struct()`, `field_count()`, `field_names()`, `field_types()`,
 /// `field_index[name]()` — if it calls one.
-fn reflection_query<'e, 'a>(
+pub(super) fn reflection_query<'e, 'a>(
     expr: &'e Expr,
     binding: &dyn Fn(&str) -> Option<&'a CtValue>,
 ) -> Option<&'e Expr> {

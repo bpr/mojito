@@ -61,10 +61,13 @@ assets/ok/comptime_applied_constant_in_signature.mojo	-	ineligible	no-scalar-ent
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_body_binding_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_body_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_collection_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_display_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_index_typed_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
@@ -543,6 +546,7 @@ assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_name_materialize.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_runtime_query.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
@@ -831,6 +835,7 @@ assets/ok/unspelled_loan_carrying_type_argument.mojo	-	ineligible	no-scalar-entr
 assets/ok/untracked_pointer_ref_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_argument_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_pack_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape

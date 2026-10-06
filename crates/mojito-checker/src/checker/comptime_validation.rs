@@ -123,6 +123,7 @@ impl Checker {
     /// MIR branch; a leaf it does not close — an application, a `Bool`
     /// binding — MIR lowers as a thunk the elaborator runs.
     pub(super) fn check_comptime_condition(&mut self, cond: &Expr) -> Result<(), TypeError> {
+        let _position = self.comptime_position();
         let inlined = self.inline_local_comptime_values(cond);
         if let Some(constraint) = self.check_ct_bool(&inlined)? {
             self.record_comptime_condition(cond, &constraint);
@@ -184,9 +185,36 @@ impl Checker {
                     ));
                 };
                 trait_names
-                    .into_iter()
+                    .iter()
                     .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
-                return Ok(None);
+                // A dependent element (a reflected field type at a loop
+                // index) conforms per instance: the condition is the
+                // conjunction of its conformance propositions, which the
+                // elaborator below MIR decides once the element is closed.
+                let Some(Ty::Dependent(dependent)) = self.comptime_type_operand(&args[0])? else {
+                    return Ok(None);
+                };
+                let mut propositions = Vec::with_capacity(trait_names.len());
+                for trait_name in trait_names {
+                    let conforms = self
+                        .param_context
+                        .conforms(
+                            dependent.expr(),
+                            mojito_ast::ast::canonical_trait_name(trait_name),
+                        )
+                        .map_err(param_error)?;
+                    propositions.push(GenericConstraint::Eq(
+                        ConstraintOperand::Expr(conforms),
+                        ConstraintOperand::Value(mojito_types::ct::CtValue::Bool(true)),
+                    ));
+                }
+                let Some(constraint) = propositions.into_iter().reduce(|all, proposition| {
+                    GenericConstraint::And(Box::new(all), Box::new(proposition))
+                }) else {
+                    return Ok(None);
+                };
+                self.record_comptime_condition(cond, &constraint);
+                return Ok(Some(constraint));
             }
             // A `comptime for` variable of `Bool` elements is the binder
             // itself, compared with `True`: a thunk over the owner's binders
@@ -300,8 +328,25 @@ impl Checker {
         ret: Option<&Ty>,
     ) -> Result<(), TypeError> {
         let source = iter;
+        let position = self.comptime_position();
         let iter = self.inline_local_comptime_values(iter);
-        let element = self.comptime_iteration_element(&iter)?;
+        // A reflected field-name list is its own sequence of strings: the
+        // names of a registered struct, or the query over a subject that is
+        // still a parameter.
+        let names = match self.reflection_list(&iter)? {
+            Some((mojito_types::param_expr::ReflectQuery::FieldNames, list)) => Some(match list {
+                mojito_types::ct::CtValue::Expr(query) => query,
+                closed => self
+                    .param_context
+                    .constant(closed)
+                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
+            }),
+            _ => None,
+        };
+        let element = match &names {
+            Some(_) => Ty::StringLiteral,
+            None => self.comptime_iteration_element(&iter)?,
+        };
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
         if let Some(bindings) = self.compile_time_bindings.last_mut() {
@@ -317,11 +362,41 @@ impl Checker {
             }
             (_, element) => element,
         };
-        let binds_index = element == Ty::Int || elements.is_some();
+        // A value pack still a parameter is its own sequence.
+        let sequence = match elements {
+            Some(elements) => Some(
+                self.param_context
+                    .constant(mojito_types::ct::CtValue::List(elements))
+                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
+            ),
+            None => names.or_else(|| self.value_pack_named(&iter)),
+        };
+        // A display the check does not close is evaluated per instance.
+        let evaluated = sequence.is_none() && evaluated_display(&iter, &element);
+        let element = match element {
+            Ty::Struct(name, args)
+                if evaluated
+                    && args.is_empty()
+                    && mojito_types::types::is_stdlib_string_struct(&name) =>
+            {
+                Ty::StringLiteral
+            }
+            element => element,
+        };
+        let binds_index = element == Ty::Int || sequence.is_some() || evaluated;
+        // The executable check sees only a loop the elaborator kept, whose
+        // variable must be a binder MIR carries.
+        if !binds_index && !self.source_validation {
+            return Err(TypeError::Unsupported(format!(
+                "'comptime for' over elements of type '{element}' in a generic body: its \
+                 variable binds an 'Int', 'Float64', 'Bool', or 'String' element"
+            )));
+        }
         let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
         if let Some(binder) = &binder {
-            self.record_comptime_iteration(source, &iter, binder, elements)?;
+            self.record_comptime_iteration(source, &iter, binder, sequence, evaluated)?;
         }
+        drop(position);
         let shadowed = binder.and_then(|binder| {
             self.innermost_value_scope()
                 .and_then(|scope| scope.insert(var.to_string(), binder))
@@ -344,9 +419,11 @@ impl Checker {
     }
 
     /// Record the loop header's sequence over the binders in scope
-    /// (`SemanticAdjustment::ComptimeIteration`): a closed collection
-    /// display's `elements`, or a `range(...)` iterable's bounds, each
-    /// compiled as a parameter expression. A bound the compiler does not
+    /// (`SemanticAdjustment::ComptimeIteration`): `elements`, the sequence
+    /// of an iterable that is not a range (a closed collection display's
+    /// constant, a value pack), or a `range(...)` iterable's bounds, each
+    /// compiled as a parameter expression; an `evaluated` display records
+    /// its element alone. A bound the compiler does not
     /// close — a pack length, a compile-time list's — is left unrecorded
     /// under source validation, where the loop is the cloner's to unroll,
     /// and is the explicit boundary in the executable check, which only sees
@@ -356,27 +433,41 @@ impl Checker {
         source: &Expr,
         iter: &Expr,
         binder: &ParamExpr,
-        elements: Option<Vec<mojito_types::ct::CtValue>>,
+        elements: Option<ParamExpr>,
+        evaluated: bool,
     ) -> Result<(), TypeError> {
+        use mojito_checked::checked::ComptimeSource;
+        let element = binder.meta().clone();
         let Some(binder) = binder.as_decl_ref() else {
             return Ok(());
         };
-        let record = |sequence| {
+        let record_source = |source_form| {
             self.operation_adjustments.borrow_mut().insert(
                 source.source_span(),
                 mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
                     mojito_checked::checked::ComptimeIteration {
                         binder: binder.clone(),
-                        source: sequence,
+                        source: source_form,
                     },
                 )),
             );
         };
+        if evaluated {
+            let construction = self
+                .operation_adjustments
+                .borrow()
+                .get(&source.source_span())
+                .cloned();
+            if let Some(construction) = construction {
+                record_source(ComptimeSource::Evaluated {
+                    element,
+                    construction: Box::new(construction),
+                });
+            }
+            return Ok(());
+        }
+        let record = |sequence| record_source(ComptimeSource::Sequence(sequence));
         if let Some(elements) = elements {
-            let elements = self
-                .param_context
-                .constant(mojito_types::ct::CtValue::List(elements))
-                .map_err(|error| TypeError::Unsupported(error.to_string()))?;
             record(mojito_checked::checked::ComptimeSequence::Elements(
                 elements,
             ));
@@ -421,13 +512,13 @@ impl Checker {
     /// list display's elements, a set display's distinct elements, a
     /// dictionary display's distinct keys. `None` for any other iterable, or
     /// a display with an element that is not a literal of a scalar type a
-    /// loop binder takes (`Int`, `Bool`, `String`).
+    /// loop binder takes (`Int`, `Float64`, `Bool`, `String`).
     fn closed_iteration_elements(
         &self,
         iter: &Expr,
         element: &Ty,
     ) -> Option<Vec<mojito_types::ct::CtValue>> {
-        let scalar = matches!(element, Ty::Int | Ty::Bool)
+        let scalar = matches!(element, Ty::Int | Ty::Float64 | Ty::Bool)
             || matches!(element, Ty::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
         if !scalar {
@@ -494,10 +585,12 @@ impl Checker {
         {
             scope.insert(name.to_string(), (level, expression));
         }
-        // A reflection handle, or a type list computed from the body's packs
+        // A reflection handle, a reflected list (`r.field_names()`), or a
+        // type list computed from the body's packs
         // (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), is a
         // compile-time-only value inlined at its uses.
         if matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "reflect")
+            || matches!(self.reflection_list(value), Ok(Some(_)))
             || matches!(self.type_list_operand(value), Ok(Some(_)))
         {
             self.local_comptime_values
@@ -761,6 +854,7 @@ impl Checker {
         &self,
         param_args: &[ParamArg],
     ) -> Result<Ty, TypeError> {
+        let _position = self.comptime_position();
         match param_args {
             [
                 ParamArg::Value(
@@ -784,6 +878,31 @@ impl Checker {
                 "materialize[...]() takes one compile-time value".to_string(),
             )),
         }
+    }
+
+    /// `materialize[X]()` in the executable check: the crossing pass folds
+    /// every operand it evaluates, so `X` is over a binder of a template
+    /// body, and the call is the runtime value of that operand at its type.
+    /// A whole reflected list (`materialize[names]()`) has no runtime form a
+    /// template carries.
+    pub(super) fn infer_template_materialize(
+        &self,
+        param_args: &[ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let [ParamArg::Value(operand)] = param_args else {
+            return Err(TypeError::Unsupported(
+                "materialize[...]() takes one compile-time value".to_string(),
+            ));
+        };
+        if self.reflection_list(operand)?.is_some() {
+            return Err(TypeError::Unsupported(
+                "materialize[...]() of a reflected list over a type parameter: a template \
+                 carries one element of it (materialize[names[i]]()), not the list"
+                    .to_string(),
+            ));
+        }
+        let _position = self.comptime_position();
+        self.infer(operand)
     }
 
     /// The parameter-list reference of the variadic pack a spread names: a
@@ -1879,8 +1998,11 @@ fn substitute_identifiers<'a>(expr: &Expr, lookup: &dyn Fn(&str) -> Option<&'a E
         ExprKind::ListLit(elements) => ExprKind::ListLit(elements.iter().map(sub).collect()),
         _ => return expr.clone(),
     };
+    // The rebuilt node is the occurrence it was rebuilt from, so a fact
+    // recorded on it is that occurrence's.
     let mut rewritten = Expr::new(kind, expr.span);
     rewritten.source.clone_from(&expr.source);
+    rewritten.syntax_id = expr.syntax_id;
     rewritten
 }
 
@@ -1907,6 +2029,21 @@ fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
         span.span.1
     );
     value_binder_expr(ParamId::new(&owner, 0), var, element)
+}
+
+/// Whether `iter` is a collection display of scalar `element`s a loop binder
+/// takes (`Int`, `Bool`, `String`), which the elaborator evaluates per
+/// instance when the check does not close it.
+fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
+    let display = match &iter.kind {
+        ExprKind::ListLit(items) => !items.is_empty(),
+        ExprKind::BraceLit(entries) => !entries.is_empty(),
+        _ => false,
+    };
+    display
+        && (matches!(element, Ty::Int | Ty::Bool)
+            || matches!(element, Ty::Struct(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
 }
 
 /// Whether `binder` is a `comptime for` variable of `Bool` elements

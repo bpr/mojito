@@ -1163,6 +1163,124 @@ fn instantiation_census_counts_each_cloned_class() {
     );
 }
 
+/// One generic `def` per `comptime for` shape its template serves.
+const COMPTIME_FOR_SERVED: &str = "\
+comptime L = [10, 20]
+
+@fieldwise_init
+struct Point:
+    var x: Int
+    var y: Int
+
+def named[n: Int]():
+    comptime for x in L:
+        print(x + n)
+
+def display[n: Int]():
+    comptime for x in [n, n + 1]:
+        comptime j = x * 2
+        print(j)
+
+def keyed[n: Int]():
+    comptime for k in {n: 1, n + 1: 2}:
+        print(k)
+
+def pack[*vals: Int]():
+    comptime for v in vals:
+        print(v)
+
+def fields[T: AnyType]():
+    comptime names = reflect[T].field_names()
+    comptime for i in range(len(names)):
+        print(materialize[names[i]]())
+    comptime for name in reflect[T].field_names():
+        print(name)
+
+def main():
+    named[1]()
+    display[3]()
+    keyed[5]()
+    pack[7, 8]()
+    fields[Point]()
+";
+
+/// One generic `def` per `comptime for` shape that still keys a clone.
+const COMPTIME_FOR_CLONED: &str = "\
+@fieldwise_init
+struct Point:
+    var x: Int
+    var y: Int
+
+def local[n: Int]():
+    comptime M = [n, n * 2]
+    comptime for x in M:
+        print(x)
+
+def twice(x: Int) -> Int:
+    return x * 2
+
+def applied[n: Int]():
+    comptime for x in [twice(n), n]:
+        print(x)
+
+def built[T: AnyType]():
+    comptime types = reflect[T].field_types()
+    comptime for i in range(len(types)):
+        comptime FT = types[i]
+        comptime if conforms_to(FT, Defaultable & Deinitable & Writable):
+            print(FT())
+
+def whole[T: AnyType]():
+    comptime names = reflect[T].field_names()
+    var all = materialize[names]()
+    print(len(all))
+
+def main():
+    local[3]()
+    applied[4]()
+    built[Point]()
+    whole[Point]()
+";
+
+#[test]
+fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
+    use mojito::census::CloneClass;
+    let compile = |source: &str| {
+        Compiler::default()
+            .compile_source(source, std::path::Path::new("census.mojo"))
+            .expect("compile")
+    };
+    let served = compile(COMPTIME_FOR_SERVED);
+    assert_eq!(
+        served
+            .instantiation_census()
+            .cloned
+            .count(CloneClass::ComptimeForDef),
+        0,
+        "a named collection, a display over a binder, a value pack, and a reflected list"
+    );
+    assert_eq!(
+        Compiler::default().execute(&served).expect("run").output,
+        "11\n21\n6\n8\n5\n6\n7\n8\nx\ny\nx\ny\n"
+    );
+    let cloned = compile(COMPTIME_FOR_CLONED);
+    let census = cloned.instantiation_census();
+    assert_eq!(
+        census.cloned.count(CloneClass::ComptimeForDef),
+        3,
+        "a local display over a binder, an applied element, and a constructed field type"
+    );
+    assert_eq!(
+        census.cloned.count(CloneClass::TypeDef),
+        1,
+        "a whole materialized list"
+    );
+    assert_eq!(
+        Compiler::default().execute(&cloned).expect("run").output,
+        "3\n6\n8\n4\n0\n0\n2\n"
+    );
+}
+
 #[test]
 fn template_two_types_infers_the_template_once() {
     let compiler = Compiler::default();

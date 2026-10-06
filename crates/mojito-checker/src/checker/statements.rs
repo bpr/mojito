@@ -1800,6 +1800,7 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
+                let _position = self.comptime_position();
                 // A function-local binding under source validation: the
                 // elaborator substitutes a type alias and consumes a
                 // compile-time-only value before the executable check, so

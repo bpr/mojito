@@ -982,6 +982,30 @@ fn heterogeneous_pack_indexes_expose_concrete_element_types() {
 }
 
 #[test]
+fn comptime_for_over_non_scalar_elements_in_a_generic_def_is_rejected() {
+    // The template carries a loop variable of a scalar element only; the
+    // elements of a module constant are typed, never dumped.
+    let src = "comptime PAIRS = [(1, 2), (3, 4)]\n\ndef f[n: Int]():\n    comptime for p in PAIRS:\n        print(n)\n\ndef main():\n    f[1]()\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("'comptime for' over elements of type 'Tuple[Int, Int]' in a generic body"),
+        "{error}"
+    );
+}
+
+#[test]
+fn whole_reflected_list_materialized_in_a_generic_method_is_rejected() {
+    // A generic struct's method is served by its template alone, which
+    // carries one element of a reflected list, not the list.
+    let src = "@fieldwise_init\nstruct P:\n    var x: Int\n\n@fieldwise_init\nstruct Box[T: AnyType]:\n    var v: Int\n\n    def names(self) -> Int:\n        comptime names = reflect[Self.T].field_names()\n        var all = materialize[names]()\n        return len(all)\n\ndef main():\n    print(Box[P](1).names())\n";
+    let error = run(src).unwrap_err();
+    assert!(
+        error.contains("materialize[...]() of a reflected list over a type parameter"),
+        "{error}"
+    );
+}
+
+#[test]
 fn variadic_value_pack_specializes_and_unrolls() {
     let src = "def total[*values: Int]() -> Int:\n    var result = 0\n    comptime for value in values:\n        result = result + value\n    return result\n\ndef main():\n    print(total[1, 2, 3, 4]())\n";
     assert_eq!(run(src).unwrap(), "10\n");

@@ -619,7 +619,13 @@ branch for the class is deleted, and so is its certificate class.
   the body. Schema 1.16. On 2026-10-05 the header became a sequence
   (`ComptimeSequence`, schema 1.25), as upstream's `kgen.param.for` iterates
   one, and a loop over a list, set, or dictionary display of literals is
-  served too; R246 keeps the rest. The second landed the same day for a module-level
+  served too. On 2026-10-06 the remaining sequences followed with no schema
+  change: a named closed collection, a `def`'s own value pack, a reflected
+  field-name list and a reflection bound, a body `comptime` binding over
+  the index, and a display over the binders, which MIR lifts as a thunk the
+  elaborator runs per instance. A local binding of such a display, an
+  element that applies a function, and a loop constructing a reflected
+  field type still key a clone (R362, R363, R364). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's
