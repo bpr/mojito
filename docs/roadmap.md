@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R400**.
+Next free ID: **R401**.
 
 ## Ordered Work
 
@@ -135,22 +135,21 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R371 (P3b) A `comptime for` the template does not serve fails when
-  it is nested in a kept `comptime if` arm or a served loop**
+- [ ] **R400 (P3) A generic struct's method over a value parameter stops at
+  run time on a `comptime for` its template does not serve**
 
-  Problem: `comptime for i in range(2):` holding `comptime for x in
-  [twice(n), i]:` in `def f[n: Int]()` fails with "'n' is not a compile-time
-  type", where the pin prints `4`, `0`, `4`, `1`.
-  - The cloner looks for an unserved loop without descending into a
-    `comptime if` arm or a `comptime for` body (`block_has_statement`,
-    `comptime.rs`), so the `def` keeps its template.
-  - The elaborator then unrolls the inner loop in the template, where `n`
-    has no value.
-  - The same inner loop at the top of the body keys a clone and runs.
-  - A method of a generic struct has no clone, so any unserved loop over
-    `Self.n` fails there the same way.
-  - Found while landing the loop over a local display binding (2026-10-06).
-  - Depends on nothing.
+  Problem: `comptime for x in [twice(Self.n), Self.n]:` in a method of
+  `struct S[n: Int]` stops with "S.f: unspecialized type-keyed method",
+  where the pin prints `4`, `2`.
+  - The template is stubbed, and a struct over a value parameter mints no
+    instance clone (`generate_instance_clones`, `comptime/specialize.rs`,
+    binds type arguments only), so nothing serves the call.
+  - The same loop in a `def` keys a clone and runs, nested or not.
+  - Serving the loop's shape from the template closes it per shape: R363
+    for a display element that applies a function.
+  - Until then the check should reject the method rather than leave a trap.
+  - Found while landing R371 (2026-10-06).
+  - Depends on R363.
   - Model: Opus, Not Planned.
 
 - [ ] **R363 (P3b) A `comptime for` display whose element applies a

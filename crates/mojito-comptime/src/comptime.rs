@@ -1273,12 +1273,20 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     })
 }
 
-/// Whether a block directly contains a `comptime for` its template does not
-/// serve, under the same scope rule as [`block_has_comptime`].
+/// Whether a block contains a `comptime for` its template does not serve,
+/// under the same scope rule as [`block_has_comptime`], looking into the arms
+/// of a `comptime if` and the body of a served `comptime for`: the template
+/// keeps both, so an unserved loop inside them still needs a clone.
 fn block_has_unkept_comptime_for(stmts: &[Stmt], names: &LoopNames<'_>) -> bool {
-    block_has_statement(stmts, &|kind| {
-        matches!(kind, StmtKind::ComptimeFor { iter, body, .. }
-            if !comptime_for_is_template_served(iter, body, names))
+    let has = |block: &[Stmt]| block_has_unkept_comptime_for(block, names);
+    block_has_statement(stmts, &|kind| match kind {
+        StmtKind::ComptimeFor { iter, body, .. } => {
+            !comptime_for_is_template_served(iter, body, names) || has(body)
+        }
+        StmtKind::ComptimeIf { branches, orelse } => {
+            branches.iter().any(|(_, b)| has(b)) || orelse.as_ref().is_some_and(|b| has(b))
+        }
+        _ => false,
     })
 }
 

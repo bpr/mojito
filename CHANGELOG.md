@@ -731,6 +731,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime for` the template does not serve (`comptime for x in
+  [twice(n), i]:`) now runs when it is nested in a served loop or a kept
+  `comptime if` arm of a generic `def`, as at the pin, where it failed with
+  "'n' is not a compile-time type": the `def` now keys a clone for it there
+  as it does at the top of the body.
 - A runtime read of a local `comptime` display over a generic body's
   parameters (`comptime L = [n, n * 2]`, then `print(L[1])` or `len(L)`) is
   now rejected with upstream's "cannot materialize comptime value of type

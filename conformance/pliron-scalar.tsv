@@ -76,6 +76,7 @@ assets/ok/comptime_for_index_typed_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_named_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_unserved_nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
