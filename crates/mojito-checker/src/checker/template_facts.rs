@@ -1501,6 +1501,7 @@ fn adjustment_derives(adjustment: &mojito_checked::checked::SemanticAdjustment) 
         mojito_checked::checked::SemanticAdjustment::TypeName { .. }
             | mojito_checked::checked::SemanticAdjustment::ComptimeCondition(..)
             | mojito_checked::checked::SemanticAdjustment::ComptimeIteration(..)
+            | mojito_checked::checked::SemanticAdjustment::ComptimeDisplay { .. }
     ) || mojito_checked::templates::derive_adjustment(adjustment, &Ty::clone).is_some()
 }
 

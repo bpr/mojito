@@ -2110,5 +2110,6 @@ const fn dropped_at_instance(adjustment: &mojito_checked::checked::SemanticAdjus
             | mojito_checked::checked::SemanticAdjustment::ConstructPackElement { .. }
             | mojito_checked::checked::SemanticAdjustment::ComptimeCondition(..)
             | mojito_checked::checked::SemanticAdjustment::ComptimeIteration(..)
+            | mojito_checked::checked::SemanticAdjustment::ComptimeDisplay { .. }
     )
 }

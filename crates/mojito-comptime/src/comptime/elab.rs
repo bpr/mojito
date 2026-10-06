@@ -1039,11 +1039,14 @@ impl Elab<'_> {
                 .iter()
                 .map(|parameter| self_qualified(&parameter.name)),
         );
+        self.template_loop_names
+            .borrow_mut()
+            .push(TemplateLoopNames {
+                value_packs: def_value_pack_names(type_params, ""),
+                reflected: ReflectedLists::of(body),
+                displays: served_display_bindings(&binders, body),
+            });
         self.template_binders.borrow_mut().push(binders);
-        self.template_loop_names.borrow_mut().push((
-            def_value_pack_names(type_params, ""),
-            ReflectedLists::of(body),
-        ));
         let body = self.block(body, env, true);
         self.template_loop_names.borrow_mut().pop();
         self.template_binders.borrow_mut().pop();
@@ -1243,7 +1246,11 @@ impl Elab<'_> {
         let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
             return Ok(false);
         };
-        let (value_packs, reflected) = self
+        let TemplateLoopNames {
+            value_packs,
+            reflected,
+            displays,
+        } = self
             .template_loop_names
             .borrow()
             .last()
@@ -1253,6 +1260,7 @@ impl Elab<'_> {
             packs: &binders,
             value_packs: &value_packs,
             reflected: &reflected,
+            displays: &displays,
             collection: &|name| {
                 !binders.contains(name) && env.get(name).is_some_and(CtValue::is_runtime_collection)
             },

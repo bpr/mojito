@@ -2793,14 +2793,39 @@ impl Flatten<'_> {
     /// `comptime N = e` is an ordinary binding at runtime. A local type
     /// alias (`comptime U = T` over a template's binder) lives in the
     /// checker's scope alone: it records no binding and its value no type.
+    /// A display the elaborator evaluates (`comptime L = [n, n + 1]`) has no
+    /// runtime form either: it is lifted here, once, for the loops that
+    /// name the binding.
     fn lower_comptime_binding(
         &mut self,
         name: &str,
         value: &Expr,
         statement_binding: Option<mojito_types::origin::OwnerId>,
     ) {
+        let display = self
+            .checked_adjustments(value)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
+                    element, ..
+                } => Some(element),
+                _ => None,
+            });
+        if let Some(element) = display {
+            if let Some(ty) = self.checked_ty(value) {
+                let binders = &self.enclosing_binders;
+                self.comptime_thunks
+                    .bind_sequence(value, binders, ty, element);
+            }
+            return;
+        }
         if statement_binding.is_none() && self.checked_ty(value).is_none() {
             return;
+        }
+        // A thunk lifted after the binding reads it as the expression over
+        // the binders it denotes (`comptime k = n + 1`).
+        if let Some((binding, denoted)) = statement_binding.zip(self.value_binder_expr(value)) {
+            self.comptime_thunks.bind_value(binding, denoted);
         }
         let materialized = self.literal_materialization(value);
         let src = self.expr(value);
@@ -2941,6 +2966,11 @@ impl Flatten<'_> {
                                     ty,
                                     element,
                                 ),
+                            )
+                        }
+                        ComptimeSource::Bound { display, .. } => {
+                            mojito_checked::checked::ComptimeSequence::Elements(
+                                self.comptime_thunks.bound_sequence(&display)?,
                             )
                         }
                     };

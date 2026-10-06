@@ -381,6 +381,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::Rebind { .. }
         | SemanticAdjustment::ComptimeCondition(..)
         | SemanticAdjustment::ComptimeIteration(..)
+        | SemanticAdjustment::ComptimeDisplay { .. }
         | SemanticAdjustment::Move
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)

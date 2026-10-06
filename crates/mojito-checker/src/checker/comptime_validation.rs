@@ -12,6 +12,17 @@ use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
 /// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
 /// while the pack is still a parameter.
+/// A local `comptime` binding of a display the elaborator evaluates per
+/// instance (`comptime L = [n, n + 1]`).
+#[derive(Debug, Clone)]
+pub(in crate::checker) struct BoundDisplay {
+    /// The display's span, which holds its
+    /// `SemanticAdjustment::ComptimeDisplay`.
+    span: SourceSpan,
+    /// What a `comptime for` over the binding binds.
+    element: Ty,
+}
+
 pub(super) struct ForwardedPack {
     /// The collector binding the spread names.
     pub(super) binding: String,
@@ -330,10 +341,14 @@ impl Checker {
         let source = iter;
         let position = self.comptime_position();
         let iter = self.inline_local_comptime_values(iter);
+        // A local binding of an evaluated display is iterated where it is
+        // declared.
+        let bound = self.bound_display(&iter).cloned();
         // A reflected field-name list is its own sequence of strings: the
         // names of a registered struct, or the query over a subject that is
         // still a parameter.
         let names = match self.reflection_list(&iter)? {
+            _ if bound.is_some() => None,
             Some((mojito_types::param_expr::ReflectQuery::FieldNames, list)) => Some(match list {
                 mojito_types::ct::CtValue::Expr(query) => query,
                 closed => self
@@ -343,9 +358,10 @@ impl Checker {
             }),
             _ => None,
         };
-        let element = match &names {
-            Some(_) => Ty::StringLiteral,
-            None => self.comptime_iteration_element(&iter)?,
+        let element = match (&bound, &names) {
+            (Some(display), _) => display.element.clone(),
+            (None, Some(_)) => Ty::StringLiteral,
+            (None, None) => self.comptime_iteration_element(&iter)?,
         };
         let before = self.uninitialized.borrow().clone();
         self.push_scope();
@@ -383,7 +399,7 @@ impl Checker {
             }
             element => element,
         };
-        let binds_index = element == Ty::Int || sequence.is_some() || evaluated;
+        let binds_index = element == Ty::Int || sequence.is_some() || evaluated || bound.is_some();
         // The executable check sees only a loop the elaborator kept, whose
         // variable must be a binder MIR carries.
         if !binds_index && !self.source_validation {
@@ -393,8 +409,12 @@ impl Checker {
             )));
         }
         let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
-        if let Some(binder) = &binder {
-            self.record_comptime_iteration(source, &iter, binder, sequence, evaluated)?;
+        match (&binder, &bound) {
+            (Some(binder), Some(display)) => self.record_bound_iteration(source, binder, display),
+            (Some(binder), None) => {
+                self.record_comptime_iteration(source, &iter, binder, sequence, evaluated)?;
+            }
+            (None, _) => {}
         }
         drop(position);
         let shadowed = binder.and_then(|binder| {
@@ -507,6 +527,26 @@ impl Checker {
         Ok(())
     }
 
+    /// Record the header of a loop over a local binding of an evaluated
+    /// display (`ComptimeSource::Bound`): the sequence is the one MIR lifts
+    /// at the binding.
+    fn record_bound_iteration(&self, source: &Expr, binder: &ParamExpr, display: &BoundDisplay) {
+        use mojito_checked::checked::{ComptimeIteration, ComptimeSource, SemanticAdjustment};
+        let Some(reference) = binder.as_decl_ref() else {
+            return;
+        };
+        self.operation_adjustments.borrow_mut().insert(
+            source.source_span(),
+            SemanticAdjustment::ComptimeIteration(Box::new(ComptimeIteration {
+                binder: reference.clone(),
+                source: ComptimeSource::Bound {
+                    element: binder.meta().clone(),
+                    display: display.span.clone(),
+                },
+            })),
+        );
+    }
+
     /// The elements a `comptime for` over a closed collection display binds,
     /// in order, each materialized at the loop variable's `element` type: a
     /// list display's elements, a set display's distinct elements, a
@@ -585,6 +625,15 @@ impl Checker {
         {
             scope.insert(name.to_string(), (level, expression));
         }
+        if let Some(display) = self.evaluated_display_binding(name, value) {
+            self.local_comptime_displays
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), display);
+            return Ok(true);
+        }
         // A reflection handle, a reflected list (`r.field_names()`), or a
         // type list computed from the body's packs
         // (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), is a
@@ -602,6 +651,63 @@ impl Checker {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// Type the display a local `comptime` binding of a template body holds
+    /// (`comptime L = [n, n + 1]`) and record it for MIR to lift
+    /// (`SemanticAdjustment::ComptimeDisplay`): a collection display of
+    /// scalar elements, read only as the iterable of a `comptime for`
+    /// ([`Self::iterated_displays`]), which the elaborator evaluates per
+    /// instance as it does one written in a loop header. `None` for any
+    /// other binding, which the ordinary path types.
+    fn evaluated_display_binding(&self, name: &str, value: &Expr) -> Option<BoundDisplay> {
+        if !self
+            .iterated_displays
+            .last()
+            .is_some_and(|displays| displays.contains(name))
+        {
+            return None;
+        }
+        let element = self.comptime_iteration_element(value).ok()?;
+        if !evaluated_display(value, &element) {
+            return None;
+        }
+        let span = value.source_span();
+        let construction = self.operation_adjustments.borrow().get(&span).cloned()?;
+        // A string element binds as a `String` value parameter does.
+        let element = match element {
+            Ty::Struct(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
+            {
+                Ty::StringLiteral
+            }
+            element => element,
+        };
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
+                element: mojito_types::param_expr::MetaTy::value(element.clone()),
+                construction: Box::new(construction),
+            },
+        );
+        Some(BoundDisplay { span, element })
+    }
+
+    /// The local binding of an evaluated display `expr` names, innermost
+    /// scope first, unless a variable of the name shadows it.
+    fn bound_display(&self, expr: &Expr) -> Option<&BoundDisplay> {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return None;
+        };
+        self.lookup(name)
+            .is_none()
+            .then(|| {
+                self.local_comptime_displays
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name))
+            })
+            .flatten()
     }
 
     /// Bind a `comptime NAME = value` constant under source validation. A

@@ -1292,10 +1292,24 @@ pub(super) struct LoopNames<'a> {
     pub(super) value_packs: &'a HashSet<String>,
     /// The body's reflected lists ([`ReflectedLists`]).
     pub(super) reflected: &'a ReflectedLists,
+    /// The body's local bindings of a display over the binders
+    /// ([`served_display_bindings`]).
+    pub(super) displays: &'a HashSet<String>,
     /// Whether a bare name is a closed collection constant: a module
     /// `comptime` constant, or a local `comptime` binding of a literal
     /// display.
     pub(super) collection: &'a dyn Fn(&str) -> bool,
+}
+
+/// The names a generic `def` body open as a template gives the loops it
+/// keeps ([`LoopNames`]): its value packs (`*vals: Int`, bare), its reflected
+/// lists, and its local bindings of a display over the binders
+/// ([`served_display_bindings`]).
+#[derive(Default, Clone)]
+pub(super) struct TemplateLoopNames {
+    pub(super) value_packs: HashSet<String>,
+    pub(super) reflected: ReflectedLists,
+    pub(super) displays: HashSet<String>,
 }
 
 /// The names a `def` body binds to a reflected list, by its query:
@@ -1414,13 +1428,16 @@ impl mojito_ast::visit::Visitor for ReflectedLists {
 ///   operators over them ([`scalar_shaped`]) — which it leaves for the
 ///   elaborator below MIR to evaluate per instance;
 /// - a named closed collection ([`LoopNames::collection`]);
+/// - a local binding of a display over the binders
+///   ([`LoopNames::displays`]);
 /// - one of the `def`'s value packs;
 /// - a reflected field-name list ([`reflected_names`]).
 ///
 /// And each `comptime` binding its body declares is an alias of a pack
 /// element ([`pack_element_alias`]), a literal, a parameter expression over
-/// the binders and the loop variable, or an element of a named compile-time
-/// list at one, which the check binds with them symbolic; and the body
+/// the binders and the loop variable, an element of a named compile-time
+/// list at one, or a display a loop iterates ([`LoopNames::displays`]),
+/// which the check binds with them symbolic; and the body
 /// spells no reflected field type as a callee or an annotation
 /// ([`ReflectedLists::type_spelled_in`]). Such a loop is checked once with
 /// the variable symbolic, carried by MIR as a loop header, and unrolled
@@ -1437,21 +1454,17 @@ pub(super) fn comptime_for_is_template_served(
             !args.is_empty() && args.iter().all(|bound| parameter_shaped(bound, packs))
         }
         ExprKind::ListLit(items) => {
-            !items.is_empty()
-                && (items.iter().all(literal_element)
-                    || items.iter().all(|item| scalar_shaped(item, packs)))
+            (!items.is_empty() && items.iter().all(literal_element))
+                || evaluated_display_shaped(iter, packs)
         }
         ExprKind::BraceLit(entries) => {
-            literal_entries(entries)
-                || (!entries.is_empty()
-                    && entries.iter().all(|(key, value)| {
-                        scalar_shaped(key, packs)
-                            && value
-                                .as_ref()
-                                .is_none_or(|value| scalar_shaped(value, packs))
-                    }))
+            literal_entries(entries) || evaluated_display_shaped(iter, packs)
         }
-        ExprKind::Identifier(name) => names.value_packs.contains(name) || (names.collection)(name),
+        ExprKind::Identifier(name) => {
+            names.value_packs.contains(name)
+                || names.displays.contains(name)
+                || (names.collection)(name)
+        }
         ExprKind::MethodCall { .. } => reflected_names(iter),
         _ => false,
     };
@@ -1459,11 +1472,11 @@ pub(super) fn comptime_for_is_template_served(
         && !names.reflected.type_spelled_in(body)
         && !block_has_statement(body, &|kind| match kind {
             StmtKind::Comptime {
+                name,
                 type_params,
                 ty: None,
                 where_clauses,
                 value,
-                ..
             } => {
                 // An element of a named compile-time list at a parameter
                 // expression (`names[i]`, `types[i]`).
@@ -1472,7 +1485,10 @@ pub(super) fn comptime_for_is_template_served(
                         && parameter_shaped(index, packs));
                 !(type_params.is_empty()
                     && where_clauses.is_empty()
-                    && (literal_element(value) || parameter_shaped(value, packs) || element))
+                    && (literal_element(value)
+                        || parameter_shaped(value, packs)
+                        || element
+                        || names.displays.contains(name)))
                     && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
             }
             StmtKind::Comptime { .. } => true,
@@ -1648,6 +1664,27 @@ fn scalar_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
     }
 }
 
+/// Whether `expression` is spelled as a list, set, or dictionary display of
+/// scalars over the binders ([`scalar_shaped`]), which the elaborator below
+/// MIR evaluates per instance.
+fn evaluated_display_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
+    match &expression.kind {
+        ExprKind::ListLit(items) => {
+            !items.is_empty() && items.iter().all(|item| scalar_shaped(item, packs))
+        }
+        ExprKind::BraceLit(entries) => {
+            !entries.is_empty()
+                && entries.iter().all(|(key, value)| {
+                    scalar_shaped(key, packs)
+                        && value
+                            .as_ref()
+                            .is_none_or(|value| scalar_shaped(value, packs))
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
 fn literal_element(expression: &Expr) -> bool {
     match &expression.kind {
@@ -1766,11 +1803,13 @@ fn def_body_keys_specialization(
     let packs = def_pack_names(type_params, params);
     let value_packs = def_value_pack_names(type_params, owner);
     let bound = def_bound_names(type_params, params, body);
+    let displays = served_display_bindings(&packs, body);
     let reflected = ReflectedLists::of(body);
     let names = LoopNames {
         packs: &packs,
         value_packs: &value_packs,
         reflected: &reflected,
+        displays: &displays,
         collection: &|name| !bound.contains(name),
     };
     block_has_unkept_comptime_for(body, &names)
@@ -1832,6 +1871,22 @@ pub(super) fn def_value_pack_names(type_params: &[TypeParam], owner: &str) -> Ha
         })
         .filter_map(|parameter| parameter.name.strip_prefix('*'))
         .map(str::to_string)
+        .collect()
+}
+
+/// The local `comptime` bindings of a generic `def` body its template
+/// serves as sequences: `comptime L = [n, n * 2]`, a display of scalars over
+/// the binders ([`evaluated_display_shaped`]) that the body reads only as
+/// the iterable of a `comptime for` ([`mojito_ast::visit::iterated_displays`]).
+/// The check types the display with the binders symbolic, MIR lifts it where
+/// it is declared, and the elaborator below MIR evaluates it once per
+/// instance for every loop over the name. Any other read — an element
+/// (`L[0]`), a length, a `materialize[L]()` — has no template form.
+pub(super) fn served_display_bindings(packs: &HashSet<String>, body: &[Stmt]) -> HashSet<String> {
+    mojito_ast::visit::iterated_displays(body)
+        .into_iter()
+        .filter(|(_, display)| evaluated_display_shaped(display, packs))
+        .map(|(name, _)| name)
         .collect()
 }
 
@@ -3040,9 +3095,9 @@ struct Elab<'a> {
     /// whose condition names one is kept for the check: its arms are the
     /// template's, and the elaborator below MIR selects.
     template_binders: RefCell<Vec<HashSet<String>>>,
-    /// The value packs (`*vals: Int`, bare) and the reflected lists of each
-    /// generic `def` body open in [`Self::template_binders`].
-    template_loop_names: RefCell<Vec<(HashSet<String>, ReflectedLists)>>,
+    /// The loop names of each generic `def` body open in
+    /// [`Self::template_binders`].
+    template_loop_names: RefCell<Vec<TemplateLoopNames>>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.

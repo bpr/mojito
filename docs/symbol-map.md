@@ -1203,7 +1203,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   source into the application of a thunk
   (`ComptimeThunks::request_sequence`, `mir.rs`, lowered with the condition
   thunks at each request's own result type), which `verify/scope.rs` admits
-  as a loop sequence of list meta. The header's `source` is the
+  as a loop sequence of list meta. A local `comptime` binding of such a
+  display, read only by loops (`mojito_ast::visit::iterated_displays`,
+  `visit.rs`, computed per block by `Checker::check_block`), is typed by
+  `Checker::evaluated_display_binding` from `bind_template_comptime`, which
+  records `SemanticAdjustment::ComptimeDisplay` on the display and keeps a
+  `BoundDisplay` in `local_comptime_displays`; a loop over the name records
+  `ComptimeSource::Bound` (`record_bound_iteration`).
+  `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) lifts the display
+  once (`ComptimeThunks::bind_sequence`) and gives the binding no runtime
+  form, and `lower_term` reads the header's sequence back
+  (`ComptimeThunks::bound_sequence`). A thunk reads an enclosing local
+  `comptime` value (`comptime k = n + 1`) as its parameter expression:
+  `lower_comptime_binding` records it (`ComptimeThunks::bind_value`), each
+  request carries the bindings so far (`EnclosingBinders::comptime_bindings`),
+  and `Flatten::identifier_read` (`mir/lower_expr/expr.rs`) answers the read. The header's `source` is the
   `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
   or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
@@ -1273,7 +1287,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - The cloner keys a top-level `def` on a `comptime for` its template does
   not serve (`comptime_for_is_template_served`, `comptime.rs`, over the
   `LoopNames` of the `def`: its packs, its value packs
-  (`def_value_pack_names`), its reflected lists (`ReflectedLists`), and
+  (`def_value_pack_names`), its reflected lists (`ReflectedLists`), its
+  local bindings of a display over the binders that only loops read
+  (`served_display_bindings`, which the elaborator holds per open template
+  body in `TemplateLoopNames`), and
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,
   `scalar_shaped`, `reflection_count`, and `reflected_names` are the

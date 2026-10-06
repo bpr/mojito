@@ -148,6 +148,7 @@ impl Checker {
         self.local_type_aliases.push(HashMap::new());
         self.local_comptime_values.push(HashMap::new());
         self.local_comptime_parameters.push(HashMap::new());
+        self.local_comptime_displays.push(HashMap::new());
         self.compile_time_bindings.push(HashSet::new());
     }
 
@@ -170,6 +171,7 @@ impl Checker {
         self.local_type_aliases.pop();
         self.local_comptime_values.pop();
         self.local_comptime_parameters.pop();
+        self.local_comptime_displays.pop();
         self.compile_time_bindings.pop();
     }
 

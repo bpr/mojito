@@ -1189,6 +1189,13 @@ def pack[*vals: Int]():
     comptime for v in vals:
         print(v)
 
+def bound[n: Int]():
+    comptime k = n + 1
+    comptime M = [n, k * 2]
+    comptime for x in M:
+        comptime for y in M:
+            print(x + y)
+
 def fields[T: AnyType]():
     comptime names = reflect[T].field_names()
     comptime for i in range(len(names)):
@@ -1201,6 +1208,7 @@ def main():
     display[3]()
     keyed[5]()
     pack[7, 8]()
+    bound[3]()
     fields[Point]()
 ";
 
@@ -1215,6 +1223,8 @@ def local[n: Int]():
     comptime M = [n, n * 2]
     comptime for x in M:
         print(x)
+    comptime for i in range(len(M)):
+        print(i)
 
 def twice(x: Int) -> Int:
     return x * 2
@@ -1257,18 +1267,19 @@ fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
             .cloned
             .count(CloneClass::ComptimeForDef),
         0,
-        "a named collection, a display over a binder, a value pack, and a reflected list"
+        "a named collection, a display over a binder, a value pack, a local binding of a \
+         display, and a reflected list"
     );
     assert_eq!(
         Compiler::default().execute(&served).expect("run").output,
-        "11\n21\n6\n8\n5\n6\n7\n8\nx\ny\nx\ny\n"
+        "11\n21\n6\n8\n5\n6\n7\n8\n6\n11\n11\n16\nx\ny\nx\ny\n"
     );
     let cloned = compile(COMPTIME_FOR_CLONED);
     let census = cloned.instantiation_census();
     assert_eq!(
         census.cloned.count(CloneClass::ComptimeForDef),
         3,
-        "a local display over a binder, an applied element, and a constructed field type"
+        "a local display read for its length, an applied element, and a constructed field type"
     );
     assert_eq!(
         census.cloned.count(CloneClass::TypeDef),
@@ -1277,7 +1288,7 @@ fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
     );
     assert_eq!(
         Compiler::default().execute(&cloned).expect("run").output,
-        "3\n6\n8\n4\n0\n0\n2\n"
+        "3\n6\n0\n1\n8\n4\n0\n0\n2\n"
     );
 }
 

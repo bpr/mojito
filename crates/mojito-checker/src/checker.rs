@@ -582,6 +582,16 @@ pub struct Checker {
     /// beside the parameter-scope depth it was bound at: a compile-time
     /// position reads the expression, as it reads a value parameter.
     local_comptime_parameters: Vec<HashMap<String, (usize, ParamExpr)>>,
+    /// Per-scope function-local `comptime NAME = <display>` bindings over
+    /// the binders of the template body being checked, whose display the
+    /// elaborator evaluates per instance: a `comptime for` over the name
+    /// iterates the binding.
+    local_comptime_displays: Vec<HashMap<String, comptime_validation::BoundDisplay>>,
+    /// Per block being checked, innermost last, the display bindings in it
+    /// that are read only as the iterable of a `comptime for`
+    /// (`mojito_ast::visit::iterated_displays`): the ones a template body
+    /// binds as sequences with no runtime form.
+    iterated_displays: Vec<HashSet<String>>,
     /// The retypings the erased `rebind[Dest](value)` calls left behind (see
     /// `rebind.rs`).
     rebind_targets: RebindTargets,
@@ -1039,6 +1049,8 @@ impl Checker {
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             local_comptime_parameters: vec![HashMap::new()],
+            local_comptime_displays: vec![HashMap::new()],
+            iterated_displays: Vec::new(),
             rebind_targets: RebindTargets::default(),
             rebind_keyed_bodies: HashSet::new(),
             no_verdict_bodies: FactSet::default(),

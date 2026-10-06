@@ -623,9 +623,12 @@ branch for the class is deleted, and so is its certificate class.
   change: a named closed collection, a `def`'s own value pack, a reflected
   field-name list and a reflection bound, a body `comptime` binding over
   the index, and a display over the binders, which MIR lifts as a thunk the
-  elaborator runs per instance. A local binding of such a display, an
-  element that applies a function, and a loop constructing a reflected
-  field type still key a clone (R362, R363, R364). The second landed 2026-10-03 for a module-level
+  elaborator runs per instance. A local `comptime` binding of such a
+  display followed the same day: MIR lifts it once, where it is declared,
+  and every loop over the name iterates that one application. A binding
+  read for an element or a length, an element that applies a function, and
+  a loop constructing a reflected field type still key a clone (R370, R363,
+  R364). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's

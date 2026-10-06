@@ -8,6 +8,8 @@
 //! [`Visitor::enter_scope`] first, so a visitor tracking one name can stop at
 //! the scope that shadows it.
 
+use std::collections::HashMap;
+
 use crate::ast::{
     ComprehensionClause, Decorator, Expr, ExprKind, FnParam, FunctionTypeParam, Method, Param,
     ParamArg, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart, TraitComptime,
@@ -555,6 +557,107 @@ pub fn walk_trait_comptime<V: Visitor>(visitor: &mut V, member: &TraitComptime) 
     walk_type_params(visitor, &member.params);
     walk_type(visitor, &member.ty);
     walk_exprs(visitor, &member.where_clauses);
+}
+
+/// The local `comptime` display bindings `statements` only iterate, each
+/// with its display.
+///
+/// Such a binding is `comptime L = [a, b]`, a list, set, or dictionary
+/// display at any depth, unannotated and with no parameters of its own,
+/// under a name nothing else in `statements` binds, whose every read is the
+/// iterable of a `comptime for`. It is a compile-time sequence and nothing
+/// more; an element read (`L[0]`), a length, or a `materialize[L]()` makes
+/// it a value.
+pub fn iterated_displays(statements: &[Stmt]) -> HashMap<String, Expr> {
+    #[derive(Default)]
+    struct Names {
+        displays: HashMap<String, Expr>,
+        bindings: HashMap<String, usize>,
+        reads: HashMap<String, usize>,
+        iterated: HashMap<String, usize>,
+    }
+
+    impl Names {
+        fn bind(&mut self, name: &str) {
+            *self.bindings.entry(name.to_string()).or_default() += 1;
+        }
+
+        fn read(&mut self, name: &str) {
+            *self.reads.entry(name.to_string()).or_default() += 1;
+        }
+    }
+
+    impl Visitor for Names {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            match &statement.kind {
+                StmtKind::Comptime {
+                    name,
+                    type_params,
+                    ty,
+                    where_clauses,
+                    value,
+                } => {
+                    self.bind(name);
+                    if type_params.is_empty()
+                        && ty.is_none()
+                        && where_clauses.is_empty()
+                        && matches!(value.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_))
+                    {
+                        self.displays.insert(name.clone(), value.clone());
+                    }
+                }
+                StmtKind::VarDecl { name, .. }
+                | StmtKind::RefDecl { name, .. }
+                | StmtKind::Assign { name, .. }
+                | StmtKind::Def { name, .. } => self.bind(name),
+                StmtKind::ComptimeFor {
+                    iter:
+                        Expr {
+                            kind: ExprKind::Identifier(name),
+                            ..
+                        },
+                    ..
+                } => *self.iterated.entry(name.clone()).or_default() += 1,
+                // An unpack target is reported as a read of its name too.
+                _ => {}
+            }
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Identifier(name)
+            | ExprKind::Call { name, .. }
+            | ExprKind::TypeApply { name, .. } = &expr.kind
+            {
+                self.read(name);
+            }
+        }
+
+        fn visit_type(&mut self, ty: &Type) {
+            if let Type::Named(name, _) = ty {
+                self.read(name);
+            }
+        }
+
+        // A parameter, a loop variable, or an `except` or `with` binder.
+        fn enter_scope(&mut self, names: &[&str]) -> bool {
+            for name in names {
+                self.bind(name.trim_start_matches('*'));
+            }
+            true
+        }
+    }
+
+    let mut found = Names::default();
+    walk_block(&mut found, statements);
+    let Names {
+        mut displays,
+        bindings,
+        reads,
+        iterated,
+    } = found;
+    displays
+        .retain(|name, _| bindings.get(name) == Some(&1) && reads.get(name) == iterated.get(name));
+    displays
 }
 
 fn walk_exprs<V: Visitor>(visitor: &mut V, expressions: &[Expr]) {

@@ -239,7 +239,8 @@ impl Flatten<'_> {
 
     /// The checked adjustments of a collection display. A `comptime for`
     /// display the elaborator evaluates carries its construction under the
-    /// loop's record, which holds the display's span.
+    /// loop's record, which holds the display's span, as a local `comptime`
+    /// binding's does under the binding's.
     fn display_adjustments(
         &self,
         expression: &Expr,
@@ -255,6 +256,7 @@ impl Flatten<'_> {
                     } => *construction,
                     sequence => SemanticAdjustment::ComptimeIteration(Box::new(sequence)),
                 },
+                SemanticAdjustment::ComptimeDisplay { construction, .. } => *construction,
                 other => other,
             })
             .collect()

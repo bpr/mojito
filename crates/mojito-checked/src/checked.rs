@@ -449,6 +449,17 @@ pub enum ComptimeSource {
         element: mojito_types::param_expr::MetaTy,
         construction: Box<SemanticAdjustment>,
     },
+    /// A local `comptime` binding of such a display (`comptime L = [n, n +
+    /// 1]`), which the loop names: MIR lifts the display once, where the
+    /// binding is declared, and every loop over the name iterates that one
+    /// application.
+    ///
+    /// `display` is the bound display's span, which holds its
+    /// [`SemanticAdjustment::ComptimeDisplay`].
+    Bound {
+        element: mojito_types::param_expr::MetaTy,
+        display: SourceSpan,
+    },
 }
 
 impl ComptimeSource {
@@ -456,7 +467,7 @@ impl ComptimeSource {
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
         match self {
             Self::Sequence(sequence) => sequence.binder_meta(),
-            Self::Evaluated { element, .. } => element.clone(),
+            Self::Evaluated { element, .. } | Self::Bound { element, .. } => element.clone(),
         }
     }
 }
@@ -776,6 +787,18 @@ pub enum SemanticAdjustment {
     /// binders in scope, recorded on the iterable: MIR carries it on the
     /// loop header, and the elaborator unrolls it.
     ComptimeIteration(Box<ComptimeIteration>),
+    /// The display a local `comptime` binding of a template body holds
+    /// (`comptime L = [n, n + 1]`), typed and not closed by the check, whose
+    /// value is a sequence of `element`s: MIR lifts the display as a function
+    /// over the binders in scope at the binding, which the elaborator
+    /// evaluates once per instance, and gives the binding no runtime form.
+    ///
+    /// `construction` is the display's own checked construction, which this
+    /// record stands in for on the display's span.
+    ComptimeDisplay {
+        element: mojito_types::param_expr::MetaTy,
+        construction: Box<Self>,
+    },
     Move,
     ExplicitDestroy,
     Iterate(IterationProtocol),

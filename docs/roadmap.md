@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R370**.
+Next free ID: **R373**.
 
 ## Ordered Work
 
@@ -135,22 +135,47 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R362 (P3b) A local `comptime` binding of a display over a binder,
-  iterated by a `comptime for`, keys a clone**
+- [ ] **R370 (P3b) A local `comptime` display over a binder that is read
+  for an element or a length, or materialized, keys a clone**
 
-  Problem: `comptime L = [n, n * 2]` then `comptime for x in L:` in `def
-  f[n: Int]()` is unrolled in the AST on a clone per instantiation, where
-  the same display written in the loop header is served by the template.
-  - The check binds no value for `L`: a display over a binder compiles to
-    no parameter expression, so the loop has no sequence to record.
-  - The display in the header is lifted as a thunk MIR names
-    (`ComptimeThunks::request_sequence`), which the check cannot name for a
-    binding it meets before the loop.
-  - The cloner keeps such a `def` by name (`def_bound_names`,
-    `comptime.rs`), and the clone prints the pin's `3`, `6`.
-  - Found while landing R246 (2026-10-06).
+  Problem: `comptime L = [n, n * 2]` then `comptime if L[0] == 3:`,
+  `range(len(L))`, or `materialize[L]()` beside `comptime for x in L:` in
+  `def f[n: Int]()` keeps the `def` on the cloner, where a body that only
+  iterates `L` is served by its template.
+  - The template binds such a display as a sequence alone: MIR lifts it as
+    a thunk the loop headers iterate (`ComptimeThunks::bind_sequence`,
+    `mir.rs`).
+  - No parameter expression reads an element or the length of a thunk's
+    value, and no MIR form builds runtime storage from it.
+  - The cloner and the check pick the served bindings by syntax
+    (`mojito_ast::visit::iterated_displays`).
+  - A method of a generic struct has no clone to fall back on, so the same
+    body fails there with "'L' is not a compile-time type", where the pin
+    prints the elements.
+  - With no loop over it, `comptime if L[0] == 2:` in a generic `def` stops
+    with "unsupported VM CTFE failed": the condition's thunk reads the
+    binding as a runtime local.
+  - Found while landing the loop over such a binding (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R371 (P3b) A `comptime for` the template does not serve fails when
+  it is nested in a kept `comptime if` arm or a served loop**
+
+  Problem: `comptime for i in range(2):` holding `comptime for x in
+  [twice(n), i]:` in `def f[n: Int]()` fails with "'n' is not a compile-time
+  type", where the pin prints `4`, `0`, `4`, `1`.
+  - The cloner looks for an unserved loop without descending into a
+    `comptime if` arm or a `comptime for` body (`block_has_statement`,
+    `comptime.rs`), so the `def` keeps its template.
+  - The elaborator then unrolls the inner loop in the template, where `n`
+    has no value.
+  - The same inner loop at the top of the body keys a clone and runs.
+  - A method of a generic struct has no clone, so any unserved loop over
+    `Self.n` fails there the same way.
+  - Found while landing the loop over a local display binding (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R363 (P3b) A `comptime for` display whose element applies a
   function, subscripts a value, or computes a float keys a clone**
@@ -3852,6 +3877,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
     operand reaches the same path.
   - Pinned by `conformance/probes/reflected_names_runtime_read_uncalled.mojo`.
   - Ledger name: `reflected-names-runtime-read-uncalled`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R372 A runtime read of a local `comptime` display over a binder is
+  accepted in a template-served body**
+
+  Problem: `comptime L = [n, n * 2]` then `print(L[1])` in `def f[n: Int]()`
+  prints `4`, where the pin stops with "cannot materialize comptime value of
+  type 'Array[Int, Int(2)]' to runtime because it is not
+  'ImplicitlyCopyable'".
+  - The elaborator keeps the binding for the template because it names a
+    binder (`keep_template_comptime_binding`, `comptime/elab.rs`).
+  - The executable check then binds it as an ordinary runtime list, since
+    the body does not only iterate it.
+  - A body that also iterates `L` with a `comptime for` is a clone's, whose
+    crossing pass rejects the read as the pin does.
+  - A method of a generic struct accepts the read the same way.
+  - `materialize[L]()` over such a binding runs, as at the pin.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

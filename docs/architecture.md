@@ -493,7 +493,18 @@ function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
 (`VmBackend::freeze`) into the list, set, or dictionary it iterates, as
-upstream runs the display on its interpreter per instance. HIR lowers the
+upstream runs the display on its interpreter per instance. A local
+`comptime` binding of such a display that the body reads only as a loop's
+iterable (`mojito_ast::visit::iterated_displays`, which the cloner and the
+check both ask) is a sequence with no runtime form: the check records it on
+the display (`SemanticAdjustment::ComptimeDisplay`) and each loop over the
+name as `ComptimeSource::Bound`, MIR lifts the display once, at the binding,
+over the binders in scope there (`ComptimeThunks::bind_sequence`), and every
+header over the name carries that one application, so the elaborator
+evaluates the binding once per instance, as upstream evaluates a `comptime`
+alias. A thunk reads a local `comptime` value bound before it (`comptime k
+= n + 1`) as the parameter expression it denotes
+(`EnclosingBinders::comptime_bindings`). HIR lowers the
 loop as a
 loop whose header is `Terminator::ComptimeLoop` and MIR as the `ComptimeFor`
 terminator — the binder, the slot the body reads it through, and the
@@ -507,10 +518,10 @@ reads folded and its types substituted, the loops nested in the copy
 unrolled under its binding first and the `comptime if`s over it decided, the
 copies chained where the loop stood, and the original body left unreachable
 for the pruning. Every other `comptime for` — over a local `comptime`
-binding of a display over a binder, a display with an element that applies
-a function, a loop that constructs a reflected field type, and every one
-outside a generic `def` or a generic struct's method — is unrolled in the
-AST as before (roadmap R362–R364). A type pack crosses the waist the same way: a pack-keyed `def`
+display the body also reads for an element or a length, a display with an
+element that applies a function, a loop that constructs a reflected field
+type, and every one outside a generic `def` or a generic struct's method —
+is unrolled in the AST as before (roadmap R370, R363, R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print` or another served `def`, no

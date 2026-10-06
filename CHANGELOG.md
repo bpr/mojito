@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` binding of a display over a generic body's parameters
+  (`comptime L = [n, n * 2]`) that the body only iterates with `comptime
+  for` is now served by the template, where the cloner unrolled each loop in
+  the AST per instantiation: MIR lifts the display once, where the binding
+  is declared, and the elaborator evaluates it once per instance for every
+  loop over the name, as upstream evaluates a `comptime` alias. Programs
+  that failed now run: such a binding iterated under a `comptime if`, inside
+  another served loop, or in a generic struct's method, and a display, bound
+  or written in a loop header, that reads a local `comptime` value bound
+  before it (`comptime k = n + 1`, then `[k, k * 2]`).
 - A generic `def`'s template now serves the remaining `comptime for`
   sequences, where the cloner unrolled each in the AST per instantiation: a
   module `comptime` collection constant or a local binding of a literal

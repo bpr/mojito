@@ -1146,11 +1146,23 @@ fn lower_expression_thunk(
 /// `$comptime$<owner>$<k>` over the binders in scope at the expression — the
 /// owner's, then the enclosing `comptime for` indices — and its branch or
 /// loop header carries the application of that thunk, which the elaborator
-/// demands and runs.
+/// demands and runs. A local `comptime` binding of such a display is lifted
+/// once, at the binding, and every loop header over its name carries that
+/// one application.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
     requests: Vec<ThunkRequest>,
+    /// The sequence each local `comptime` binding of a display holds, by the
+    /// display's span ([`Self::bind_sequence`]).
+    bound_sequences: HashMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
+    /// The owner's local `comptime` bindings of a parameter expression
+    /// lowered so far ([`Self::bind_value`]), which every thunk requested
+    /// after them reads ([`EnclosingBinders::comptime_bindings`]).
+    bound_values: Vec<(
+        mojito_types::origin::OwnerId,
+        mojito_types::param_expr::ParamExpr,
+    )>,
 }
 
 /// One lifted expression: the thunk's name, the expression it returns at
@@ -1166,7 +1178,7 @@ impl ComptimeThunks {
     fn for_owner(owner: &str) -> Self {
         Self {
             owner: owner.to_string(),
-            requests: Vec::new(),
+            ..Self::default()
         }
     }
 
@@ -1202,6 +1214,45 @@ impl ComptimeThunks {
         )
     }
 
+    /// Register the `display` a local `comptime` binding holds, as
+    /// [`Self::request_sequence`] does a loop header's, and keep its
+    /// sequence for the loops that name the binding
+    /// ([`Self::bound_sequence`]): one thunk per binding, over the binders
+    /// in scope where it is declared.
+    fn bind_sequence(
+        &mut self,
+        display: &Expr,
+        binders: &EnclosingBinders,
+        ty: Ty,
+        element: mojito_types::param_expr::MetaTy,
+    ) {
+        let sequence = self.request_sequence(display, binders, ty, element);
+        self.bound_sequences.insert(display.source_span(), sequence);
+    }
+
+    /// The sequence of the binding whose display sits at `display`.
+    fn bound_sequence(&self, display: &SourceSpan) -> Option<mojito_types::param_expr::ParamExpr> {
+        self.bound_sequences.get(display).cloned()
+    }
+
+    /// Record that the local `comptime` binding `owner` denotes `value`
+    /// (`comptime k = n + 1`), for the thunks that read it.
+    fn bind_value(
+        &mut self,
+        owner: mojito_types::origin::OwnerId,
+        value: mojito_types::param_expr::ParamExpr,
+    ) {
+        self.bound_values.push((owner, value));
+    }
+
+    /// The expression the local `comptime` binding `owner` denotes.
+    fn bound_value(
+        &self,
+        owner: mojito_types::origin::OwnerId,
+    ) -> Option<mojito_types::param_expr::ParamExpr> {
+        comptime_binding_value(&self.bound_values, owner)
+    }
+
     /// Register `expression`, returned at `ty`, and give back its thunk
     /// applied to every binder in scope, a value of `meta`.
     fn application(
@@ -1215,7 +1266,10 @@ impl ComptimeThunks {
         self.requests.push(ThunkRequest {
             name: name.clone(),
             expression: expression.clone(),
-            binders: binders.clone(),
+            binders: EnclosingBinders {
+                comptime_bindings: self.bound_values.clone(),
+                ..binders.clone()
+            },
             ty,
         });
         let context = mojito_types::param_expr::ParamContext::detached();
@@ -1537,6 +1591,18 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
         }
     }
     scopes
+}
+
+/// The expression the local `comptime` binding `owner` denotes among
+/// `bindings`.
+fn comptime_binding_value(
+    bindings: &[(mojito_types::origin::OwnerId, ParamExpr)],
+    owner: mojito_types::origin::OwnerId,
+) -> Option<ParamExpr> {
+    bindings
+        .iter()
+        .find(|(binding, _)| *binding == owner)
+        .map(|(_, value)| value.clone())
 }
 
 /// The sequence a `comptime for` iterable was checked as, when the checker
@@ -2572,7 +2638,12 @@ impl Flatten<'_> {
             ExprKind::Int(value) => context
                 .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
                 .ok(),
-            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false),
+            // A binder, or a local `comptime` binding of an expression over
+            // them.
+            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false).or_else(|| {
+                self.checked_owner(expression)
+                    .and_then(|owner| self.comptime_thunks.bound_value(owner))
+            }),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 self.enclosing_binders.value(field, true)
             }
@@ -3739,6 +3810,10 @@ struct EnclosingBinders {
         mojito_types::origin::OwnerId,
         mojito_types::param_expr::ParamRef,
     )>,
+    /// In a lifted thunk, the local `comptime` bindings of a parameter
+    /// expression in the function it was lifted from (`comptime k = n +
+    /// 1`), each checked binding with the expression it denotes.
+    comptime_bindings: Vec<(mojito_types::origin::OwnerId, ParamExpr)>,
 }
 
 impl EnclosingBinders {
@@ -3812,6 +3887,11 @@ impl EnclosingBinders {
                     .chain(self.values.iter().map(|(binder, _)| binder))
                     .any(|binder| binder.name.as_ref() == name)
         })
+    }
+
+    /// The expression the local `comptime` binding `owner` denotes.
+    fn comptime_value(&self, owner: mojito_types::origin::OwnerId) -> Option<ParamExpr> {
+        comptime_binding_value(&self.comptime_bindings, owner)
     }
 
     /// The reference to `binder`, one of these value binders.

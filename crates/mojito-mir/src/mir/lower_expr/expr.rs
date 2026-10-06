@@ -268,11 +268,15 @@ impl Flatten<'_> {
         {
             return self.constant(e, Const::Function(name.to_owned()));
         }
-        if let Some(value) = self
-            .checked_owner(e)
-            .and_then(|owner| self.parameter_reads.get(&owner))
-            .and_then(|binder| self.enclosing_binders.value_of(binder))
-        {
+        // In a lifted thunk, an enclosing `comptime for` index or local
+        // `comptime` binding is the parameter expression it denotes.
+        let denoted = self.checked_owner(e).and_then(|owner| {
+            self.parameter_reads
+                .get(&owner)
+                .and_then(|binder| self.enclosing_binders.value_of(binder))
+                .or_else(|| self.enclosing_binders.comptime_value(owner))
+        });
+        if let Some(value) = denoted {
             return self.param_value_register(e, value);
         }
         let var = self.expression_var(name, e);
