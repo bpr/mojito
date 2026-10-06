@@ -31,8 +31,9 @@ Each entry's `Model:` bullet, `Opus|Fable, Planned|Not Planned`, picks the
 Claude model and whether the task is planned first. A `Planned` entry with no
 plan file at the repository root gets a plan session before the session that
 carries it out, which is handed the plan; a plan pass that fails or writes no
-plan file leaves the task unexecuted. `--no-auto-plan` skips that pass, and a
-plan file already at the root is handed to the executing session either way.
+plan file leaves the task unexecuted. `--no-auto-plan` skips that pass,
+`--auto-plan-all` gives it to `Not Planned` entries too, and a plan file
+already at the root is handed to the executing session either way.
 `--model Opus` or `--model Fable` overrides every entry's model choice (say,
 when Fable usage runs out); planning still follows the bullet.
 
@@ -45,6 +46,7 @@ Usage:
   scripts/claude_loop.py --start R3 --until R9
   scripts/claude_loop.py --plan -n 3          # plan the next three instead
   scripts/claude_loop.py --no-auto-plan       # execute Planned entries unplanned
+  scripts/claude_loop.py --auto-plan-all      # plan every entry, then execute it
   scripts/claude_loop.py --model opus -n 0    # run every entry on Opus
   scripts/claude_loop.py --dry-run -n 2       # print prompts, run nothing
   scripts/claude_loop.py --no-commit          # leave the work uncommitted
@@ -339,11 +341,13 @@ def model_for(args, task: Task) -> str:
 
 def modes_for(args, task: Task) -> list[str]:
     """The task's sessions in order: `"plan"` writes the plan file only,
-    `"execute"` carries the task out. A `Planned` entry with no plan file yet
-    is planned before it is carried out."""
+    `"execute"` carries the task out. A `Planned` entry (any entry, under
+    `--auto-plan-all`) with no plan file yet is planned before it is carried
+    out."""
     if args.plan:
         return ["plan"]
-    if task.planned and not args.no_auto_plan and not plan_path(task).exists():
+    wants_plan = task.planned or args.auto_plan_all
+    if wants_plan and not args.no_auto_plan and not plan_path(task).exists():
         return ["plan", "execute"]
     return ["execute"]
 
@@ -371,8 +375,12 @@ def main() -> int:
                    help="model for an entry with no Model: bullet")
     p.add_argument("--plan", action="store_true",
                    help="write each task's plan file instead of carrying the task out")
-    p.add_argument("--no-auto-plan", action="store_true",
-                   help="carry Planned entries out without a plan session first")
+    auto_plan = p.add_mutually_exclusive_group()
+    auto_plan.add_argument("--no-auto-plan", action="store_true",
+                           help="carry Planned entries out without a plan session first")
+    auto_plan.add_argument("--auto-plan-all", action="store_true",
+                           help="give every entry without a plan file a plan session first, "
+                                "Not Planned ones included")
     p.add_argument("--permission-mode", default="bypassPermissions")
     p.add_argument("--claude", default="claude", help="claude executable")
     p.add_argument("--claude-arg", action="append", default=[],
