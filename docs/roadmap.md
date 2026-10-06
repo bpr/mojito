@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R403**.
+Next free ID: **R405**.
 
 ## Ordered Work
 
@@ -135,21 +135,23 @@ correctness fix to existing behavior is allowed.
   - Depends on R256, R316, and R246.
   - Model: Fable, Planned.
 
-- [ ] **R400 (P3) A generic struct's method over a value parameter stops at
-  run time on a `comptime for` its template does not serve**
+- [ ] **R403 (P3) A struct method whose instance clone fails to elaborate
+  stops at run time instead of being rejected**
 
-  Problem: `comptime for x in [twice(Self.n), Self.n]:` in a method of
-  `struct S[n: Int]` stops with "S.f: unspecialized type-keyed method",
-  where the pin prints `4`, `2`.
-  - The template is stubbed, and a struct over a value parameter mints no
-    instance clone (`generate_instance_clones`, `comptime/specialize.rs`,
-    binds type arguments only), so nothing serves the call.
-  - The same loop in a `def` keys a clone and runs, nested or not.
-  - Serving the loop's shape from the template closes it per shape: R363
-    for a display element that applies a function.
-  - Until then the check should reject the method rather than leave a trap.
-  - Found while landing R371 (2026-10-06).
-  - Depends on R363.
+  Problem: `comptime for x in [Self.g(Self.n), Self.n]:` over a static
+  method `g` of `struct S[n: Int]` stops with "S.f: unspecialized
+  type-keyed method", where the pin prints `12`, `2` for `S[2]`.
+  - `generate_instance_clones` (`comptime/specialize.rs`) drops a clone
+    whose body fails to elaborate and keeps the template's trap stub, so
+    the error never reaches the user.
+  - The same loop in a `def` (`[S[n].g(n), n]`) fails at elaboration with
+    "compile-time method 'g' needs a value receiver": compile-time
+    evaluation has no static-method callee.
+  - A clone is minted for every instance, called or not, so the failure
+    should surface at a call that reaches it, not at minting.
+  - The static-method callee itself is R401's "a method".
+  - Found while landing R400 (2026-10-06).
+  - Depends on R401.
   - Model: Opus, Not Planned.
 
 - [ ] **R401 (P3b) A `comptime for` display element of a struct type, or one
@@ -4229,6 +4231,18 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Mojito closes both lists to one canonical concatenation, so the result
     and the annotation are one type.
   - `flip`'s `Tuple[*Ts.reverse()]` result is accepted by both.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R404 A raising call in a compile-time collection literal is
+  accepted**
+
+  Problem: `comptime for x in [twice(n), n]:` over a `def twice(n: Int)
+  raises -> Int` runs in Mojito, in a generic `def` or a method, where the
+  pin stops with "cannot call raising function in collection literal".
+  - A runtime list literal (`var l = [twice(1), 2]` in a raising body) is
+    accepted by both.
+  - Found while landing R400 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

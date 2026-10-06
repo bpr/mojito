@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method of a generic struct over a value parameter (`struct S[n: Int]`)
+  holding a `comptime for` the template does not serve (a struct-valued
+  display, a body `comptime m: Int = ...`) now runs, as at the pin, where
+  it stopped with "unspecialized type-keyed method": each instance mints
+  its own clone of the method, as an instance over type parameters does.
 - A `comptime for` display over a generic body's parameters may now call a
   `def` returning a scalar, compute a float, or subscript a compile-time
   list (`[twice(n), n]`, `[Float64(n) * 0.5]`, `[SQUARES[n]]`), and the

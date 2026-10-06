@@ -596,6 +596,9 @@ impl Elab<'_> {
                         variadic: false,
                         callable_bound: None,
                         ..
+                    } | ParamDecl::Value {
+                        variadic: false,
+                        ..
                     }
                 )
             })

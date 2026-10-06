@@ -1999,9 +1999,10 @@ impl Elab<'_> {
     /// lifecycle methods clone like any other, a constructor family as one
     /// overload set under the shared clone name; a bundled template's stay
     /// erased, carrying the value-parameter reification that path relies on. Only a template whose
-    /// parameters are all plain type parameters specializes here; value
-    /// parameters, retained origin binders, and callable-bounded parameters
-    /// keep the erased path.
+    /// parameters are all plain type or value parameters specializes here
+    /// (a value argument baked as itself, `f$i2;` on `S[2]`); packs,
+    /// retained origin binders, and callable-bounded parameters keep the
+    /// erased path.
     #[allow(
         clippy::unnecessary_wraps,
         reason = "TODO: drop the Result once callers stop using ?"
@@ -2040,10 +2041,35 @@ impl Elab<'_> {
         // Bind each parameter; an instance whose argument violates a declared
         // bound, or does not round-trip to source syntax, keeps the erased path.
         let mut bindings = Vec::new();
+        let mut receiver_arguments = Vec::new();
         let mut origin_binders = CloneOriginBinders::default();
         for (parameter, value) in type_params.iter().zip(values) {
             let CtValue::Type(ty) = value else {
-                return Ok(InstanceClones::default());
+                // A value argument is baked as itself, as a generic `def`'s
+                // clone bakes it (`f$y2:2` on `S[2]`).
+                let Some(ParamDecl::Value {
+                    variadic: false,
+                    ty,
+                    ..
+                }) = classify_ct_param(parameter, type_params, name)
+                else {
+                    return Ok(InstanceClones::default());
+                };
+                let Some(spelled) = (!matches!(
+                    value,
+                    CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
+                ) && ct_value_has_type(value, &ty))
+                .then(|| value.materialize(template.span))
+                .flatten() else {
+                    return Ok(InstanceClones::default());
+                };
+                receiver_arguments.push(ParamArg::Value(spelled));
+                bindings.push(MethodBinding {
+                    name: parameter.name.clone(),
+                    value: value.clone(),
+                    source: None,
+                });
+                continue;
             };
             if parameter
                 .bounds
@@ -2055,6 +2081,7 @@ impl Elab<'_> {
             let Some((bound, source)) = self.clone_binding(ty, &mut origin_binders) else {
                 return Ok(InstanceClones::default());
             };
+            receiver_arguments.push(ParamArg::Type(source.clone()));
             bindings.push(MethodBinding {
                 name: parameter.name.clone(),
                 value: CtValue::Type(Box::new(bound)),
@@ -2079,13 +2106,7 @@ impl Elab<'_> {
                 ty
             })
             .collect();
-        let receiver = Type::Named(
-            name.to_string(),
-            bindings
-                .iter()
-                .filter_map(|binding| binding.source.clone().map(ParamArg::Type))
-                .collect(),
-        );
+        let receiver = Type::Named(name.to_string(), receiver_arguments);
         let consts = self.top_consts.borrow().clone();
         let mut env = consts.clone();
         for binding in &bindings {

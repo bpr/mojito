@@ -1129,10 +1129,11 @@ impl Checker {
     /// The materialized declaration-order arguments of a closed instance of
     /// an ordinary generic struct that gets per-instantiation clones, or
     /// `None` when the application keeps the erased path. Only a struct whose
-    /// parameters are all plain type parameters qualifies (the elaborator's
-    /// `instance_template`): value parameters, callable-bounded parameters,
-    /// and origin binders keep the erased path, as does a `StringLiteral`
-    /// argument (`instance_method_clone_name` names it no clone).
+    /// parameters are all plain type or value parameters qualifies (the
+    /// elaborator's `instance_template`): packs, callable-bounded parameters,
+    /// and origin binders keep the erased path, as does a `StringLiteral` or
+    /// an open value argument (`instance_method_clone_name` names it no
+    /// clone).
     pub(super) fn instance_arguments(
         &self,
         template: &str,
@@ -1147,6 +1148,9 @@ impl Checker {
                         variadic: false,
                         callable_bound: None,
                         ..
+                    } | ParamDecl::Value {
+                        variadic: false,
+                        ..
                     }
                 )
             })
@@ -1155,9 +1159,10 @@ impl Checker {
                 matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
                     || parameter.is_origin_mutability_binder(&info.source_params)
             })
-            && arguments.iter().all(|argument| {
-                matches!(argument, TyArg::Ty(ty)
-                    if !mojito_types::types::contains_string_literal(ty))
+            && arguments.iter().all(|argument| match argument {
+                TyArg::Ty(ty) => !mojito_types::types::contains_string_literal(ty),
+                TyArg::Val(value) => mojito_symbol::symbol::specialization_value_is_closed(value),
+                TyArg::Origin(_) => false,
             });
         bakeable.then(|| {
             arguments
