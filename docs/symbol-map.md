@@ -1102,7 +1102,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
   `SIMDLength` binder pair per wildcard parameter of a `def`, method, or
-  trait requirement) and the vector-alias bound fold.
+  trait requirement), the vector-alias bound fold, and the value reading
+  of a `Self.`-spelled `materialize` operand
+  (`read_materialize_self_operands`: `materialize[Self.n]()`,
+  `materialize[Self.values[i]]()`).
 - `crates/mojito-symbol/src/symbol.rs` owns specialization keys. `mangle`
   returns `Result<String, NonConstantSpecialization>`: `mangle_parts`
   validates the whole key (`specialization_value_is_closed`: no residual or
@@ -1510,11 +1513,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`substituted_facts`, `folded_literals`). A value pack that is still a
   parameter (`*values: Int`) is a `ParamList` of its element
   (`annotations::value_parameter_expr`, `verify::declared_kind`):
-  `Checker::value_pack_named` resolves it and
+  `Checker::value_pack_named` resolves it — a struct's own `Self.values`
+  through `self_value_pack`, which `infer_member` types as the pack — and
   `infer_value_pack_element` records `values[i]` as a `ListGet`, while
   `infer_len`, the intrinsic `__len__` receiver, and `pack_length_binder`
   record its length; `value_packs_read_as_parameters` (`comptime.rs`) keeps
-  the clone for any other read, and mono binds the pack from the call
+  the clone for any other read, and `LoopNames::value_packs` admits a
+  `comptime for` over `Self.values` to a method's template. A pack spread
+  whole into brackets (`Pack[*vs]`, `total[*vs]()`) binds the callee's pack
+  to it (`Checker::value_pack_spread`, read by the bracket binding in
+  `checker/declarations.rs`); MIR
+  passes it as the list's parameter constant in a `VariadicPack` register
+  (`Flatten::value_pack_spread`, `EnclosingBinders::value_pack`),
+  `verify_param_arguments` accepts it in the pack's slot, mono folds it and
+  retires it once the call names its instance (`retire_forwarded_packs`,
+  `mono/spread.rs`), and the erased oracle splices it into the callee's
+  tuple (`align_parameter_arguments`); and mono binds the pack from the call
   (`bind_instantiated_arguments`, `mono/infer.rs`;
   `bind_explicit_value_arguments`, `mono/unify.rs`) and folds the constants
   in each unrolled copy too (`copy_body`, `mono/unroll.rs`). The erased

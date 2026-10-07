@@ -589,7 +589,8 @@ impl ScopeCx<'_> {
     }
 
     /// A struct's or projection's arguments; a value argument at slot `i`
-    /// has the kind the declared value parameter `i` gives it.
+    /// has the kind the declared value parameter `i` gives it, a value
+    /// pack's the list of its element.
     fn arguments(
         &mut self,
         role: &str,
@@ -611,6 +612,11 @@ impl ScopeCx<'_> {
                         declared
                             .and_then(|decls| decls.get(slot))
                             .and_then(|decl| match decl {
+                                ParamDecl::Value {
+                                    ty, variadic: true, ..
+                                } => {
+                                    Some(MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone()))))
+                                }
                                 ParamDecl::Value { ty, .. } => Some(MetaTy::value((**ty).clone())),
                                 ParamDecl::Type { .. } => None,
                             });

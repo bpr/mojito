@@ -1043,7 +1043,14 @@ impl Elab<'_> {
         self.template_loop_names
             .borrow_mut()
             .push(TemplateLoopNames {
-                value_packs: def_value_pack_names(type_params, ""),
+                value_packs: def_value_pack_names(type_params, "")
+                    .into_iter()
+                    .chain(
+                        def_value_pack_names(struct_params, "")
+                            .iter()
+                            .map(|name| self_qualified(name)),
+                    )
+                    .collect(),
                 displays: served_display_bindings(&binders, &self.scalar_reads, body),
             });
         self.template_binders.borrow_mut().push(binders);

@@ -775,7 +775,12 @@ pub(super) fn verify_param_arguments(
                 "{prefix}: value parameter '{name}' has no runtime register"
             )),
             (mojito_types::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
+                // A value pack spread whole binds the pack of its element.
+                let spread = pack(index)
+                    && matches!(function.reg_types.get(&register.0),
+                        Some(Ty::VariadicPack(element)) if types_compatible(element, ty));
                 if let Some(found) = function.reg_types.get(&register.0)
+                    && !spread
                     && !(matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. })
                         && mojito_types::types::callable_bound_accepts(found, ty))
                     && !types_compatible(found, ty)

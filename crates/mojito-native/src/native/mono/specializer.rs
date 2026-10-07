@@ -492,6 +492,7 @@ impl<'a> Specializer<'a> {
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;
         function.blocks = blocks;
+        retire_forwarded_packs(&mut function);
         repair_storage_result_types(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
@@ -1168,6 +1169,13 @@ impl<'a> Specializer<'a> {
                 .constraint_holds(&proposition, bindings, &mut HashSet::new())
                 .map(Const::Bool)),
             None => match eval_ct(value, bindings) {
+                // A value pack spread whole into a bracket (`f[*vs]()`) is
+                // its bound list, which the callee's instance keys.
+                Ok(list @ CtValue::Tuple(_))
+                    if matches!(value.meta(), mojito_types::param_expr::MetaTy::ParamList(_)) =>
+                {
+                    Ok(Some(Const::Value(list)))
+                }
                 Ok(value) => Ok(value_parameter_constant(&value, None)),
                 Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
                 Err(_) => Ok(None),

@@ -1916,7 +1916,14 @@ fn align_parameter_arguments(
         if !value_pack(index) {
             aligned[index] = value;
         } else if let (Some(Value::Tuple(values)), Some(value)) = (&mut aligned[index], value) {
-            values.push(value);
+            // A value pack's elements are scalars, so a tuple is a pack
+            // spread whole (`f[*vs]()`).
+            match value {
+                Value::Tuple(spread) if matches!(declarations[index], ParamDecl::Value { .. }) => {
+                    values.extend(spread);
+                }
+                value => values.push(value),
+            }
         }
     }
     aligned

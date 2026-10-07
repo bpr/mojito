@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's own value pack now reads in its methods as at the pin:
+  `len(Self.values)`, `Self.values[i]` at a compile-time index,
+  `materialize[Self.values[i]]()`, and `comptime for v in Self.values`,
+  where each stopped on "'Self.values' is not a type parameter of the
+  enclosing struct". A value pack still a parameter now spreads whole into
+  another application's brackets — `Pack[*vs]()`, `total[*vs]()`,
+  `Sink().count[*vs]()`, `Pack[*Self.qs]()` — where it stopped on "expected
+  a value, found a type". `materialize[Self.n]()` over a struct's scalar
+  value parameter runs too. A runtime read of a `def`'s whole value pack
+  (`for v in values`, a runtime index) is still rejected: upstream's
+  `ParameterList` needs a value parameter typed by a type parameter, which
+  Mojito does not yet accept.
 - A generic `def` whose `comptime for` constructs a reflected field type —
   `types[i]()` or `FT()` over `comptime FT = types[i]`, with `comptime types
   = reflect[T].field_types()` — or annotates a local with it (`var y:

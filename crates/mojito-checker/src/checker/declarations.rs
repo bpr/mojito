@@ -3191,6 +3191,20 @@ impl Checker {
                         tyargs.push(argument);
                         continue;
                     }
+                    // A spread of a value pack that is still a parameter
+                    // (`PL[*vs]`, `PL[*Self.vs]`) forwards that pack whole.
+                    if let [argument] = arguments.as_slice()
+                        && matches!(decl, ParamDecl::Value { .. })
+                        && let Some(pack) = self.value_pack_spread(argument)
+                    {
+                        let value = CtValue::Expr(pack);
+                        value_environment.insert(
+                            decl.name().trim_start_matches('*').to_string(),
+                            value.clone(),
+                        );
+                        tyargs.push(TyArg::Val(value));
+                        continue;
+                    }
                     let mut values = Vec::with_capacity(arguments.len());
                     for argument in arguments {
                         // A spread of a computed list binds its elements,

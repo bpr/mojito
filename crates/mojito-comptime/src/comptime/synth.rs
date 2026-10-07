@@ -1,6 +1,7 @@
 //! Synthesized conformance methods: `Copyable.copy` and
 //! `Hashable.__hash__` bodies, plus upstream's `SIMD[_, _]` parameter
-//! desugar and the vector-alias bound fold.
+//! desugar, the vector-alias bound fold, and the value reading of a
+//! `Self.`-spelled `materialize` operand.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -235,6 +236,32 @@ pub(super) fn desugar_simd_wildcard_parameters(program: &mut [Stmt]) {
     }
 }
 
+/// `materialize`'s one parameter is a value, so a `Self.n` or
+/// `Self.values[i]` operand the parser read as a type spelling is the value
+/// expression it spells: the member read, or the subscript of one.
+pub(super) fn read_materialize_self_operands(program: &mut [Stmt]) {
+    struct Operands;
+    impl mojito_ast::visit::MutVisitor for Operands {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            if let ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } = &mut expr.kind
+                && name == "materialize"
+                && args.is_empty()
+                && kwargs.is_empty()
+                && let [ParamArg::Type(operand)] = param_args.as_slice()
+                && let Some(operand) = self_value_operand(operand, expr.span)
+            {
+                param_args[0] = ParamArg::Value(operand);
+            }
+        }
+    }
+    mojito_ast::visit::walk_block_mut(&mut Operands, program);
+}
+
 fn desugar_wildcard_parameters(
     type_params: &mut Vec<TypeParam>,
     params: &mut [mojito_ast::ast::FnParam],
@@ -325,5 +352,27 @@ pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt]) {
                 parameter.bounds = vec!["SIMD".to_string()];
             }
         }
+    }
+}
+
+/// The value expression a `Self.`-rooted type spelling denotes
+/// ([`read_materialize_self_operands`]).
+fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
+    match operand {
+        Type::SelfParam(name) if !name.starts_with('*') => Some(Expr::new(
+            ExprKind::Member {
+                object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
+                field: name.clone(),
+            },
+            span,
+        )),
+        Type::IndexedProjection { base, index } => Some(Expr::new(
+            ExprKind::Index {
+                object: Box::new(self_value_operand(base, span)?),
+                index: index.clone(),
+            },
+            span,
+        )),
+        _ => None,
     }
 }

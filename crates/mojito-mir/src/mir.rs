@@ -2750,6 +2750,9 @@ impl Flatten<'_> {
             ParamArg::Type(t) if let Some(element) = self.display_element_argument(t) => {
                 return Some(element);
             }
+            ParamArg::Type(t) if let Some(pack) = self.value_pack_spread(t, site) => {
+                return Some(pack);
+            }
             ParamArg::Type(t) => return self.reified_type_argument(t, site),
         };
         let adjustments = self.checked_adjustments(expression);
@@ -2784,6 +2787,26 @@ impl Flatten<'_> {
                 None => self.expr(expression),
             })
         }
+    }
+
+    /// A value pack still a parameter spread whole into a bracket (`*vs`,
+    /// `*Self.vs`): the parameter constant of its list, which the elaborator
+    /// folds per instance and a backend binds to the callee's own pack.
+    fn value_pack_spread(&mut self, ty: &mojito_ast::ast::Type, site: &SourceSpan) -> Option<Reg> {
+        let (name, of_self) = match ty {
+            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => (name, false),
+            mojito_ast::ast::Type::SelfParam(name) => (name, true),
+            _ => return None,
+        };
+        let (pack, element) = self
+            .enclosing_binders
+            .value_pack(name.strip_prefix('*')?, of_self)?;
+        let dest = self.fresh_typed(site.clone(), None, Ty::VariadicPack(Box::new(element)));
+        self.emit(MirInstr::Const {
+            dest,
+            k: Const::Param(pack),
+        });
+        Some(dest)
     }
 
     /// Semantic Origin/OriginSet arguments are retained in source long enough
@@ -4436,6 +4459,35 @@ impl EnclosingBinders {
 
     /// The reference a value binder's spelling denotes: `Self.n` names the
     /// struct's, declared first; a bare `n` the innermost declaration's.
+    /// The value pack a bracket spread names (`*vs`, or `*Self.vs` when
+    /// `of_self`), as the parameter list it binds: `Self.vs` names the
+    /// struct's, declared first; a bare `vs` the innermost declaration's.
+    fn value_pack(&self, name: &str, of_self: bool) -> Option<(ParamExpr, Ty)> {
+        let mut packs = self
+            .declarations
+            .iter()
+            .filter_map(|declaration| match declaration {
+                ParamDecl::Value {
+                    name: declared,
+                    ty,
+                    variadic: true,
+                    ..
+                } if declared.trim_start_matches('*') == name => Some((declaration, ty)),
+                _ => None,
+            });
+        let (declaration, ty) = if of_self { packs.next() } else { packs.next_back() }?;
+        Some((
+            ParamContext::detached().decl_ref(
+                declaration.id().clone(),
+                name,
+                mojito_types::param_expr::MetaTy::ParamList(Box::new(
+                    mojito_types::param_expr::MetaTy::value((**ty).clone()),
+                )),
+            ),
+            (**ty).clone(),
+        ))
+    }
+
     fn value(&self, name: &str, of_self: bool) -> Option<ParamExpr> {
         let mut binders = self.values.iter();
         let named =

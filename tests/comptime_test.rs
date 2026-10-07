@@ -1013,6 +1013,20 @@ fn variadic_value_pack_specializes_and_unrolls() {
 }
 
 #[test]
+fn struct_value_pack_reads_in_its_methods() {
+    let src = "struct Pack[*values: Int]:\n    def __init__(out self):\n        pass\n\n    def summary(self) -> Int:\n        var sum = 0\n        comptime for value in Self.values:\n            sum += value\n        return sum * 10 + len(Self.values) + Self.values[0]\n\ndef main():\n    print(Pack[1, 2, 3]().summary())\n";
+    assert_eq!(run(src).unwrap(), "64\n");
+}
+
+#[test]
+fn value_pack_spread_beside_another_bracket_argument_is_rejected() {
+    // The pin rejects `Pack[0, *vs]`: a spread pack binds the variadic
+    // parameter whole.
+    let src = "struct Pack[*values: Int]:\n    def __init__(out self):\n        pass\n\ndef wrap[*vs: Int]():\n    _ = Pack[0, *vs]()\n\ndef main():\n    wrap[1, 2]()\n";
+    assert!(run(src).is_err());
+}
+
+#[test]
 fn type_predicate_selects_comptime_branch() {
     // Upstream's type comparison (`T == Int`) lets a `comptime if` branch on a
     // type parameter — `name[Int]` takes the `int` branch, `name[String]` the

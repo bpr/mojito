@@ -521,6 +521,7 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
         mojito_checker::checker::expand_trait_defaults(&program).map_err(ComptimeError::Type)?;
     desugar_simd_wildcard_parameters(&mut program);
     fold_simd_alias_bounds(&mut program);
+    read_materialize_self_operands(&mut program);
     Ok(program)
 }
 
@@ -1237,7 +1238,8 @@ pub(super) struct LoopNames<'a> {
     /// enclosing struct's as `Self.Ts`. The elaborator passes every binder
     /// in scope, which holds them.
     pub(super) packs: &'a HashSet<String>,
-    /// The `def`'s value packs (`*vals: Int`), bare.
+    /// The `def`'s value packs (`*vals: Int`), bare, and an enclosing
+    /// struct's as `Self.vals`.
     pub(super) value_packs: &'a HashSet<String>,
     /// The body's local bindings of a display over the binders
     /// ([`served_display_bindings`]).
@@ -1426,6 +1428,9 @@ pub(super) fn comptime_for_is_template_served(
             names.value_packs.contains(name)
                 || names.displays.contains(name)
                 || (names.collection)(name)
+        }
+        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+            names.value_packs.contains(&format!("Self.{field}"))
         }
         ExprKind::MethodCall { .. } => reflected_names(iter),
         _ => false,

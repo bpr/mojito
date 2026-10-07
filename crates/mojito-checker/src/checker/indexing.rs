@@ -1896,6 +1896,14 @@ impl Checker {
                     .borrow_mut()
                     .insert(object.source_span(), self_ty.clone());
             }
+            if self.self_value_pack(field).is_some()
+                && let Some(ParamDecl::Value { ty, .. }) = self
+                    .self_decls
+                    .iter()
+                    .find(|d| d.name().trim_start_matches('*') == field)
+            {
+                return Ok(Ty::VariadicPack(ty.clone()));
+            }
             return match self.self_decls.iter().find(|d| d.name() == field) {
                 // A vector-, struct-, or `DType`-typed value parameter
                 // (`AHasher[key: U256]`, `Tagged[e: Extent]`) reads as its

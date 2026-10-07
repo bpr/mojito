@@ -1,6 +1,7 @@
 //! Expanding a whole-pack spread: an instance replaces the collector a call
 //! or a method call spreads (`show(*args)`, `Sink().take(*args)`) with the
-//! bound pack's element places.
+//! bound pack's element places, and retires a value pack spread into a
+//! bracket (`f[*vs]()`) once the call names its instance.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -48,6 +49,26 @@ struct SpreadTables<'a> {
 struct Collector {
     place: MirPlace,
     moved: bool,
+}
+
+/// Retire the bound list of a value pack spread into a bracket
+/// (`f[*vs]()`, `PL[*vs]()`): the call it fed names its instance, whose key
+/// holds the list, and no register reads it.
+pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
+    let forwarded: HashSet<u32> = function
+        .reg_types
+        .iter()
+        .filter(|(_, ty)| matches!(ty, Ty::VariadicPack(_)))
+        .map(|(register, _)| *register)
+        .collect();
+    if forwarded.is_empty() {
+        return;
+    }
+    let mut retired = HashSet::new();
+    retire_in_blocks(&mut function.blocks, &forwarded, &mut retired);
+    function
+        .reg_types
+        .retain(|register, _| !retired.contains(register));
 }
 
 fn expand_in_blocks(
@@ -207,5 +228,36 @@ impl SpreadTables<'_> {
             function: Some(self.template.to_string()),
             construct: construct.to_string(),
         }
+    }
+}
+
+fn retire_in_blocks(blocks: &mut [MirBlock], forwarded: &HashSet<u32>, retired: &mut HashSet<u32>) {
+    for block in blocks {
+        block.instrs.retain_mut(|instruction| match instruction {
+            MirInstr::Const {
+                dest,
+                k: Const::Value(CtValue::Tuple(_)),
+            } if forwarded.contains(&dest.0) => {
+                retired.insert(dest.0);
+                false
+            }
+            MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } => {
+                let regions = std::iter::once(body)
+                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                    .chain(orelse.iter_mut())
+                    .chain(finalbody.iter_mut());
+                for region in regions {
+                    retire_in_blocks(region, forwarded, retired);
+                }
+                true
+            }
+            _ => true,
+        });
     }
 }

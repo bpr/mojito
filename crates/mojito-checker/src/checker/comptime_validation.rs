@@ -1896,10 +1896,15 @@ impl Checker {
         }
     }
 
-    /// The value pack an identifier names while it is still a parameter: a
+    /// The value pack an expression names while it is still a parameter: a
     /// `def`'s own `*values: Int`, typed as the pack of its element, which
-    /// no instance has bound yet.
+    /// no instance has bound yet, or the enclosing struct's `Self.values`.
     pub(super) fn value_pack_named(&self, expr: &Expr) -> Option<ParamExpr> {
+        if let ExprKind::Member { object, field } = &expr.kind
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+        {
+            return self.self_value_pack(field);
+        }
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
@@ -1912,6 +1917,44 @@ impl Checker {
         self.value_parameter_in_scope(name).filter(|pack| {
             pack.as_decl_ref().is_some()
                 && matches!(pack.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
+        })
+    }
+
+    /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
+    /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
+    pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
+        match argument {
+            // The struct's own pack arrives here too: pack qualification
+            // folds `*Self.vs` onto the bare spread.
+            ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
+                let name = name.strip_prefix('*')?;
+                self.value_pack_named(&Expr::new(
+                    ExprKind::Identifier(name.to_string()),
+                    mojito_common::token::DUMMY_SPAN,
+                ))
+                .or_else(|| self.self_value_pack(name))
+            }
+            ParamArg::Type(SourceType::SelfParam(name)) => {
+                self.self_value_pack(name.strip_prefix('*')?)
+            }
+            _ => None,
+        }
+    }
+
+    /// The enclosing struct's own value pack `Self.<field>`, as the
+    /// parameter-list reference its binder declares.
+    pub(super) fn self_value_pack(&self, field: &str) -> Option<ParamExpr> {
+        self.self_decls.iter().find_map(|decl| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: true,
+                ..
+            } if name.trim_start_matches('*') == field => Some(
+                self.param_context
+                    .intern(&super::annotations::value_parameter_expr(decl, ty)),
+            ),
+            _ => None,
         })
     }
 

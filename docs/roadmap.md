@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R446**.
+Next free ID: **R448**.
 
 ## Ordered Work
 
@@ -638,6 +638,24 @@ correctness fix to existing behavior is allowed.
   - The elaborator answers both through the oracle that decides a
     `comptime if` (`answer_param_constants`, `mono/specializer.rs`).
   - Entry R10 deletes the oracle and the question with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R447 (P5) The erased oracle drops a kept `comptime for` index
+  before a `return` reads it**
+
+  Problem: `if i == idx: return values[i]` inside `comptime for i in
+  range(len(values))` in `def get[*values: Int](idx: Int) -> Int` prints on
+  concrete MIR and stops under `--erased` with "the erased oracle cannot
+  evaluate the parameter constant `values[i]`".
+  - Drop elaboration places the index slot's `drop.var` on the return edge
+    before the parameter constant that reads the index, since liveness does
+    not count a `Const::Param` read of the binder as a use of its slot.
+  - Assigning the element to a local and returning after the loop runs.
+  - Concrete MIR unrolls the loop and folds the constant, so the production
+    path is unaffected; entry R10 deletes the oracle and the question with
+    it.
+  - Found while landing R325's first stages (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2535,18 +2553,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R369 A struct's value pack cannot be read in its methods**
-
-  Problem: `Self.vals[0]` and `comptime for v in Self.vals:` in a method of
-  `struct S[*vals: Int]` fail with "'Self.vals' is not a type parameter of
-  the enclosing struct", where the pin prints the element.
-  - A `def`'s own value pack reads both ways (`value_pack_named`,
-    `checker/comptime_validation.rs`), which looks only at the `def`'s
-    binders.
-  - Found while landing R246 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R376 A compile-time application under an untaken `comptime if` arm
   is evaluated**
 
@@ -2774,19 +2780,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R446 A value parameter typed by a type parameter is rejected**
+
+  Problem: `struct S[T: ImplicitlyCopyable & Writable, //, v: T]` and
+  `def f[T: ImplicitlyCopyable & Writable, //, v: T]() -> T` fail with
+  "unknown trait 'T' in a type-parameter bound", where the pin infers `T`
+  from the argument and `S[3]().get()`, `f[True]()`, and `f[2.5]()` print
+  `3`, `True`, and `2.5`.
+  - The checker (`classify_params_in_scope`, `checker/declarations.rs`) and
+    the elaborator (`classify_ct_param`, `comptime.rs`) read a lone bound as
+    a trait, a scalar type, or a struct, never a sibling binder.
+  - Classifying it as a value parameter is not enough: the infer-only `T`
+    must be solved from the value argument, and the value's meta, identity,
+    and mangling then carry a type that is still a parameter.
+  - Upstream's `ParameterList[type: AnyType, //, values: ...]` and its
+    iterator are declared this way, so R325 waits on it.
+  - Found while landing R325's first stages (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R325 A value pack read as a runtime value is rejected**
 
   Problem: `for v in values:` and `values[i]` with a runtime `i`, over
-  `def f[*values: Int]`, fail with "struct 'Tuple' was not registered" and
-  "expected a compile-time Int index", where the pin runs both over the
-  pack's runtime `VariadicList`.
-  - Such a `def` keeps its clone (`value_packs_read_as_parameters`), and
-    neither the clone nor MIR builds the pack as a runtime list.
-  - A template-served body would need MIR to materialize the parameter
-    list (a `Const::Param` of list meta) as runtime storage.
+  `def f[*values: Int]`, fail with "type 'Tuple[Int, Int, Int]' has no
+  method '__iter__'" and "expected a compile-time Int index", where the pin
+  runs both over the pack's runtime `ParameterList`.
+  - At the pin a runtime read of the pack is a zero-sized
+    `ParameterList[values.values]` (`std/builtin/variadics.mojo`), whose
+    `__getitem__` reads a static constant array of the elements
+    (`global_constant`).
+  - The port's signature needs a value parameter typed by a type parameter
+    (R446).
+  - MIR also lacks the static address of a closed parameter list's
+    elements, which the VM and the native backend would each lay out once.
+  - Until then such a `def` keeps its clone
+    (`value_packs_read_as_parameters`), whose pack is a `Tuple`.
+  - A struct's own value pack already reads in its methods and spreads
+    whole into brackets (`Pack[*Self.values]`), which the port and the
+    checker's construction of `ParameterList[E, *values]` need.
+  - Plan: `R325-a-value-pack-read-as-a-plan.md` (slices 3 to 6 remain).
   - Found while landing R318 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Depends on R446.
+  - Model: Opus, Planned.
 
 - [ ] **R326 An empty explicit application `f[]()` is a pointer dereference**
 
@@ -3601,17 +3636,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A bare `Self.` static on a parametric struct infers the struct's
     parameters from the arguments (`infer_struct_static_method`) instead of
     binding the enclosing `Self`, and a forwarded pack infers nothing.
-  - Found while landing R256 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R417 A bracket spread of a value pack is rejected**
-
-  Problem: `vals[*vs]()` in `def fwd[*vs: Int]()` fails with "expected a
-  value, found a type", and the method form (`B().vals[*vs]()`) with "no
-  overload matches", where the pin runs both.
-  - A literal application (`B().vals[1, 2, 3]()`) runs.
-  - The bracket argument's spread is resolved as a type pack.
   - Found while landing R256 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -802,7 +802,15 @@ impl Checker {
 
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
         self.self_decls.iter().find_map(|decl| match decl {
-            ParamDecl::Value { name: n, ty, .. } if n == name => Some(value_parameter(decl, ty)),
+            // `Self.values` names the struct's value pack unstarred too.
+            ParamDecl::Value {
+                name: n,
+                ty,
+                variadic,
+                ..
+            } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
+                Some(value_parameter(decl, ty))
+            }
             // `Self.Ts` names the struct's pack by its unstarred spelling.
             ParamDecl::Type {
                 name: n, variadic, ..
