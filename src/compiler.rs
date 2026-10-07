@@ -7,9 +7,8 @@ use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
     MethodSpecializationRequest, StructInstanceRequest, TStringSpecializationRequest,
     UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
-    dtype_generic_template_names, elaborate_prepared, generated_names, instance_traces,
-    pack_generic_template_names, prepare, unserved_template_parameter,
-    variadic_struct_template_names,
+    elaborate_prepared, generated_names, instance_traces, pack_generic_template_names, prepare,
+    unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -420,7 +419,6 @@ impl Compiler {
             let mut templates = bound_generic_template_names(linked, &templates_catalog);
             templates.extend(pack_generic_template_names(linked, &templates_catalog));
             templates.extend(comptime_generic_template_names(linked, &templates_catalog));
-            templates.extend(dtype_generic_template_names(linked, &templates_catalog));
             templates
         };
         // The abstract references of the elaboration `checked` was checked

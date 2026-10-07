@@ -10,8 +10,8 @@
 ///
 /// A body that several classes describe takes the one whose stage of the
 /// plan lands last, since the cloner keeps it until then: a `def` clone is
-/// tested in the order `DTypeVectorDef`, `PackDef`, `ComptimeForDef`,
-/// `ComptimeIfDef`, `ValueDef`, `TypeDef`.
+/// tested in the order `PackDef`, `ComptimeForDef`, `ComptimeIfDef`,
+/// `ValueDef`, `TypeDef`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CloneClass {
     /// A `def` clone with only type arguments baked in and no compile-time
@@ -23,8 +23,6 @@ pub enum CloneClass {
     ComptimeForDef,
     /// A `def` clone that expands a type pack.
     PackDef,
-    /// A `def` clone keyed by a `DType` or vector value.
-    DTypeVectorDef,
     /// A `def` clone keyed by any other value, with no compile-time control
     /// flow in its template.
     ValueDef,
@@ -42,12 +40,11 @@ pub enum CloneClass {
 }
 
 impl CloneClass {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::TypeDef,
         Self::ComptimeIfDef,
         Self::ComptimeForDef,
         Self::PackDef,
-        Self::DTypeVectorDef,
         Self::ValueDef,
         Self::InstanceMethod,
         Self::InstanceMethodComptime,
@@ -62,7 +59,6 @@ impl CloneClass {
             Self::ComptimeIfDef => "instantiation.cloned.def_comptime_if",
             Self::ComptimeForDef => "instantiation.cloned.def_comptime_for",
             Self::PackDef => "instantiation.cloned.def_pack",
-            Self::DTypeVectorDef => "instantiation.cloned.def_dtype_vector",
             Self::ValueDef => "instantiation.cloned.def_value",
             Self::InstanceMethod => "instantiation.cloned.method_per_instantiation",
             Self::InstanceMethodComptime => {

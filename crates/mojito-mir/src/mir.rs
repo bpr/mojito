@@ -263,8 +263,9 @@ pub fn binder_scope<'a>(
 
 /// The declared type of the materialized value parameter `name` in `scope`.
 ///
-/// Such a parameter is non-variadic and declared at a type binder (`v: T`)
-/// or an aggregate (`p: Tuple[Int, String]`).
+/// Such a parameter is non-variadic and declared at a type binder (`v: T`),
+/// an aggregate (`p: Tuple[Int, String]`), or a vector
+/// (`v: SIMD[DType.int32, 2]`).
 pub fn materialized_parameter_ty<'a>(
     name: &str,
     scope: impl IntoIterator<Item = &'a ParamDecl>,
@@ -275,7 +276,12 @@ pub fn materialized_parameter_ty<'a>(
             ty,
             variadic: false,
             ..
-        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. } | Ty::Struct(..)) => {
+        } if declared == name
+            && matches!(
+                ty.as_ref(),
+                Ty::Param { .. } | Ty::Struct(..) | Ty::Simd { .. }
+            ) =>
+        {
             Some(ty.as_ref())
         }
         _ => None,

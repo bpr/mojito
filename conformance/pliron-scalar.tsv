@@ -692,6 +692,7 @@ assets/ok/template_folded_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_inner_request.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_keyed_runtime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_keyed_runtime_while.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_lane_def_value_binder_outside_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_loop_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_applied_overloaded_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_method_binder_construction.mojo	-	ineligible	no-scalar-entry-shape

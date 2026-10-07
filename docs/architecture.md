@@ -507,8 +507,8 @@ binder's own slot owning nothing and so no drop root
 read of it, per unrolled copy, into a `Const::Value` where its leaves are
 numbers and booleans, or into the element's construction where one is a
 `String` (`construct_parameter_reads`), as upstream's `kgen.param.constant`
-materializes a parameter at each use. A tuple or struct value parameter's
-slot follows the same rule: it owns nothing and is no drop root
+materializes a parameter at each use. A tuple, struct, or vector value
+parameter's slot follows the same rule: it owns nothing and is no drop root
 (`mir::materialized_parameter_slots`), and each read of it is the value's
 constant or construction, with nothing built at entry. A field chain off
 either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
@@ -826,9 +826,10 @@ application's values, to a concrete lane or to the caller's own symbolic
 `MakeSimd`, `SimdCast`, and `SimdBitcast` (schema 1.18): the parametric
 verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
-`DType`- or lane-keyed `def`, overloaded or not, is a bound generic served by
-its template (`lane_def_template_served`, a per-declaration verdict, since
-overload selection is the checker's), a local `comptime` binding of its
+`DType`- or lane-keyed `def`, overloaded or not, is an ordinary generic `def`
+served by its template unless its body keys a clone, its binders bound from
+the call's arguments, an argument's lane slots, or the checker's inferred
+instantiation (`n` of `a: Box[n]`), a local `comptime` binding of its
 binder (`comptime lane = dt`) an alias of the binder's parameter expression. A struct
 keyed on a `DType`, a lane width, a vector value, or a struct-typed value is
 an ordinary generic struct, a generator: the executable check types its
@@ -1026,20 +1027,15 @@ per instance once its `comptime if`s are decided, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
 error on a mismatch.
-Three comptime-class subsets take an inferred
+Two comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
-statically evident, a **compile-time-keyed** `def`
+statically evident, and a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
-without an argument for a required parameter, and a **`DType`-keyed** `def`
-(`dtype_generic_template_names`) the template does not serve — a
-declaration whose value binder a runtime parameter names outside a lane
-slot (R477) — whose call omits only its lane: the
-lane is the argument's own, which the checker reads off a `Scalar[dt]` slot
-and the elaborator cannot. A call that omits a SIMD width is not in that
-subset — the pin does not infer one either. An overloaded name with a
-compile-time-keyed declaration, or a type-pack or `DType`-keyed one the
-template does not serve, among its overloads is a *family*
+without an argument for a required parameter. A `DType`- or lane-keyed `def`
+is in neither: its template serves it. An overloaded name with a
+compile-time-keyed declaration, or a type-pack one the template does not
+serve, among its overloads is a *family*
 (`collect_overload_families`); a member the template serves forms none. A
 call selecting such a served member is left as written, as a uniquely named
 served `def`'s call is (`Elab::family_call_is_served`). No other call to it is

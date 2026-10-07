@@ -367,8 +367,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   validated), and the body `value_keyed_def` names is validated, with no
   verdict where it cannot be typed (a `def` keyed on a
   `DType` binder or using a parameter as a lane width, which the executable
-  pass checks again as a bound generic when `comptime.rs`'s
-  `lane_def_template_served` serves it and the elaborator clones per call otherwise
+  pass checks again as a bound generic
   — `mojito_ast::simd_width::def_uses_layout_dependent_param`, shared with
   the elaborator, is the lane-width scan), and
   `validate_comptime_method_bodies` checks a method body
@@ -975,13 +974,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   specialize from checker-recorded instantiations, and
   `comptime_generic_template_names` for defs keyed only by a `comptime
   if`/`for` body, whose inferred calls do the same, gated by
-  `omits_required_param` in `comptime/mono.rs`, and
-  `dtype_generic_template_names` for defs keyed on a `DType` parameter,
-  whose calls may omit the lane alone (`omits_dtype_param`), a declaration
-  the template does not serve (`lane_def_template_served`) — each
+  `omits_required_param` in `comptime/mono.rs`; a `DType`- or lane-keyed
+  def is in none of them unless its body keys a clone — each
   classification is a per-declaration predicate
-  (`comptime_keyed_declaration`, `pack_keyed_declaration`,
-  `dtype_keyed_declaration`) that an overloaded name admits one declaration at
+  (`comptime_keyed_declaration`, `pack_keyed_declaration`) that an
+  overloaded name admits one declaration at
   a time, so one family may hold two classes, or two type packs, and
   `Elab::family_declaration` picks the declaration a request selected by its
   parameter names, parameter types, and `symbol::VariadicKey`, and
@@ -1078,10 +1075,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   unsupported. `template_serves_def` says
   which generic `def` keeps its template at every closed call: a plain
   trait-bound one, with type parameters and scalar or `DType` value
-  parameters named at most as lane slots (`template_serves_binders`), and no
-  such construct; `comptime.rs`'s `lane_def_template_served` admits every
-  `DType`- or lane-keyed `def` declaration, overloaded or not, whose binders
-  `template_serves_binders` accepts, whatever its body holds. An
+  parameters (`template_serves_binders`, a value inferred from any argument
+  type included), and no such construct; a `DType`- or lane-keyed `def`,
+  overloaded or not, is an ordinary generic `def`, specializable only when
+  its body keys a clone (`is_specializable_declaration`). An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type` over `struct_instance`,

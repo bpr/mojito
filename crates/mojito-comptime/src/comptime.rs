@@ -837,19 +837,6 @@ pub fn comptime_generic_template_names(
     collect_comptime_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
-/// The top-level `DType`-keyed template names (`def only_dt[dt: DType](a:
-/// Scalar[dt])`) of a linked program.
-///
-/// A call that omits the lane leaves it to the checker, which reads it off the
-/// argument's own SIMD slot and records the instantiation the next discovery
-/// round mints; until then the template stands in as a signature-only stub.
-pub fn dtype_generic_template_names(
-    program: &[Stmt],
-    templates: &mojito_checked::templates::TemplateCatalog,
-) -> HashSet<String> {
-    collect_dtype_generic_templates(program, &ScalarReads::of(program, templates))
-}
-
 /// The parameter an inferred application of `template` failed to close.
 ///
 /// That is the declaration of the first checker argument that is not closed;
@@ -979,7 +966,6 @@ pub fn elaborate_prepared(
         pack_generics,
         served_packs: served_pack_defs(program, &scalar_reads),
         comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
-        dtype_generics: collect_dtype_generic_templates(program, &scalar_reads),
         overload_families: collect_overload_families(program, &scalar_reads),
         scalar_reads,
         method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::scan(
@@ -2289,31 +2275,6 @@ fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> 
     }
 }
 
-/// Whether a `DType`- or lane-keyed top-level `def` is served by its
-/// template: it is keyed on a `DType` binder, on a parameter used as a lane
-/// width, or on a layout operand, and its every compile-time parameter is a
-/// type parameter or a scalar value (`Int`, `UInt`, `Bool`, `Float64`,
-/// `StringLiteral`, or `DType`) the runtime parameters name only as a lane
-/// slot ([`template_serves_binders`]). Such a body is checked once with its
-/// lane slots symbolic, a local `comptime` binding of a binder an alias of
-/// its parameter expression; MIR carries the slots in its register types and
-/// SIMD instructions, and the elaborator closes them per instance. The
-/// verdict is per declaration, overloaded or not, since overload selection
-/// is the checker's: a call names the declaration it selected.
-fn lane_def_template_served(statement: &Stmt) -> bool {
-    let StmtKind::Def {
-        name,
-        type_params,
-        params,
-        ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    (dtype_keyed_declaration(statement) || def_uses_layout_dependent_param(statement))
-        && template_serves_binders(type_params, params, name)
-}
-
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
 /// the callees its body spreads its pack into when so: its binders are ones
 /// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
@@ -2342,7 +2303,7 @@ fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<
         return None;
     };
     let packs = def_pack_names(type_params, params);
-    let shape = template_serves_binders(type_params, params, name)
+    let shape = template_serves_binders(type_params, name)
         && !def_body_keys_specialization(type_params, params, name, body, scalars)
         && value_packs_read_as_parameters(type_params, name, body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
@@ -3073,16 +3034,7 @@ fn is_specializable_declaration(
                     || (type_params
                         .iter()
                         .any(|parameter| parameter.name.starts_with('*'))
-                        && !pack_def_template_served(statement, served_packs))
-                    // A `[dtype: DType]` parameter, or a parameter used as a
-                    // lane width or a layout operand, keys a clone per call
-                    // unless the template serves the body
-                    // (`lane_def_template_served`): the body is checked once
-                    // with the lane symbolic, and the elaborator closes it
-                    // per instance.
-                    || ((dtype_keyed_declaration(statement)
-                        || def_uses_layout_dependent_param(statement))
-                        && !lane_def_template_served(statement)))
+                        && !pack_def_template_served(statement, served_packs)))
         }
         _ => false,
     }
@@ -3127,12 +3079,6 @@ struct Elab<'a> {
     /// instantiation for its occurrence; a deferred call keeps the template as
     /// a signature-only stub for the discovery check.
     comptime_generics: HashSet<String>,
-    /// The subset of `specializable` keyed on a `DType` parameter of its own.
-    /// The lane such a call omits is the argument's, which only the checker
-    /// reads, so the call consults the checker-recorded instantiation for its
-    /// occurrence and a deferred one keeps the template as a signature-only
-    /// stub for the discovery check.
-    dtype_generics: HashSet<String>,
     /// The declarations of every overloaded template name, in
     /// declaration order (see [`collect_overload_families`]). A call
     /// to such a name is served only from the checker's recorded
@@ -3690,16 +3636,15 @@ fn collect_specializable<'a>(
 }
 
 /// The declarations of every overloaded template name, in declaration order:
-/// a name declared more than once with a compile-time-keyed declaration, a
-/// type-pack one the template does not serve, or a `DType`-keyed one the
-/// template does not serve among them.
+/// a name declared more than once with a compile-time-keyed declaration or
+/// a type-pack one the template does not serve among them.
 ///
 /// Overload selection is the checker's, so the elaborator cannot pick among
 /// these itself: a call reaches one of them only through the checker's
 /// recorded instantiation, which names the selected overload by its runtime
 /// parameter names. A family may mix specialization classes — a keyed
-/// declaration beside a type pack, a `DType` parameter, or a layout-dependent
-/// one — because the class is a property of a declaration, not of the name:
+/// declaration beside a type pack, or beside a template-served one — because
+/// the class is a property of a declaration, not of the name:
 /// the request's selected declaration index is what tells a call which class
 /// serves it.
 fn collect_overload_families<'a>(
@@ -3718,7 +3663,6 @@ fn collect_overload_families<'a>(
             && declarations.iter().any(|s| {
                 comptime_keyed_declaration(s, scalars)
                     || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
-                    || (dtype_keyed_declaration(s) && !lane_def_template_served(s))
             })
     });
     families
@@ -3791,18 +3735,6 @@ fn declaration_takes(
         && caller_visible.next().is_none()
 }
 
-/// Whether a top-level `def` keys a lane on a `DType` parameter of its own —
-/// the `DType`-keyed class's per-declaration predicate. Such a signature
-/// stands in as a checkable stub: a `Scalar[dt]` slot validates symbolically.
-fn dtype_keyed_declaration(statement: &Stmt) -> bool {
-    let StmtKind::Def { type_params, .. } = &statement.kind else {
-        return false;
-    };
-    type_params
-        .iter()
-        .any(|parameter| matches!(parameter.bounds.as_slice(), [only] if only == "DType"))
-}
-
 /// Whether a top-level `def` is specializable only because its body holds
 /// compile-time control flow or a `rebind` over its own parameters — the
 /// compile-time-keyed class's per-declaration predicate.
@@ -3829,105 +3761,33 @@ fn comptime_keyed_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
 /// binds from the call's recorded elements — or a value parameter typed by a
 /// scalar (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`) or by
 /// an earlier type binder (`[T: AnyType, //, v: T]`), a value pack among
-/// them, that a runtime parameter type names only as a vector's lane slot (`a: Scalar[dt]`, `v: SIMD[dt, width]`), if at all, so
-/// the elaborator binds it from the call's recorded arguments or from the
-/// argument's slot. A value a call must infer from any other argument type
-/// keeps the clone until the elaborator binds one from the call.
-pub(super) fn template_serves_binders(
-    type_params: &[TypeParam],
-    params: &[FnParam],
-    owner: &str,
-) -> bool {
+/// them. The elaborator binds such a value from the call's recorded
+/// arguments, from the argument's lane slot, or from the checker's inferred
+/// instantiation (`n` of `a: Box[n]`).
+pub(super) fn template_serves_binders(type_params: &[TypeParam], owner: &str) -> bool {
     !type_params.is_empty()
         && type_params.iter().all(|parameter| {
             match classify_ct_param(parameter, type_params, owner) {
                 Some(ParamDecl::Type { .. }) => true,
-                Some(ParamDecl::Value { ty, .. }) => {
-                    matches!(
-                        ty.as_ref(),
-                        Ty::Int
-                            | Ty::UInt
-                            | Ty::Bool
-                            | Ty::Float64
-                            | Ty::StringLiteral
-                            | Ty::Dtype
-                            | Ty::Param { .. }
-                    ) && !params
-                        .iter()
-                        .any(|param| type_names_outside_lanes(&param.ty, &parameter.name))
-                }
+                Some(ParamDecl::Value { ty, .. }) => matches!(
+                    ty.as_ref(),
+                    Ty::Int
+                        | Ty::UInt
+                        | Ty::Bool
+                        | Ty::Float64
+                        | Ty::StringLiteral
+                        | Ty::Dtype
+                        | Ty::Param { .. }
+                ),
                 _ => false,
             }
         })
 }
 
-/// [`type_names`], except inside the arguments of a `SIMD` or `Scalar` type,
-/// whose slots the elaborator binds from the argument's own slots.
-fn type_names_outside_lanes(ty: &Type, name: &str) -> bool {
-    match ty {
-        Type::Named(head, _) if head == "SIMD" || head == "Scalar" => false,
-        Type::Named(_, arguments) => arguments.iter().any(|argument| match argument {
-            ParamArg::Type(inner) => type_names_outside_lanes(inner, name),
-            ParamArg::Value(value) => expr_names(value, name),
-            ParamArg::Named { value, .. } => match value.as_ref() {
-                ParamArg::Type(inner) => type_names_outside_lanes(inner, name),
-                ParamArg::Value(inner) => expr_names(inner, name),
-                ParamArg::Named { .. } => type_names(ty, name),
-            },
-        }),
-        other => type_names(other, name),
-    }
-}
-
-/// Whether the expression `expr` reads the identifier `name`.
-fn expr_names(expr: &Expr, name: &str) -> bool {
-    struct Finder<'a> {
-        name: &'a str,
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(&expr.kind, ExprKind::Identifier(found) if found == self.name) {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = Finder { name, found: false };
-    mojito_ast::visit::walk_expr(&mut finder, expr);
-    finder.found
-}
-
-/// Whether the annotation `ty` spells `name`, as a type or in a value slot.
-fn type_names(ty: &Type, name: &str) -> bool {
-    struct Finder<'a> {
-        name: &'a str,
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(&expr.kind, ExprKind::Identifier(found) if found == self.name) {
-                self.found = true;
-            }
-        }
-
-        fn visit_type(&mut self, ty: &Type) {
-            if matches!(ty, Type::Named(found, _) | Type::SelfParam(found) if found == self.name) {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = Finder { name, found: false };
-    mojito_ast::visit::walk_type(&mut finder, ty);
-    finder.found
-}
-
 /// Whether a declaration's own parameters permit the compile-time-keyed class.
-/// A pack, a `DType` parameter, or a layout-dependent parameter keeps its own
-/// specialization path: such a signature cannot stand in as a checkable stub.
+/// A pack, a `DType` parameter, or a layout-dependent parameter cannot stand
+/// in as a checkable stub, so such a declaration whose body keys a clone
+/// resolves its applications explicitly.
 fn admits_comptime_keying(statement: &Stmt) -> bool {
     let StmtKind::Def { type_params, .. } = &statement.kind else {
         return false;
@@ -3994,28 +3854,6 @@ fn variadic_keyed_declaration(statement: &Stmt) -> bool {
         if type_params.iter().any(|parameter| parameter.name.starts_with('*')))
 }
 
-/// Top-level `DType`-keyed templates the template does not serve
-/// ([`lane_def_template_served`]): a uniquely named such `def`, or an
-/// overload family's such member, which the cloner specializes per call. Its
-/// signature, with the `DType` parameter omitted, stands in as a checkable
-/// stub until a call's request closes it.
-fn collect_dtype_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
-    let families = collect_overload_families(program, scalars);
-    let def_counts = def_name_counts(program);
-    program
-        .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def { name, .. } = &statement.kind else {
-                return None;
-            };
-            let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
-                && dtype_keyed_declaration(statement)
-                && !lane_def_template_served(statement);
-            admitted.then(|| name.clone())
-        })
-        .collect()
-}
-
 fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let families = collect_overload_families(program, scalars);
     let def_counts = def_name_counts(program);
@@ -4054,9 +3892,6 @@ fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
             else {
                 return None;
             };
-            let StmtKind::Def { params, .. } = &statement.kind else {
-                return None;
-            };
             if is_specializable_declaration(statement, &served_packs, scalars)
                 || def_counts[name.as_str()] != 1
             {
@@ -4071,8 +3906,7 @@ fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
                     })
                 )
             });
-            (has_type_binder || template_serves_binders(type_params, params, name))
-                .then(|| name.clone())
+            (has_type_binder || template_serves_binders(type_params, name)).then(|| name.clone())
         })
         .collect()
 }
@@ -4847,14 +4681,10 @@ mod value_typed_binder_tests {
     fn a_value_pack_typed_by_a_sibling_binder_is_a_served_value_parameter() {
         let parsed =
             parse("def g[T: AnyType, //, *vs: T]() -> Int:\n    return 0\n").expect("parse");
-        let (type_params, params) = parsed
+        let type_params = parsed
             .iter()
             .find_map(|statement| match &statement.kind {
-                StmtKind::Def {
-                    type_params,
-                    params,
-                    ..
-                } => Some((type_params, params)),
+                StmtKind::Def { type_params, .. } => Some(type_params),
                 _ => None,
             })
             .expect("one def");
@@ -4866,6 +4696,6 @@ mod value_typed_binder_tests {
                 ParamDecl::Value { ty, variadic: true, .. },
             ] if matches!(ty.as_ref(), Ty::Param { binder: typed, .. } if typed.id == *binder)
         ));
-        assert!(template_serves_binders(type_params, params, "g"));
+        assert!(template_serves_binders(type_params, "g"));
     }
 }

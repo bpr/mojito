@@ -1091,21 +1091,6 @@ impl Elab<'_> {
                             return Ok(());
                         };
                         (values, kept, false)
-                    } else if self.dtype_generics.contains(name.as_str())
-                        && omits_dtype_param(self.specializable[name.as_str()], param_args)
-                    {
-                        // An inferred application of a `DType`-keyed template:
-                        // the lane is the argument's own, which only the checker
-                        // reads, so consult the recorded instantiation for this
-                        // occurrence, else keep the template as a stub for the
-                        // discovery check.
-                        let Some((values, kept, _)) =
-                            self.def_request_target(name, &source_span, param_args, mono)
-                        else {
-                            mono.retain_abstract(name, &source_span, false);
-                            return Ok(());
-                        };
-                        (values, kept, false)
                     } else {
                         let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
@@ -1124,14 +1109,12 @@ impl Elab<'_> {
                             },
                         );
                         let (values, kept) = match resolved {
-                            // An explicit application of a compile-time- or
-                            // `DType`-keyed template over an enclosing body's
-                            // own parameters (`show[T](x)`, a method's own lane
-                            // in `helper[dt](x)`) stays on the stub, as an
-                            // inferred one does.
+                            // An explicit application of a compile-time-keyed
+                            // template over an enclosing body's own parameters
+                            // (`show[T](x)`) stays on the stub, as an inferred
+                            // one does.
                             Err(_)
-                                if (self.comptime_generics.contains(name.as_str())
-                                    || self.dtype_generics.contains(name.as_str()))
+                                if self.comptime_generics.contains(name.as_str())
                                     && param_args_mention_any(
                                         param_args,
                                         &mono.symbolic_type_params,
@@ -1951,17 +1934,6 @@ impl Elab<'_> {
 /// without one.
 fn omits_required_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
     !omitted_required_params(template, param_args).is_empty()
-}
-
-/// Whether a call omits a required parameter and every one it omits is keyed
-/// on a `DType`. Such a lane lives in the argument's own type, which the
-/// checker reads off a `Scalar[dt]` slot and the elaborator cannot.
-fn omits_dtype_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
-    let omitted = omitted_required_params(template, param_args);
-    !omitted.is_empty()
-        && omitted
-            .iter()
-            .all(|parameter| matches!(parameter.bounds.as_slice(), [only] if only == "DType"))
 }
 
 /// The parameters of `template` a call leaves without an argument: no source

@@ -9,7 +9,6 @@ use super::{
 use mojito_ast::ast::{Method, Stmt, StmtKind};
 use mojito_checked::census::{CloneCensus, CloneClass};
 use mojito_common::token::Span;
-use mojito_types::ct::CtValue;
 use std::collections::HashMap;
 
 /// What one elaboration produced, and the prepared program it read.
@@ -132,9 +131,7 @@ fn method_source_name(owner: &str, method: &mojito_ast::ast::Method) -> String {
 }
 
 fn def_class(trace: &DefInstanceTrace, template: &[Stmt]) -> CloneClass {
-    if has_lane_value(&trace.value_bindings) {
-        CloneClass::DTypeVectorDef
-    } else if !trace.pack_bindings.is_empty() {
+    if !trace.pack_bindings.is_empty() {
         CloneClass::PackDef
     } else if block_has_statement(template, &|kind| {
         matches!(kind, StmtKind::ComptimeFor { .. })
@@ -165,10 +162,4 @@ fn bakes_own_parameters(template: &Method, clone: &Method) -> bool {
             .type_params
             .iter()
             .any(|parameter| baked.contains(&parameter.name.as_str()))
-}
-
-fn has_lane_value(bindings: &[(String, CtValue)]) -> bool {
-    bindings
-        .iter()
-        .any(|(_, value)| matches!(value, CtValue::Dtype(_) | CtValue::Simd { .. }))
 }

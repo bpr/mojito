@@ -217,14 +217,6 @@ impl Elab<'_> {
                     &stmt,
                     "unspecialized compile-time-keyed function",
                 ));
-            } else if retained
-                && self.dtype_generics.contains(&template_name)
-                && dtype_keyed_declaration(&stmt)
-            {
-                // A `DType`-keyed template with a deferred call stands in the
-                // same way, until the checker reads the lane off the call's
-                // argument and its request is served.
-                out.push(template_stub(&stmt, "unspecialized DType-keyed function"));
             }
             if let Some(mut specs) = generated {
                 specs.reverse();
@@ -291,7 +283,6 @@ impl Elab<'_> {
             if !self.bound_generics.contains(callee)
                 && !self.pack_generics.contains(callee)
                 && !self.comptime_generics.contains(callee)
-                && !self.dtype_generics.contains(callee)
             {
                 continue;
             }
@@ -493,15 +484,6 @@ impl Elab<'_> {
             .iter()
             .map(String::as_str)
             .chain(per_call_stubs.map(String::as_str))
-            // A `DType`-keyed template stands as a stub only where a call
-            // actually deferred to the checker; the rest specialize outright
-            // and are nobody's stub.
-            .chain(
-                self.dtype_generics
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|name| uses.iter().any(|reference| reference.callee == **name)),
-            )
             .collect();
         loop {
             let reached: Vec<&str> = uses
@@ -526,30 +508,23 @@ impl Elab<'_> {
 
     /// Whether the template of the `def` `name` serves every closed call of
     /// it, so no call mints a clone: the `def` is a plain trait-bound one
-    /// whose compile-time parameters are all type parameters, and its body
+    /// whose compile-time parameters are all served binders, and its body
     /// neither holds a construct only an instance lowers (by its checked
     /// types as the driver read them) nor reaches a compile-time-keyed stub.
     /// A nested `def` or lambda is no such construct: its body is a generator
-    /// over this one's binders, instantiated per instance below MIR. The elaborator instantiates the template's
-    /// MIR for each call, and a call's transfer summary names its loans by
-    /// the stored type. A scalar value parameter an application spells is
-    /// served too; one a call must infer from an argument type keeps the
-    /// clone until the elaborator binds it from the call. The verdict is the
-    /// first one made for the name, so every call of it agrees.
+    /// over this one's binders, instantiated per instance below MIR. The
+    /// elaborator instantiates the template's MIR for each call, and a call's
+    /// transfer summary names its loans by the stored type. The verdict is
+    /// the first one made for the name, so every call of it agrees.
     pub(super) fn template_serves_def(&self, name: &str, template: &Stmt, mono: &Mono) -> bool {
         if let Some(served) = self.template_served_defs.borrow().get(name) {
             return *served;
         }
-        let StmtKind::Def {
-            type_params,
-            params,
-            ..
-        } = &template.kind
-        else {
+        let StmtKind::Def { type_params, .. } = &template.kind else {
             return false;
         };
         let served = self.bound_generics.contains(name)
-            && template_serves_binders(type_params, params, name)
+            && template_serves_binders(type_params, name)
             && !self
                 .keyed_methods
                 .contains(&(name.to_string(), String::new()))

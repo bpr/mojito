@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R479**.
+Next free ID: **R483**.
 
 ## Ordered Work
 
@@ -105,22 +105,6 @@ correctness fix to existing behavior is allowed.
   - Found while landing R246 (2026-10-06).
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
-
-- [ ] **R477 (P3c) A lane-keyed `def` whose value binder a runtime
-  parameter names outside a lane slot is cloned per call**
-
-  Problem: `def h[dt: DType, n: Int](a: Box[n], b: Scalar[dt])` is not served
-  by its template, and its inferred call `h(Box[3](0), Int32(1))` is
-  rejected with "generic 'h' requires compile-time parameter 'dt'", where the
-  pin prints `3`.
-  - `template_serves_binders` rejects the shape, so the `def` takes the
-    `DType` stub path (`dtype_generic_template_names`, `omits_dtype_param`)
-    and the `DTypeVectorDef` census class.
-  - That path and class are deleted once this lands; it is the last shape
-    on them, overloaded lane-keyed `def`s being served per declaration.
-  - Pinned by `conformance/probes/lane_def_value_binder_outside_lane_slot.mojo`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R478 (P3c) A served generic body's call over its own binder into a
   surviving overload family fails**
@@ -1846,6 +1830,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R479 A partial explicit application does not infer the remaining
+  parameters**
+
+  Problem: `g2[m: Int, n: Int](a: Box[n])` called as `g2[1](Box[4](0))` is
+  rejected with "cannot infer type parameter 'n' of 'g2' from the
+  arguments", where the pin prints `5`.
+  - The same holds for a lane: `h[DType.int8](Box[4](0), Int8(1))` for
+    `h[dt: DType, n: Int](a: Box[n], b: Scalar[dt])`, pin `4`.
+  - It holds for a keyword-only prefix too: `k[s="yo2"](Int16(2))` for
+    `k[dt: DType, s: String](x: Scalar[dt])`, and `z[T=P](Int8(1))`.
+  - Once any parameter is spelled, the checker solves none of the rest from
+    the arguments.
+  - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R52 A binder is not inferred through a converting argument**
 
   Problem: `boxed(value)` for `def boxed[U: Copyable & Deinitable](box:
@@ -2447,6 +2447,19 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R480 A `comptime if` over an element of a vector-valued binder
+  takes the wrong arm**
+
+  Problem: `a5[v: SIMD[DType.int32, 2]]() -> Int32` holding
+  `comptime if v[0] > 0: return 7` then `return 9` prints `9` for
+  `a5[SIMD[DType.int32, 2](1, 5)]()`, where the pin prints `7`.
+  - A plain read of the element (`return v[1]`) is right.
+  - `--erased` reports "the erased oracle cannot decide the comptime if
+    condition", so the condition is not folded from the binder's value.
+  - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R471 A local `comptime` struct binding in a plain `def` is stored
   and destroyed**
 
@@ -2476,6 +2489,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - An `Int`, `Bool`, `DType`, vector, or struct leaf folds (`e.a`,
     `e.i.v`, `show(e.i)`).
   - Found while landing R467 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R481 A value binder typed by a lane type is rejected**
+
+  Problem: `s[dt: DType, v: Scalar[dt]]() -> Scalar[dt]` called as
+  `s[DType.int16, 5]()` is rejected with "type mismatch for value parameter
+  'v': expected Scalar[dt], found 5", where the pin prints `6`.
+  - The argument is checked against the declared type before the earlier
+    binder `dt` is substituted into it.
+  - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R482 A sized-scalar value binder is rejected**
+
+  Problem: `s[v: Int16]() -> Int16` is rejected with "unknown trait 'Int16'
+  in a type-parameter bound", where the pin prints `6` for `s[5]()`.
+  - The capitalized name in the binder's annotation is read as a trait
+    bound, not as a value type.
+  - Its argument `s[Int16(5)]()` also stops the parser with "Expected ']'
+    after a subscript", a different shape from R381's operator.
+  - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

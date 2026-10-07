@@ -2699,13 +2699,6 @@ fn template_value_keyed_lane_def_is_template_served() {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let census = program.instantiation_census();
-        assert_eq!(
-            census
-                .cloned
-                .count(mojito::census::CloneClass::DTypeVectorDef),
-            0,
-            "no lane-keyed def clone: {census:?}"
-        );
         assert!(
             !census.cloned.minted("lane") && !census.cloned.minted("wide"),
             "the templates serve every call: {census:?}"
@@ -2728,13 +2721,6 @@ fn template_overloaded_lane_def_is_template_served() {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let census = program.instantiation_census();
-        assert_eq!(
-            census
-                .cloned
-                .count(mojito::census::CloneClass::DTypeVectorDef),
-            0,
-            "no lane-keyed def clone: {census:?}"
-        );
         assert!(
             !census.cloned.minted("lane"),
             "the template serves every lane call: {census:?}"
@@ -2757,13 +2743,6 @@ fn template_local_comptime_lane_binding_is_template_served() {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
         let census = program.instantiation_census();
-        assert_eq!(
-            census
-                .cloned
-                .count(mojito::census::CloneClass::DTypeVectorDef),
-            0,
-            "no lane-keyed def clone: {census:?}"
-        );
         assert!(
             !census.cloned.minted("rebound") && !census.cloned.minted("single"),
             "the templates serve every call: {census:?}"
@@ -2771,6 +2750,29 @@ fn template_local_comptime_lane_binding_is_template_served() {
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "7 4.0\n7 2.5\n"
+        );
+    }
+}
+
+#[test]
+fn template_lane_def_value_binder_outside_lane_is_template_served() {
+    // A lane-keyed `def` is an ordinary generic `def`: a value binder a
+    // runtime parameter names outside a lane slot (`n` of `a: Box[n]`) is
+    // inferred from the argument's type, an erased origin beside the lane is
+    // too, and a `thin` callable binder is bound from the brackets, so the
+    // cloner mints no instance.
+    let source = "struct Box[n: Int](Copyable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef h[dt: DType, n: Int](a: Box[n], b: Scalar[dt]) -> Int:\n    return n\n\ndef o2[dt: DType, mut: Bool, //, origin: Origin[mut=mut]](ref[origin] x: Scalar[dt]) -> Scalar[dt]:\n    return x + 1\n\ndef twice(x: Int) -> Int:\n    return 2 * x\n\ndef c[dt: DType, f: def(Int) thin -> Int](x: Scalar[dt]) -> Int:\n    return f(Int(x))\n\ndef main():\n    var a = Int32(4)\n    print(h(Box[3](0), Int32(1)), h[DType.int8, 2](Box[2](0), Int8(1)))\n    print(o2(a), c[DType.int8, twice](Int8(3)))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let census = program.instantiation_census();
+        assert!(
+            !census.cloned.minted("h") && !census.cloned.minted("o2") && !census.cloned.minted("c"),
+            "the templates serve every call: {census:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "3 2\n5 6\n"
         );
     }
 }

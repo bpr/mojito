@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `DType`- or lane-keyed `def` is now an ordinary generic `def`, served by
+  its template unless its body keys a clone, as at the pin. A value binder
+  a runtime parameter names outside a lane slot (`h[dt: DType, n: Int](a:
+  Box[n], b: Scalar[dt])` called as `h(Box[3](0), Int32(1))`), or an erased
+  origin beside the lane (`o2(a)`), was rejected with "requires
+  compile-time parameter 'dt'" and now runs; a type or pack binder beside
+  an inferred value is served too. A vector-valued binder now reads on the
+  native backend.
+
 - An overloaded `DType`- or lane-keyed `def` (`kind[dt: DType](a:
   Scalar[dt])` beside `kind(a: String)`) is now served by its template per
   declaration, as at the pin, instead of making its name a template family

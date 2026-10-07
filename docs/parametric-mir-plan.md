@@ -672,8 +672,9 @@ branch for the class is deleted, and so is its certificate class.
   parameter expression, and the elaborator binds the lane binders from the
   call's recorded arguments or a vector argument's slots and closes the slots
   per instance. An overloaded lane-keyed `def` is served per declaration
-  since R260; the cloner keeps one whose value binder a runtime parameter
-  names outside a lane slot (R477); a method's own lane
+  since R260, and one whose value binder a runtime parameter names outside
+  a lane slot (`a: Box[n]`) since R477, which deleted the cloner's `DType`
+  path; a method's own lane
   binder is served since P3e's first step, and a local `comptime` binding
   of a lane binder (`comptime lane = dt`) is served as an alias of the
   binder since R261.
