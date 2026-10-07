@@ -812,6 +812,20 @@ fn parses_struct_conformance_list() {
 }
 
 #[test]
+fn parses_a_method_value_parameter_typed_by_self_param() {
+    let statements = parse(
+        "struct S[T: AnyType]:\n    def pick[v: Self.T](self) -> Self.T:\n        return v\n",
+    );
+    let StmtKind::Struct { methods, .. } = &statements[0].kind else {
+        panic!("expected struct");
+    };
+    let parameter = &methods[0].type_params[0];
+    assert_eq!(parameter.name, "v");
+    assert_eq!(parameter.bounds, ["Self.T"]);
+    assert_eq!(parameter.value_type, Some(Type::SelfParam("T".into())));
+}
+
+#[test]
 fn retains_conditional_struct_conformance_predicates() {
     let statements =
         parse("struct Wrapper[T: AnyType](Writable where conforms_to(T, Writable)):\n    pass\n");

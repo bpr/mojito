@@ -604,22 +604,31 @@ impl ScopeCx<'_> {
             self.expr(role, "spread list", list, &MetaTy::type_list(), nested);
             return;
         }
+        // A value parameter typed by a sibling type binder (`v: T`) has the
+        // kind that binder's argument gives it.
+        let types: mojito_types::types::TySubst = declared
+            .into_iter()
+            .flatten()
+            .zip(args)
+            .filter_map(|(decl, argument)| match (decl, argument) {
+                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Some((id.clone(), ty.clone())),
+                _ => None,
+            })
+            .collect();
         for (slot, argument) in args.iter().enumerate() {
             match argument {
                 TyArg::Ty(ty) => self.walk_in(role, ty, nested),
                 TyArg::Val(value) => {
-                    let expected =
-                        declared
-                            .and_then(|decls| decls.get(slot))
-                            .and_then(|decl| match decl {
-                                ParamDecl::Value {
-                                    ty, variadic: true, ..
-                                } => {
-                                    Some(MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone()))))
-                                }
-                                ParamDecl::Value { ty, .. } => Some(MetaTy::value((**ty).clone())),
-                                ParamDecl::Type { .. } => None,
-                            });
+                    let expected = declared
+                        .and_then(|decls| decls.get(slot))
+                        .and_then(|decl| match decl {
+                            ParamDecl::Value {
+                                ty, variadic: true, ..
+                            } => Some(MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone())))),
+                            ParamDecl::Value { ty, .. } => Some(MetaTy::value((**ty).clone())),
+                            ParamDecl::Type { .. } => None,
+                        })
+                        .map(|expected| expected.substitute(&types));
                     self.value(role, value, expected.as_ref(), nested);
                 }
                 TyArg::Origin(_) => {}

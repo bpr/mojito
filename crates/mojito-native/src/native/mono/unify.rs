@@ -187,6 +187,16 @@ pub(super) fn bind_explicit_value_arguments(
             // A constant register is the value; an argument built from the
             // caller's value binders is its recorded expression under the
             // caller instance's bindings.
+            // A binder typed by a type binder (`v: T`) keeps the checker's
+            // solution, materialized at `T`'s: the register holds the
+            // literal as spelled (`2` where `T` is `Float64`).
+            ParamDecl::Value { ty, .. }
+                if matches!(ty.as_ref(), Ty::Param { .. })
+                    && bindings
+                        .values
+                        .get(&declaration.binder())
+                        .is_some_and(|bound| !mojito_types::types::ct_value_is_symbolic(bound)) => {
+            }
             ParamDecl::Value { name, .. } => {
                 let value = match (constant_values.get(&value_reg.0), &argument.expr) {
                     (Some(value), _) => value.clone(),

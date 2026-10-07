@@ -1406,7 +1406,7 @@ impl ParamContext {
         let replaced = match expr.kind() {
             ParamKind::Constant(_) | ParamKind::Hole { .. } => expr.clone(),
             ParamKind::DeclRef(reference) => match bindings.lookup(reference) {
-                Some(value) => self.bound_value(expr, value, depth)?,
+                Some(value) => self.bound_value(expr, value, bindings, depth)?,
                 None => expr.clone(),
             },
             ParamKind::IndexRef {
@@ -1416,7 +1416,7 @@ impl ParamContext {
                 .checked_sub(depth)
                 .and_then(|outer| bindings.lookup_index(outer, *index))
             {
-                Some(value) => self.bound_value(expr, value, depth)?,
+                Some(value) => self.bound_value(expr, value, bindings, depth)?,
                 None => expr.clone(),
             },
             ParamKind::Op { op, operands } => {
@@ -1537,21 +1537,33 @@ impl ParamContext {
         &self,
         reference: &ParamExpr,
         value: &ParamExpr,
+        bindings: &ParamBindings,
         depth: u32,
     ) -> Result<ParamExpr, ParamError> {
-        let value = match (reference.meta(), value.as_constant()) {
-            (MetaTy::Value(ty), Some(constant)) if value.meta() != reference.meta() => {
+        let declared = reference.meta().substitute(bindings.types());
+        // A reference typed by a type binder no binding here solves
+        // (`v: T`) takes the value as typed: its declaration's application
+        // solved the binder from it.
+        if declared.has_free_parameters() {
+            return if depth == 0 {
+                Ok(value.clone())
+            } else {
+                self.shift(value, 0, depth)
+            };
+        }
+        let value = match (&declared, value.as_constant()) {
+            (MetaTy::Value(ty), Some(constant)) if *value.meta() != declared => {
                 self.constant_as(constant.clone(), ty)?
             }
             _ => value.clone(),
         };
-        if value.meta() != reference.meta()
-            && !value.meta().is_unresolved_struct(reference.meta())
-            && !value.meta().is_list_of(reference.meta())
+        if *value.meta() != declared
+            && !value.meta().is_unresolved_struct(&declared)
+            && !value.meta().is_list_of(&declared)
         {
             return Err(ParamError::TypeMismatch {
                 operation: format!("binding of '{reference}'"),
-                expected: reference.meta().to_string(),
+                expected: declared.to_string(),
                 found: value.meta().to_string(),
             });
         }
@@ -2431,6 +2443,49 @@ impl MetaTy {
 
     fn is_literal(&self) -> bool {
         matches!(self.as_value(), Some(Ty::IntLiteral | Ty::FloatLiteral))
+    }
+
+    /// This meta-type with the type binders `subst` solves replaced.
+    #[must_use]
+    pub fn substitute(&self, subst: &crate::types::TySubst) -> Self {
+        if subst.is_empty() {
+            return self.clone();
+        }
+        match self {
+            Self::Value(ty) => Self::value(crate::types::substitute(ty, subst)),
+            Self::ParamList(element) => Self::ParamList(Box::new(element.substitute(subst))),
+            Self::Tuple(elements) => {
+                Self::Tuple(elements.iter().map(|e| e.substitute(subst)).collect())
+            }
+            Self::List(elements) => {
+                Self::List(elements.iter().map(|e| e.substitute(subst)).collect())
+            }
+            Self::Set(elements) => {
+                Self::Set(elements.iter().map(|e| e.substitute(subst)).collect())
+            }
+            Self::Dict(entries) => Self::Dict(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.substitute(subst), value.substitute(subst)))
+                    .collect(),
+            ),
+            Self::Type | Self::ReflectedType => self.clone(),
+        }
+    }
+
+    /// Whether a value domain in this meta-type names a type parameter.
+    pub fn has_free_parameters(&self) -> bool {
+        match self {
+            Self::Value(ty) => matches!(**ty, Ty::Param { .. }),
+            Self::ParamList(element) => element.has_free_parameters(),
+            Self::Tuple(elements) | Self::List(elements) | Self::Set(elements) => {
+                elements.iter().any(Self::has_free_parameters)
+            }
+            Self::Dict(entries) => entries
+                .iter()
+                .any(|(key, value)| key.has_free_parameters() || value.has_free_parameters()),
+            Self::Type | Self::ReflectedType => false,
+        }
     }
 
     /// A frozen struct constant is typed by bare name, while its parameter

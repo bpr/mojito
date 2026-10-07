@@ -67,39 +67,29 @@ pub(super) fn classify_ct_param(
     if retained_specialization_param(tp, siblings) {
         return None;
     }
+    let value = |ty: Ty| ParamDecl::Value {
+        id: elaborated_binder(tp, siblings, owner),
+        name: tp.name.clone(),
+        ty: Box::new(ty),
+        default: tp
+            .default
+            .as_ref()
+            .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
+        callable_default: None,
+        infer_only: tp.infer_only,
+        variadic: tp.name.starts_with('*'),
+        constraints: Vec::new(),
+    };
     if let Some(source_type) = &tp.value_type
         && let Some(ty) = ct_param_source_type(source_type)
     {
-        return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings, owner),
-            name: tp.name.clone(),
-            ty: Box::new(ty),
-            default: tp
-                .default
-                .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
-            callable_default: None,
-            infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
-            constraints: Vec::new(),
-        });
+        return Some(value(ty));
     }
     if let [only] = tp.bounds.as_slice()
-        && let Some(ty) = ct_value_param_type(only)
+        && let Some(ty) =
+            ct_value_param_type(only).or_else(|| sibling_type_binder(tp, only, siblings, owner))
     {
-        return Some(ParamDecl::Value {
-            id: elaborated_binder(tp, siblings, owner),
-            name: tp.name.clone(),
-            ty: Box::new(ty),
-            default: tp
-                .default
-                .as_ref()
-                .and_then(|default| ct_expr_from_ast(default, siblings, owner)),
-            callable_default: None,
-            infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
-            constraints: Vec::new(),
-        });
+        return Some(value(ty));
     }
     Some(ParamDecl::Type {
         id: elaborated_binder(tp, siblings, owner),
@@ -208,4 +198,38 @@ pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dt
     };
     let width = width.wrapping_signed(64)?;
     (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
+}
+
+/// The `Ty::Param` of the type binder `name` when it is a non-variadic
+/// sibling declared before `tp`: a value parameter of that type
+/// (`[T: AnyType, //, v: T]`), as the checker classifies it.
+fn sibling_type_binder(
+    tp: &TypeParam,
+    name: &str,
+    siblings: &[TypeParam],
+    owner: &str,
+) -> Option<Ty> {
+    let position = siblings
+        .iter()
+        .position(|sibling| sibling.name == tp.name)?;
+    let sibling = siblings[..position]
+        .iter()
+        .find(|sibling| sibling.name == name)?;
+    let ParamDecl::Type {
+        id,
+        bounds,
+        variadic: false,
+        ..
+    } = classify_ct_param(sibling, siblings, owner)?
+    else {
+        return None;
+    };
+    Some(Ty::Param {
+        binder: mojito_types::param_expr::ParamRef {
+            id,
+            name: std::sync::Arc::from(name),
+        },
+        bounds,
+        callable_bound: None,
+    })
 }

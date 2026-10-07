@@ -637,6 +637,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // `Origin[mut=True]`, so they record as the `Origin` bound with a
             // fixed mutability.
             let mut value_type = None;
+            // `v: Self.T` is a value parameter typed by the enclosing
+            // struct's type parameter.
+            let first_bound = if first_bound == "Self"
+                && callable_bound.is_none()
+                && matches!(self.peek_token()?, Some(Token::Dot))
+            {
+                self.next_token()?;
+                let param = self.expect_identifier("Expected a parameter name after 'Self.'")?;
+                let spelled = format!("Self.{param}");
+                value_type = Some(Type::SelfParam(param));
+                spelled
+            } else {
+                first_bound
+            };
             let origin_mutability = if let Some(fixed) = fixed_mutability {
                 Some(fixed)
             } else if first_bound == "Origin" && matches!(self.peek_token()?, Some(Token::LBracket))

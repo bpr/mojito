@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R448**.
+Next free ID: **R453**.
 
 ## Ordered Work
 
@@ -2780,22 +2780,60 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R446 A value parameter typed by a type parameter is rejected**
+- [ ] **R448 A value that solves a type parameter to `String` is rejected**
 
-  Problem: `struct S[T: ImplicitlyCopyable & Writable, //, v: T]` and
-  `def f[T: ImplicitlyCopyable & Writable, //, v: T]() -> T` fail with
-  "unknown trait 'T' in a type-parameter bound", where the pin infers `T`
-  from the argument and `S[3]().get()`, `f[True]()`, and `f[2.5]()` print
-  `3`, `True`, and `2.5`.
-  - The checker (`classify_params_in_scope`, `checker/declarations.rs`) and
-    the elaborator (`classify_ct_param`, `comptime.rs`) read a lone bound as
-    a trait, a scalar type, or a struct, never a sibling binder.
-  - Classifying it as a value parameter is not enough: the infer-only `T`
-    must be solved from the value argument, and the value's meta, identity,
-    and mangling then carry a type that is still a parameter.
-  - Upstream's `ParameterList[type: AnyType, //, values: ...]` and its
-    iterator are declared this way, so R325 waits on it.
-  - Found while landing R325's first stages (2026-10-07).
+  Problem: `f["lit"]()` and `f[String("s")]()` over `def f[T:
+  ImplicitlyCopyable & Writable, //, v: T]() -> T` fail with "value
+  parameter 'v' typed by 'T' cannot bind a 'String' value yet", where the
+  pin solves `T = String` and prints `lit` and `s`.
+  - A compile-time string is a `CtValue::Str`, typed `StringLiteral`, so a
+    read of `v` at `T = String` would put a literal in a `String` register.
+  - Mono must close the read as the literal followed by the conversion MIR
+    already uses for a `[s: String]` read; the checker then accepts the
+    `Str` against the `String` struct in one shared rule.
+  - The rejection lives in `Checker::solve_binders_from_values`.
+  - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R449 A keyword-supplied infer-only parameter is rejected**
+
+  Problem: `f[T=Int, n=3](1)` over `def f[T: Writable & ImplicitlyCopyable,
+  //, n: Int](x: T) -> Int`, and `PL[T=Int]()` over `struct PL[T: …, //,
+  *vs: T]`, fail with "infer-only parameter 'T' cannot be supplied
+  explicitly", where the pin accepts both and prints `3` and `0`.
+  - The pin rejects only a positional argument for an infer-only binder.
+  - The check is made twice: in `Checker::resolve_use_params` and in
+    `split_callable_specialization` (`checker/generics.rs`).
+  - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R450 A `UInt` value parameter inferred from an argument type is missing at the call**
+
+  Problem: `name(S[UInt(3)]())` over `def name[v: UInt](s: S[v]) -> UInt`
+  fails with "required compile-time value parameter 'v' is missing", where
+  the pin prints `3`; the same holds for `v: T` solved to `UInt`.
+  - MIR's `inferred_param_arg_regs` passes an inferred `Int`, `Float64`,
+    `Bool`, string, or `DType` value as a constant register, but has no
+    constant for a `UInt`.
+  - Mono already reads a bound `UInt` as its 64 bits in a `UInt` slot, which
+    the register needs to match.
+  - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R451 The elaborator classifies a value parameter whose type it cannot read as a type parameter**
+
+  Problem: `classify_ct_param` (`comptime/params.rs`) makes `v` in `def
+  pick[v: Self.T](self)` a type parameter bounded by "trait `Self.T`", and
+  does the same for a value type it cannot read (`items: List[T]`), while
+  the checker classifies both as value parameters.
+  - Programs run today because a template-served method binds its value
+    from the call's recorded arguments, not from this classification.
+  - The method form needs the enclosing struct's binder identity, which
+    `classify_ct_param` is not given.
+  - Found while landing R446 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2822,6 +2860,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R318 (2026-10-05).
   - Depends on R446.
   - Model: Opus, Planned.
+
+- [ ] **R452 A `comptime` alias of an applied generic function is rejected**
+
+  Problem: `comptime g = f[7]` then `g()`, over `def f[v: Int]() -> Int`,
+  fails with "not a compile-time value: 'f' is not a compile-time type",
+  where the pin binds the specialized function and prints `7`.
+  - The alias path evaluates the right-hand side as a type application.
+  - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
+  - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R326 An empty explicit application `f[]()` is a pointer dereference**
 

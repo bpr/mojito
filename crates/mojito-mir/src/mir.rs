@@ -3262,7 +3262,9 @@ impl Flatten<'_> {
                 let k = match value {
                     mojito_types::ct::CtValue::Int(value) => Const::Int(value),
                     mojito_types::ct::CtValue::IntLiteral(value) => Const::IntLiteral(value),
+                    mojito_types::ct::CtValue::Float(bits) => Const::Float(f64::from_bits(bits)),
                     mojito_types::ct::CtValue::Bool(value) => Const::Bool(value),
+                    mojito_types::ct::CtValue::Str(value) => Const::Str(value),
                     mojito_types::ct::CtValue::Dtype(value) => Const::Dtype(value),
                     mojito_types::ct::CtValue::Expr(expr) => {
                         let value = self.inferred_value_register(&expr, &span(call))?;
@@ -4475,7 +4477,11 @@ impl EnclosingBinders {
                 } if declared.trim_start_matches('*') == name => Some((declaration, ty)),
                 _ => None,
             });
-        let (declaration, ty) = if of_self { packs.next() } else { packs.next_back() }?;
+        let (declaration, ty) = if of_self {
+            packs.next()
+        } else {
+            packs.next_back()
+        }?;
         Some((
             ParamContext::detached().decl_ref(
                 declaration.id().clone(),

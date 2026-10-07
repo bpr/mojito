@@ -3786,11 +3786,10 @@ fn comptime_keyed_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
 
 /// Whether every compile-time parameter of a `def` is one its template
 /// serves: a type parameter — a type pack included, which the elaborator
-/// binds from the call's recorded elements — or a scalar (`Int`, `UInt`,
-/// `Bool`, `Float64`, `StringLiteral`, `DType`) value parameter, a value pack
-/// among them, that a runtime
-/// parameter type names only as a
-/// vector's lane slot (`a: Scalar[dt]`, `v: SIMD[dt, width]`), if at all, so
+/// binds from the call's recorded elements — or a value parameter typed by a
+/// scalar (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`) or by
+/// an earlier type binder (`[T: AnyType, //, v: T]`), a value pack among
+/// them, that a runtime parameter type names only as a vector's lane slot (`a: Scalar[dt]`, `v: SIMD[dt, width]`), if at all, so
 /// the elaborator binds it from the call's recorded arguments or from the
 /// argument's slot. A value a call must infer from any other argument type
 /// keeps the clone until the elaborator binds one from the call.
@@ -3806,7 +3805,13 @@ pub(super) fn template_serves_binders(
                 Some(ParamDecl::Value { ty, .. }) => {
                     matches!(
                         ty.as_ref(),
-                        Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::Dtype
+                        Ty::Int
+                            | Ty::UInt
+                            | Ty::Bool
+                            | Ty::Float64
+                            | Ty::StringLiteral
+                            | Ty::Dtype
+                            | Ty::Param { .. }
                     ) && !params
                         .iter()
                         .any(|param| type_names_outside_lanes(&param.ty, &parameter.name))
@@ -4730,5 +4735,39 @@ mod def_request_tests {
             !defs.iter().any(|name| name.starts_with("ident$")),
             "{defs:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod value_typed_binder_tests {
+    use super::{classify_ct_params, template_serves_binders};
+    use mojito::parse;
+    use mojito_ast::ast::StmtKind;
+    use mojito_types::types::{ParamDecl, Ty};
+
+    #[test]
+    fn a_value_pack_typed_by_a_sibling_binder_is_a_served_value_parameter() {
+        let parsed =
+            parse("def g[T: AnyType, //, *vs: T]() -> Int:\n    return 0\n").expect("parse");
+        let (type_params, params) = parsed
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                StmtKind::Def {
+                    type_params,
+                    params,
+                    ..
+                } => Some((type_params, params)),
+                _ => None,
+            })
+            .expect("one def");
+        let decls = classify_ct_params(type_params, "g");
+        assert!(matches!(
+            decls.as_slice(),
+            [
+                ParamDecl::Type { id: binder, .. },
+                ParamDecl::Value { ty, variadic: true, .. },
+            ] if matches!(ty.as_ref(), Ty::Param { binder: typed, .. } if typed.id == *binder)
+        ));
+        assert!(template_serves_binders(type_params, params, "g"));
     }
 }

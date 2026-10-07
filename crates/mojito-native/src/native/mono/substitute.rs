@@ -82,10 +82,18 @@ pub(super) fn substitute_function(
         &bindings.callables,
     )?;
     for (var, name) in function.var_names.iter().enumerate() {
-        if let Some(ty) = locals
-            .get(name.as_str())
-            .and_then(|value| scalar_parameter_ty(value, name, scope))
-        {
+        let Some(value) = locals.get(name.as_str()) else {
+            continue;
+        };
+        // A binder typed by a type binder (`v: T`) holds a value of `T`'s
+        // binding.
+        let ty = match scalar_parameter_ty(value, name, scope) {
+            Some(ty) => Some(ty),
+            None => declared_parameter_ty(name, scope)
+                .map(|ty| substitute_ty(ty, bindings))
+                .transpose()?,
+        };
+        if let Some(ty) = ty {
             function.var_tys.insert(var as u32, ty);
         }
     }
@@ -1196,6 +1204,8 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
 pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
+        // A `UInt` is its 64 bits, in the `UInt`-typed slot it is read into.
+        CtValue::UInt(value) => Some(Const::Int(*value as i64)),
         CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
         CtValue::Dtype(value) => Some(Const::Dtype(*value)),
@@ -1330,10 +1340,24 @@ pub(super) fn bound_parameter_locals<'a>(
         .collect()
 }
 
+/// The declared type of the non-variadic value parameter `name` when it is
+/// a type binder of the declaration (`v: T`).
+fn declared_parameter_ty<'a>(name: &str, scope: &'a [ParamDecl]) -> Option<&'a Ty> {
+    scope.iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            name: declared,
+            ty,
+            variadic: false,
+            ..
+        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. }) => Some(ty.as_ref()),
+        _ => None,
+    })
+}
+
 /// The type of the local a scalar value parameter's read binds: the
 /// binder's declared scalar type (`Int`, `UInt`, `Bool`, `Float64`,
 /// `StringLiteral`, `DType`), or the bound value's own scalar type where the
-/// declaration names none.
+/// declaration names none (`v: T`, the value materialized at `T`'s binding).
 fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Option<Ty> {
     let declared = scope.iter().find_map(|decl| match decl {
         ParamDecl::Value {
@@ -1357,6 +1381,8 @@ fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Opti
             ),
         ) => Some(ty.clone()),
         (CtValue::Int(_), _) => Some(Ty::Int),
+        (CtValue::UInt(_), _) => Some(Ty::UInt),
+        (CtValue::Float(_), _) => Some(Ty::Float64),
         (CtValue::Bool(_), _) => Some(Ty::Bool),
         (CtValue::Dtype(_), _) => Some(Ty::Dtype),
         _ => None,

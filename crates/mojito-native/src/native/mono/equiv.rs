@@ -552,10 +552,33 @@ fn register_constant(
                 Const::Str(text) => Some(CtValue::Str(text.clone())),
                 _ => None,
             }),
-            MirInstr::MaterializeLiteral { dest, value, .. } if *dest == reg => {
-                Some(register_constant(instructions, *value, visiting))
-            }
+            // A literal takes the value of the type it materializes to (`4`
+            // bound to a `Float64`-typed binder is `4.0`).
+            MirInstr::MaterializeLiteral {
+                dest,
+                value,
+                target,
+            } if *dest == reg => Some(
+                literal_constant(instructions, *value)
+                    .and_then(|literal| literal.materialize_as(target))
+                    .or_else(|| register_constant(instructions, *value, visiting)),
+            ),
             _ => None,
         })
         .flatten()
+}
+
+/// The literal constant `reg` holds, unmaterialized.
+fn literal_constant(instructions: &[&MirInstr], reg: Reg) -> Option<CtValue> {
+    instructions.iter().find_map(|instr| match instr {
+        MirInstr::Const {
+            dest,
+            k: Const::IntLiteral(literal),
+        } if *dest == reg => Some(CtValue::IntLiteral(literal.clone())),
+        MirInstr::Const {
+            dest,
+            k: Const::FloatLiteral(literal),
+        } if *dest == reg => Some(CtValue::FloatLiteral(literal.clone())),
+        _ => None,
+    })
 }

@@ -587,9 +587,10 @@ impl Checker {
     }
 
     /// Classify a `[...]` parameter list into type and value parameters, and
-    /// validate them: names must be distinct; a single bound naming a concrete
-    /// type is a **value** parameter (must be `Int`); otherwise the bounds must
-    /// all name traits (built-in or user), giving a **type** parameter. The
+    /// validate them: names must be distinct; a single bound naming a value
+    /// type (a scalar, a registered struct, or an earlier type binder of the
+    /// same list) is a **value** parameter; otherwise the bounds must all name
+    /// traits (built-in or user), giving a **type** parameter. The
     /// parser guarantees each parameter carries at least one `: bound` (Mojo has
     /// no unconstrained parameters).
     /// `owner` names the declaration whose binders these are
@@ -621,6 +622,9 @@ impl Checker {
             if let Some(scope) = self.vparams.last_mut() {
                 *scope = value_scope(&decls);
             }
+            if let Some(scope) = self.tparams.last_mut() {
+                *scope = type_scope(&decls);
+            }
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
             }
@@ -638,25 +642,7 @@ impl Checker {
             }
             if let Some(value_type) = &tp.value_type {
                 let ty = self.ty_from_anno(value_type)?;
-                let default = tp
-                    .default
-                    .as_ref()
-                    .map(|expr| self.compile_dependent_ct_expr(expr))
-                    .transpose()?;
-                decls.push(ParamDecl::Value {
-                    id: binder_id(decls.len()),
-                    name: tp.name.clone(),
-                    ty: Box::new(ty),
-                    default,
-                    callable_default: None,
-                    infer_only: tp.infer_only,
-                    variadic: tp.name.starts_with('*'),
-                    constraints: tp
-                        .constraints
-                        .iter()
-                        .map(|condition| self.compile_where_clause(condition))
-                        .collect::<Result<_, _>>()?,
-                });
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
                 continue;
             }
             // The removed `SIMDSize` width spelling (upstream hard removal,
@@ -684,24 +670,7 @@ impl Checker {
                 if only == "SIMDLength" {
                     self.simd_length_binders.insert(binder_id(decls.len()));
                 }
-                decls.push(ParamDecl::Value {
-                    id: binder_id(decls.len()),
-                    name: tp.name.clone(),
-                    ty: Box::new(vty),
-                    default: tp
-                        .default
-                        .as_ref()
-                        .map(|expr| self.compile_dependent_ct_expr(expr))
-                        .transpose()?,
-                    callable_default: None,
-                    infer_only: tp.infer_only,
-                    variadic: tp.name.starts_with('*'),
-                    constraints: tp
-                        .constraints
-                        .iter()
-                        .map(|condition| self.compile_where_clause(condition))
-                        .collect::<Result<_, _>>()?,
-                });
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), vty)?);
                 continue;
             }
             // A lone bound naming a registered struct is a struct-typed
@@ -711,24 +680,17 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && self.structs.contains_key(only)
             {
-                decls.push(ParamDecl::Value {
-                    id: binder_id(decls.len()),
-                    name: tp.name.clone(),
-                    ty: Box::new(Ty::Struct(only.clone(), Vec::new().into())),
-                    default: tp
-                        .default
-                        .as_ref()
-                        .map(|expr| self.compile_dependent_ct_expr(expr))
-                        .transpose()?,
-                    callable_default: None,
-                    infer_only: tp.infer_only,
-                    variadic: tp.name.starts_with('*'),
-                    constraints: tp
-                        .constraints
-                        .iter()
-                        .map(|condition| self.compile_where_clause(condition))
-                        .collect::<Result<_, _>>()?,
-                });
+                let ty = Ty::Struct(only.clone(), Vec::new().into());
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                continue;
+            }
+            // A lone bound naming an earlier type binder of this list is a
+            // value parameter of that type (`[T: AnyType, //, v: T]`): the
+            // list is a telescope, each binder in scope for the ones after it.
+            if let [only] = tp.bounds.as_slice()
+                && let Some(ty) = sibling_type_binder(&decls, only)
+            {
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
                 continue;
             }
             let trait_bounds = tp
@@ -836,6 +798,33 @@ impl Checker {
         })();
         self.tparams.pop();
         result
+    }
+
+    /// The value declaration `tp` classifies to once its type is `ty`.
+    fn value_param_decl(
+        &self,
+        tp: &mojito_ast::ast::TypeParam,
+        id: ParamId,
+        ty: Ty,
+    ) -> Result<ParamDecl, TypeError> {
+        Ok(ParamDecl::Value {
+            id,
+            name: tp.name.clone(),
+            ty: Box::new(ty),
+            default: tp
+                .default
+                .as_ref()
+                .map(|expr| self.compile_dependent_ct_expr(expr))
+                .transpose()?,
+            callable_default: None,
+            infer_only: tp.infer_only,
+            variadic: tp.name.starts_with('*'),
+            constraints: tp
+                .constraints
+                .iter()
+                .map(|condition| self.compile_where_clause(condition))
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     /// Lower a callable contract with its own `def[...]` binders. The
@@ -3144,9 +3133,14 @@ impl Checker {
                 unify(pattern, actual, &mut subst)?;
             }
             unify_through_callable_bounds(decls, &mut subst)?;
+            self.solve_binders_from_values(decls, &mut subst, |index, declared| {
+                self.bound_value_ty(&bound[index], declared)
+            })?;
             let mut tyargs = Vec::with_capacity(decls.len());
             let mut value_environment = HashMap::new();
             for (decl, arguments) in decls.iter().zip(bound) {
+                let typed = substituted_value_decl(decl, &subst);
+                let decl = typed.as_ref().unwrap_or(decl);
                 let infer_only = matches!(
                     decl,
                     ParamDecl::Type {
@@ -3349,6 +3343,11 @@ impl Checker {
                 unify(pat, act, &mut subst)?;
             }
         }
+        self.solve_binders_from_values(decls, &mut subst, |index, declared| {
+            value_solutions
+                .get(decls[index].name())
+                .and_then(|value| self.ct_value_ty(value, declared))
+        })?;
         unify_through_callable_bounds(decls, &mut subst)?;
         let materialize_pack_element = |ty: Ty| self.materialize_pack_element(ty);
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
@@ -3375,7 +3374,8 @@ impl Checker {
         let mut tyargs = Vec::with_capacity(decls.len());
         let mut value_environment = HashMap::new();
         for decl in decls {
-            match decl {
+            let typed = substituted_value_decl(decl, &subst);
+            match typed.as_ref().unwrap_or(decl) {
                 ParamDecl::Value {
                     name: pname,
                     default,
@@ -3481,6 +3481,119 @@ impl Checker {
         self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
         Ok((subst, tyargs))
+    }
+
+    /// Solve the type binders a value parameter's declared type names
+    /// (`[T: AnyType, //, v: T]`) from the type of the value `value_ty`
+    /// finds for it, else of its default, the way a runtime argument solves
+    /// its parameter's type: a literal materializes. A later value is
+    /// checked against the solution as it binds.
+    fn solve_binders_from_values(
+        &self,
+        decls: &[ParamDecl],
+        subst: &mut TySubst,
+        value_ty: impl Fn(usize, &Ty) -> Option<Ty>,
+    ) -> Result<(), TypeError> {
+        for (index, decl) in decls.iter().enumerate() {
+            let ParamDecl::Value {
+                ty,
+                default,
+                callable_default: None,
+                ..
+            } = decl
+            else {
+                continue;
+            };
+            let open: Vec<&ParamDecl> = decls
+                .iter()
+                .filter(|binder| {
+                    matches!(binder, ParamDecl::Type { id, .. } if !subst.contains_key(id))
+                        && mojito_types::types::names_binder(ty, &binder.binder())
+                })
+                .collect();
+            if open.is_empty() {
+                continue;
+            }
+            let Some(actual) = value_ty(index, ty).or_else(|| {
+                default
+                    .as_ref()
+                    .and_then(|default| default.evaluate_named(&HashMap::new()).ok())
+                    .and_then(|value| self.ct_value_ty(&value, ty))
+            }) else {
+                continue;
+            };
+            unify(ty, &actual, subst)?;
+            for binder in open {
+                let (ParamDecl::Type { bounds, .. }, Some(solved)) =
+                    (binder, subst.get(binder.id()))
+                else {
+                    continue;
+                };
+                for bound in bounds {
+                    if !self.conforms_to(solved, bound) {
+                        return Err(TypeError::TraitNotSatisfied {
+                            param: binder.name().to_string(),
+                            ty: solved.to_string(),
+                            trait_name: bound.clone(),
+                            reason: self.trait_failure_reason(solved, bound),
+                        });
+                    }
+                }
+                // A compile-time string is carried as a literal, which no
+                // `String`-typed read of the binder materializes yet.
+                if matches!(solved, Ty::Struct(name, _)
+                    if mojito_symbol::symbol::is_stdlib_string_struct(name))
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "value parameter '{}' typed by '{}' cannot bind a 'String' value yet",
+                        decl.name().trim_start_matches('*'),
+                        binder.name()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The type of the value the first bracket argument bound to a
+    /// parameter declared `declared` spells: a forwarded value pack's element
+    /// type, else the value as [`Self::resolve_param_arg`] types it.
+    fn bound_value_ty(
+        &self,
+        arguments: &[&mojito_ast::ast::ParamArg],
+        declared: &Ty,
+    ) -> Option<Ty> {
+        let argument = arguments.first()?;
+        match self.value_pack_spread(argument) {
+            Some(pack) => match pack.meta() {
+                mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
+                _ => None,
+            },
+            None => self.param_arg_value_ty(argument, declared),
+        }
+    }
+
+    /// The type of the compile-time value a bracket argument spells, typed as
+    /// [`Self::resolve_param_arg`] types it against `declared`.
+    fn param_arg_value_ty(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+        declared: &Ty,
+    ) -> Option<Ty> {
+        match argument {
+            mojito_ast::ast::ParamArg::Value(expr) => self
+                .eval_associated_ct(expr, &HashMap::new())
+                .ok()
+                .and_then(|value| self.ct_value_ty(&value, declared))
+                .or_else(|| self.infer(expr).ok()),
+            mojito_ast::ast::ParamArg::Named { value, .. } => {
+                self.param_arg_value_ty(value, declared)
+            }
+            mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) => self
+                .self_param_value(param)
+                .and_then(|value| self.ct_value_ty(&value, declared)),
+            mojito_ast::ast::ParamArg::Type(_) => None,
+        }
     }
 
     /// `P(copy=other)`: the explicit copy constructor when the struct declares
@@ -3794,4 +3907,32 @@ fn fieldwise_arguments(
             ArgSlot::Default => None,
         })
         .collect())
+}
+
+/// The `Ty::Param` of the earlier, non-variadic type binder `name` names in a
+/// list being classified.
+fn sibling_type_binder(decls: &[ParamDecl], name: &str) -> Option<Ty> {
+    decls
+        .iter()
+        .find(|decl| {
+            decl.name() == name
+                && matches!(
+                    decl,
+                    ParamDecl::Type {
+                        variadic: false,
+                        ..
+                    }
+                )
+        })
+        .and_then(type_parameter)
+}
+
+/// `decl` with the binders its value type names replaced by their solutions
+/// in `subst`, or `None` when it names none.
+fn substituted_value_decl(decl: &ParamDecl, subst: &TySubst) -> Option<ParamDecl> {
+    let ParamDecl::Value { ty, .. } = decl else {
+        return None;
+    };
+    let solved = mojito_types::types::substitute(ty, subst);
+    (solved != **ty).then(|| decl.with_value_type(solved))
 }

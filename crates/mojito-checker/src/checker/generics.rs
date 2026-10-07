@@ -1467,14 +1467,19 @@ impl Checker {
             closed: false,
         };
         let mut closed = signature.clone();
+        let mut retyped = false;
         for decl in &mut closed.decls {
-            if let ParamDecl::Value { ty, .. } = decl
-                && let Ok(rewritten) = mojito_types::types::rewrite_ty(ty, &mut rewrite)
-            {
-                **ty = rewritten;
+            if let ParamDecl::Value { ty, .. } = decl {
+                let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
+                    .unwrap_or_else(|_| (**ty).clone());
+                // A value parameter typed by the struct's own type binder
+                // (`[v: Self.T]`) takes the receiver's argument for it.
+                let at_receiver = substitute_at(&rewritten, info, targs);
+                retyped |= at_receiver != rewritten;
+                **ty = at_receiver;
             }
         }
-        rewrite.closed.then_some(closed)
+        (rewrite.closed || retyped).then_some(closed)
     }
 
     /// `ty` with the method's own value binders closed at a call's solved

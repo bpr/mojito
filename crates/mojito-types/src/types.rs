@@ -1528,6 +1528,18 @@ impl ParamDecl {
         }
     }
 
+    /// This value binder declared with the type `ty` instead, as an
+    /// application that solved the type binders its type names sees it; a
+    /// type binder is returned unchanged.
+    #[must_use]
+    pub fn with_value_type(&self, ty: Ty) -> Self {
+        let mut typed = self.clone();
+        if let Self::Value { ty: declared, .. } = &mut typed {
+            **declared = ty;
+        }
+        typed
+    }
+
     /// The argument this binder contributes to its declaration's own `Self`
     /// type: a type binder as its `Ty::Param`, a value binder as a reference
     /// to itself.

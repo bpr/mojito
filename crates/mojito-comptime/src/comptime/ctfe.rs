@@ -34,10 +34,29 @@ impl Elab<'_> {
         let f = self.fns.get(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("'{name}' is not a compile-time-callable function"))
         })?;
-        if f.ct_params.len() != param_args.len() {
+        // An infer-only parameter takes no argument: a type binder of one is
+        // solved from the value a sibling it types binds (`[T: AnyType, //,
+        // v: T]`).
+        let explicit: Vec<&ParamDecl> = f
+            .ct_params
+            .iter()
+            .filter(|decl| {
+                !matches!(
+                    decl,
+                    ParamDecl::Type {
+                        infer_only: true,
+                        ..
+                    } | ParamDecl::Value {
+                        infer_only: true,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        if explicit.len() != param_args.len() {
             return Err(ComptimeError::Arity(format!(
                 "'{name}' expects {} compile-time argument(s), got {}",
-                f.ct_params.len(),
+                explicit.len(),
                 param_args.len()
             )));
         }
@@ -51,7 +70,28 @@ impl Elab<'_> {
         self.burn()?;
         let mut locals: HashMap<String, CtValue> = HashMap::new();
         let mut value_params = Vec::new();
-        for (decl, arg) in f.ct_params.iter().zip(param_args) {
+        let mut solved = mojito_types::types::TySubst::new();
+        for (&decl, arg) in explicit.iter().zip(param_args) {
+            let typed;
+            let decl = match decl {
+                ParamDecl::Value { ty, .. } if matches!(**ty, Ty::Param { .. }) => {
+                    if let (Ty::Param { binder, .. }, ParamArg::Value(expr)) = (&**ty, arg)
+                        && !solved.contains_key(&binder.id)
+                        && let Some(actual) =
+                            mojito_types::param_expr::MetaTy::of_value(&self.eval(expr, scope)?)
+                                .as_value()
+                                .cloned()
+                    {
+                        solved.insert(
+                            binder.id.clone(),
+                            mojito_types::types::default_literal(&actual),
+                        );
+                    }
+                    typed = decl.with_value_type(mojito_types::types::substitute(ty, &solved));
+                    &typed
+                }
+                _ => decl,
+            };
             let value = self.resolve_ct_arg(decl, arg, scope)?;
             if let ParamDecl::Value { name, .. } = decl
                 && !matches!(value, CtValue::Type(_))
@@ -59,6 +99,11 @@ impl Elab<'_> {
                 value_params.push((name.clone(), ct_to_vm(&value)?));
             }
             locals.insert(decl.name().to_string(), value);
+        }
+        for decl in &f.ct_params {
+            if let Some(ty) = solved.get(decl.id()) {
+                locals.insert(decl.name().to_string(), CtValue::Type(Box::new(ty.clone())));
+            }
         }
         locals.extend(f.params.iter().cloned().zip(args));
         let mut visiting = HashSet::new();

@@ -354,6 +354,12 @@ param_decl: ['*'] NAME ':' ( bound | type ) ['=' expression]
 bound: '&'.NAME+
 ```
 
+A value parameter's `type` may be an earlier type parameter of the same list
+(`[T: Copyable, //, v: T]`, `[T: Copyable, //, *vs: T]`) or, on a method,
+`Self.NAME` naming the enclosing struct's type parameter (`def pick[v:
+Self.T](self)`); the parser records `Self.NAME` as the value type, and the
+checker reads a lone bound naming an earlier type binder as that binder's type.
+
 A `params_decl` list may follow the name in a `struct` or `def` header, declaring
 compile-time **parameters**. Each `NAME: X` is either a **type parameter** — when `X`
 is one or more trait names joined by `&` (`T: Copyable & Movable`) — or a **value

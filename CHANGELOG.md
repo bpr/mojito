@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A value parameter typed by an earlier type parameter now works as at the
+  pin: `struct S[T: ImplicitlyCopyable & Writable, //, v: T]` with
+  `S[3]().get()`, `def f[T: …, //, v: T]() -> T` with `f[True]()` and
+  `f[2.5]()`, the value pack `*vs: T` (the shape of upstream's
+  `ParameterList`, solved from a forwarded `P[*xs]` too), and the method form
+  `def pick[v: Self.T](self)`, where each stopped on "unknown trait 'T' in a
+  type-parameter bound" or a parse error. The infer-only `T` is solved from
+  the value, an argument type, or a default, and in CTFE; a later value of
+  another type and a type outside `T`'s bounds are rejected. A value that
+  solves `T` to `String` is still rejected explicitly. A `UInt` value
+  parameter (`def g[n: UInt]() -> UInt: return n`) now reads at run time,
+  where it stopped on "unsupported runtime value parameter".
 - A struct's own value pack now reads in its methods as at the pin:
   `len(Self.values)`, `Self.values[i]` at a compile-time index,
   `materialize[Self.values[i]]()`, and `comptime for v in Self.values`,
