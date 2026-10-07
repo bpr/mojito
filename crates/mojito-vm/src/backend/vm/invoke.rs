@@ -546,7 +546,9 @@ impl VmBackend {
                     offset: 0,
                 })
             }
-            Value::Str(current) if method == "write" => {
+            Value::Str(current)
+                if matches!(method, "write" | mojito_symbol::symbol::WRITE_FORMATTED) =>
+            {
                 let place = recv_place.as_ref().ok_or_else(|| {
                     RuntimeError::Unsupported("vm: Writer.write needs a mutable place".into())
                 })?;
@@ -624,7 +626,7 @@ impl VmBackend {
                 ))),
             },
             Value::Struct { name, .. }
-                if method == "write"
+                if method == mojito_symbol::symbol::WRITE_FORMATTED
                     && prog.index_of(&format!("{name}.write_string")).is_some() =>
             {
                 let place = recv_place.as_ref().ok_or_else(|| {

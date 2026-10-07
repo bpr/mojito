@@ -24,8 +24,8 @@ struct _BoundsMessage(Movable, Writer):
     def __init__(out self):
         self.text = String("")
 
-    def write_string(mut self, chunk: StringSpan):
-        self.text.write_string(chunk)
+    def write_string(mut self, string: StringSpan):
+        self.text.write_string(string)
 
 
 def _check_span_slice_bounds(start: Int, end: Int, length: Int):

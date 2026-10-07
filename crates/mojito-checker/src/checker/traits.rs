@@ -44,7 +44,7 @@ impl Checker {
         }
         for parent in refines {
             self.check_trait_name(parent)?;
-            if BUILTIN_TRAITS.contains(&parent.as_str()) {
+            if BUILTIN_TRAITS.contains(&parent.as_str()) && !self.traits.contains_key(parent) {
                 return Err(TypeError::Unsupported(format!(
                     "user trait '{name}' cannot refine builtin trait '{parent}' yet"
                 )));
@@ -1595,20 +1595,6 @@ impl Checker {
                     .get("__mlir_index__")
                     .is_some_and(|methods| methods.iter().any(is_indexer_requirement))
             }),
-            "Writer" => self.structs.get(name).is_some_and(|info| {
-                info.methods.get("write_string").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        // Upstream's `write_string(mut self, string:
-                        // StringSlice)`: the payload is the borrowed view.
-                        let payload = matches!(method.params.as_slice(),
-                            [Ty::Struct(name, _)] if mojito_types::types::is_stdlib_string_span_struct(name));
-                        method.has_self
-                            && method.self_convention == Some(ArgConvention::Mut)
-                            && payload
-                            && method.ret == Ty::None
-                    })
-                })
-            }),
             "Hasher" => self.structs.get(name).is_some_and(|info| {
                 let initializes = info.methods.get("__init__").is_some_and(|methods| {
                     methods.iter().any(|method| method.params.is_empty())
@@ -2003,7 +1989,7 @@ impl Checker {
                         _ => true,
                     }
                 }
-                "Writer" | "Hasher" => match ty {
+                "Hasher" => match ty {
                     Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     _ => false,
@@ -2236,8 +2222,8 @@ impl Checker {
                     always()
                 }
             }
-            "Writable" | "Writer" | "Hasher" | "Hashable" | "Defaultable" | "Indexer"
-            | "Equatable" | "Comparable" | "Intable" | "Floatable" => declared(&refining),
+            "Writable" | "Hasher" | "Hashable" | "Defaultable" | "Indexer" | "Equatable"
+            | "Comparable" | "Intable" | "Floatable" => declared(&refining),
             "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
             | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
             | "Andable" | "Orable" | "Xorable" | "Negatable" => Vec::new(),
@@ -3153,16 +3139,6 @@ impl Checker {
                 signature.self_convention = Some(ArgConvention::Var);
                 methods.push(signature);
             }
-        }
-        // `Writer.write_string(mut self, string: StringSlice)`: the one required
-        // method, callable on a `Some[Writer]` receiver.
-        if method == "write_string" && argc == 1 && bounds.iter().any(|b| b == "Writer") {
-            let mut signature = MethodSig::intrinsic(
-                vec![self.unbound_struct_instance(mojito_types::types::STDLIB_STRING_SPAN_STRUCT)],
-                Ty::None,
-            );
-            signature.self_convention = Some(ArgConvention::Mut);
-            methods.push(signature);
         }
         // Current Mojo's `Copyable` trait carries a non-overridable default
         // `copy(self) -> Self`; elaboration synthesizes the concrete method on

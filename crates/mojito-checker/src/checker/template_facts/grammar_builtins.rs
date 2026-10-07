@@ -389,8 +389,8 @@ impl BodyShape<'_> {
     }
 
     /// `hasher.update(value)`, `hasher._update_with_simd(value)`, or
-    /// `writer.write(values…)` on a parameter bounded by `Hasher` or
-    /// `Writer`: a checker builtin that selects no callee
+    /// `hasher^.finish()` on a parameter bounded by `Hasher`: a checker
+    /// builtin that selects no callee
     /// ([`Checker::realize_bound_builtin`]).
     ///
     /// The template records the receiver's place and, at each argument, only
@@ -409,7 +409,6 @@ impl BodyShape<'_> {
         let (builtin, bound) = match (method, args.len()) {
             ("update", 1) => (BoundBuiltin::Update, "Hasher"),
             ("_update_with_simd", 1) => (BoundBuiltin::UpdateSimd, "Hasher"),
-            ("write", 1..) => (BoundBuiltin::Write, "Writer"),
             ("finish", 0) => (BoundBuiltin::Finish, "Hasher"),
             _ => return false,
         };

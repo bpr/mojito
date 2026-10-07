@@ -5,15 +5,14 @@ use super::*;
 
 /// The collector methods the checker answers without a declared signature.
 ///
-/// They are `write` on a `Writer` and `format` on a string. Such a call
-/// lowers with no resolved callee, so a template cannot serve a pack spread
-/// into it.
-pub const INTRINSIC_COLLECTOR_METHODS: &[&str] = &[WRITER_WRITE, STRING_FORMAT];
+/// The one is `format` on a string. Such a call lowers with no resolved
+/// callee, so a template cannot serve a pack spread into it.
+pub const INTRINSIC_COLLECTOR_METHODS: &[&str] = &[STRING_FORMAT];
 
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
     /// the compiler-known collections, `SIMD` and `DType`, slice descriptors,
-    /// the inverted `write_to`, `Writer`/`Hasher` bounds, string literals,
+    /// the inverted `write_to`, `Hasher` bounds, string literals,
     /// tuples, packs, pointers, and uninit storage. `None` leaves the call to
     /// signature resolution.
     pub(super) fn infer_intrinsic_receiver_call(
@@ -104,9 +103,6 @@ impl Checker {
                 || self.conforms_to(obj_ty, "Writable"))
         {
             return self.infer_inverted_write(site).map(Some);
-        }
-        if self.conforms_to(obj_ty, "Writer") && method == WRITER_WRITE {
-            return self.infer_writer_write(site).map(Some);
         }
         if matches!(obj_ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
             && let Some(ty) = self.infer_hasher_bound_method(site)?
@@ -404,19 +400,6 @@ impl Checker {
         Ok(Ty::None)
     }
 
-    /// `writer.write(values…)` through a `Writer` conformance.
-    fn infer_writer_write(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
-        let MethodCallSite { object, call, .. } = site;
-        let MethodCallArguments { args, kwargs, .. } = call;
-        reject_kwargs(kwargs)?;
-        self.check_place(object)?;
-        self.borrowed_read_call_places
-            .borrow_mut()
-            .extend(args.iter().map(Expr::source_span));
-        self.infer_print(args, &[])?;
-        Ok(Ty::None)
-    }
-
     /// The `Hasher` requirements a `Hasher`-bounded parameter answers
     /// directly; any other method resolves through the bound.
     fn infer_hasher_bound_method(&self, site: MethodCallSite<'_>) -> Result<Option<Ty>, TypeError> {
@@ -484,5 +467,4 @@ fn string_literal_primitive(method: &str) -> Option<Ty> {
     }
 }
 
-const WRITER_WRITE: &str = "write";
 const STRING_FORMAT: &str = "format";

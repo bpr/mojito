@@ -653,8 +653,9 @@ branch for the class is deleted, and so is its certificate class.
   call of an overloaded method with binders of its own were served too:
   the driver no longer keys a body for the overload. Later that day a
   spread into a method with a type-pack collector was served too, judged
-  by method name; a spread into `Writer.write` still keys a clone (R414),
-  the element-typed binding keeps
+  by method name, and a spread into `Writer.write` once `Writer` became the
+  bundled trait with upstream's default `write`; a spread into
+  `String.format` still keys a clone (R421), the element-typed binding keeps
   the clone (R252), and the certificate class waits on them and on the
   methods (R253).
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked

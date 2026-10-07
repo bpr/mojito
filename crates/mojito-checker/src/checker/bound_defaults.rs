@@ -136,6 +136,21 @@ impl Checker {
         method: &str,
         requirement: &MethodSig,
     ) -> Result<(), TypeError> {
+        let renamed =
+            call.slots
+                .iter()
+                .zip(&requirement.names)
+                .enumerate()
+                .find(|(index, (slot, name))| {
+                    !matches!(slot, ArgSlot::Positional(_))
+                        && self.witness_renames(bounds, method, requirement, *index, name)
+                });
+        if let Some((_, (_, name))) = renamed {
+            return Err(TypeError::Unsupported(format!(
+                "binding '{name}' of '{method}' by name through a trait bound whose \
+                 conformer renames it"
+            )));
+        }
         let Some(syntax) = call.span.syntax else {
             return Ok(());
         };
@@ -180,6 +195,33 @@ impl Checker {
             },
         );
         Ok(())
+    }
+
+    /// Whether some conformer to `bounds` declares a witness for
+    /// `requirement` naming its regular parameter at `index` other than
+    /// `name`, which a call through the bound binds by the requirement's
+    /// name and the witness's body reads by its own.
+    fn witness_renames(
+        &self,
+        bounds: &[String],
+        method: &str,
+        requirement: &MethodSig,
+        index: usize,
+        name: &str,
+    ) -> bool {
+        self.structs
+            .iter()
+            .filter_map(|(struct_name, info)| Some((struct_name, info, info.methods.get(method)?)))
+            .filter(|(struct_name, info, _)| {
+                let implementation =
+                    Ty::Struct((*struct_name).clone(), params_as_args(&info.decls).into());
+                bounds
+                    .iter()
+                    .all(|bound| self.conforms_to(&implementation, bound))
+            })
+            .flat_map(|(_, _, signatures)| signatures)
+            .filter(|signature| signature.names.len() == requirement.names.len())
+            .any(|signature| signature.names.get(index).is_some_and(|got| got != name))
     }
 
     /// Whether every conformer to `bounds` declaring `method` defaults its

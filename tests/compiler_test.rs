@@ -338,10 +338,10 @@ fn pack_spread_into_own_pack_method_is_template_served() {
 }
 
 #[test]
-fn pack_spread_into_writer_write_keeps_the_clone() {
-    // `write` on a `Writer` is the checker's intrinsic dispatch, with no
-    // declared callee for MIR to name, so a spread into it keeps the
-    // spreading `def` on the cloner.
+fn pack_spread_into_writer_write_is_template_served() {
+    // `write` resolves to `String`'s own `write[*Ts]` and, through `W:
+    // Writer`, to the bundled trait's requirement, so a spread into either
+    // is served by the spreading `def`'s template.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -350,8 +350,8 @@ fn pack_spread_into_writer_write_keeps_the_clone() {
         )
         .expect("a pack spread into Writer.write");
     let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 2);
-    let output = compiler.execute(&program).expect("run the cloned spreads");
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    let output = compiler.execute(&program).expect("run the served spreads");
     assert_eq!(output.output, "1x2.5\n1x2.5\n");
 }
 

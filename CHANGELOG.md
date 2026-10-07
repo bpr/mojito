@@ -8,6 +8,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Writer` is now upstream's library trait, bundled in
+  `std/format/__init__.mojo` and exported by the prelude: a
+  `write_string(mut self, string: StringSlice)` requirement and a default
+  `write[*Ts: Writable](mut self, *args: *Ts)` that writes each argument
+  through its `write_to`, which a conformer may override. `String` declares
+  upstream's `write[*Ts]` and `write[T]` overloads. A `w.write(...)` call
+  now resolves to that declared method, where the checker answered it
+  intrinsically, so a pack-keyed `def` spreading its collector into `write`
+  (`s.write(*a)`, `w.write(*a)` over `W: Writer` or `Some[Writer]`) is
+  served by its template, as at the pin, where it was cloned per call. A
+  conformer's own `write` is now reached by a direct call, where the
+  intrinsic shadowed it, and one that forwards through
+  `args[i].write_to(self)` no longer overflows the stack. Writer-heavy runs
+  cost about 3–5% more wall time and memory (`nominal_string_writer.mojo`
+  5.47 s → 5.73 s, 199 → 207 MB, debug build).
+- A trait witness may now name a regular parameter otherwise than its
+  requirement (`def f(self, y: Int)` for `def f(self, x: Int)`), as at the
+  pin, where it failed with "does not match the signature required by
+  trait"; a keyword-only parameter's name must still match. Binding such a
+  renamed parameter by keyword through the bound is rejected as
+  unsupported, where the pin binds it by the requirement's name.
+- A call whose argument a method's pack collector bound rejects now says
+  so, as the pin does ("an element of 'args' with type ... does not conform
+  to trait 'Writable'"), where it reported "no overload matches".
 - A trait requirement may now declare a `*args` collector, homogeneous
   (`def sum(self, *xs: Int) -> Int`) or a pack (`def take[*Ts: Writable](self,
   *a: *Ts)`), read or `var`, as at the pin, where it was rejected with

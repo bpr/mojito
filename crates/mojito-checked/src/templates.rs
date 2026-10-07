@@ -1925,8 +1925,6 @@ pub enum BoundBuiltin {
     Update,
     /// `hasher._update_with_simd(value)`: the value must be a vector.
     UpdateSimd,
-    /// `writer.write(values…)`: every value must be writable.
-    Write,
     /// `hasher^.finish()` on a `^` transfer of a place of the method's own
     /// `Hasher` binder: it takes no argument and yields a `UInt64` under
     /// every instance.

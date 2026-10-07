@@ -242,8 +242,14 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got_shape.overload = None;
     got_shape.required.clone_from(&required.required);
     got_shape.defaults.clone_from(&required.defaults);
-    // A collector is never bound by name, so a witness may rename it.
+    // A collector is never bound by name, so a witness may rename it, and a
+    // call through the bound binds a positional parameter by the
+    // requirement's name, so the witness may rename that too.
     got_shape.variadic_name.clone_from(&required.variadic_name);
+    let positional = required.keyword_only.unwrap_or(required.names.len());
+    if got_shape.names.len() == required.names.len() {
+        got_shape.names[..positional].clone_from_slice(&required.names[..positional]);
+    }
     let mut required_shape = canonical_method_shape(required);
     required_shape.raises = false;
     required_shape.error = None;

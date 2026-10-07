@@ -468,7 +468,6 @@ impl Checker {
             let accepted = match builtin {
                 BoundBuiltin::Update => self.is_hashable(ty),
                 BoundBuiltin::UpdateSimd => crate::checker::builtins::simd_valued_ty(ty),
-                BoundBuiltin::Write => self.printable_argument(ty),
                 BoundBuiltin::Finish => false,
             };
             if !accepted {

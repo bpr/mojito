@@ -59,6 +59,14 @@ pub const DIGITS_BUFFER_BYTES: u64 = 32;
 /// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
 pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 
+/// The method a writer receives for `x.write_to(writer)` on a value whose
+/// `write_to` the host formats (a builtin scalar or literal).
+///
+/// It stands for the tail of upstream's `write_to` body, which writes the
+/// formatted text through `writer.write_string` and never re-enters the
+/// writer's own `write`; the `$` keeps any source method from naming it.
+pub const WRITE_FORMATTED: &str = "$write_formatted";
+
 /// The name prefix of the origin binders a generated clone declares.
 ///
 /// They spell the origin slots of a loan-carrying type argument

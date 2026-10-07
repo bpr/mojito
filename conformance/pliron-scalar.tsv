@@ -393,6 +393,7 @@ assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_sibling_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_variadic_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_reverse_concat_types.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_spread_into_writer_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_spread_result_overloaded_init_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_element_alias_condition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_explicit_in_generic_body.mojo	-	ineligible	no-scalar-entry-shape
@@ -818,6 +819,7 @@ assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_constant_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_witness_renames_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transfer_into_read_parameter_borrows.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
@@ -892,6 +894,7 @@ assets/ok/with_multiple_dependent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/witness_default_differs_from_requirement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/writable_extra_write_to_overload.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/writer_write_override.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/comprehension_borrowed_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/container_owning_family_apis.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	-	ineligible	no-scalar-entry-shape

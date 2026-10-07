@@ -393,6 +393,7 @@ assets/ok/pack_overload_method_arity.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_sibling_forward.mojo	main	exe-differential	sanitized
 assets/ok/pack_overload_variadic_position.mojo	main	exe-differential	sanitized
 assets/ok/pack_reverse_concat_types.mojo	main	exe-differential	sanitized
+assets/ok/pack_spread_into_writer_write.mojo	main	exe-differential	sanitized
 assets/ok/pack_spread_result_overloaded_init_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_element_alias_condition.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_explicit_in_generic_body.mojo	main	exe-differential	sanitized
@@ -818,6 +819,7 @@ assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
+assets/ok/trait_witness_renames_parameter.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	sanitized
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
@@ -892,6 +894,7 @@ assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
+assets/ok/writer_write_override.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_break_continue.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_loop_carried_refill.mojo	main	exe-differential	sanitized

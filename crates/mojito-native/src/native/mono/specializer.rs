@@ -1646,7 +1646,8 @@ impl<'a> Specializer<'a> {
                 if matches!(instruction, MirInstr::Call { func, .. }
                     if matches!(func.0.as_str(), "print" | "String" | "repr" | "_mojito_abort"))
                     || matches!(instruction,
-                        MirInstr::MethodCall { method, .. } if method == "write")
+                        MirInstr::MethodCall { method, .. }
+                            if matches!(method.as_str(), "write" | mojito_symbol::symbol::WRITE_FORMATTED))
                 {
                     for symbol in [
                         mojito_symbol::symbol::INT_DIGITS_SYMBOL,
@@ -1852,15 +1853,26 @@ impl<'a> Specializer<'a> {
                             .is_some_and(|target| target.starts_with("__trait_dispatch."))
                             && !matches!(peel_refs(receiver), Ty::Struct(..))
                         {
+                            // The builtin answers the call itself and takes
+                            // none of the requirement's compile-time arguments.
                             *resolved = None;
-                            continue;
+                            param_decls.clear();
+                            instantiated_args.clear();
+                            param_arg_regs.clear();
+                            if !matches!(peel_refs(receiver), Ty::StringLiteral) {
+                                continue;
+                            }
                         }
                         // `write` on the builtin-string accumulator (the
                         // `Value::Str` writer inside a `write_to` expansion)
                         // formats nominal arguments through their own
                         // `write_to` conformance — enqueue those instances
                         // for the lowered recursion.
-                        if method == "write" && matches!(peel_refs(receiver), Ty::StringLiteral) {
+                        if matches!(
+                            method.as_str(),
+                            "write" | mojito_symbol::symbol::WRITE_FORMATTED
+                        ) && matches!(peel_refs(receiver), Ty::StringLiteral)
+                        {
                             for arg in args.clone() {
                                 self.enqueue_display_instance(owner, function, arg)?;
                             }
@@ -1901,7 +1913,7 @@ impl<'a> Specializer<'a> {
                             // The VM-synthesized `Writer.write` dispatch calls
                             // the receiver's `write_string`; enqueue its
                             // instance for the lowered expansion.
-                            if method == "write" {
+                            if method == mojito_symbol::symbol::WRITE_FORMATTED {
                                 let write_string = mojito_symbol::symbol::resolve_callable_symbol(
                                     self.functions.iter().map(|(name, f)| CallableCandidate {
                                         name,

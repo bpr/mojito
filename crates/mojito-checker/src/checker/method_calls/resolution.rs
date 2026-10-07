@@ -316,7 +316,12 @@ impl Checker {
                     });
                     continue;
                 }
-                Err(_) => continue,
+                Err(failure) => {
+                    if !overloaded && let Some(reason) = collector_element_failure(sig, &failure) {
+                        availability_failure.get_or_insert(reason);
+                    }
+                    continue;
+                }
             };
             let Ok(clone_origins) = self.bind_clone_receiver_origins(
                 &format!("{sname}.{method}"),
@@ -522,7 +527,7 @@ impl Checker {
                 .kw_variadic
                 .as_deref()
                 .map(|ty| substitute_self(ty, obj_ty));
-            let Ok((params, variadic, kw_variadic, method_subst, method_arguments)) = self
+            let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
                 .instantiate_method_generics(
                     &format!("{obj_ty}.{method}"),
                     &sig,
@@ -532,9 +537,16 @@ impl Checker {
                     param_args,
                     args,
                     kwargs,
-                )
-            else {
-                continue;
+                ) {
+                Ok(instantiated) => instantiated,
+                Err(failure) => {
+                    if single_candidate
+                        && let Some(reason) = collector_element_failure(&sig, &failure)
+                    {
+                        availability_failure.get_or_insert(reason);
+                    }
+                    continue;
+                }
             };
             if let Err(failure) = self.method_constraint_result(&sig, &method_arguments, &[], &[]) {
                 if single_candidate
@@ -813,4 +825,29 @@ fn intrinsic_resolution(
         declared_params: Vec::new(),
         nested_origins: NestedOrigins::AsDeclared,
     }
+}
+
+/// Upstream's reason for an argument a pack collector's element bound
+/// rejects (`*args: *Ts` over `*Ts: Writable`), when `failure` is one.
+fn collector_element_failure(sig: &MethodSig, failure: &TypeError) -> Option<String> {
+    let TypeError::TraitNotSatisfied {
+        param,
+        ty,
+        trait_name,
+        ..
+    } = failure
+    else {
+        return None;
+    };
+    let collector = sig.variadic_name.as_ref()?;
+    sig.decls
+        .iter()
+        .any(|decl| decl.name() == param && matches!(decl, ParamDecl::Type { variadic: true, .. }))
+        .then(|| {
+            format!(
+                "an element of '{collector}' with type '{ty}' does not conform to trait \
+                 '{trait_name}'; either prove the conformance with 'conforms_to', or add \
+                 conformance"
+            )
+        })
 }

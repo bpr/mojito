@@ -62,6 +62,7 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "ptr",
     "unsafe_ptr",
     "write",
+    mojito_symbol::symbol::WRITE_FORMATTED,
     "__len__",
     "indices",
     "__eq__",
@@ -115,6 +116,8 @@ mod tests {
         for name in INTRINSIC_METHODS {
             let implemented = quoted(INVOKE, name)
                 || quoted(RUNTIME, name)
+                || (*name == mojito_symbol::symbol::WRITE_FORMATTED
+                    && INVOKE.contains("mojito_symbol::symbol::WRITE_FORMATTED"))
                 || mojito_ast::ast::Dtype::Int.predicate(name).is_some();
             assert!(
                 implemented,

@@ -32,8 +32,8 @@ struct _BoundsMessage(Movable, Writer):
     def __init__(out self):
         self.text = String("")
 
-    def write_string(mut self, chunk: StringSpan):
-        self.text.write_string(chunk)
+    def write_string(mut self, string: StringSpan):
+        self.text.write_string(string)
 
 
 def check_slice_bounds(start: Int, end: Int, length: Int):
@@ -861,8 +861,15 @@ struct String(
 
     # `Writer` conformance: `s.write(a, b, ...)` appends each argument's
     # written text to this buffer (amortized doubling growth).
-    def write_string(mut self, chunk: StringSpan):
-        self._append_bytes_of(chunk, 0, chunk.byte_length())
+    def write_string(mut self, string: StringSpan):
+        self._append_bytes_of(string, 0, string.byte_length())
+
+    def write[*Ts: Writable](mut self, *args: *Ts):
+        comptime for i in range(args.__len__()):
+            args[i].write_to(self)
+
+    def write[T: Writable](mut self, value: T):
+        value.write_to(self)
 
     # The result APIs (search, affix tests, replace, split, case, predicates,
     # justification, and the strip family) live on `StringSpan` in upstream's

@@ -698,7 +698,11 @@ fn borrowed_operands(
             method,
             args,
             ..
-        } if matches!(method.as_str(), "write" | "write_string") => {
+        } if matches!(
+            method.as_str(),
+            "write" | "write_string" | mojito_symbol::symbol::WRITE_FORMATTED
+        ) =>
+        {
             args.iter().map(|reg| reg.0).collect()
         }
         MirInstr::Call {

@@ -1,4 +1,4 @@
-# expect: does not conform to trait 'Writer'
+# expect: does not match the signature required by trait 'Writer'
 # `Writer.write_string` takes the borrowed view (`StringSlice`), as upstream;
 # a conformer declaring an owned `String` payload does not implement it.
 struct Buf(Writer):

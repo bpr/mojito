@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R420**.
+Next free ID: **R425**.
 
 ## Ordered Work
 
@@ -60,22 +60,22 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R414 (P3b) A pack spread into `Writer.write` keys a clone**
+- [ ] **R421 (P3b) A pack spread into `String.format` keys a clone**
 
-  Problem: a pack-keyed `def` that spreads its collector into `write` on a
-  `Writer` (`s.write(*a)`, `w.write(*a)` over `W: Writer`) stays on the
-  cloner, where the pin serves it from one template.
-  - The checker answers `write` intrinsically (`infer_writer_write`), so the
-    MIR call has no resolved callee and the verifier rejects a served body
-    that spreads into it.
-  - The spread gate therefore leaves out every name in the checker's
-    `INTRINSIC_COLLECTOR_METHODS` (`write`, `format`).
-  - The Mojo shape is an ordinary `Writer.write[*Ts]` requirement the call
-    resolves to, which needs R413.
-  - Pinned by `pack_spread_into_writer_write_keeps_the_clone`
-    (`tests/compiler_test.rs`), which turns red when this lands.
-  - Found while landing R256 (2026-10-06).
-  - Depends on R413.
+  Problem: a pack-keyed `def` that spreads its collector into `format`
+  (`"{} and {}".format(*a)`) stays on the cloner, where the pin serves it
+  from one template.
+  - The checker answers `format` intrinsically, so the MIR call has no
+    resolved callee and the spread gate leaves the name out
+    (`INTRINSIC_COLLECTOR_METHODS`, `checker/method_calls/intrinsic_receivers.rs`).
+  - The pin declares `format[*Ts: Writable](self, *args: *Ts) raises` on
+    `String` and `StringSlice` (`string.mojo`, `string_span.mojo`), so the
+    Mojo shape is a bundled `format` the call resolves to, as `write` now is.
+  - Probe: `def show[*Ts: Writable](*a: *Ts) raises -> String: return "{}
+    and {}".format(*a)` prints `1 and x` at both, with one `def_pack` clone
+    in Mojito's census.
+  - Found while landing R414 (2026-10-06).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R316 (P3b) A pack spread into a constructor keys a clone**
@@ -2436,17 +2436,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R418 A witness that renames a regular parameter does not conform**
+- [ ] **R420 A keyword call through a bound to a parameter a witness
+  renames is rejected**
 
-  Problem: `def f(self, y: Int)` for a requirement `def f(self, x: Int)`
-  fails with "does not match the signature required by trait", where the
-  pin accepts it and prints the call's result.
-  - `MethodSig::names` is part of the shape `method_satisfies_requirement`
-    (`checker/traits_support.rs`) compares.
-  - A regular parameter may be bound by keyword through the bound, so which
-    name such a call binds needs a pin study first; a renamed `*args`
-    collector already conforms.
-  - Found while landing R413 (2026-10-06).
+  Problem: `u.f(x=1, z=2)` through `U: T`, where a conformer declares
+  `f(self, z: Int, x: Int)` for the requirement `f(self, x: Int, z: Int)`,
+  fails with "binding 'x' of 'f' by name through a trait bound whose
+  conformer renames it". The pin binds the keywords by the requirement's
+  names and passes the values to the witness by position.
+  - Pinned by `conformance/probes/keyword_through_bound_renamed_witness.mojo`
+    (the pin prints `312`).
+  - The rejection is `Checker::record_bound_default_arguments`
+    (`checker/bound_defaults.rs`). It also covers a requirement default the
+    check would spell by a renamed name.
+  - Cause: a call through the bound reaches the witness by name, in a clone
+    re-checked nominally and in `native::mono`'s `infer_call` alike.
+  - The lever is to lower such a call positionally, by the requirement's
+    binding, which the checked call contract already records.
+  - Found while landing R418 with R414 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4342,6 +4349,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R423 A writer overriding `write` misses the nested `write` a
+  scalar's `write_to` makes at the pin**
+
+  Problem: a `Writer` whose own `write` wraps each argument
+  (`self.text += "<"`, then `args[i].write_to(self)`) prints `<1x>` for
+  `b.write(1, "x")` in Mojito and `<<>1x>` at the pin.
+  - The pin's `Int.write_to` and `Float64.write_to` are Mojo bodies that
+    call `writer.write` for their digits, which re-enters the override.
+  - Mojito formats a builtin scalar in the host and hands the text to
+    `write_string` (the `$write_formatted` primitive), so the override is
+    never re-entered.
+  - Pinned by `conformance/probes/writer_override_scalar_write_to.mojo`.
+  - Ledger name: `writer-override-scalar-write-to`.
+  - Found while landing R414 (2026-10-06).
+  - Depends on R276, which moves the scalar text into Mojo bodies.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -4639,6 +4663,39 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     declaration.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R422 `print` and `String(x)` write a struct through a host string
+  accumulator where upstream writes through a `Writer` struct**
+
+  Problem: a struct's `write_to` reached from `print` or `String(x)` gets a
+  compiler-private string accumulator as its writer, where upstream passes a
+  real `Writer` (the stdout buffer, or the `String` itself).
+  - A `writer.write(...)` call inside such a body dispatches through the
+    bound to `__trait_dispatch.write`, which the specializer clears on the
+    accumulator's non-struct receiver (`native/mono/specializer.rs`).
+  - The VM answers it in the `Value::Str` arm of `method_call`
+    (`backend/vm/invoke.rs`) and Pliron in `lower_str_writer_write`
+    (`lower/methods.rs`).
+  - A writer that overrides `write` is never the accumulator, so the texts
+    match the pin; the shape does not.
+  - Found while landing R414 (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R424 `Writable` is a compiler builtin where upstream declares it in
+  `std/format`**
+
+  Problem: `Writable` and its `write_to`/`write_repr_to` requirements are
+  synthesized in the checker (`builtin_requirements`, `checker/traits.rs`),
+  where upstream's `std/format/__init__.mojo` declares the trait beside
+  `Writer`, with Mojo default bodies.
+  - The reflective `Name(field=value, ...)` default the checker synthesizes
+    for a conformer without a `write_to` is upstream's default body.
+  - `Writer` moved to the bundled `std/format/__init__.mojo` with R414, so
+    this is the remaining half of that module.
+  - Found while landing R414 (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

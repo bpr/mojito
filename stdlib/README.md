@@ -81,6 +81,10 @@ only from their authoritative `std` modules.
   element references declared at `_get_owned_interior["element"]` granularity,
   resolved to the source's mutability at each loop site. Mapping mutation
   during iteration is lazily rejected; view iterators snapshot at the call.
+- `std/format/__init__.mojo` — upstream's `Writer` trait: the
+  `write_string` requirement and the default `write[*Ts: Writable]` that
+  writes each argument through its `write_to`, which a conformer may
+  override. The prelude exports it; `Writable` stays a compiler builtin.
 - `std/collections/set.mojo` — a generic, list-backed `Set[T, H: Hasher = default_hasher]` for `Hashable & Equatable &
   Copyable & Movable` elements (upstream's KeyElement bound and hasher
   parameter; the dense list preserves insertion order and never hashes). It supports `add`, membership through `in`/`__contains__`, `len`, and

@@ -113,7 +113,10 @@ impl FnLowering<'_> {
         // accumulator) appends each argument's display text in place; its
         // `write_string` appends the view's bytes the same way.
         if resolved.is_none()
-            && matches!(method, "write" | "write_string")
+            && matches!(
+                method,
+                "write" | "write_string" | mojito_symbol::symbol::WRITE_FORMATTED
+            )
             && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
@@ -163,7 +166,7 @@ impl FnLowering<'_> {
         // The VM-synthesized `Writer.write` dispatch: format each argument
         // and feed it through the receiver's compiled `write_string`.
         if resolved.is_none()
-            && method == "write"
+            && method == mojito_symbol::symbol::WRITE_FORMATTED
             && let Some(Ty::Struct(writer, _)) = self.func.reg_types.get(&recv.0).cloned()
             && self
                 .signatures

@@ -630,8 +630,10 @@ erased oracle expand alike. The gate (`pack_spread_callees`) judges such a
 callee by name, before the check types its receiver: the name must be one
 some struct declares with a type-pack collector, the method's own
 (`*a: *Ts`) or the struct's (`*b: *Self.Ts`), and not one the checker
-answers without a declared callee (`INTRINSIC_COLLECTOR_METHODS`: `write`
-on a `Writer`, `format` on a string), whose call MIR cannot name. A clone that spreads its bound pack into a served
+answers without a declared callee (`INTRINSIC_COLLECTOR_METHODS`: `format`
+on a string), whose call MIR cannot name. `write` is not among them: it
+resolves to the bundled `Writer` trait's default or a conformer's own
+`write` (`stdlib/std/format/__init__.mojo`), as upstream's does. A clone that spreads its bound pack into a served
 `def` spells the elements itself (`PackRewriter::served_callees`). A pack query
 read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
 `Ts.all_conforms_to[T]()` of a `def`'s or method's own pack — is upstream's
@@ -1156,8 +1158,9 @@ gives every loan-carrying element (`CheckedTupleUnpackElement::carries_loans`)
 the unpacked value's loans, as binding the whole value would. A discarded
 reference result (an expression statement, `_ = e`) is
 recorded in `discarded_reference_results` and is not a value read. On the
-VM, `Writer.write` formats its arguments with the caller frame mirrored so a
-nested `write_to` can read a pointer into the caller. The empty-subscript
+VM, the host string accumulator's `write` and the `$write_formatted`
+primitive format their arguments with the caller frame mirrored so a nested
+`write_to` can read a pointer into the caller. The empty-subscript
 store `p[] = v` types the pointer as a value read and gates on the pointer
 origin's mutability alone, so a plain `self` method writes through a
 `Pointer[T, Origin[mut=True]]` field as upstream does.
@@ -1857,8 +1860,10 @@ reads it through the reference handle (mutable-reference getter), applies the
 in-place dunder to that temporary, and commits the result.
 
 Printing and `String()` require `Writable`. A custom `write_to` or
-`write_repr_to` receives `Some[Writer]`; `Writer.write` accepts heterogeneous
-Writable values and ultimately feeds UTF-8 strings to `write_string`. The VM's
+`write_repr_to` receives `Some[Writer]`; `Writer` is the bundled trait
+(`std/format/__init__.mojo`), whose default `write` writes each heterogeneous
+Writable argument through its `write_to`, and a builtin's `write_to` feeds its
+host-formatted UTF-8 text to `write_string` (`$write_formatted`). The VM's
 buffer writer uses `String` as the `StringSlice` representation. When a Writable
 method is absent, field reflection produces the default display or repr form.
 `String.format` supports automatic/manual fields, repr selection, escaped braces,

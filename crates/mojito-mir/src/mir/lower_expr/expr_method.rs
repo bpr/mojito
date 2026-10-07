@@ -239,7 +239,7 @@ impl Flatten<'_> {
             self.emit(MirInstr::MethodCall {
                 dest: d,
                 recv,
-                method: "write".to_string(),
+                method: mojito_symbol::symbol::WRITE_FORMATTED.to_string(),
                 resolved: None,
                 raises: None,
                 reference_result: None,
@@ -292,7 +292,7 @@ impl Flatten<'_> {
             self.emit(MirInstr::MethodCall {
                 dest: d,
                 recv,
-                method: "write".to_string(),
+                method: mojito_symbol::symbol::WRITE_FORMATTED.to_string(),
                 resolved: None,
                 raises: None,
                 reference_result: None,

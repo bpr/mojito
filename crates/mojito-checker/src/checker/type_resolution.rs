@@ -2735,19 +2735,6 @@ impl Checker {
         })
     }
 
-    /// The instance type of a registered struct without type or value
-    /// parameters whose origin slots are all left to inference — the
-    /// checker-synthesized spelling of a bare `StringSpan` parameter.
-    pub(super) fn unbound_struct_instance(&self, name: &str) -> Ty {
-        let tail = self.structs.get(name).map_or_else(Vec::new, |info| {
-            info.origin_slots()
-                .iter()
-                .map(|_| TyArg::Origin(mojito_types::origin::Origin::Unbound))
-                .collect()
-        });
-        self.struct_instance_type(name, tail)
-    }
-
     /// Construct the checked identity of an ordinary struct or of a concrete
     /// erased specialization whose source parameters have become fixed facts.
     pub(super) fn struct_instance_type(&self, name: &str, arguments: Vec<TyArg>) -> Ty {

@@ -190,12 +190,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   from the brace's, checks it, and records
   `SemanticAdjustment::InitializerList`, which `mojito-checked`'s arena
   builder answers at the brace's location and `mojito-hir`
-  (`substitute_initializer_lists`) lowers in the brace's place. Together they own method-call inference (including the `Writer.write` intrinsic and its
-  inverse: `x.write_to(writer)` on a bounded parameter, a builtin, or the
+  (`substitute_initializer_lists`) lowers in the brace's place. Together they own method-call inference (including the inverted write:
+  `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
-  `mir/lower_expr/expr.rs` lowers as `writer.write(x)`, and
-  `x.write_repr_to(writer)` records `InvertedReprWrite`, lowered as
-  `writer.write(repr(x))`; an instance method called through its type with
+  `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive
+  `mojito-symbol`'s `WRITE_FORMATTED` (`$write_formatted`, the formatted
+  text through `write_string`), and `x.write_repr_to(writer)` records
+  `InvertedReprWrite`, lowered as the same primitive over `repr(x)`; a
+  plain `writer.write(...)` resolves to the bundled `Writer` trait's
+  declared `write` like any method; an instance method called through its type with
   the receiver as the first argument — `infer_type_receiver_instance_call`
   in `statics.rs` — records `ReceiverFromFirstArgument`, and MIR lowers the
   first argument as the receiver), overload scoring

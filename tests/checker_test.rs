@@ -2410,7 +2410,7 @@ fn imported_names_are_not_made_available() {
 
 #[test]
 fn accepts_print_of_various_values() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct P(Writable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.x)\n\nprint(1, \"a\", True, 3.5, None, P(5))\nprint()\n",
     );
 }
@@ -3303,16 +3303,44 @@ fn bounded_and_builtin_write_to_lower_as_writer_write() {
     // `x.write_to(writer)` on a `Writable`-bounded parameter or a builtin
     // Writable value is the `writer.write(x)` shape; an unbounded parameter
     // has no such method and the argument must be a Writer.
-    ok(
+    ok_std(
         "struct Wrap[T: Writable & ImplicitlyCopyable & Deinitable](Writable):\n    var value: Self.T\n\n    def __init__(out self, value: Self.T):\n        self.value = value\n\n    def write_to[W: Writer](self, mut writer: W):\n        writer.write(\"Wrap(\")\n        self.value.write_to(writer)\n        Int(3).write_to(writer)\n        writer.write(\")\")\n\nvar w = Wrap(8)\n",
     );
     assert!(matches!(
-        err("def show[T: Copyable, W: Writer](x: T, mut out: W):\n    x.write_to(out)\n"),
+        err_std("def show[T: Copyable, W: Writer](x: T, mut out: W):\n    x.write_to(out)\n"),
         TypeError::NoSuchMethod { .. }
     ));
     assert!(matches!(
-        err("var n = 3\nInt(7).write_to(n)\n"),
+        err_std("var n = 3\nInt(7).write_to(n)\n"),
         TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn writer_is_the_bundled_trait_and_a_witness_may_rename_its_payload() {
+    // `Writer` declares `write_string(mut self, string: StringSpan)`; a
+    // conformer naming the payload otherwise still conforms, since a call
+    // through the bound binds it by position. One declaring no
+    // `write_string` does not.
+    ok_std(
+        "struct Buf(Writer):\n    var text: String\n\n    def __init__(out self):\n        self.text = String()\n\n    def write_string(mut self, chunk: StringSpan):\n        self.text += chunk\n\ndef main():\n    var b = Buf()\n    b.write(1, \"x\")\n",
+    );
+    assert!(matches!(
+        err_std("struct Bad(Writer):\n    var n: Int\n\ndef main():\n    pass\n"),
+        TypeError::MissingTraitMethod { .. }
+    ));
+}
+
+#[test]
+fn keyword_through_a_bound_to_a_renamed_witness_parameter_is_unsupported() {
+    // The pin binds `u.f(x=4)` by the requirement's names and passes the
+    // value positionally to `S.f(self, y: Int)`; the clone path would bind
+    // it by the witness's, so the call is rejected rather than misbound.
+    let source = "trait T:\n    def f(self, x: Int) -> Int:\n        ...\n\nstruct S(T):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\n    def f(self, y: Int) -> Int:\n        return self.n + y\n\ndef g[U: T](u: U) -> Int:\n    return u.f(";
+    ok_std(&format!("{source}4)\n"));
+    assert!(matches!(
+        err_std(&format!("{source}x=4)\n")),
+        TypeError::Unsupported(_)
     ));
 }
 

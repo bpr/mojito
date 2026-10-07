@@ -993,7 +993,8 @@ fn visit_call_edges<'p>(
             // formatting shape missing from this list fails loudly.
             if matches!(instr, MirInstr::Call { func, .. }
                 if matches!(func.0.as_str(), "print" | "String" | "repr" | "_mojito_abort"))
-                || matches!(instr, MirInstr::MethodCall { method, .. } if method == "write")
+                || matches!(instr, MirInstr::MethodCall { method, .. }
+                    if matches!(method.as_str(), "write" | mojito_symbol::symbol::WRITE_FORMATTED))
             {
                 push_named(&mut targets, mojito_symbol::symbol::INT_DIGITS_SYMBOL);
                 push_named(&mut targets, mojito_symbol::symbol::UINT_DIGITS_SYMBOL);
@@ -1081,7 +1082,11 @@ fn visit_call_edges<'p>(
                     resolved: None,
                     args,
                     ..
-                } if method == "write" => {
+                } if matches!(
+                    method.as_str(),
+                    "write" | mojito_symbol::symbol::WRITE_FORMATTED
+                ) =>
+                {
                     if let Some(Ty::Struct(name, _)) = function.reg_types.get(&recv.0) {
                         push_named(&mut targets, &format!("{name}.write_string"));
                     }
