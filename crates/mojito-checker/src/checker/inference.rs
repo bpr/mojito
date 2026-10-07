@@ -884,19 +884,6 @@ impl Checker {
                 // reading: a type-name receiver (`Lanes.ident[Int](3)`) is a
                 // static call there and is never inferred as a value.
                 if let ExprKind::Member { object, field } = &callee.kind {
-                    // `p.__getitem__[k]()` on a specialized variadic struct
-                    // names the accessor the subscript sugar unrolled per
-                    // index; the explicit spelling selects the same one.
-                    if let Some(accessor) = self
-                        .dependent_index_accessor_method(object, field, param_args, args, kwargs)?
-                    {
-                        return self.infer_method_call(
-                            &expr.source_span(),
-                            object,
-                            &accessor,
-                            MethodCallArguments::parameterized(&[], &[], &[]),
-                        );
-                    }
                     match self.infer_method_call(
                         &expr.source_span(),
                         object,
@@ -1527,7 +1514,7 @@ impl Checker {
                 let factory = self.infer(&kwarg.value)?;
                 let factory_ret = placement_factory_result(&factory);
                 let index = factory_ret.and_then(|ret| {
-                    variant_position(&alternatives, |alternative| coerces(ret, alternative))
+                    self.variant_index(&alternatives, ret, |alternative| coerces(ret, alternative))
                 });
                 let Some(index) = index else {
                     return Err(TypeError::TypeMismatch {
@@ -1703,20 +1690,20 @@ impl Checker {
                     }
                     let input = self.type_param_argument(&param_args[0], "Variant.replace")?;
                     let output = self.type_param_argument(&param_args[1], "Variant.replace")?;
-                    let input_index =
-                        variant_position(&alternatives, |alternative| alternative == &input)
-                            .ok_or_else(|| TypeError::TypeMismatch {
-                                expected: format!("one of {}", Ty::Variant(alternatives.clone())),
-                                found: input.to_string(),
-                                context: "Variant replacement input type".to_string(),
-                            })?;
-                    let output_index =
-                        variant_position(&alternatives, |alternative| alternative == &output)
-                            .ok_or_else(|| TypeError::TypeMismatch {
-                                expected: format!("one of {}", Ty::Variant(alternatives.clone())),
-                                found: output.to_string(),
-                                context: "Variant replacement output type".to_string(),
-                            })?;
+                    let input_index = self
+                        .variant_index(&alternatives, &input, |alternative| alternative == &input)
+                        .ok_or_else(|| TypeError::TypeMismatch {
+                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                            found: input.to_string(),
+                            context: "Variant replacement input type".to_string(),
+                        })?;
+                    let output_index = self
+                        .variant_index(&alternatives, &output, |alternative| alternative == &output)
+                        .ok_or_else(|| TypeError::TypeMismatch {
+                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                            found: output.to_string(),
+                            context: "Variant replacement output type".to_string(),
+                        })?;
                     self.check_place(object)?;
                     if field == "replace" && !self.is_deinitable(&input) {
                         return Err(TypeError::TraitNotSatisfied {
@@ -1793,7 +1780,7 @@ impl Checker {
         &self,
         alternatives: &[Ty],
         handler: &Expr,
-    ) -> Result<usize, TypeError> {
+    ) -> Result<VariantIndex, TypeError> {
         let handler_ty = self.infer(handler)?;
         let reject = |found: &Ty| TypeError::TypeMismatch {
             expected: "def(var element: T) for one alternative T".to_string(),
@@ -1826,8 +1813,10 @@ impl Checker {
                 ) {
                     return Err(reject(&handler_ty));
                 }
-                variant_position(alternatives, |alternative| alternative == &params[0])
-                    .ok_or_else(|| reject(&handler_ty))
+                self.variant_index(alternatives, &params[0], |alternative| {
+                    alternative == &params[0]
+                })
+                .ok_or_else(|| reject(&handler_ty))
             }
             _ => Err(reject(&handler_ty)),
         }
@@ -1837,7 +1826,7 @@ impl Checker {
         &self,
         alternatives: &[Ty],
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(usize, Ty), TypeError> {
+    ) -> Result<(VariantIndex, Ty), TypeError> {
         if args.len() != 1 {
             return Err(TypeError::WrongTypeArgCount {
                 name: "Variant operation".to_string(),
@@ -1846,13 +1835,41 @@ impl Checker {
             });
         }
         let requested = self.type_param_argument(&args[0], "Variant operation")?;
-        variant_position(alternatives, |alternative| alternative == &requested)
-            .map(|index| (index, requested.clone()))
-            .ok_or_else(|| TypeError::TypeMismatch {
-                expected: format!("one of {}", Ty::Variant(alternatives.to_vec())),
-                found: requested.to_string(),
-                context: "Variant operation type".to_string(),
-            })
+        self.variant_index(alternatives, &requested, |alternative| {
+            alternative == &requested
+        })
+        .map(|index| (index, requested.clone()))
+        .ok_or_else(|| TypeError::TypeMismatch {
+            expected: format!("one of {}", Ty::Variant(alternatives.to_vec())),
+            found: requested.to_string(),
+            context: "Variant operation type".to_string(),
+        })
+    }
+
+    /// The alternative an operation selecting `selected` names: the first
+    /// that `selects` admits, or, over a pack that is still a parameter,
+    /// upstream's `_get_type_index[selected, *Ts]()`, which each
+    /// instantiation closes (failing at a type the pack lacks).
+    pub(super) fn variant_index(
+        &self,
+        alternatives: &[Ty],
+        selected: &Ty,
+        selects: impl Fn(&Ty) -> bool,
+    ) -> Option<VariantIndex> {
+        match mojito_types::types::pack_spread(alternatives) {
+            Some(Ty::Param { binder, .. }) => {
+                Some(VariantIndex::Expr(self.param_context.pack_query(
+                    binder,
+                    mojito_types::param_expr::PackQuery::IndexOf(
+                        self.param_context.type_shape(selected.clone()),
+                    ),
+                )))
+            }
+            _ => alternatives
+                .iter()
+                .position(selects)
+                .map(VariantIndex::Known),
+        }
     }
 
     /// Infer a collection display against an expected collection type. Empty
@@ -2607,10 +2624,11 @@ impl Checker {
             };
             let factory = self.infer(&kwarg.value)?;
             let factory_ret = placement_factory_result(&factory);
-            let index = factory_ret.and_then(|ret| {
-                variant_position(&alternatives, |alternative| coerces(ret, alternative))
+            let selected = factory_ret.and_then(|ret| {
+                self.variant_index(&alternatives, ret, |alternative| coerces(ret, alternative))
+                    .map(|index| (index, ret.clone()))
             });
-            let Some(index) = index else {
+            let Some((index, payload)) = selected else {
                 return Err(TypeError::TypeMismatch {
                     expected: "def() -> T for one alternative T".to_string(),
                     found: factory.to_string(),
@@ -2622,6 +2640,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
                     alternatives: alternatives.clone(),
                     index,
+                    payload,
                 },
             );
             return Ok(Ty::Variant(alternatives));
@@ -2645,9 +2664,25 @@ impl Checker {
             ));
         };
         let actual = self.infer(&args[0])?;
-        // Over a pack that is still a parameter, which alternative the
-        // payload is belongs to each instantiation.
+        // Over a pack that is still a parameter, the payload's materialized
+        // type selects the alternative, as the pin's `__init__[T]` does;
+        // each instantiation closes which one it is.
         if mojito_types::types::pack_spread(&alternatives).is_some() {
+            let payload = default_literal(&actual);
+            let index = self
+                .variant_index(&alternatives, &payload, |_| false)
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation(
+                        "a pack-spread Variant selects a symbolic alternative".to_string(),
+                    )
+                })?;
+            self.operation_adjustments.borrow_mut().insert(
+                span,
+                mojito_checked::checked::SemanticAdjustment::ConstructVariant {
+                    alternatives: alternatives.clone(),
+                    index,
+                },
+            );
             return Ok(Ty::Variant(alternatives));
         }
         let exact: Vec<_> = alternatives
@@ -2706,7 +2741,7 @@ impl Checker {
             span,
             mojito_checked::checked::SemanticAdjustment::ConstructVariant {
                 alternatives: alternatives.clone(),
-                index: *index,
+                index: VariantIndex::Known(*index),
             },
         );
         Ok(Ty::Variant(alternatives))
@@ -2881,13 +2916,6 @@ fn with_contextual_root(expression: &Expr, base: &str) -> Expr {
 /// The position of the alternative `selects` accepts. Over a pack that is
 /// still a parameter membership is each instantiation's fact, so the first
 /// position stands in: only the type discipline is checked there.
-fn variant_position(alternatives: &[Ty], selects: impl Fn(&Ty) -> bool) -> Option<usize> {
-    if mojito_types::types::pack_spread(alternatives).is_some() {
-        return Some(0);
-    }
-    alternatives.iter().position(selects)
-}
-
 /// The result type of an `init_with` placement factory: a zero-parameter,
 /// non-raising callable, or a type parameter bounded by one.
 fn placement_factory_result(factory: &Ty) -> Option<&Ty> {

@@ -10,7 +10,15 @@ pub use mojito_types::types::{map_tyargs, substitute};
 pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
     match pattern {
         Ty::Param { binder, .. } => {
-            let solved = default_literal(actual);
+            // A string literal binds the type it materializes to, as the
+            // pin's nonmaterializable `StringLiteral` does.
+            let solved = match actual {
+                Ty::StringLiteral => Ty::Struct(
+                    mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+                    Vec::new().into(),
+                ),
+                actual => default_literal(actual),
+            };
             match subst.get(&binder.id) {
                 None => {
                     subst.insert(binder.id.clone(), solved);

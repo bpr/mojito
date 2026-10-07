@@ -14,7 +14,7 @@ use std::collections::HashSet;
 fn schema_version_and_envelope_are_stable() {
     assert_eq!(MAGIC, "mojito-mir");
     assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 30));
-    assert_eq!(version_header(), "mojito-mir 1.30");
+    assert_eq!(version_header(), "mojito-mir 1.31");
 }
 
 #[test]
@@ -44,7 +44,10 @@ fn closed_supporting_enums_have_canonical_spellings() {
     assert_eq!(projection_spelling(&Proj::Field("x".into())), "field");
     assert_eq!(projection_spelling(&Proj::Index(Reg(0))), "index");
     assert_eq!(projection_spelling(&Proj::ConstIndex(0)), "const_index");
-    assert_eq!(projection_spelling(&Proj::Variant(0)), "variant");
+    assert_eq!(
+        projection_spelling(&Proj::Variant(mojito::types::VariantIndex::Known(0))),
+        "variant"
+    );
     assert_eq!(projection_spelling(&Proj::UninitPayload), "uninit_payload");
 
     let intrinsics = [

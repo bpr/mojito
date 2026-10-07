@@ -20,7 +20,6 @@ impl Elab<'_> {
             statement,
             &self.served_packs,
             &self.served_lanes,
-            &self.served_structs,
             &self.scalar_reads,
         )
     }
@@ -1384,23 +1383,6 @@ impl Elab<'_> {
                 _ => false,
             })
             .cloned()
-            .map(|stmt| {
-                // A variadic template a retained body applies over its own
-                // parameters (`TypeNames[Self.T]()` in `List.write_repr_to`)
-                // crosses as the shell the pre-check elaboration emits; the
-                // public `Tuple`/`TString` keep their own machinery.
-                if let StmtKind::Struct {
-                    name, type_params, ..
-                } = &stmt.kind
-                    && type_params
-                        .iter()
-                        .any(|parameter| parameter.name.starts_with('*'))
-                    && !matches!(name.rsplit('$').next().unwrap_or(name), "Tuple" | "TString")
-                {
-                    return super::specialize::template_shell(&stmt);
-                }
-                stmt
-            })
             .collect::<Vec<_>>();
         // Module-scope literal constants fold into the retained bodies as the
         // production elaboration folds them: a retained `Comptime` statement

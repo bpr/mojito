@@ -691,8 +691,14 @@ branch for the class is deleted, and so is its certificate class.
   their unrolled members. `Tuple` and `TString` followed on 2026-10-06:
   both are templates `native::mono` instantiates, the tuple requests and
   the `Tuple$t…` spellings are gone, and Hello World's census reads 0
-  clones. `Variant` and the variadic structs over it stay on the cloner
-  (R4).
+  clones. `Variant` followed the same day, and with it every variadic
+  struct: its storage operations carry upstream's
+  `_get_type_index[T, *Ts]()` as a symbolic `VariantIndex` (schema 1.31),
+  which `native::mono` closes per instance, failing a non-member. The
+  driver's variadic-struct requests, `generate_struct_spec`, the per-index
+  accessor clones, the variadic shells, and the census's three
+  struct-member classes are gone; `Variant[Int, Bool](1)` with `isa[Int]`
+  reads 0 clones (was `struct_variadic 21`).
 - **P3e.** Three steps: a method's own compile-time parameters, nested
   definitions and their captures, and clones minted during CTFE. The first
   landed 2026-10-05: a method with compile-time parameters of its own is a
@@ -712,8 +718,7 @@ branch for the class is deleted, and so is its certificate class.
   followed with R259 (2026-10-05): `_update_with_simd` is a generator over
   an infer-only dtype and `SIMDLength` binder pair, the 28 eager leaves
   are gone, and Hello World reads `method_per_call 47`, total 183. What
-  still clones per call is R310 (a body only a clone serves, a member of a
-  variadic struct specialized whole).
+  still clones per call is R310 (a body only a clone serves).
 
 One mixed-feature probe is carried through every P3 step, so migrations that
 pass alone also compose.

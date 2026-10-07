@@ -2797,11 +2797,6 @@ impl Checker {
                 None => self.type_param_argument(arg, "Variant alternative")?,
             };
             reject_stored_callable_type(&alternative, "a 'Variant' alternative type")?;
-            if alternatives.contains(&alternative) {
-                return Err(TypeError::Unsupported(format!(
-                    "Variant contains duplicate alternative '{alternative}'"
-                )));
-            }
             alternatives.push(alternative);
         }
         Self::reject_mixed_spread("Variant", &alternatives)?;

@@ -1,4 +1,4 @@
-# expect: 'init_with' factory for 'Variant'
+# expect: Type does not exist in Variant
 # The placement constructor's factory must return one of the alternatives.
 from std.utils import Variant
 

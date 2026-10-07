@@ -177,6 +177,27 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
     types
 }
 
+/// The alternatives a `Variant` operation selects, outside its places.
+pub fn instruction_variant_indices(
+    instruction: &MirInstr,
+) -> Vec<&mojito_types::types::VariantIndex> {
+    match instruction {
+        MirInstr::MakeVariant { index, .. }
+        | MirInstr::VariantIs { index, .. }
+        | MirInstr::VariantGet { index, .. }
+        | MirInstr::VariantSet { index, .. }
+        | MirInstr::VariantTake { index, .. }
+        | MirInstr::VariantSetInitWith { index, .. }
+        | MirInstr::VariantDeinitWith { index, .. } => vec![index],
+        MirInstr::VariantReplace {
+            input_index,
+            output_index,
+            ..
+        } => vec![input_index, output_index],
+        _ => Vec::new(),
+    }
+}
+
 /// Whether a binder is one a callable contract or witness request spells,
 /// bound by the construct that holds it rather than by a declaration.
 pub(super) fn is_contract_binder(id: &ParamId) -> bool {
@@ -311,6 +332,23 @@ impl ScopeCx<'_> {
                         width: width.clone(),
                     };
                     self.walk(&format!("block {index} vector slots"), &built);
+                }
+                let projected = instruction_places(instruction)
+                    .into_iter()
+                    .flat_map(|place| &place.proj)
+                    .filter_map(|projection| match projection {
+                        Proj::Variant(alternative) => Some(alternative),
+                        _ => None,
+                    });
+                for alternative in instruction_variant_indices(instruction)
+                    .into_iter()
+                    .chain(projected)
+                {
+                    if let mojito_types::types::VariantIndex::Expr(value) = alternative {
+                        let role = format!("block {index} variant alternative");
+                        let mut nested = Vec::new();
+                        self.expr_nodes(&role, "variant alternative", value, &mut nested);
+                    }
                 }
                 if let MirInstr::SimdShuffle { mask, .. } = instruction {
                     let role = format!("block {index} lane mask");

@@ -3139,7 +3139,10 @@ impl Flatten<'_> {
 impl Flatten<'_> {
     /// The alternative index of a checked Variant projection recorded on `e`
     /// (`v[T]`, `storage[T]`), if any.
-    pub(super) fn variant_projection_index(&self, e: &Expr) -> Option<usize> {
+    pub(super) fn variant_projection_index(
+        &self,
+        e: &Expr,
+    ) -> Option<mojito_types::types::VariantIndex> {
         self.checked_adjustments(e)
             .into_iter()
             .find_map(|adjustment| match adjustment {

@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
-use mojito_types::types::LaneMask;
+use mojito_types::types::{LaneMask, VariantIndex};
 
 fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
@@ -581,7 +581,7 @@ fn sample_place(root: u32) -> MirPlace {
             Proj::Field("data".into()),
             Proj::Index(Reg(7)),
             Proj::ConstIndex(1),
-            Proj::Variant(0),
+            Proj::Variant(VariantIndex::Known(0)),
             Proj::UninitPayload,
         ],
         projection_tys: vec![Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Int],
@@ -977,48 +977,48 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MakeVariant {
             dest: Reg(27),
             alternatives: vec![Ty::Int, Ty::None],
-            index: 1,
+            index: VariantIndex::Known(1),
             value: Reg(1),
         },
         MirInstr::VariantIs {
             dest: Reg(28),
             variant: Reg(27),
-            index: 0,
+            index: VariantIndex::Known(0),
         },
         MirInstr::VariantGet {
             dest: Reg(29),
             variant: Reg(27),
-            index: 1,
+            index: VariantIndex::Known(1),
         },
         MirInstr::VariantSet {
             dest: Reg(30),
             place: place(0),
-            index: 0,
+            index: VariantIndex::Known(0),
             value: Reg(1),
         },
         MirInstr::VariantTake {
             dest: Reg(31),
             variant: Reg(27),
-            index: 1,
+            index: VariantIndex::Known(1),
             checked: true,
         },
         MirInstr::VariantSetInitWith {
             dest: Reg(32),
             place: place(0),
-            index: 0,
+            index: VariantIndex::Known(0),
             factory: Reg(5),
         },
         MirInstr::VariantDeinitWith {
             dest: Reg(33),
             variant: Reg(27),
             handler: Reg(5),
-            index: 1,
+            index: VariantIndex::Known(1),
         },
         MirInstr::VariantReplace {
             dest: Reg(34),
             place: place(0),
-            input_index: 0,
-            output_index: 1,
+            input_index: VariantIndex::Known(0),
+            output_index: VariantIndex::Known(1),
             value: Reg(1),
             checked: false,
         },
@@ -2206,6 +2206,49 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
     assert_ne!(older.replacen("mojito-mir 1.5", "mojito-mir 1.10", 1), text);
     let pack = read_pack(&older);
     assert!(pack.is_unbound() && &*pack.name == "Ts");
+}
+
+/// A template's `Variant` alternative is upstream's
+/// `_get_type_index[T, *Ts]()` in an instruction and in a place
+/// projection, and both read back to the same index.
+#[test]
+fn symbolic_variant_index_round_trips() {
+    let context = ParamContext::detached();
+    let element = context.type_shape(Ty::Param {
+        binder: test_binder("T"),
+        bounds: Vec::new(),
+        callable_bound: None,
+    });
+    let index =
+        VariantIndex::Expr(context.pack_query(&test_binder("*Ts"), PackQuery::IndexOf(element)));
+    let mut projected = sample_place(0);
+    projected.proj = vec![Proj::Variant(index.clone())];
+    projected.projection_tys = vec![Ty::Int];
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::Bool, Ty::Int],
+            vec![
+                MirInstr::VariantIs {
+                    dest: Reg(0),
+                    variant: Reg(1),
+                    index: index.clone(),
+                },
+                MirInstr::LoadPlace {
+                    dest: Reg(1),
+                    place: projected,
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("pack_index_of("));
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let instrs = &parsed.program.functions[0].1.blocks[0].instrs;
+    assert!(matches!(&instrs[0], MirInstr::VariantIs { index: read, .. } if *read == index));
+    assert!(matches!(&instrs[1], MirInstr::LoadPlace { place, .. }
+        if matches!(place.proj.as_slice(), [Proj::Variant(read)] if *read == index)));
 }
 
 /// The three forms only a generator carries — a pack element, a reflection

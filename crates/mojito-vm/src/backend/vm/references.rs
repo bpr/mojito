@@ -804,7 +804,7 @@ pub(super) fn place_projection_segments(
                 RefProjection::Index(value_as_index(&registers[register.0 as usize])? as usize)
             }
             Proj::ConstIndex(index) => RefProjection::Index(*index),
-            Proj::Variant(index) => RefProjection::Variant(*index),
+            Proj::Variant(index) => RefProjection::Variant(known_variant_index(index)?),
             Proj::UninitPayload => RefProjection::UninitPayload,
         });
     }

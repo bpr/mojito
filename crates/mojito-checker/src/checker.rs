@@ -30,7 +30,7 @@ use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use generics::*;
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
-use mojito_types::types::TransferSet;
+use mojito_types::types::{TransferSet, VariantIndex};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use operators::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -2681,12 +2681,6 @@ struct TupleUnpackSource {
     /// Whether the statement declares them (`var a, b = t`) rather than
     /// storing to bindings already in scope.
     declares: bool,
-}
-
-#[derive(Clone, Copy)]
-struct DependentIndexAccessorFamily {
-    place: &'static str,
-    value: &'static str,
 }
 
 /// The checked signature of a trait: required methods plus associated

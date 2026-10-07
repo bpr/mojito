@@ -778,15 +778,22 @@ members with the binder symbolic, its template crosses MIR, and
 struct binder to a `Const::Value` and a field of a struct-typed one
 (`ParamKind::Field`) to its constant. The elaborator freezes a computed
 struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
-which the checker reads as the frozen value. A variadic struct the
-template serves (`served_variadic_structs`: its source names no struct
-still specialized whole) is a generator too, `native::mono` binding its
-pack per instance. The public `Tuple` and `TString` are such generators:
-a tuple's type is the nominal `Tuple[...]` applied element by element
-(`types::canonical_pack_arguments`), `t[k]` is the template's
-`__getitem_param__[k]`, and the consuming members move elements out
+which the checker reads as the frozen value. Every variadic struct is a
+generator too, `native::mono` binding its pack per instance; the cloner
+specializes no struct whole. The public `Tuple`, `TString`, and `Variant`
+are spelled element by element (`types::binds_pack_elementwise`,
+`types::canonical_pack_arguments`): `t[k]` is the template's
+`__getitem_param__[k]`, and `Tuple`'s consuming members move elements out
 through pointers and end the storage with `MirInstr::MarkDestroyed`.
-`Variant` and the variadic structs over it are still specialized whole. A method with a lane binder of its
+`Variant`'s storage operations select upstream's
+`_get_type_index[T, *Ts]()` (`PackQuery::IndexOf`): the checker records it
+as a `types::VariantIndex` in the operation's adjustment, HIR and MIR carry
+it (`MakeVariant` through `VariantReplace`, `Proj::Variant`), and
+`native::mono` closes it per instance (`close_variant_index`), failing the
+instance at a `T` the pack lacks, as upstream's `Variant._check[T]()` does.
+Ownership keys a symbolic alternative as one that may be any
+(`Key::Variant(None)`, `VariantIndex::may_equal`), and concrete MIR holds
+only known ones (`verify_concrete`). A method with a lane binder of its
 own is a generator too, instantiated per call.
 
 **A reflected field is symbolic too.** A body reading `reflect[T]` over a
@@ -1082,14 +1089,13 @@ binds it below MIR. A method keeps per-call AST clones only where its
 template cannot serve: its body reaches a compile-time-keyed
 stub (`per_call_stubs` and the elaborator's stub-reaching walk, reported to
 the driver as `Elaborated::stub_reaching_methods` and keyed the next round),
-holds a nested `def` or a lambda, or applies a tuple or a struct specialized
-whole over its own binders, or it is a member of a struct specialized whole.
+holds a nested `def` or a lambda, or applies a tuple over its own
+binders.
 Those clones share one minting path (`per_call_method_clones`): the
 elaborator's struct walk mints them for a named owner (`PerCallBase`), and
 `generate_instance_clones` for an instance (instance values first, then the
 call's), each gated by the method's template servability
-(`template_serves_method`, the instance's keyed set); `generate_struct_spec`
-and `generate_value_struct_spec` mint a specialized struct's own. The checker
+(`template_serves_method`, the instance's keyed set). The checker
 retargets a call to such a clone by exact name
 (`specialized_method_clone`, `instance_call_method_clone`), a construction
 through `per_call_constructor_target`. A pack binding expands `*args: *Ts`
@@ -1153,42 +1159,8 @@ store `p[] = v` types the pointer as a value read and gates on the pointer
 origin's mutability alone, so a plain `self` method writes through a
 `Pointer[T, Origin[mut=True]]` field as upstream does.
 
-A variadic struct applied over an enclosing declaration's own type parameters
-(`Variant[T, String]` in `def wrap[T]`, `Variant[*Ts]` in `def f[*Ts]`, a
-`Variant[*Self.Ts]` field of `struct Outer[*Ts]`) cannot specialize eagerly.
-`Mono::symbolic_type_params` tracks the parameters of the declarations being
-walked; `resolve_struct_spec_args_if_ready` leaves such an application
-symbolic (as the public `Tuple` always was) and retains the template. The
-program rebuild then emits the template as a **shell**
-(`StmtKind::Struct::template_shell`): its parameters, declared conformances
-(taken unconditionally — the concrete specialization re-verifies them), the
-method signatures that resolve symbolically, and — for a variadic template,
-whose members resolve over its pack — its fields and associated members
-when they all resolve, register in the checker (`check_struct_shell` skips
-the variadic-template rejection, `register_struct_method_signatures` skips a
-signature that fails, `check_struct_types` installs a variadic shell's
-members all-or-nothing, and the completion phase is skipped), so the
-retained abstract body checks against it, its constructions included;
-`explicit_destroy` and MIR skip a shell entirely. A concrete application that
-fails to resolve keeps its eager diagnostic, and the raw seam still rejects
-an unmarked variadic template.
-
-A bare construction of a single-pack template (`Pair((1, True))`,
-`Bag(7, "x")`) also survives elaboration with the template retained as a
-shell (`mono_expr`, `Elab::single_pack_template`). The discovery check types
-it against the shell's constructor and solves the pack there
-(`solve_value_args` binds a spread `Tuple[*Self.Ts]` to the display's
-element list; the `*args: *Self.Ts` collector's elements collect as a
-method-level pack does), rejects a constructor naming the pack nowhere
-(`Checker::reject_unconstrained_pack`), records the pack as a
-`GenericInstantiation` on the struct's own name at the call occurrence and
-— once the specialization is declared — types the call as that concrete
-struct's construction (`finish_variadic_construction`). `Compiler::compile_linked` turns the
-recording into a constructor-rewrite request (`variadic_struct_requests`),
-which `seed_def_call_targets` files under `Mono::struct_call_targets` and
-`mono_expr` serves by rewriting the call to `mangle(template, [pack])` — the
-same symbol an explicit application mints. A scalar `range(...)` takes the
-same route (`scalar_range_requests`) to a different rewrite: its range
+A scalar `range(...)` recorded by the checker is a constructor rewrite
+(`scalar_range_requests`): its range
 struct is a generator, so the call becomes the construction of the linked
 struct at the recorded dtype (`_ZeroStartingRange[DType.int32](…)`), which
 the next round checks as any generic construction.
@@ -1204,16 +1176,15 @@ its body fixes its element from the loop index the elaborator folded there.
 `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar
-`range` family; a bare variadic-struct construction — the last two are
-constructor rewrites) and `MethodSpecializationRequest`s from its recorded generic
-*method* instantiations — on a specialized variadic struct, on a closed
+`range` family, a constructor rewrite) and `MethodSpecializationRequest`s from its recorded generic
+*method* instantiations — on a closed
 instance of an ordinary generic struct (the request owner is the instance
 key `mangle(template, arguments)` and the instance's arguments bake before
 the call's: `kind$y3:Int$y4:Bool`), on a user-declared struct, or from any
 call site outside the unstamped bundled stdlib (user code and `$`-stamped
 clone bodies: `List[Int].write_repr_to` reaching `FormatStruct.params`),
-never for a variadic template's own shell name (its round-1 recording would
-only conflict with the specialization's); a method-level pack inferred from
+never for a variadic template's own name (the abstract type, which names
+no instance); a method-level pack inferred from
 the overflow arguments is a closed `CtValue::Tuple` of materialized element
 types (closed arguments only, keyed by occurrence span with the phase-local
 syntax id stripped) and

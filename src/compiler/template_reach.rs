@@ -11,21 +11,16 @@
 use super::{ServedRequests, StructInstanceRequest, closed_generic_argument};
 use crate::ast::{Expr, Stmt, StmtKind};
 use crate::checked::DiscoveryResult;
-use crate::comptime::specialized_struct_template_names;
 use crate::ct::CtValue;
 use crate::param_expr::{ParamError, ParamExpr, ParamRef};
 use crate::types::{TyRewrite, mentions, rewrite_ty};
 use crate::{Ty, TyArg};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// What the template-served bodies of a compilation demand across its
 /// discovery rounds.
 pub(super) struct TemplateDemand {
-    /// Structs specialized whole by the AST cloner (`Variant`, a variadic
-    /// struct over it): an application of one over a struct's parameter has no
-    /// template the elaborator could instantiate.
-    specialized: HashSet<String>,
     /// Template methods that still clone per instance because of what their
     /// checked bodies hold, as (struct, method). A `def` that still clones
     /// for the same reason is (`def`, "").
@@ -37,9 +32,8 @@ pub(super) struct TemplateDemand {
 }
 
 impl TemplateDemand {
-    pub(super) fn new(linked: &[Stmt]) -> Self {
+    pub(super) const fn new() -> Self {
         Self {
-            specialized: specialized_struct_template_names(linked),
             keyed_methods: Vec::new(),
             stub_reaching: Vec::new(),
         }
@@ -66,7 +60,7 @@ impl TemplateDemand {
         struct_requests: &mut Vec<StructInstanceRequest>,
         served: &mut ServedRequests,
     ) -> Option<String> {
-        let mut reach = TemplateReach::new(checked, &self.specialized);
+        let mut reach = TemplateReach::new(checked);
         let mut last = None;
         let calls = closed_def_calls(checked);
         let owners = |struct_requests: &[StructInstanceRequest]| {
@@ -118,13 +112,12 @@ impl TemplateDemand {
 /// methods, read lazily from one check's facts.
 struct TemplateReach<'a> {
     checked: &'a DiscoveryResult,
-    specialized: &'a HashSet<String>,
     templates: HashMap<&'a str, &'a Stmt>,
     reached: HashMap<String, Vec<Application>>,
 }
 
 impl<'a> TemplateReach<'a> {
-    fn new(checked: &'a DiscoveryResult, specialized: &'a HashSet<String>) -> Self {
+    fn new(checked: &'a DiscoveryResult) -> Self {
         let templates = checked
             .statements
             .iter()
@@ -146,7 +139,6 @@ impl<'a> TemplateReach<'a> {
             .collect();
         Self {
             checked,
-            specialized,
             templates,
             reached: HashMap::new(),
         }
@@ -162,13 +154,10 @@ impl<'a> TemplateReach<'a> {
             let mut bind = BindOwner {
                 owners: vec![(&template, request.arguments())],
             };
-            let specialized = self.specialized;
             let reached: Vec<StructInstanceRequest> = self
                 .applications(&template)
                 .iter()
-                .filter(|application| {
-                    !application.keyed && !specialized.contains(&application.name)
-                })
+                .filter(|application| !application.keyed)
                 .filter_map(|application| {
                     let arguments = application
                         .arguments
@@ -200,8 +189,7 @@ impl<'a> TemplateReach<'a> {
     /// The template bodies of the owners `requests` instantiate that only
     /// an instance's own check can serve, as (struct, method), or (`def`, "")
     /// for a `def`'s:
-    /// one that applies a struct specialized whole, or builds a tuple, over
-    /// the struct's parameters, and one that calls an overloaded method with
+    /// one that builds a tuple over the struct's parameters, and one that calls an overloaded method with
     /// compile-time parameters of its own, which runs as a per-call clone.
     fn keyed_methods(&mut self, requests: &[StructInstanceRequest]) -> Vec<(String, String)> {
         let mut templates: Vec<&str> = requests
@@ -212,13 +200,9 @@ impl<'a> TemplateReach<'a> {
         templates.dedup();
         let mut keyed = Vec::new();
         for template in templates {
-            let specialized = self.specialized;
             for application in self.applications(template) {
                 let key = (template.to_string(), application.method.clone());
-                if application.names(template)
-                    && (application.keyed || specialized.contains(&application.name))
-                    && !keyed.contains(&key)
-                {
+                if application.names(template) && application.keyed && !keyed.contains(&key) {
                     keyed.push(key);
                 }
             }
@@ -228,8 +212,8 @@ impl<'a> TemplateReach<'a> {
 
     /// What one closed call of a method with binders of its own reaches
     /// over them: the closed instances its body applies, and whether the
-    /// body only a per-call clone can serve (a tuple, or a struct
-    /// specialized whole, over the method's own binders).
+    /// body only a per-call clone can serve (a tuple over the method's own
+    /// binders).
     fn method_call(&mut self, call: &MethodCall) -> (Vec<StructInstanceRequest>, bool) {
         let binder_owner = call.binder_owner();
         let mut bind = BindOwner {
@@ -238,13 +222,12 @@ impl<'a> TemplateReach<'a> {
                 (binder_owner.as_str(), call.arguments.as_slice()),
             ],
         };
-        let specialized = self.specialized;
         let mut instances = Vec::new();
         let mut keyed = false;
         for application in self.applications(&call.owner).iter().filter(|application| {
             application.method == call.method && application.names(&binder_owner)
         }) {
-            if application.keyed || specialized.contains(&application.name) {
+            if application.keyed {
                 keyed = true;
                 continue;
             }

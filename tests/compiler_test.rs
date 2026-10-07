@@ -273,19 +273,29 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
         .expect("compile linked Variant");
     let execution = compiler.execute(&program).expect("execute Variant");
     assert_eq!(execution.output, "True False\nTrue\n7\nTrue\nmojo\n");
+    // The template serves every instance: its storage operations select
+    // `_get_type_index[T, *Ts]()`, which each instance closes.
     assert!(program.checked().expressions().iter().any(|expression| {
         expression.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
-                SemanticAdjustment::ConstructVariant { index: 0, .. }
+                SemanticAdjustment::ConstructVariant {
+                    index: mojito::types::VariantIndex::Expr(_),
+                    ..
+                }
             )
         })
     }));
     assert!(program.checked().expressions().iter().any(|expression| {
-        expression
-            .adjustments
-            .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::VariantSet { index: 1, .. }))
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                SemanticAdjustment::VariantSet {
+                    index: mojito::types::VariantIndex::Expr(_),
+                    ..
+                }
+            )
+        })
     }));
 }
 

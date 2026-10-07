@@ -575,26 +575,6 @@ fn stamped_source_module(source: &str) -> &str {
     source.split('$').next().unwrap_or(source)
 }
 
-/// Select the current Mojo parameter-index hook first, while retaining the
-/// earlier spelling as an intentional source-compatibility fallback.
-pub(super) fn dependent_index_accessor_family(
-    info: &StructInfo,
-) -> Option<DependentIndexAccessorFamily> {
-    if info.methods.contains_key("__getitem_param__$0") {
-        Some(DependentIndexAccessorFamily {
-            place: "__getitem_param__",
-            value: "__getitem_param_value__",
-        })
-    } else if info.methods.contains_key("__getitem__$0") {
-        Some(DependentIndexAccessorFamily {
-            place: "__getitem__",
-            value: "__getitem_value__",
-        })
-    } else {
-        None
-    }
-}
-
 /// View a statement as a struct declaration, for the order-independent
 /// declaration pre-passes and the source-order walk alike.
 /// The declaration view of a struct statement. `shell` marks a template

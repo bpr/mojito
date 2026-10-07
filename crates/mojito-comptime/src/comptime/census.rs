@@ -64,11 +64,6 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
             })
         })
         .collect();
-    let struct_traces: HashMap<&str, &MethodInstanceTrace> = minted
-        .method_traces
-        .iter()
-        .map(|trace| (trace.owner.as_str(), trace))
-        .collect();
     let clone_traces: HashMap<(&str, &str, Span), &MethodInstanceTrace> = minted
         .method_traces
         .iter()
@@ -98,8 +93,7 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
                 .copied()
         };
         // A per-call clone counts as one wherever it was minted: on a
-        // non-generic struct, on a generic struct's instance, or among the
-        // members of a struct specialized whole.
+        // non-generic struct or on a generic struct's instance.
         let per_call = |method: &Method| {
             template(method).is_some_and(|template| bakes_own_parameters(template, method))
                 || minted
@@ -108,18 +102,6 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
                     .iter()
                     .any(|(owner, clone)| owner == name && *clone == method.name)
         };
-        if minted.generated.structs.contains(name) {
-            let class = struct_traces
-                .get(name.as_str())
-                .map_or(CloneClass::ValueStruct, |trace| struct_class(trace));
-            let per_call_members = methods.iter().filter(|method| per_call(method)).count();
-            census.add(class, methods.len() - per_call_members);
-            census.add(CloneClass::PerCallMethod, per_call_members);
-            for method in methods {
-                census.name(method_source_name(name, method));
-            }
-            continue;
-        }
         for method in methods {
             let class = if per_call(method) {
                 CloneClass::PerCallMethod
@@ -183,16 +165,6 @@ fn bakes_own_parameters(template: &Method, clone: &Method) -> bool {
             .type_params
             .iter()
             .any(|parameter| baked.contains(&parameter.name.as_str()))
-}
-
-fn struct_class(trace: &MethodInstanceTrace) -> CloneClass {
-    if has_lane_value(&trace.value_bindings) {
-        CloneClass::DTypeVectorStruct
-    } else if trace.pack_bindings.is_empty() {
-        CloneClass::ValueStruct
-    } else {
-        CloneClass::VariadicStruct
-    }
 }
 
 fn has_lane_value(bindings: &[(String, CtValue)]) -> bool {

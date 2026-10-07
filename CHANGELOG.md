@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Variant` is now a struct generator, as at the pin: its template serves
+  every instance, each storage operation selecting the alternative
+  `_get_type_index[T, *Ts]()` names, which elaboration closes per instance.
+  A generic `def` or a variadic struct may now call `Variant` operations
+  over its own binders (`v.isa[T]()` in `def pick[T]`), where the call
+  stopped with "unspecialized type-keyed method"; `Variant[Int, Int]` is
+  accepted and selects the first alternative, where it was rejected as a
+  duplicate; and a `T` that is no alternative fails the instantiation with
+  "constraint failed: Type does not exist in Variant.". MIR text schema
+  1.31 carries the symbolic index (`pack_index_of`).
+- A type parameter inferred from a string literal now binds `String`, the
+  type the literal materializes to, as at the pin (`f("x")` for `def
+  f[T: Movable](var x: T)`), where it bound `StringLiteral`.
+- A static method called through an instance of a variadic struct
+  (`p.has[Int]()` for a `@staticmethod` reading `Self.Ts`) now runs, where
+  elaboration stopped with "keeps the parameter constant".
 - A `comptime for` over tuple- or struct-valued elements in a generic `def`
   (`comptime for p in PAIRS:` over `comptime PAIRS = [(1, 2), (3, 4)]`) now
   runs its body once per element, as at the pin, where it was rejected with

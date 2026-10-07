@@ -85,8 +85,8 @@ use places::*;
 pub use places::{instruction_places, instruction_places_mut};
 pub use regs::*;
 pub(crate) use scope::declared_kind;
-pub use scope::instruction_named_types;
 use scope::verify_scope;
+pub use scope::{instruction_named_types, instruction_variant_indices};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

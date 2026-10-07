@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R407**.
+Next free ID: **R413**.
 
 ## Ordered Work
 
@@ -300,31 +300,6 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R4 (P3d) `Variant` and the variadic structs over it are specialized
-  whole in the AST**
-
-  Problem: the cloner re-declares `Variant`, and every variadic struct whose
-  source names it, per instance, from requests the driver derives, where the
-  pin elaborates each as an ordinary struct generator.
-  - `Tuple` and `TString` are generators, and so is a variadic struct over
-    them (2026-10-06). `served_variadic_structs` (`comptime.rs`) is the gate
-    that leaves with this entry.
-  - A served `Variant.isa[T]` needs a symbolic alternative index in
-    `MakeVariant`, `VariantIs`, `VariantGet`, `VariantSet`, `VariantReplace`,
-    and `Proj::Variant` (upstream's `_get_type_index`), failing the
-    instantiation at a non-member `T`.
-  - The ownership analysis keys a variant payload place by that index
-    (`Key::Variant`, `analysis/moves.rs`), so it must admit a symbolic one.
-  - `native::mono`'s `substitute_ty` already expands a spread in
-    `Ty::Variant` (`sub_spread_types`).
-  - `variant.mojo`'s `comptime if Self.Ts.contains[T](): pass` markers stand
-    in for upstream's `Self._check[T]()`, which needs `comptime assert`.
-  - `variadic_struct_requests`, `generate_struct_spec`, the per-index
-    accessor clones with their value twins (`__getitem_param_value__$k`),
-    and the variadic template shells leave with it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R357 (P3d) A `t"…"` literal reaches its `TString` construction
   through a request the driver derives**
 
@@ -366,6 +341,21 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R412 (P3d) Code for a struct specialized whole outlives the last
+  one**
+
+  Problem: since `Variant` became a generator (2026-10-06), the cloner
+  specializes no struct whole, but code that served or described one
+  remains.
+  - The frozen template-facts modules keep recipes and comments for a member
+    of such a struct: `realization_calls.rs`'s per-index
+    `__getitem_param__$k` accessor recipes, and notes in `certificate.rs`,
+    `grammar.rs`, and `realization.rs`.
+  - `PerCallOwner::template` (`comptime/specialize.rs`) differs from the
+    owner only for such a struct.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
 
@@ -393,6 +383,23 @@ correctness fix to existing behavior is allowed.
     `MethodFeatures` certificate bits.
   - Depends on R4, R6, R7, R307, and R308.
   - Model: Fable, Planned.
+
+- [ ] **R410 (P3e) A generic `def` calling an overloaded method with
+  compile-time parameters of its own is cloned per call**
+
+  Problem: `def wrap[T: Movable](var x: T) -> Variant[T, String]`, returning
+  `Variant[T, String](x^)`, mints a `def_type_arguments` clone per call,
+  where its template could serve every call.
+  - The driver keys the `def` (`TemplateReach`,
+    `src/compiler/template_reach.rs`) because the checker recorded an
+    overload selection at the constructor call: `Variant.__init__` is
+    overloaded, and such a method runs as a per-call clone.
+  - A user struct whose generic `__init__` has a sibling overload behaves
+    the same (`Box[T](v^)`).
+  - `wrap` and `wrap_outer` in
+    `assets/ok/variadic_pack_forwarding_generic_def.mojo` are such clones.
+  - Depends on R310, which serves such a method from its template.
+  - Model: Fable, Not Planned.
 
 - [ ] **R6 (P3e) A nested `def` over an enclosing compile-time parameter is
   cloned**
@@ -887,6 +894,23 @@ correctness fix to existing behavior is allowed.
     (`size_pack_storage`, `backend/vm/values.rs`), and a named result's
     storage is sized from the frame (`erased_list_length`, `backend/vm.rs`).
   - Its `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`) cite this entry.
+  - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R407 (P5) The erased oracle cannot run `Variant`**
+
+  Problem: a program that uses `Variant` runs on concrete MIR but stops
+  under `--erased`, where it ran while the cloner specialized `Variant` per
+  instance.
+  - The oracle reifies a pack's length, not its element types
+    (`erased_parameter_values`, `backend/vm.rs`), so it cannot decide the
+    `comptime if Self.Ts.contains[T]()` lines, nor close a storage
+    operation's `_get_type_index[T, *Ts]()` (`known_variant_index`).
+  - A static method's `Self.Ts.contains[T]()` stops the same way
+    (`assets/ok/pack_struct_static_method_through_instance.mojo`).
+  - The fixtures are `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`)
+    citing this entry.
   - Entry R10 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2434,6 +2458,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `checker/rebind.rs` compares the closed types whole, origins included.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R409 A template-served method's violated `where` clause is spelled
+  from its folded constraint**
+
+  Problem: `v.set[Conn](Conn(4))` on a `Variant[Conn]` whose `Conn` is not
+  `Deinitable` reports "expected 'conforms_to(Ts.values, Deinitable)'",
+  where the clause is declared, and the pin quotes it, as
+  `Ts.all_conforms_to[Deinitable]()`.
+  - Both spellings fold to one `GenericConstraint::ConformsPack`, and
+    `violated_constraint_reason` (`checker/generics.rs`) prints its
+    `Display`.
+  - A method the cloner specialized was unparsed from its source
+    (`comptime/unparse.rs`), as `Variant`'s were until 2026-10-06.
+  - `assets/type_error/variant_set_linear_alternative.mojo` expects only the
+    note's prefix until this is fixed.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
@@ -4260,6 +4301,20 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R408 A `Variant[*Self.Ts]` field is accepted over a pack not
+  bounded `Deinitable`**
+
+  Problem: `struct Box[*Ts: Copyable]` holding `var v: Variant[*Self.Ts]`
+  compiles and runs in Mojito, where the pin rejects the field: "field 'v'
+  has non-'Deinitable' type 'Variant[*Ts.values]'".
+  - `Variant` is `Deinitable` only where every alternative is, and the pin
+    demands that of every field at the declaration.
+  - Pinned by `conformance/probes/variant_pack_field_not_deinitable.mojo`.
+  - Ledger name: `variant-pack-field-not-deinitable`.
+  - Found while landing R4 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -5111,6 +5166,21 @@ residue found inside a task moves to the task that owns its fix.
   - `tests/checker_test.rs`'s `rejects_bad_simd_shuffle_masks` pins the
     current rejection.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R411 `Variant` stands a `comptime if` line where upstream calls
+  `Self._check[T]()`**
+
+  Problem: upstream's `Variant` methods open with `Self._check[T]()`, whose
+  `comptime assert` rejects a `T` that is no alternative; Mojito's
+  `stdlib/std/utils/variant.mojo` has a no-op
+  `comptime if Self.Ts.contains[T](): pass` there instead.
+  - The check itself holds: a storage operation's
+    `_get_type_index[T, *Ts]()` fails the instantiation at such a `T` with
+    upstream's message (`close_variant_index`, `native::mono`).
+  - Port `_InvalidTypeIndex`, `_get_type_index`, and `_check` verbatim once
+    `comptime assert` parses.
+  - Depends on R74.
   - Model: Opus, Not Planned.
 
 ### Packaging, Artifacts, And Developer Tooling

@@ -541,15 +541,11 @@ impl Checker {
     }
 
     /// The synthetic element reads of unpacking a value of tuple type `vt`:
-    /// each element's checked type and, for a generated Tuple, its accessor.
-    ///
-    /// A `place` is read through the place accessors on the reference it
-    /// yields (`source`); a temporary through the value accessors, which
-    /// exist only for implicitly copyable elements.
+    /// each element's checked type and, for the nominal `Tuple`, its index
+    /// accessor read through the reference the value yields (`source`).
     pub(super) fn tuple_unpack_plan(
         &self,
         vt: &Ty,
-        place: bool,
         source: Option<&mojito_types::origin::RefTy>,
     ) -> Result<Vec<mojito_checked::checked::CheckedTupleUnpackElement>, TypeError> {
         let elements = tuple_elements(vt).ok_or_else(|| {
@@ -588,65 +584,6 @@ impl Checker {
                 element.ty = (*reference.referent).clone();
                 element.reference = Some(reference);
             }
-        } else if let Some((name, info, family)) = self.generated_tuple_accessors(vt) {
-            for (index, element) in plan.iter_mut().enumerate() {
-                let method = if place {
-                    format!("{}${index}", family.place)
-                } else {
-                    format!("{}${index}", family.value)
-                };
-                let signature = info
-                    .methods
-                    .get(&method)
-                    .and_then(|overloads| overloads.first())
-                    .ok_or_else(|| {
-                        if place {
-                            TypeError::InvariantViolation(format!(
-                                "generated Tuple '{name}' is missing accessor '{method}'"
-                            ))
-                        } else {
-                            TypeError::NonCopyable {
-                                ty: vt.to_string(),
-                                context:
-                                    "unpacking an rvalue Tuple requires implicitly copyable elements"
-                                        .to_string(),
-                            }
-                        }
-                    })?;
-                element.ty = signature.ret.clone();
-                element.accessor = Some(format!("{name}.{method}"));
-                if let Some(reference_return) = &signature.ref_return {
-                    let self_reference = source.filter(|_| place).ok_or_else(|| {
-                        TypeError::InvariantViolation(format!(
-                            "generated Tuple value accessor '{method}' returns a reference"
-                        ))
-                    })?;
-                    let origin = substitute_sig_origin_with_self(
-                        &reference_return.origin,
-                        &[],
-                        Some(self_reference.origin.clone()),
-                    );
-                    let mutability = match reference_return.mutability {
-                        mojito_types::origin::SigMutability::Immutable => {
-                            mojito_types::origin::Mutability::Immutable
-                        }
-                        mojito_types::origin::SigMutability::Mutable => {
-                            mojito_types::origin::Mutability::Mutable
-                        }
-                        _ if self_reference.mutability
-                            == mojito_types::origin::Mutability::Mutable =>
-                        {
-                            mojito_types::origin::Mutability::Mutable
-                        }
-                        _ => mojito_types::origin::Mutability::Immutable,
-                    };
-                    element.reference = Some(mojito_types::origin::RefTy {
-                        referent: Box::new(signature.ret.clone()),
-                        origin,
-                        mutability,
-                    });
-                }
-            }
         }
         for element in &mut plan {
             element.carries_loans = self.type_carries_loans(&element.ty);
@@ -674,19 +611,6 @@ impl Checker {
             return None;
         };
         Some((name.as_str(), accessor))
-    }
-
-    /// The generated Tuple declaration `vt` names, with its dependent index
-    /// accessor family: `None` for a Tuple still generic.
-    pub(super) fn generated_tuple_accessors<'s>(
-        &'s self,
-        vt: &'s Ty,
-    ) -> Option<(&'s str, &'s StructInfo, DependentIndexAccessorFamily)> {
-        let Ty::Struct(name, _) = vt else {
-            return None;
-        };
-        let info = self.structs.get(name)?;
-        dependent_index_accessor_family(info).map(|family| (name.as_str(), info, family))
     }
 
     #[allow(
@@ -1437,12 +1361,12 @@ impl Checker {
                 }
                 let elems = elems.into_iter().cloned().collect::<Vec<_>>();
                 // A place is read element by element through the reference it
-                // yields; a generated Tuple's place accessors demand it.
+                // yields; the Tuple's index accessor demands it.
                 let place = is_place_expr(value);
                 let served = self.tuple_index_accessor(&vt).is_some();
                 let source = match place.then(|| self.reference_actual(value)).transpose() {
                     Ok(source) => source,
-                    Err(error) if served || self.generated_tuple_accessors(&vt).is_some() => {
+                    Err(error) if served => {
                         return Err(error);
                     }
                     Err(_) => None,
@@ -1467,7 +1391,7 @@ impl Checker {
                     }
                     source => source,
                 };
-                let mut unpack_plan = self.tuple_unpack_plan(&vt, place, source.as_ref())?;
+                let mut unpack_plan = self.tuple_unpack_plan(&vt, source.as_ref())?;
                 if let (false, true, Some(mojito_types::origin::Origin::Place(temporary))) =
                     (place, served, source.as_ref().map(|source| &source.origin))
                 {

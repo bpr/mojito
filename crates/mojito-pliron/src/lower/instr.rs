@@ -700,23 +700,35 @@ impl FnLowering<'_> {
                 alternatives,
                 index,
                 value,
-            } => self.lower_make_variant(ctx, *dest, alternatives, *index, *value),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_make_variant(ctx, *dest, alternatives, index, *value)
+            }
             MirInstr::VariantIs {
                 dest,
                 variant,
                 index,
-            } => self.lower_variant_is(ctx, *dest, *variant, *index),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_is(ctx, *dest, *variant, index)
+            }
             MirInstr::VariantGet {
                 dest,
                 variant,
                 index,
-            } => self.lower_variant_get(ctx, *dest, *variant, *index, true),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_get(ctx, *dest, *variant, index, true)
+            }
             MirInstr::VariantTake {
                 dest,
                 variant,
                 index,
                 checked,
-            } => self.lower_variant_take(ctx, *dest, *variant, *index, *checked),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_take(ctx, *dest, *variant, index, *checked)
+            }
             MirInstr::VariantReplace {
                 dest,
                 place,
@@ -724,15 +736,19 @@ impl FnLowering<'_> {
                 output_index,
                 value,
                 checked,
-            } => self.lower_variant_replace(
-                ctx,
-                *dest,
-                place,
-                *input_index,
-                *output_index,
-                *value,
-                *checked,
-            ),
+            } => {
+                let input_index = self.known_variant_index(input_index)?;
+                let output_index = self.known_variant_index(output_index)?;
+                self.lower_variant_replace(
+                    ctx,
+                    *dest,
+                    place,
+                    input_index,
+                    output_index,
+                    *value,
+                    *checked,
+                )
+            }
             MirInstr::Index { dest, .. }
             | MirInstr::Slice { dest, .. }
             | MirInstr::MultiIndex { dest, .. } => {
@@ -802,19 +818,28 @@ impl FnLowering<'_> {
                 place,
                 index,
                 value,
-            } => self.lower_variant_set(ctx, *dest, place, *index, *value),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_set(ctx, *dest, place, index, *value)
+            }
             MirInstr::VariantSetInitWith {
                 dest,
                 place,
                 index,
                 factory,
-            } => self.lower_variant_set_init_with(ctx, *dest, place, *index, *factory),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_set_init_with(ctx, *dest, place, index, *factory)
+            }
             MirInstr::VariantDeinitWith {
                 dest,
                 variant,
                 handler,
                 index,
-            } => self.lower_variant_deinit_with(ctx, *dest, *variant, *handler, *index),
+            } => {
+                let index = self.known_variant_index(index)?;
+                self.lower_variant_deinit_with(ctx, *dest, *variant, *handler, index)
+            }
             MirInstr::Drop { .. } => {
                 Err(self.unsupported(format!("instruction `{}`", instr_name(instr)), None))
             }

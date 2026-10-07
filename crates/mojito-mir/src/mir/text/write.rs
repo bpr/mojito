@@ -1010,7 +1010,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("alternatives", list(alternatives.iter().map(ty_value))),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
                 ("value", reg_value(*value)),
             ],
         ),
@@ -1028,7 +1028,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("variant", reg_value(*variant)),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
             ],
         ),
         MirInstr::VariantSet {
@@ -1041,7 +1041,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("place", place_value(place)),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
                 ("value", reg_value(*value)),
             ],
         ),
@@ -1055,7 +1055,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("variant", reg_value(*variant)),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
                 ("checked", checked.to_string()),
             ],
         ),
@@ -1069,7 +1069,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("place", place_value(place)),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
                 ("factory", reg_value(*factory)),
             ],
         ),
@@ -1084,7 +1084,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("variant", reg_value(*variant)),
                 ("handler", reg_value(*handler)),
-                ("index", index.to_string()),
+                ("index", variant_index(index)),
             ],
         ),
         MirInstr::VariantReplace {
@@ -1099,8 +1099,8 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("place", place_value(place)),
-                ("input_index", input_index.to_string()),
-                ("output_index", output_index.to_string()),
+                ("input_index", variant_index(input_index)),
+                ("output_index", variant_index(output_index)),
                 ("value", reg_value(*value)),
                 ("checked", checked.to_string()),
             ],
@@ -1367,7 +1367,7 @@ fn projection_value(projection: &Proj) -> String {
         Proj::Field(v) => positional("field", &symbol(v)),
         Proj::Index(v) => positional("index", &reg_value(*v)),
         Proj::ConstIndex(v) => positional("const_index", &v.to_string()),
-        Proj::Variant(v) => positional("variant", &v.to_string()),
+        Proj::Variant(v) => positional("variant", &variant_index(v)),
         Proj::UninitPayload => "uninit_payload".into(),
     }
 }
@@ -1972,6 +1972,14 @@ fn simd_width_slot(width: &mojito_types::types::SimdWidth) -> String {
     }
 }
 
+/// A known alternative is its position, a template's `ct_expr(...)`.
+fn variant_index(index: &mojito_types::types::VariantIndex) -> String {
+    match index {
+        mojito_types::types::VariantIndex::Known(index) => index.to_string(),
+        mojito_types::types::VariantIndex::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
 /// A known mask is its index list; a template's keeps its method's form.
 fn lane_mask(mask: &mojito_types::types::LaneMask) -> String {
     use mojito_types::types::LaneMask;
@@ -2118,6 +2126,7 @@ fn pack_query(query: &PackQuery) -> String {
             ],
         ),
         PackQuery::Contains(element) => positional("pack_contains", &param_expr(element)),
+        PackQuery::IndexOf(element) => positional("pack_index_of", &param_expr(element)),
     }
 }
 

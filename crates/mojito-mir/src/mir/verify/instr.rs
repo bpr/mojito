@@ -529,18 +529,20 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             value,
             ..
         } => {
-            if *index >= alternatives.len() {
-                errors.push(format!(
-                    "{prefix}: variant construction index {index} out of {} alternatives",
-                    alternatives.len()
-                ));
-            } else if let Some(found) = cx.reg_ty(*value)
-                && !types_compatible(found, &alternatives[*index])
-            {
-                errors.push(format!(
-                    "{prefix}: variant payload {found} does not fit alternative {}",
-                    alternatives[*index]
-                ));
+            if let Some(index) = index.known() {
+                if index >= alternatives.len() {
+                    errors.push(format!(
+                        "{prefix}: variant construction index {index} out of {} alternatives",
+                        alternatives.len()
+                    ));
+                } else if let Some(found) = cx.reg_ty(*value)
+                    && !types_compatible(found, &alternatives[index])
+                {
+                    errors.push(format!(
+                        "{prefix}: variant payload {found} does not fit alternative {}",
+                        alternatives[index]
+                    ));
+                }
             }
         }
         MirInstr::MakeClosure {

@@ -2633,13 +2633,17 @@ impl Checker {
                         && mojito_types::types::array_element(ty).is_none()
                         && mojito_types::types::owned_pointer_element(ty).is_none()
                 },
+                // A conditional conformance's condition decides at the
+                // instance: its fields were checked under that condition at
+                // the declaration. An unconditional one holds fieldwise.
                 |s| {
                     s.conforms.iter().any(|c| {
                         matches!(c.as_str(), "ImplicitlyCopyable" | "TrivialRegisterPassable")
-                            && s.conformance_conditions.get(c).is_none_or(|condition| {
-                                self.eval_conformance_condition(s, args, condition)
-                            })
-                    }) && self.struct_implicitly_copyable_conformance_ok(name, None)
+                            && s.conformance_conditions.get(c).map_or_else(
+                                || self.struct_implicitly_copyable_conformance_ok(name, None),
+                                |condition| self.eval_conformance_condition(s, args, condition),
+                            )
+                    })
                 },
             ),
             Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
@@ -3003,10 +3007,10 @@ impl Checker {
         info.methods.contains_key("__copyinit__")
             || info.fields.iter().all(|(_, ty)| {
                 self.is_implicitly_copyable(ty)
-                    // Private pack storage (`__RuntimeTuple[*Self.Ts]`)
+                    // Private pack storage (`__RuntimeTuple[*Self.Ts]`,
                     // copies as its elements do, which the conformance's own
                     // `where` clause states.
-                    || matches!(ty, Ty::Tuple(elements)
+                    || matches!(ty, Ty::Tuple(elements) | Ty::Variant(elements)
                         if matches!(mojito_types::types::pack_spread(elements),
                             Some(Ty::Param { binder, .. }) if assumption.is_some_and(|known| {
                                 binder_conformance_assumed(binder, "ImplicitlyCopyable", known)

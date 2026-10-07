@@ -680,6 +680,19 @@ impl VmBackend {
     }
 }
 
+/// A `Variant` operation's alternative. Concrete MIR holds only known
+/// ones; the erased oracle reifies a pack's length, not its element types,
+/// so a template's `_get_type_index` is out of its reach.
+pub(super) fn known_variant_index(
+    index: &mojito_types::types::VariantIndex,
+) -> Result<usize, RuntimeError> {
+    index.known().ok_or_else(|| {
+        RuntimeError::Unsupported(format!(
+            "Variant alternative `{index}` is not known in erased execution"
+        ))
+    })
+}
+
 /// The values an erased frame reads a parameter expression against, by
 /// name: its slots and reified value parameters that have a compile-time
 /// reading, and each type pack of the signature by its collector's runtime

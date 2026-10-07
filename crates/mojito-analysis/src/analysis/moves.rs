@@ -47,7 +47,9 @@ pub(super) enum Key {
     Field(String),
     Index,
     ConstIndex(usize),
-    Variant(usize),
+    /// A variant payload, by its known alternative; `None` is a template's
+    /// symbolic alternative, which may fold to any position.
+    Variant(Option<usize>),
     /// Payload of compiler-private inline uninit storage. The payload is
     /// opaque to ownership tracking (all access is explicitly unsafe), so the
     /// key exists only to keep place paths total; it overlaps itself.
@@ -58,7 +60,10 @@ pub(super) fn keys_overlap(left: &Key, right: &Key) -> bool {
     left == right
         || matches!(
             (left, right),
-            (Key::Index, Key::ConstIndex(_)) | (Key::ConstIndex(_), Key::Index)
+            (Key::Index, Key::ConstIndex(_))
+                | (Key::ConstIndex(_), Key::Index)
+                | (Key::Variant(None), Key::Variant(_))
+                | (Key::Variant(_), Key::Variant(None))
         )
 }
 
@@ -71,7 +76,7 @@ pub(super) fn place_path(place: &MirPlace) -> Vec<Key> {
             Proj::Field(f) => Key::Field(f.clone()),
             Proj::Index(_) => Key::Index,
             Proj::ConstIndex(index) => Key::ConstIndex(*index),
-            Proj::Variant(index) => Key::Variant(*index),
+            Proj::Variant(index) => Key::Variant(index.known()),
             Proj::UninitPayload => Key::UninitPayload,
         })
         .collect()
@@ -94,7 +99,7 @@ pub(super) fn place_display(root: &str, path: &[Key]) -> String {
             }
             Key::Variant(index) => {
                 s.push_str("[alternative#");
-                s.push_str(&index.to_string());
+                s.push_str(&index.map_or_else(|| "?".to_string(), |index| index.to_string()));
                 s.push(']');
             }
             Key::UninitPayload => s.push_str("[payload]"),

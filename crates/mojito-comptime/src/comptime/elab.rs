@@ -363,7 +363,6 @@ impl Elab<'_> {
                     stmt,
                     &self.served_packs,
                     &self.served_lanes,
-                    &HashSet::new(),
                     &self.scalar_reads,
                 ) {
                     out.push(stmt.clone());

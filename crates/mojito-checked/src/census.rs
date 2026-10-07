@@ -11,8 +11,7 @@
 /// A body that several classes describe takes the one whose stage of the
 /// plan lands last, since the cloner keeps it until then: a `def` clone is
 /// tested in the order `DTypeVectorDef`, `PackDef`, `ComptimeForDef`,
-/// `ComptimeIfDef`, `ValueDef`, `TypeDef`, and a member of a struct
-/// specialized whole takes its struct's class.
+/// `ComptimeIfDef`, `ValueDef`, `TypeDef`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CloneClass {
     /// A `def` clone with only type arguments baked in and no compile-time
@@ -29,12 +28,6 @@ pub enum CloneClass {
     /// A `def` clone keyed by any other value, with no compile-time control
     /// flow in its template.
     ValueDef,
-    /// A member of a struct specialized whole for a `DType` or vector value.
-    DTypeVectorStruct,
-    /// A member of a struct specialized whole for any other value.
-    ValueStruct,
-    /// A member of a variadic struct specialized whole (`Variant$…`).
-    VariadicStruct,
     /// A per-instantiation method clone whose template body holds no
     /// compile-time control flow.
     InstanceMethod,
@@ -45,22 +38,19 @@ pub enum CloneClass {
     PerCallMethod,
     /// A clone of a `def` nested in another body.
     NestedDef,
-    /// A method clone or a member of a struct specialized whole, minted for
-    /// a compile-time evaluation's own subprogram.
+    /// A method clone minted for a compile-time evaluation's own
+    /// subprogram.
     Ctfe,
 }
 
 impl CloneClass {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 11] = [
         Self::TypeDef,
         Self::ComptimeIfDef,
         Self::ComptimeForDef,
         Self::PackDef,
         Self::DTypeVectorDef,
         Self::ValueDef,
-        Self::DTypeVectorStruct,
-        Self::ValueStruct,
-        Self::VariadicStruct,
         Self::InstanceMethod,
         Self::InstanceMethodComptime,
         Self::PerCallMethod,
@@ -77,9 +67,6 @@ impl CloneClass {
             Self::PackDef => "instantiation.cloned.def_pack",
             Self::DTypeVectorDef => "instantiation.cloned.def_dtype_vector",
             Self::ValueDef => "instantiation.cloned.def_value",
-            Self::DTypeVectorStruct => "instantiation.cloned.struct_dtype_vector",
-            Self::ValueStruct => "instantiation.cloned.struct_value",
-            Self::VariadicStruct => "instantiation.cloned.struct_variadic",
             Self::InstanceMethod => "instantiation.cloned.method_per_instantiation",
             Self::InstanceMethodComptime => {
                 "instantiation.cloned.method_per_instantiation_comptime"

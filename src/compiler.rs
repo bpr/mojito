@@ -391,7 +391,7 @@ impl Compiler {
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
-        let mut template_demand = template_reach::TemplateDemand::new(linked);
+        let mut template_demand = template_reach::TemplateDemand::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -486,10 +486,6 @@ impl Compiler {
             for request in def_specialization_requests(checked.result(), &templates)
                 .into_iter()
                 .chain(scalar_range_requests(checked.result(), &range_templates))
-                .chain(variadic_struct_requests(
-                    checked.result(),
-                    &variadic_templates,
-                ))
             {
                 if conflicted.contains(request.occurrence()) {
                     continue;
@@ -923,8 +919,8 @@ fn def_specialization_requests(
 /// records (the checker never sees the dropped comptime-class templates, so
 /// it cannot record the module-mangled spelling itself).
 /// The checker-recorded generic-method instantiations that are closed and
-/// therefore replayable as per-call clones: on a specialized variadic
-/// struct, on a closed instance of an ordinary generic struct (the request
+/// therefore replayable as per-call clones: on a closed instance of an
+/// ordinary generic struct (the request
 /// owner is the instance key `mangle(template, arguments)`, the key
 /// `generate_instance_clones` consults), on a user-declared struct, or from
 /// a call site outside the unstamped bundled stdlib (user code, and
@@ -945,9 +941,6 @@ fn method_specialization_requests(
     > = std::collections::HashMap::new();
     let mut conflicted = std::collections::HashSet::new();
     for (span, instantiation) in checked.method_instantiations() {
-        let specialized_owner = variadic_templates
-            .iter()
-            .any(|template| instantiation.owner.starts_with(&format!("{template}$")));
         let instance_owner = !instantiation.owner_arguments.is_empty();
         // A per-instantiation clone body carries a `$`-tagged source
         // (`list.mojo$List$write_repr_to$y3:Int`): it exists only for an
@@ -955,15 +948,10 @@ fn method_specialization_requests(
         let user_site = span.source.as_deref().is_none_or(|source| {
             source.contains('$') || !crate::checker::is_bundled_module_source(Some(source))
         });
-        // A variadic template's own name is its shell: a recording on the
-        // abstract type (before the call's clone returns the concrete
-        // specialization) can mint nothing and would only conflict with the
-        // later recording on the specialization.
+        // A recording on a variadic template's own name, the abstract type,
+        // names no instance a clone could be minted for.
         if variadic_templates.contains(&instantiation.owner)
-            || !(specialized_owner
-                || instance_owner
-                || user_site
-                || user_structs.contains(&instantiation.owner))
+            || !(instance_owner || user_site || user_structs.contains(&instantiation.owner))
             || !instantiation.arguments.iter().all(closed_generic_argument)
             || !instantiation
                 .owner_arguments
@@ -1096,49 +1084,6 @@ fn scalar_range_requests(
                 Vec::new(),
                 instantiation.arguments.clone(),
             ))
-        })
-        .collect();
-    requests.sort_by(|a, b| {
-        let key = |request: &DefSpecializationRequest| {
-            (
-                request.occurrence().source.clone(),
-                request.occurrence().span.0,
-                request.occurrence().span.1,
-                request.callee().to_string(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
-    requests
-}
-
-/// The checker-recorded bare constructions of variadic struct templates
-/// (`Pair((1, True))`, the pack inferred from the constructor) whose pack is
-/// closed, as constructor-rewrite requests on the template, sorted like
-/// [`def_specialization_requests`]. The public `Tuple` and `TString` are
-/// served by their templates. Occurrence conflicts share the caller's
-/// def-request conflict handling.
-fn variadic_struct_requests(
-    checked: &DiscoveryResult,
-    templates: &std::collections::HashSet<String>,
-) -> Vec<DefSpecializationRequest> {
-    let mut requests: Vec<DefSpecializationRequest> = checked
-        .generic_instantiations()
-        .iter()
-        .filter(|(_, instantiation)| {
-            templates.contains(&instantiation.callee)
-                && instantiation.callee != crate::types::TUPLE_TYPE_NAME
-                && instantiation.callee != crate::types::TSTRING_TYPE_NAME
-                && instantiation.arguments.iter().all(closed_generic_argument)
-        })
-        .map(|(span, instantiation)| {
-            DefSpecializationRequest::new(
-                span.clone(),
-                instantiation.callee.clone(),
-                Vec::new(),
-                Vec::new(),
-                instantiation.arguments.clone(),
-            )
         })
         .collect();
     requests.sort_by(|a, b| {

@@ -4,13 +4,12 @@
 # (upstream keeps its storage in an MLIR `!kgen.variant`). The public API and
 # the pack-driven protocol bodies follow upstream's `utils/variant.mojo`.
 #
-# Every type-keyed method specializes per call (one clone per distinct `T`).
-# The `comptime if Self.Ts.contains[T](): pass` guard is the specialization
-# marker: the generic template (a symbolic `T`) cannot elaborate it and so
-# becomes a trap stub that no concrete call reaches, while each clone folds
-# it away. A clone for a type that is not an alternative fails to type-check
-# at its storage operation (upstream's `Self._check[T]()`); a string literal
-# payload converts to the `String` alternative like a constructor argument.
+# The template serves every instance. Each storage operation selects the
+# alternative `_get_type_index[T, *Self.Ts]()` names, which the elaborator
+# closes per instance; a `T` the pack lacks fails the instantiation with
+# upstream's "Type does not exist in Variant.". The
+# `comptime if Self.Ts.contains[T](): pass` lines stand where upstream calls
+# `Self._check[T]()`, whose `comptime assert` Mojito does not parse yet.
 from std.reflection.type_info import _unqualified_type_name
 
 struct Variant[*Ts: AnyType](

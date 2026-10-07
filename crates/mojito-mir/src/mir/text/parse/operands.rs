@@ -160,7 +160,7 @@ impl Decoder {
                 "field" => self.symbol(inner).map(Proj::Field),
                 "index" => self.reg(inner).map(Proj::Index),
                 "const_index" => self.uint(inner).map(Proj::ConstIndex),
-                "variant" => self.uint(inner).map(Proj::Variant),
+                "variant" => self.variant_index(inner).map(Proj::Variant),
                 other => {
                     self.error(value.span, format!("unknown projection `{other}`"));
                     None

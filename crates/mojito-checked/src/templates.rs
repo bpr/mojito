@@ -2506,8 +2506,6 @@ pub struct TemplateCatalog {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedNames {
     pub defs: std::collections::HashSet<String>,
-    /// Structs specialized whole, every member of which is generated.
-    pub structs: std::collections::HashSet<String>,
     /// Per-call method clones, as (owner, clone name).
     pub methods: std::collections::HashSet<(String, String)>,
 }
@@ -2749,19 +2747,11 @@ impl TemplateCatalog {
         self.generated.defs.contains(name)
     }
 
-    /// Whether `owner` is a struct specialized whole.
-    pub fn generated_struct(&self, owner: &str) -> bool {
-        self.generated.structs.contains(owner)
-    }
-
-    /// Whether `owner.method` is generated: a member of a struct specialized
-    /// whole, or a per-call clone.
+    /// Whether `owner.method` is a generated per-call clone.
     pub fn generated_method(&self, owner: &str, method: &str) -> bool {
-        self.generated.structs.contains(owner)
-            || self
-                .generated
-                .methods
-                .contains(&(owner.to_string(), method.to_string()))
+        self.generated
+            .methods
+            .contains(&(owner.to_string(), method.to_string()))
     }
 
     pub fn trace(&self, instance: &InstanceName) -> Option<&InstanceTrace> {

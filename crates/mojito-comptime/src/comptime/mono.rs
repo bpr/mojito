@@ -670,36 +670,7 @@ impl Elab<'_> {
                 for argument in arguments.iter_mut() {
                     self.mono_param_arg(argument, consts, mono)?;
                 }
-                if self.specializable.contains_key(name.as_str())
-                    && matches!(
-                        self.specializable[name.as_str()].kind,
-                        StmtKind::Struct { .. }
-                    )
-                {
-                    let Some(vals) =
-                        self.resolve_struct_spec_args_if_ready(name, arguments, consts, mono)?
-                    else {
-                        // Public Tuple applications in an ordinary generic
-                        // declaration remain symbolic until the checker has
-                        // substituted the declaration's type parameters at a
-                        // concrete use.  The discovery pass then requests the
-                        // resulting closed nominal specialization.
-                        return Ok(());
-                    };
-                    let mangled = mangle(name, &vals)?;
-                    if mono.done.insert(mangled.clone()) {
-                        mono.queue.push_back(Job {
-                            orig: name.clone(),
-                            decl: None,
-                            vals,
-                            site: "a type annotation".to_string(),
-                            output_name: mangled.clone(),
-                            whole_pack_abi: false,
-                        });
-                    }
-                    *name = mangled;
-                    arguments.clear();
-                } else if self.instance_template(name) {
+                if self.instance_template(name) {
                     self.request_instance(name, arguments, consts, mono);
                 } else {
                     self.freeze_struct_value_arguments(name, arguments, consts);
@@ -881,13 +852,6 @@ impl Elab<'_> {
                 Ok(())
             }
             ExprKind::Identifier(name) => {
-                // The template is dropped after monomorphization, so a bare
-                // (argument-less) use of a variadic struct can never resolve.
-                if mono.resolves_top_template(name) && self.struct_template(name) {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "variadic struct '{name}' requires explicit compile-time type arguments, e.g. `{name}[Int, Bool](...)`"
-                    )));
-                }
                 // A function-value use of a bound generic pins the abstract
                 // template: there is no application to monomorphize against.
                 if mono.resolves_top_template(name) && self.bound_generics.contains(name.as_str()) {
@@ -896,26 +860,7 @@ impl Elab<'_> {
                 Ok(())
             }
             ExprKind::TypeApply { name, args } => {
-                if mono.resolves_top_template(name) && self.struct_template(name) {
-                    let Some(vals) =
-                        self.resolve_struct_spec_args_if_ready(name, args, consts, mono)?
-                    else {
-                        return Ok(());
-                    };
-                    let mangled = mangle(name, &vals)?;
-                    if mono.done.insert(mangled.clone()) {
-                        mono.queue.push_back(Job {
-                            orig: name.clone(),
-                            decl: None,
-                            vals,
-                            site: request_site,
-                            output_name: mangled.clone(),
-                            whole_pack_abi: false,
-                        });
-                    }
-                    *name = mangled;
-                    args.clear();
-                } else if self.instance_template(name) {
+                if self.instance_template(name) {
                     // A static call through an explicit instance
                     // (`Box[Int].filled(7)`) mints that instance's clones.
                     self.request_instance(name, args, consts, mono);
@@ -957,7 +902,6 @@ impl Elab<'_> {
                 // own arguments below.
                 if !self.specializable.contains_key(name.as_str())
                     && !self.bound_generics.contains(name.as_str())
-                    && !self.struct_template(name)
                 {
                     for argument in param_args.iter_mut() {
                         self.mono_param_arg(argument, consts, mono)?;
@@ -990,42 +934,6 @@ impl Elab<'_> {
                         })?;
                     *name = template;
                     *param_args = arguments;
-                    return Ok(());
-                }
-                // A checker-selected bare variadic-struct construction whose
-                // pack the checker inferred (`Pair((1, True))`): rewrite the
-                // call into the concrete specialization's constructor and
-                // queue that specialization.
-                let bare_pack_construction = param_args.is_empty()
-                    && mono.resolves_top_template(name)
-                    && self.single_pack_template(name);
-                if bare_pack_construction
-                    && let Some((template, vals)) = mono
-                        .struct_call_targets
-                        .get(&source_span.clone().without_syntax())
-                        .cloned()
-                {
-                    let mangled = mangle(&template, &vals)?;
-                    if mono.done.insert(mangled.clone()) {
-                        mono.queue.push_back(Job {
-                            orig: template,
-                            decl: None,
-                            vals,
-                            site: request_site,
-                            output_name: mangled.clone(),
-                            whole_pack_abi: false,
-                        });
-                    }
-                    *name = mangled;
-                    return Ok(());
-                }
-                // A bare construction of a single-pack template
-                // (`Pair((1, True))`) survives for the discovery
-                // check, which infers the pack from the constructor it
-                // selects; the template is retained as a shell so the checker
-                // can type that constructor.
-                if bare_pack_construction {
-                    mono.retained.insert(name.clone());
                     return Ok(());
                 }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
@@ -1068,15 +976,6 @@ impl Elab<'_> {
                         };
                         selected_decl = decl;
                         (values, kept, whole_pack_abi)
-                    } else if self.struct_template(name) {
-                        // A struct specialization is fully concrete: every
-                        // compile-time argument is baked into the mangled name.
-                        let Some(values) =
-                            self.resolve_struct_spec_args_if_ready(name, param_args, consts, mono)?
-                        else {
-                            return Ok(());
-                        };
-                        (values, Vec::new(), false)
                     } else if self.bound_generics.contains(name.as_str()) {
                         // A call the template serves is left as written,
                         // explicit application included: the elaborator
@@ -1402,94 +1301,6 @@ impl Elab<'_> {
             // A lambda's hidden definition monomorphizes like the equivalent
             // nested `def` statement (signature plus body in its own scope).
             ExprKind::Lambda { def } => self.mono_stmt(def, consts, mono),
-        }
-    }
-
-    /// Whether `name` is a specializable variadic-struct template.
-    pub(super) fn struct_template(&self, name: &str) -> bool {
-        self.specializable
-            .get(name)
-            .is_some_and(|template| matches!(template.kind, StmtKind::Struct { .. }))
-    }
-
-    /// Whether `name` is a struct template keyed by exactly one type pack and
-    /// nothing else (`struct Pair[*Ts: Bound]`): the shape whose bare
-    /// construction the checker infers the pack for.
-    pub(super) fn single_pack_template(&self, name: &str) -> bool {
-        self.specializable.get(name).is_some_and(|template| {
-            matches!(&template.kind, StmtKind::Struct { type_params, .. }
-            if matches!(
-                classify_ct_params(type_params, name).as_slice(),
-                [ParamDecl::Type { variadic: true, .. }]
-            ))
-        })
-    }
-
-    /// Resolve a variadic-struct instantiation's `[...]` arguments into the
-    /// specialization key: every argument is a type, collected into the pack
-    /// tuple. Instantiation requires explicit arguments (the elaborator does
-    /// not infer types), and a template supports exactly one trailing pack.
-    pub(super) fn resolve_struct_spec_args(
-        &self,
-        name: &str,
-        param_args: &[ParamArg],
-        consts: &HashMap<String, CtValue>,
-    ) -> Result<Vec<CtValue>, ComptimeError> {
-        let StmtKind::Struct { type_params, .. } = &self.specializable[name].kind else {
-            return Err(ComptimeError::NotComptime(format!(
-                "specialization registry entry '{name}' is not a struct"
-            )));
-        };
-        let decls = classify_ct_params(type_params, name);
-        let [ParamDecl::Type { variadic: true, .. }] = decls.as_slice() else {
-            return Err(ComptimeError::NotComptime(format!(
-                "variadic struct '{name}' supports exactly one type-parameter pack and no other compile-time parameters"
-            )));
-        };
-        if param_args.is_empty() {
-            return Err(ComptimeError::NotComptime(format!(
-                "variadic struct '{name}' requires explicit compile-time type arguments, e.g. `{name}[Int, Bool](...)`"
-            )));
-        }
-        let types = param_args
-            .iter()
-            .map(|argument| {
-                self.param_arg_type(argument, consts)
-                    .map(|ty| CtValue::Type(Box::new(ty)))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(vec![CtValue::Tuple(types)])
-    }
-
-    /// Resolve a variadic-struct application when it is ready for concrete
-    /// monomorphization.  Public `Tuple[T, ...]` may appear in the signature or
-    /// body of an ordinary generic declaration: pre-check elaboration has no
-    /// binding for `T`, and manufacturing a `Tuple$T` implementation would be
-    /// unsound.  Leave only that compiler-known public template canonical so
-    /// the checker can retain the symbolic type and the later discovery pass can
-    /// request its closed call-site instantiations.  User variadic structs keep
-    /// their existing eager, explicit-specialization diagnostics.
-    pub(super) fn resolve_struct_spec_args_if_ready(
-        &self,
-        name: &str,
-        param_args: &[ParamArg],
-        consts: &HashMap<String, CtValue>,
-        mono: &mut Mono,
-    ) -> Result<Option<Vec<CtValue>>, ComptimeError> {
-        match self.resolve_struct_spec_args(name, param_args, consts) {
-            Ok(values) => Ok(Some(values)),
-            Err(_) if name == "Tuple" => Ok(None),
-            // Any variadic template applied over an enclosing declaration's
-            // own type parameter (`Variant[T, String]` inside `def f[T]`,
-            // `Variant[*Ts]` inside `def f[*Ts]`) stays symbolic for the
-            // retained body's abstract check; the template is retained as a
-            // shell so the checker can name it. A concrete application that
-            // fails keeps its eager diagnostic.
-            Err(_) if param_args_mention_any(param_args, &mono.symbolic_type_params) => {
-                mono.retained.insert(name.to_string());
-                Ok(None)
-            }
-            Err(error) => Err(error),
         }
     }
 

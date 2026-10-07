@@ -149,17 +149,6 @@ pub(super) fn expand_pack_spreads_in_function_body(
     rewriter.expand_block(statements);
 }
 
-/// Expand a declaration tree such as a specialized variadic struct. Each method
-/// establishes its own parameter identities, preventing pack metadata from one
-/// method leaking into a same-named ordinary parameter in another.
-pub(super) fn expand_pack_spreads_in_stmt(
-    statement: &mut Stmt,
-    type_packs: &HashMap<String, Vec<Type>>,
-    served_callees: &HashSet<String>,
-) {
-    PackRewriter::new(type_packs, served_callees).expand_statement(statement);
-}
-
 pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt {
     let mut s = s.clone();
     rewrite_stmt(&mut s, subs, into_defs);

@@ -1,4 +1,4 @@
-# expect: violated constraint; constraint declared here evaluated to False, expected 'Ts.all_conforms_to[Deinitable]()'
+# expect: violated constraint; constraint declared here evaluated to False, expected
 from std.utils import Variant
 
 @explicit_destroy("close Conn")

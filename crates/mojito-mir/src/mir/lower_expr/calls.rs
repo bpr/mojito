@@ -9,7 +9,8 @@ impl Flatten<'_> {
     /// `v.is_type_supported[Int]()`): the checker selected a target without a
     /// receiver, so evaluate the receiver for its effect only and call the
     /// static symbol with the arguments alone — exactly the type-receiver
-    /// spelling's lowering. `None` when the call keeps its receiver.
+    /// spelling's lowering, the instance's type naming the struct binders
+    /// the static body reads. `None` when the call keeps its receiver.
     pub(super) fn lower_elided_receiver_call(
         &mut self,
         e: &Expr,
@@ -23,6 +24,7 @@ impl Flatten<'_> {
             return None;
         }
         let _ = self.lower_call_receiver(object);
+        let receiver = self.static_receiver(object);
         let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
@@ -47,7 +49,7 @@ impl Flatten<'_> {
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            receiver: None,
+            receiver,
             instantiated_args,
             spread: None,
         });

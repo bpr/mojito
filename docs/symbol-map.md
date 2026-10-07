@@ -148,9 +148,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/
   `lambdas_in_stmt` are the shared lambda-discovery walkers used by the
   checker, `checked.rs`, and `mir/nested.rs`.
-- `checker/indexing.rs` owns place validation, subscript/index inference
-  (`dependent_index_accessor_method` routes an explicit `p.__getitem__[k]()`
-  to the accessor the subscript sugar unrolled) and
+- `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment (including keyword slices and the `BorrowViewResult` marking for
   view-typed slice results), pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the pointer-write
@@ -633,11 +631,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
-  and `MethodInstanceTrace`, recorded by `generate_instance_clones`, by
-  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone
-  and by `generate_struct_spec` (`trace_struct_members`, each
-  `TracedMember` with the index or element type it baked) for a member of a
-  struct specialized whole;
+  and `MethodInstanceTrace`, recorded by `generate_instance_clones` and by
+  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone;
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
@@ -1026,9 +1021,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/unparse.rs` owns the source spelling of a `where` clause for
   diagnostics (`render_where_clause`, `violated_constraint_message`: the
   clause as declared with `Self.` dropped, upstream's note text).
-- `comptime/specialize.rs` owns monomorphization and `def`/`struct`
-  specialization synthesis (`generate_struct_spec`, tuple-spec ordering, and
-  Tuple/TString request seeding), and the per-instantiation method clones of
+- `comptime/specialize.rs` owns monomorphization and `def` specialization
+  synthesis (`generate_def_spec`, request seeding), and the per-instantiation method clones of
   ordinary generic structs (`generate_instance_clones`, driven by
   `StructInstanceRequest`s and by the in-elaboration instance worklist
   `mono.rs` feeds through `instance_template`/`request_instance`; the clone
@@ -1424,13 +1418,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## Struct generators (P3d, 2026-10-05)
 
-- A struct keyed on a `DType`, a lane width, a vector value, or a
-  struct-typed value is no template the cloner keeps:
-  `is_specializable_declaration` (`comptime.rs`) admits only a variadic
-  struct, and `served_variadic_structs` (a fixpoint over the variadic
-  structs whose source names none still specialized whole; `Variant` is
-  always whole, `Tuple` and `TString` are served) exempts the rest;
-  `Elab::served_structs` carries the set.
+- No struct is a template the cloner keeps: `is_specializable_declaration`
+  (`comptime.rs`) admits only a `def`, and every struct — keyed on a
+  `DType`, a lane width, a vector or struct value, or a type pack — is a
+  generator `native::mono` instantiates.
+- `Variant` is a generator (2026-10-06). Its storage operations carry
+  upstream's `_get_type_index[T, *Ts]()` as `types::VariantIndex`
+  (`mojito-types/src/types.rs`; `PackQuery::IndexOf` in `param_expr.rs`,
+  text `pack_index_of`, schema 1.31): the checker records it
+  (`inference.rs:variant_index`), `mojito-checked`'s Variant adjustments,
+  `HirPlaceProjectionKind::Variant`, the MIR `Variant*` instructions, and
+  `Proj::Variant` carry it, `mono/substitute.rs:close_variant_index` closes
+  it per instance (failing a non-member), `verify/concrete.rs` rejects a
+  symbolic one, `analysis/moves.rs` keys it as `Key::Variant(None)`, and the
+  VM (`known_variant_index`, `backend/vm.rs`) and Pliron
+  (`lower/variants.rs`) read only a known one.
 - `Tuple` and `TString` are generators (2026-10-06). The checker spells a
   tuple's type as the nominal application (`types::tuple_type`,
   `types::canonical_pack_arguments` in `struct_instance_type`), reads an

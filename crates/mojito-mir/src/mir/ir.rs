@@ -772,7 +772,7 @@ pub enum Proj {
     ConstIndex(usize),
     /// Payload of a checked `Variant` alternative.  The tag is static; runtime
     /// navigation traps if the active alternative differs.
-    Variant(usize),
+    Variant(mojito_types::types::VariantIndex),
     /// Payload of compiler-private inline uninit storage (`__UninitStorage`).
     /// A final-step write initializes-or-overwrites without dropping the old
     /// payload; reads trap while the storage is uninitialized.
@@ -1316,33 +1316,33 @@ pub enum MirInstr {
     MakeVariant {
         dest: Reg,
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
         value: Reg,
     },
     /// Test a tag selected during semantic checking.
     VariantIs {
         dest: Reg,
         variant: Reg,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Extract the active alternative, trapping on a tag mismatch.
     VariantGet {
         dest: Reg,
         variant: Reg,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Replace a writable variant and destroy its previous payload.
     VariantSet {
         dest: Reg,
         place: MirPlace,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
         value: Reg,
     },
     /// Move a payload out of an already-consumed variant value.
     VariantTake {
         dest: Reg,
         variant: Reg,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
         checked: bool,
     },
     /// In-place placement replacement (`set(init_with=…)`): invoke the
@@ -1351,7 +1351,7 @@ pub enum MirInstr {
     VariantSetInitWith {
         dest: Reg,
         place: MirPlace,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
         factory: Reg,
     },
     /// Consuming teardown (`deinit_with`): destructure the moved variant
@@ -1362,15 +1362,15 @@ pub enum MirInstr {
         dest: Reg,
         variant: Reg,
         handler: Reg,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Replace the active payload without destroying it, returning ownership of
     /// that previous payload to the caller.
     VariantReplace {
         dest: Reg,
         place: MirPlace,
-        input_index: usize,
-        output_index: usize,
+        input_index: mojito_types::types::VariantIndex,
+        output_index: mojito_types::types::VariantIndex,
         value: Reg,
         checked: bool,
     },

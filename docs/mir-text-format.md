@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.30
+# Mojito Textual MIR Format, Version 1.31
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.30 is implemented end to end for inspection and loading: canonical
+Version 1.31 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.30
+mojito-mir 1.31
 ```
 
-The writer emits 1.30. The reader accepts 1.0 through 1.30; *Schema 1.0*
+The writer emits 1.31. The reader accepts 1.0 through 1.31; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -502,8 +502,10 @@ value the compile-time route established for it when one has (schema 1.14;
 `meta_param_list(meta)`. A pack query's `pack` is the
 `binder { owner, slot, name }` record of the pack binder it queries, and its
 `query` is `pack_length`,
-`pack_conforms(symbol)`, `pack_predicate { predicate, all }`, or
-`pack_contains(param-expr)`.
+`pack_conforms(symbol)`, `pack_predicate { predicate, all }`,
+`pack_contains(param-expr)`, or `pack_index_of(param-expr)` (schema 1.31:
+upstream's `_get_type_index[element, *Ts]()`, the first position of the
+element type in the pack, else `-1`).
 
 Parsing re-enters the canonicalizing constructors, so a parsed expression is
 canonical whatever order the text spelled its operands in, a bad arity or
@@ -650,7 +652,13 @@ loan {
 ```
 
 Projection operations are `field(symbol)`, `index(%rN)`, `const_index(uint)`,
-`variant(uint)`, and `uninit_payload`. Each projection pairs with its resulting
+`variant(variant-index)`, and `uninit_payload`. A `variant-index` (schema
+1.31) is a known alternative's `uint`, or `ct_expr(param-expr)` in a
+template: upstream's `_get_type_index[T, *Ts]()`, spelled
+`param_pack_query { pack, query: pack_index_of(element) }`, which
+elaboration closes per instance. The `index`, `input_index`, and
+`output_index` fields of the `variant.*` instructions are `variant-index`
+values too; concrete MIR holds only the `uint` form. Each projection pairs with its resulting
 type, preserving `projection_tys`. Root and terminal types retain their explicit
 optionality for compatibility MIR, although verified production artifacts
 require them.
@@ -727,7 +735,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.30
+mojito-mir 1.31
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

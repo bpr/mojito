@@ -168,6 +168,18 @@ fn concrete_blocks(name: &str, blocks: &[MirBlock], errors: &mut Vec<String>) {
     }
 }
 
+fn require_known_alternative(
+    head: &str,
+    index: &mojito_types::types::VariantIndex,
+    errors: &mut Vec<String>,
+) {
+    if index.is_symbolic() {
+        errors.push(format!(
+            "{head} keeps the symbolic Variant alternative `{index}` in elaborated MIR"
+        ));
+    }
+}
+
 fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<String>) {
     for place in instruction_places(instruction) {
         let types = place
@@ -178,6 +190,14 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         for ty in types {
             require_concrete(head, "place", ty, errors);
         }
+        for projection in &place.proj {
+            if let Proj::Variant(index) = projection {
+                require_known_alternative(head, index, errors);
+            }
+        }
+    }
+    for index in instruction_variant_indices(instruction) {
+        require_known_alternative(head, index, errors);
     }
     match instruction {
         MirInstr::Rebind { .. } => {

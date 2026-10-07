@@ -140,6 +140,7 @@ fn nav_step<'a>(
                 index,
                 value,
             } => {
+                let expected = &known_variant_index(expected)?;
                 if index != expected {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant holds '{}', not '{}'",

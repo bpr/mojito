@@ -903,14 +903,16 @@ pub enum SemanticAdjustment {
     /// Construct the selected alternative of a checked `Variant` type.
     ConstructVariant {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Placement construction (`Variant[...](init_with=factory)`): the
     /// zero-parameter factory's result becomes the payload of the alternative
     /// selected by its return type (no `Movable` requirement).
     ConstructVariantInitWith {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
+        /// The factory's result type, the selected alternative.
+        payload: Ty,
     },
     /// A collection display/comprehension resolved to a nominal constructor and
     /// insertion protocol. MIR lowers this as ordinary construction plus exact
@@ -934,30 +936,30 @@ pub enum SemanticAdjustment {
     /// Test the active runtime tag (`value.isa[T]()`).
     VariantIs {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Checked typed projection (`value[T]`).
     VariantProject {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Replace the active alternative (`value.set[T](new_value)`).
     VariantSet {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// Consume a variant and move out the selected payload. `checked` controls
     /// whether execution validates the active tag (`take` versus `unsafe_take`).
     VariantTake {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
         checked: bool,
     },
     /// Atomically install `input_index` and move out `output_index`.
     VariantReplace {
         alternatives: Vec<Ty>,
-        input_index: usize,
-        output_index: usize,
+        input_index: mojito_types::types::VariantIndex,
+        output_index: mojito_types::types::VariantIndex,
         checked: bool,
     },
     /// The `__mlir_op` statement `lit.ownership.mark_initialized` over
@@ -1026,7 +1028,7 @@ pub enum SemanticAdjustment {
     /// previous payload is destroyed (all alternatives checked `Deinitable`).
     VariantSetInitWith {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// `variant.deinit_with(handler)`: consume the variant, handing the
     /// active payload to the single-parameter consuming handler. The handler
@@ -1034,7 +1036,7 @@ pub enum SemanticAdjustment {
     /// mismatch aborts, matching upstream's contract.
     VariantDeinitWith {
         alternatives: Vec<Ty>,
-        index: usize,
+        index: mojito_types::types::VariantIndex,
     },
     /// `storage^.take()`: move the payload out of consumed inline uninit
     /// storage; traps at the VM if the storage is uninitialized.

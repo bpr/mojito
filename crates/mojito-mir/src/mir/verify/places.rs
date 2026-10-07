@@ -464,7 +464,8 @@ pub(super) fn verify_place(
             }
             Proj::Variant(index) => {
                 if let Some(Ty::Variant(alternatives)) = &current
-                    && *index >= alternatives.len()
+                    && let Some(index) = index.known()
+                    && index >= alternatives.len()
                 {
                     errors.push(format!(
                         "{prefix} place projects variant alternative {index} out of {}",

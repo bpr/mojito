@@ -224,8 +224,7 @@ struct Bindings {
     self_instance: Option<(String, Ty)>,
     /// The names of every generic struct template in the source program.
     /// Substitution renames a concrete application of one of these to its
-    /// instance symbol; checker-specialized structs with empty `param_decls`
-    /// (a variadic struct the cloner specialized whole) keep their names.
+    /// instance symbol.
     generic_templates: Rc<HashSet<String>>,
     /// Each source struct's parameters, unparameterized associated types,
     /// and fields. Substitution solves `C.Element` from them once `C` is

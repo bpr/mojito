@@ -599,6 +599,21 @@ impl Decoder {
         }
     }
 
+    /// A `Variant` alternative: its position, or a template's `ct_expr`.
+    pub(super) fn variant_index(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::types::VariantIndex> {
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => self
+                .param_expr(inner)
+                .map(mojito_types::types::VariantIndex::Expr),
+            _ => self
+                .uint(value)
+                .map(mojito_types::types::VariantIndex::Known),
+        }
+    }
+
     /// A lane gather's mask: a known index list, or a template's
     /// `lane_shuffle`/`lane_slice`/`lane_join` form.
     pub(super) fn lane_mask(&mut self, value: &Value) -> Option<mojito_types::types::LaneMask> {
@@ -895,6 +910,7 @@ impl Decoder {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "pack_conforms" => self.symbol(inner).map(PackQuery::Conforms),
                 "pack_contains" => self.param_expr(inner).map(PackQuery::Contains),
+                "pack_index_of" => self.param_expr(inner).map(PackQuery::IndexOf),
                 other => {
                     self.error(value.span, format!("unknown pack query `{other}`"));
                     None

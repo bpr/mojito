@@ -555,13 +555,13 @@ impl Decoder {
             "variant.make" => Some(MirInstr::MakeVariant {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 alternatives: self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?,
-                index: self.req(value, fields, "index", Self::uint)?,
+                index: self.req(value, fields, "index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
             }),
             "variant.is" | "variant.get" => {
                 let dest = self.req(value, fields, "dest", Self::reg)?;
                 let variant = self.req(value, fields, "variant", Self::reg)?;
-                let index = self.req(value, fields, "index", Self::uint)?;
+                let index = self.req(value, fields, "index", Self::variant_index)?;
                 Some(if tag == "variant.is" {
                     MirInstr::VariantIs {
                         dest,
@@ -579,32 +579,32 @@ impl Decoder {
             "variant.set" => Some(MirInstr::VariantSet {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 place: self.req(value, fields, "place", Self::place)?,
-                index: self.req(value, fields, "index", Self::uint)?,
+                index: self.req(value, fields, "index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
             }),
             "variant.take" => Some(MirInstr::VariantTake {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 variant: self.req(value, fields, "variant", Self::reg)?,
-                index: self.req(value, fields, "index", Self::uint)?,
+                index: self.req(value, fields, "index", Self::variant_index)?,
                 checked: self.req(value, fields, "checked", Self::boolean)?,
             }),
             "variant.set_init_with" => Some(MirInstr::VariantSetInitWith {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 place: self.req(value, fields, "place", Self::place)?,
-                index: self.req(value, fields, "index", Self::uint)?,
+                index: self.req(value, fields, "index", Self::variant_index)?,
                 factory: self.req(value, fields, "factory", Self::reg)?,
             }),
             "variant.deinit_with" => Some(MirInstr::VariantDeinitWith {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 variant: self.req(value, fields, "variant", Self::reg)?,
                 handler: self.req(value, fields, "handler", Self::reg)?,
-                index: self.req(value, fields, "index", Self::uint)?,
+                index: self.req(value, fields, "index", Self::variant_index)?,
             }),
             "variant.replace" => Some(MirInstr::VariantReplace {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 place: self.req(value, fields, "place", Self::place)?,
-                input_index: self.req(value, fields, "input_index", Self::uint)?,
-                output_index: self.req(value, fields, "output_index", Self::uint)?,
+                input_index: self.req(value, fields, "input_index", Self::variant_index)?,
+                output_index: self.req(value, fields, "output_index", Self::variant_index)?,
                 value: self.req(value, fields, "value", Self::reg)?,
                 checked: self.req(value, fields, "checked", Self::boolean)?,
             }),

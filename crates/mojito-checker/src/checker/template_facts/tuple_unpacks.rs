@@ -75,7 +75,7 @@ impl Checker {
                 origin: mojito_types::origin::Origin::Static,
                 mutability: source.mutability,
             });
-            self.tuple_unpack_plan(&unpack.value, proof.is_some(), proof.as_ref())
+            self.tuple_unpack_plan(&unpack.value, proof.as_ref())
                 .map_err(|_| "a tuple unpacking has no element reads for the instance")?;
         }
         Ok(())
@@ -91,7 +91,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         for (id, unpack) in &facts.tuple_unpacks {
             let source = unpack.source.as_ref().map(referenced).transpose()?;
-            let plan = self.tuple_unpack_plan(&unpack.value, source.is_some(), source.as_ref())?;
+            let plan = self.tuple_unpack_plan(&unpack.value, source.as_ref())?;
             self.tuple_unpack_plans.borrow_mut().insert(span(id)?, plan);
         }
         Ok(())
@@ -115,11 +115,7 @@ impl Checker {
             .cloned()
             .ok_or(IncompleteReason::TupleUnpackRecipe)?;
         let rebuilt = self
-            .tuple_unpack_plan(
-                &value_ty,
-                source.reference.is_some(),
-                source.reference.as_ref(),
-            )
+            .tuple_unpack_plan(&value_ty, source.reference.as_ref())
             .map_err(|_| IncompleteReason::TupleUnpackRecipe)?;
         if rebuilt != recorded {
             return Err(IncompleteReason::TupleUnpackRecipe);

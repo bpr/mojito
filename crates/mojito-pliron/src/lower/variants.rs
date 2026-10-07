@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::VariantIndex;
 
 impl FnLowering<'_> {
     /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)` over a scalar operand,
@@ -158,6 +159,15 @@ impl FnLowering<'_> {
                 unreachable!("sized sources normalize above; conversion targets are builtins")
             }
         }
+    }
+
+    /// A `Variant` operation's alternative: concrete MIR holds only known
+    /// ones, so a template's `_get_type_index` reaching here is an
+    /// elaboration gap.
+    pub(super) fn known_variant_index(&self, index: &VariantIndex) -> Result<usize, PlironError> {
+        index.known().ok_or_else(|| {
+            self.unsupported(format!("symbolic Variant alternative `{index}`"), None)
+        })
     }
 
     pub(super) fn lower_make_variant(

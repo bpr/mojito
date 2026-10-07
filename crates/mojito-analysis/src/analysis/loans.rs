@@ -440,7 +440,7 @@ pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
                     (Proj::Index(_), Proj::ConstIndex(_)) | (Proj::ConstIndex(_), Proj::Index(_))
                 )
                 || matches!((a, b), (Proj::ConstIndex(x), Proj::ConstIndex(y)) if x == y)
-                || matches!((a, b), (Proj::Variant(x), Proj::Variant(y)) if x == y)
+                || matches!((a, b), (Proj::Variant(x), Proj::Variant(y)) if x.may_equal(y))
         })
 }
 

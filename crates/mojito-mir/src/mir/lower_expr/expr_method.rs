@@ -348,7 +348,7 @@ impl Flatten<'_> {
                     mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
                         index,
                         ..
-                    } => Some(*index),
+                    } => Some(index.clone()),
                     _ => None,
                 })
         {
@@ -382,7 +382,7 @@ impl Flatten<'_> {
                     mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
                         index,
                         ..
-                    } => Some(*index),
+                    } => Some(index.clone()),
                     _ => None,
                 })
         {

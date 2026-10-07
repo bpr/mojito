@@ -66,7 +66,7 @@ pub struct HirPlaceProjection {
 pub enum HirPlaceProjectionKind {
     Field(String),
     Index(CheckedNodeId),
-    Variant(usize),
+    Variant(mojito_types::types::VariantIndex),
 }
 
 impl HirExpr {
@@ -886,7 +886,7 @@ impl Lower {
                     node.adjustments
                         .iter()
                         .find_map(|adjustment| match adjustment {
-                            SemanticAdjustment::VariantProject { index, .. } => Some(*index),
+                            SemanticAdjustment::VariantProject { index, .. } => Some(index.clone()),
                             _ => None,
                         });
                 let kind = match variant_index {
@@ -909,7 +909,7 @@ impl Lower {
                             SemanticAdjustment::VariantProject {
                                 alternatives,
                                 index,
-                            } => Some((alternatives, *index)),
+                            } => Some((alternatives, index.clone())),
                             _ => None,
                         })?;
                 let ty = node.place_ty.clone()?;

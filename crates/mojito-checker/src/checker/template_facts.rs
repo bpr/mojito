@@ -499,21 +499,15 @@ impl Checker {
     /// Record on the body's transfer frame (pushed by its inner checker
     /// before the site is entered) whether selections made under source
     /// validation stand (`TransferFrame::keeps_symbolic_selection`): a
-    /// member of a struct specialized whole always keeps them, as does a
-    /// body no trace covers (a seam without the elaborator's traces) whose
-    /// name marks it a clone; any other traced body keeps them when its
-    /// template was validated.
+    /// body no trace covers (a seam without the elaborator's traces) keeps
+    /// them when its name marks it a clone; a traced body keeps them when
+    /// its template was validated.
     fn mark_symbolic_selection(&self, site: &BodySite<'_>) {
         let keeps = {
             let catalog = self.template_catalog.borrow();
-            let whole_struct = site
-                .instance
-                .owner
-                .as_deref()
-                .is_some_and(|owner| catalog.generated_struct(owner));
             match catalog.trace(&site.instance) {
-                Some(trace) if !whole_struct => catalog.validated(&trace.template),
-                _ => site.display.contains('$'),
+                Some(trace) => catalog.validated(&trace.template),
+                None => site.display.contains('$'),
             }
         };
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {

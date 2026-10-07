@@ -4126,7 +4126,10 @@ fn close_register_types(
                     } => Some((
                         dest,
                         reg_types.get(&variant.0).and_then(|ty| match ty {
-                            Ty::Variant(alternatives) => alternatives.get(*index).cloned(),
+                            Ty::Variant(alternatives) => index
+                                .known()
+                                .and_then(|index| alternatives.get(index))
+                                .cloned(),
                             _ => None,
                         }),
                     )),
@@ -4138,7 +4141,10 @@ fn close_register_types(
                     } => Some((
                         dest,
                         place.ty.as_ref().and_then(|ty| match ty {
-                            Ty::Variant(alternatives) => alternatives.get(*output_index).cloned(),
+                            Ty::Variant(alternatives) => output_index
+                                .known()
+                                .and_then(|index| alternatives.get(index))
+                                .cloned(),
                             _ => None,
                         }),
                     )),

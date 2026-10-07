@@ -233,7 +233,8 @@ impl FnLowering<'_> {
                         );
                     };
                     let alternatives = alternatives.clone();
-                    let Some(selected) = alternatives.get(*index).cloned() else {
+                    let index = self.known_variant_index(index)?;
+                    let Some(selected) = alternatives.get(index).cloned() else {
                         return Err(
                             self.unsupported_reg("Variant projection checked tag".into(), dest)
                         );
@@ -242,7 +243,7 @@ impl FnLowering<'_> {
                         address = self.gep_byte(ctx, address, offset, dest);
                         offset = 0;
                     }
-                    self.emit_variant_tag_guard(ctx, address, *index, dest)?;
+                    self.emit_variant_tag_guard(ctx, address, index, dest)?;
                     let layout = self.layout.variant_layout(&alternatives).map_err(|error| {
                         self.unsupported_reg(format!("Variant layout ({error})"), dest)
                     })?;
@@ -521,7 +522,7 @@ fn projections_agree(recorded: &Proj, used: &Proj) -> bool {
         (Proj::Field(a), Proj::Field(b)) => a == b,
         (Proj::Index(_), Proj::Index(_)) => true,
         (Proj::ConstIndex(a), Proj::ConstIndex(b)) => a == b,
-        (Proj::Variant(a), Proj::Variant(b)) => a == b,
+        (Proj::Variant(a), Proj::Variant(b)) => a.may_equal(b),
         (Proj::UninitPayload, Proj::UninitPayload) => true,
         _ => false,
     }

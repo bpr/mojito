@@ -152,6 +152,7 @@ impl Flatten<'_> {
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
             alternatives,
             index,
+            payload,
         }) = self.checked_adjustments(e).into_iter().find(|adjustment| {
             matches!(
                 adjustment,
@@ -166,11 +167,7 @@ impl Flatten<'_> {
                     .expect("checked Variant(init_with=) has one factory")
                     .value,
             );
-            let payload = self.fresh_typed(
-                span(e),
-                None,
-                alternatives.get(index).cloned().unwrap_or(Ty::Error),
-            );
+            let payload = self.fresh_typed(span(e), None, payload);
             self.emit(MirInstr::CallIndirect {
                 dest: payload,
                 callee: factory,
@@ -619,7 +616,7 @@ impl Flatten<'_> {
         let ExprKind::Member { object, .. } = &callee.kind else {
             unreachable!("checked Variant operation has a member callee")
         };
-        match *operation {
+        match operation.clone() {
             mojito_checked::checked::SemanticAdjustment::VariantIs { index, .. } => {
                 let variant = self.expr(object);
                 let dest = self.fresh(span(e), None);
@@ -679,7 +676,6 @@ impl Flatten<'_> {
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { index, .. } => {
-                let index = index.to_owned();
                 let place = self
                     .try_place(object)
                     .expect("checked Variant.deinit_with receiver is an owned place");

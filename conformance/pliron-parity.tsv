@@ -191,6 +191,7 @@ assets/ok/generic_equatable_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/generic_field_pointer_deref_in_place.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
+assets/ok/generic_param_string_literal_materializes.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_generic_constructor_overload.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_bodies.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_instance_dispatch.mojo	main	exe-differential	sanitized
@@ -397,6 +398,7 @@ assets/ok/pack_struct_explicit_in_generic_body.mojo	main	exe-differential	saniti
 assets/ok/pack_struct_getitem.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_inferred_args.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_pair.mojo	main	exe-differential	sanitized
+assets/ok/pack_struct_static_method_through_instance.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_variadic_init.mojo	main	exe-differential	sanitized
 assets/ok/pack_struct_writable.mojo	main	exe-differential	sanitized
 assets/ok/pack_template_served.mojo	main	exe-differential	sanitized
@@ -860,12 +862,16 @@ assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_upstream_spellings.mojo	main	exe-differential	sanitized
+assets/ok/variadic_struct_over_variant_method.mojo	main	exe-differential	sanitized
 assets/ok/variadic_var_collector_transfer.mojo	main	exe-differential	sanitized
 assets/ok/variant_deinit_with_linear_payload.mojo	main	exe-differential	sanitized
+assets/ok/variant_duplicate_alternatives.mojo	main	exe-differential	sanitized
+assets/ok/variant_generic_def_operations.mojo	main	exe-differential	sanitized
 assets/ok/variant_hash_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/variant_init_with_constructor.mojo	main	exe-differential	sanitized
 assets/ok/variant_nominal_string_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_owning_api.mojo	main	exe-differential	sanitized
+assets/ok/variant_string_literal_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_unsafe_get_static_supported.mojo	main	exe-differential	sanitized
 assets/ok/view_copy_at_last_use.mojo	main	exe-differential	sanitized
 assets/ok/view_temporaries.mojo	main	exe-differential	sanitized

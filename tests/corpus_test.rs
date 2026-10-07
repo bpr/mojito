@@ -318,6 +318,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "template_served_loan_carrying_instance",
     // Section 1, the erased oracle: an erased value carries no type
     // argument to spell a type name over a parameter from.
+    "generic_param_string_literal_materializes",
     "generic_struct_instance_bodies",
     "generic_struct_instance_dispatch",
     "generic_struct_template_reach",
@@ -401,6 +402,22 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "type_names_applied_elements",
     "variadic_method_type_params",
     "variadic_pack_upstream_spellings",
+    // R407, the erased oracle: a pack reifies its length, not its element
+    // types, so `Variant`'s template cannot select an alternative and a
+    // static method cannot answer `Self.Ts.contains[T]()`.
+    "container_hashable",
+    "pack_struct_static_method_through_instance",
+    "variadic_pack_forwarding_generic_def",
+    "variadic_struct_over_variant_method",
+    "variant_deinit_with_linear_payload",
+    "variant_duplicate_alternatives",
+    "variant_generic_def_operations",
+    "variant_hash_dict_key",
+    "variant_init_with_constructor",
+    "variant_nominal_string_payload",
+    "variant_owning_api",
+    "variant_string_literal_payload",
+    "variant_unsafe_get_static_supported",
 ];
 
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one

@@ -702,13 +702,14 @@ impl ParamContext {
     /// concrete tuple/pack logic to resolve. It adds no symbolic pack support.
     pub fn pack_query(&self, pack: &ParamRef, query: PackQuery) -> ParamExpr {
         let meta = match &query {
-            PackQuery::Length => MetaTy::int(),
+            PackQuery::Length | PackQuery::IndexOf(_) => MetaTy::int(),
             PackQuery::Conforms(_) | PackQuery::Predicate { .. } | PackQuery::Contains(_) => {
                 MetaTy::bool()
             }
         };
         let query = match query {
             PackQuery::Contains(element) => PackQuery::Contains(self.intern(&element)),
+            PackQuery::IndexOf(element) => PackQuery::IndexOf(self.intern(&element)),
             other => other,
         };
         self.make(
@@ -1506,6 +1507,9 @@ impl ParamContext {
                     PackQuery::Contains(element) => {
                         PackQuery::Contains(self.replace_at(element, bindings, depth, memo)?)
                     }
+                    PackQuery::IndexOf(element) => {
+                        PackQuery::IndexOf(self.replace_at(element, bindings, depth, memo)?)
+                    }
                     other => other.clone(),
                 };
                 self.pack_query(pack, query)
@@ -1844,7 +1848,7 @@ impl ParamExpr {
             ParamKind::ListTabulate { count, element } => vec![count, element],
             ParamKind::ListConcat { lists } => lists.iter().collect(),
             ParamKind::PackQuery {
-                query: PackQuery::Contains(element),
+                query: PackQuery::Contains(element) | PackQuery::IndexOf(element),
                 ..
             } => vec![element],
             ParamKind::Apply { args, .. } => args.iter().collect(),
@@ -2488,6 +2492,9 @@ pub enum PackQuery {
     },
     /// `TypeList[Ts.values]().contains[T]()` over a Type-meta-type element.
     Contains(ParamExpr),
+    /// `_get_type_index[T, *Ts]()`: the first position of a Type-meta-type
+    /// element in the pack, else `-1` (upstream's `_InvalidTypeIndex`).
+    IndexOf(ParamExpr),
 }
 
 /// The reflection queries of a symbolic subject.
@@ -3399,6 +3406,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             PackQuery::Contains(element) => {
                 write!(f, "TypeList[{pack}.values]().contains[{element}]()")
             }
+            PackQuery::IndexOf(element) => write!(f, "_get_type_index[{element}, *{pack}]()"),
         },
         // Mojo-shaped: a type argument in brackets, a value in parentheses.
         ParamKind::Apply { function, args, .. } => {

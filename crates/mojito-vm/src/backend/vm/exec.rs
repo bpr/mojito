@@ -1445,6 +1445,7 @@ impl VmBackend {
                 index,
                 value,
             } => {
+                let index = &known_variant_index(index)?;
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant construction has an invalid tag".to_string())
                 })?;
@@ -1477,6 +1478,7 @@ impl VmBackend {
                         crate::runtime::type_name(&regs[variant.0 as usize])
                     )));
                 };
+                let index = &known_variant_index(index)?;
                 if *index >= alternatives.len() {
                     return Err(RuntimeError::TypeError(
                         "Variant.isa has an invalid checked tag".to_string(),
@@ -1500,6 +1502,7 @@ impl VmBackend {
                         crate::runtime::type_name(&regs[variant.0 as usize])
                     )));
                 };
+                let index = &known_variant_index(index)?;
                 let expected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError(
                         "typed Variant projection has an invalid checked tag".to_string(),
@@ -1532,6 +1535,7 @@ impl VmBackend {
                         crate::runtime::type_name(&regs[variant.0 as usize])
                     )));
                 };
+                let index = &known_variant_index(index)?;
                 let expected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant.take has an invalid checked tag".to_string())
                 })?;
@@ -1553,6 +1557,7 @@ impl VmBackend {
                 index,
                 factory,
             } => {
+                let index = &known_variant_index(index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant { alternatives, .. } = &old else {
                     return Err(RuntimeError::TypeError(format!(
@@ -1586,6 +1591,7 @@ impl VmBackend {
                 handler,
                 index: expected,
             } => {
+                let expected = &known_variant_index(expected)?;
                 let Value::Variant { index, value, .. } = &regs[variant.0 as usize] else {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant.deinit_with applied to {}",
@@ -1617,6 +1623,7 @@ impl VmBackend {
                 index,
                 value,
             } => {
+                let index = &known_variant_index(index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant { alternatives, .. } = &old else {
                     return Err(RuntimeError::TypeError(format!(
@@ -1648,6 +1655,8 @@ impl VmBackend {
                 value,
                 checked,
             } => {
+                let input_index = &known_variant_index(input_index)?;
+                let output_index = &known_variant_index(output_index)?;
                 let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
                 let Value::Variant {
                     alternatives,

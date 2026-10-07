@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	521
+# swept-count	522
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -544,6 +544,7 @@ assets/type_error/variadic_elements_share_mutable_origin.mojo	compile-reject	agr
 assets/type_error/variadic_pack_all_conforms_to_false.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'Bag[Int, Opaque]' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/variant_deinit_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'deinit_with': value passed to 'deinit_func' cannot be converted from 'def `lambda_0(a: Int) thin -> Int' to 'F'
 assets/type_error/variant_init_with_no_match.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/variant_operation_non_member.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/variant_set_linear_alternative.mojo	compile-reject	agree	error: no matching method in call to 'set'
 assets/type_error/variant_take_renamed.mojo	compile-reject	agree	error: 'Variant[Int, String]' value has no attribute 'take'
 assets/type_error/var_less_introduction.mojo	compile-reject	agree	error: implicit declaration of 'count' is not allowed; add 'var' to declare a new name

@@ -338,9 +338,7 @@ pub(super) fn verify_subscript_call(
                     .strip_prefix(method)
                     .is_some_and(|suffix| suffix.starts_with('$'))
                 || method == "__getitem__"
-                    && (symbol == "__getitem_param__"
-                        || symbol.starts_with("__getitem_param__$")
-                        || symbol.starts_with("__getitem_param_value__$"))
+                    && (symbol == "__getitem_param__" || symbol.starts_with("__getitem_param__$"))
         });
     if !target_family {
         errors.push(format!(

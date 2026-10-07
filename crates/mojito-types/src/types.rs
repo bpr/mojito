@@ -259,6 +259,53 @@ impl fmt::Display for SimdWidth {
     }
 }
 
+/// The alternative a `Variant` storage operation selects: the index
+/// attribute upstream's `pop.variant` operations take, computed by
+/// `_get_type_index[T, *Ts]()`.
+///
+/// An operation in a template over the variant's pack, or over a method's
+/// own type parameter, keeps that query, which each instantiation closes;
+/// one naming no alternative fails the instance, as upstream's
+/// `Variant._check[T]()` does. Concrete MIR holds only `Known`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VariantIndex {
+    Known(usize),
+    Expr(ParamExpr),
+}
+
+impl VariantIndex {
+    pub const fn known(&self) -> Option<usize> {
+        match self {
+            Self::Known(index) => Some(*index),
+            Self::Expr(_) => None,
+        }
+    }
+
+    pub const fn is_symbolic(&self) -> bool {
+        matches!(self, Self::Expr(_))
+    }
+
+    /// Whether two operations may select the same alternative: two
+    /// distinct known positions never do, and a symbolic one may fold to
+    /// any position (two binders may bind one type, and a pack may repeat
+    /// one).
+    pub fn may_equal(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Known(left), Self::Known(right)) => left == right,
+            _ => true,
+        }
+    }
+}
+
+impl fmt::Display for VariantIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(index) => write!(f, "{index}"),
+            Self::Expr(expr) => write!(f, "{expr}"),
+        }
+    }
+}
+
 /// A lane gather's mask (`pop.simd.shuffle`'s mask parameter): result lane
 /// `i` reads lane `mask[i]` of the source lanes, a join's being the
 /// receiver's followed by its argument's.
@@ -562,6 +609,8 @@ pub const DICT_TYPE_NAME: &str = "Dict";
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
 
 pub const TSTRING_TYPE_NAME: &str = "TString";
+/// The public `Variant` struct's name.
+pub const VARIANT_TYPE_NAME: &str = "Variant";
 
 pub const RANGE_TYPE_NAME: &str = "Range";
 
@@ -972,16 +1021,20 @@ pub fn spread_arguments(name: &str, list: &ParamExpr) -> Result<Vec<TyArg>, Para
     })
 }
 
-/// Whether a struct spells its bound pack element by element: the public
-/// `Tuple` and `TString`, whose identity is that spelling, by public name or
-/// generated specialization symbol.
+/// Whether a struct spells its bound pack element by element.
+///
+/// The public `Tuple`, `TString`, and `Variant` do, by public name or
+/// generated specialization symbol: their identity is that spelling
+/// (`Variant[Int, String]`).
 pub fn binds_pack_elementwise(name: &str) -> bool {
-    [TUPLE_TYPE_NAME, TSTRING_TYPE_NAME].iter().any(|public| {
-        name == *public
-            || name.ends_with(&format!("${public}"))
-            || name.starts_with(&format!("{public}$"))
-            || name.contains(&format!("${public}$"))
-    })
+    [TUPLE_TYPE_NAME, TSTRING_TYPE_NAME, VARIANT_TYPE_NAME]
+        .iter()
+        .any(|public| {
+            name == *public
+                || name.ends_with(&format!("${public}"))
+                || name.starts_with(&format!("{public}$"))
+                || name.contains(&format!("${public}$"))
+        })
 }
 
 /// The canonical argument list of an application of the struct `name`.

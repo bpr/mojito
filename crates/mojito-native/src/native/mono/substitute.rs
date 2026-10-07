@@ -3,6 +3,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::Proj;
+use mojito_types::types::VariantIndex;
 
 /// Rewrite each nullary `T()` or `Ts[i]()` whose constructed type these
 /// bindings decide into that type's default construction
@@ -364,6 +366,7 @@ pub(super) fn substitute_instruction(
         SizeOf, Slice, Store, StoreRef, Try, TryNext, TypeName, UninitStorageDestroy,
         UninitStorageTake, VariantReplace, VariantSet, VariantSetInitWith,
     };
+    close_instruction_variant_indices(instruction, bindings)?;
     match instruction {
         // A SIMD instruction's slots close as the vector type they build
         // does; one the bindings leave symbolic stays for the concreteness
@@ -625,14 +628,13 @@ pub(super) fn substitute_instruction(
         MakeTuple {
             element_types: Some(types),
             ..
-        }
-        | MakeVariant {
-            alternatives: types,
-            ..
         } => {
             for ty in types {
                 *ty = substitute_ty(ty, bindings)?;
             }
+        }
+        MakeVariant { alternatives, .. } => {
+            *alternatives = sub_spread_types(alternatives, bindings)?;
         }
         VariantSet { place, .. }
         | VariantSetInitWith { place, .. }
@@ -694,7 +696,81 @@ pub(super) fn substitute_place(place: &mut MirPlace, bindings: &Bindings) -> Res
     for ty in &mut place.projection_tys {
         *ty = substitute_ty(ty, bindings)?;
     }
+    for projection in &mut place.proj {
+        if let Proj::Variant(index) = projection {
+            close_variant_index(index, bindings)?;
+        }
+    }
     sub_opt_ty(&mut place.ty, bindings)
+}
+
+/// Close the alternatives a `Variant` operation selects.
+fn close_instruction_variant_indices(
+    instruction: &mut MirInstr,
+    bindings: &Bindings,
+) -> Result<(), MonoError> {
+    match instruction {
+        MirInstr::MakeVariant { index, .. }
+        | MirInstr::VariantIs { index, .. }
+        | MirInstr::VariantGet { index, .. }
+        | MirInstr::VariantSet { index, .. }
+        | MirInstr::VariantTake { index, .. }
+        | MirInstr::VariantSetInitWith { index, .. }
+        | MirInstr::VariantDeinitWith { index, .. } => close_variant_index(index, bindings),
+        MirInstr::VariantReplace {
+            input_index,
+            output_index,
+            ..
+        } => {
+            close_variant_index(input_index, bindings)?;
+            close_variant_index(output_index, bindings)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
+/// the pack and `T`. A `T` the pack lacks fails the instance, as upstream's
+/// `Variant._check[T]()` does; an index the bindings leave open stays for
+/// the concreteness check to name.
+fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<(), MonoError> {
+    let VariantIndex::Expr(expr) = &*index else {
+        return Ok(());
+    };
+    let ParamKind::PackQuery {
+        pack,
+        query: PackQuery::IndexOf(element),
+    } = expr.kind()
+    else {
+        return Ok(());
+    };
+    let Some(Ty::RuntimePack(alternatives)) = bindings.types.get(pack) else {
+        return Ok(());
+    };
+    let alternatives = sub_types(alternatives, bindings)?;
+    let selected = match element.kind() {
+        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
+        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        _ => return Ok(()),
+    };
+    if is_symbolic(&selected) || alternatives.iter().any(is_symbolic) {
+        return Ok(());
+    }
+    *index = VariantIndex::Known(
+        alternatives
+            .iter()
+            .position(|alternative| super::equiv::ty_equal_modulo_origins(alternative, &selected))
+            .ok_or_else(|| MonoError {
+                kind: MonoErrorKind::Instantiation,
+                function: None,
+                construct: format!(
+                    "constraint failed: Type does not exist in Variant. ('{selected}' is not \
+                     one of {})",
+                    Ty::Variant(alternatives.clone())
+                ),
+            })?,
+    );
+    Ok(())
 }
 pub(super) fn sub_places(
     places: &mut [Option<MirPlace>],
