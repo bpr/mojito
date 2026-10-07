@@ -532,6 +532,20 @@ impl Checker {
                         }
                     }
                 }
+                // The body of a method clone whose instantiation failed: the
+                // elaborator reports the literal message if a reachable call
+                // instantiates it.
+                "_mojito_instantiation_failed" => {
+                    let tys = self.builtin_args("_mojito_instantiation_failed", 1, args)?;
+                    if tys[0] != Ty::StringLiteral {
+                        return Err(TypeError::TypeMismatch {
+                            expected: "StringLiteral".to_string(),
+                            found: tys[0].to_string(),
+                            context: "argument to '_mojito_instantiation_failed'".to_string(),
+                        });
+                    }
+                    return Ok(Ty::None);
+                }
                 // Positional `String(x)` is the stringify intrinsic; the
                 // zero-argument form is the nominal empty constructor
                 // (2026-08 stabilization) and falls through to it.

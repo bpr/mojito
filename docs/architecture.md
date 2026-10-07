@@ -1146,7 +1146,15 @@ through `per_call_constructor_target`. A pack binding expands `*args: *Ts`
 to the `$pack[...]` element list inside `specialize_method_clone` exactly as
 a def specialization does, and the template's method body becomes the
 `unspecialized_method_stub` trap when it only elaborates with the struct's
-parameters or its own pack bound. A member of a vector- or struct-keyed
+parameters or its own pack bound. A clone of such a stubbed method that
+fails to elaborate for its instance (or per call) is still minted, with the
+instance's signature over the one compiler-private call
+`_mojito_instantiation_failed("…")` (`instantiation_failure_stub`): the
+template has no erased body to fall back to, and the failure is the pin's
+`function instantiation failed`, reported only where the program reaches
+the instance. `native::mono` reports it per reached instance after branch
+selection (`discharge_instantiation_failures`, `mono/failure.rs`) as a
+`MonoErrorKind::Instantiation` error. A member of a vector- or struct-keyed
 specialization that its template serves keeps its own binders and mints no
 clone, as a non-generic struct's method does.
 `specialize_method_clone` bakes

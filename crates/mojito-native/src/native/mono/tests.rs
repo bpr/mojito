@@ -1435,3 +1435,35 @@ fn a_struct_pack_binds_element_by_element_or_whole() {
         );
     }
 }
+
+const FAILED_INSTANCE: &str = r"
+struct S[n: Int]:
+    def __init__(out self):
+        pass
+
+    def f(self):
+        comptime for i in range(Self.n):
+            comptime q = [1, 2][i]
+            print(q)
+
+def reaches():
+    S[5]().f()
+
+def main():
+    S[2]().f()
+";
+
+#[test]
+fn failed_method_instance_is_reported_only_where_reached() {
+    let compiler = mojito::Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(FAILED_INSTANCE, std::path::Path::new("mono_test.mojo"))
+        .expect("the check accepts every instance");
+    let mir = compiled.drop_elaborated_mir();
+    specialize(mir, &["main".to_string()], host_target().as_ref())
+        .expect("`main` reaches no failed instance");
+    let error = specialize(mir, &["reaches".to_string()], host_target().as_ref())
+        .expect_err("`reaches` instantiates `S[5].f`");
+    assert_eq!(error.kind, MonoErrorKind::Instantiation, "{error}");
+    assert!(error.construct.contains("out of range"), "{error}");
+}

@@ -928,6 +928,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct method whose clone fails to elaborate for a reached instance
+  (`comptime q = [1, 2][i]` in a loop over `range(Self.n)`, called on
+  `S[5]`), or a generic method's per-call instantiation that fails the same
+  way, is now rejected at compile time with "function instantiation of
+  `S.f…` failed", as at the pin, where it stopped at run time with
+  "unspecialized type-keyed method". An instance no reachable call needs
+  still compiles.
 - A `comptime for` the template does not serve (`comptime for x in
   [twice(n), i]:`) now runs when it is nested in a served loop or a kept
   `comptime if` arm of a generic `def`, as at the pin, where it failed with

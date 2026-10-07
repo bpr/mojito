@@ -666,6 +666,7 @@ assets/ok/struct_generator_lane_symbolic_width.mojo	-	ineligible	no-scalar-entry
 assets/ok/struct_generator_struct_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_generator_vector_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_method_instance_clone_unreached.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape

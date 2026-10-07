@@ -362,11 +362,17 @@ impl Elab<'_> {
                     && mojito_symbol::symbol::lifecycle_method_name(method) == "__init__"
             })
             .count();
+        let stubbed = methods
+            .iter()
+            .filter(|method| method.self_ty.is_none() && is_unspecialized_method_stub(&method.body))
+            .map(|method| method.name.clone())
+            .collect();
         let InstanceClones {
             clones,
             mut field_types,
             withheld,
-        } = self.generate_instance_clones(template, values, &keyed)?;
+            stubbed,
+        } = self.generate_instance_clones(template, values, &keyed, &stubbed)?;
         mono.minted_instances.push(StructInstanceRequest::new(
             template.to_string(),
             values
@@ -380,7 +386,8 @@ impl Elab<'_> {
         for ty in &mut field_types {
             self.mono_type(ty, consts, mono)?;
         }
-        let mut kept = self.walk_instance_clones(clones, template, module.as_deref(), consts, mono);
+        let mut kept =
+            self.walk_instance_clones(clones, template, module.as_deref(), &stubbed, consts, mono);
         // A constructor family clones as a unit or not at all. The checker
         // names the member it selected by matching the substituted signature,
         // so a family that lost one member would let that constructor's call
@@ -430,7 +437,10 @@ impl Elab<'_> {
 
     /// Walk each minted clone of one instance, dropping any whose own
     /// applications do not resolve: that call keeps the erased template
-    /// rather than failing the program.
+    /// rather than failing the program. A clone of a template whose body is
+    /// the trap stub (`stubbed`, clone name to template method) has no
+    /// erased body to fall back to, so it keeps its signature and reports
+    /// the failure where a reachable call instantiates it.
     ///
     /// Every clone is stamped with its own source tag first, so the walk's
     /// span-keyed lookups find the checker's records for this instantiation
@@ -442,6 +452,7 @@ impl Elab<'_> {
         clones: Vec<Method>,
         template: &str,
         module: Option<&str>,
+        stubbed: &HashMap<String, String>,
         consts: &HashMap<String, CtValue>,
         mono: &mut Mono,
     ) -> Vec<Method> {
@@ -453,8 +464,14 @@ impl Elab<'_> {
                 (!clone.type_params.is_empty()).then(|| super::method_owner(template, &clone.name));
             let walked = self.mono_method(&mut clone, consts, mono);
             mono.abstract_owner = None;
-            if walked.is_ok() {
-                kept.push(clone);
+            match (walked, stubbed.get(&clone.name)) {
+                (Ok(()), _) => kept.push(clone),
+                (Err(error), Some(method)) => {
+                    clone.body = vec![instantiation_failure_stub(template, method, &clone, &error)];
+                    mojito_ast::ast::stamp_source(&mut clone.body, &tag);
+                    kept.push(clone);
+                }
+                (Err(_), None) => {}
             }
         }
         kept
@@ -1172,7 +1189,9 @@ impl Elab<'_> {
     /// parameters are all plain type or value parameters specializes here
     /// (a value argument baked as itself, `f$i2;` on `S[2]`); packs,
     /// retained origin binders, and callable-bounded parameters keep the
-    /// erased path.
+    /// erased path. A method in `stubbed`, whose template body is the trap
+    /// stub, has no erased path: a clone of one that fails to elaborate is
+    /// minted anyway, its body reporting the failure.
     #[allow(
         clippy::unnecessary_wraps,
         reason = "TODO: drop the Result once callers stop using ?"
@@ -1182,6 +1201,7 @@ impl Elab<'_> {
         name: &str,
         values: &[CtValue],
         keyed: &HashSet<String>,
+        stubbed: &HashSet<String>,
     ) -> Result<InstanceClones, ComptimeError> {
         let Some(template) = self.program.iter().find(|statement| {
             matches!(&statement.kind, StmtKind::Struct { name: template, .. } if template == name)
@@ -1308,6 +1328,7 @@ impl Elab<'_> {
         // never runs.
         let mut withheld: HashSet<String> = HashSet::new();
         let mut clones = Vec::new();
+        let mut stubbed_clones = HashMap::new();
         for method in methods {
             if unavailable.contains(&method.name) {
                 withheld.insert(method.name.clone());
@@ -1324,31 +1345,38 @@ impl Elab<'_> {
             // elaborator from its MIR, its own binders bound with the
             // struct's.
             let served = !keyed.contains(&method.name);
-            clones.extend(
-                (!served)
-                    .then(|| {
-                        self.per_call_method_clones(
+            let stub = stubbed.contains(&method.name);
+            let per_call = if served {
+                Vec::new()
+            } else {
+                self.per_call_method_clones(
+                    name,
+                    method,
+                    stub,
+                    per_call_requests,
+                    &PerCallBase {
+                        values,
+                        bindings: &bindings,
+                        receiver: Some(&receiver),
+                        owner: Some(PerCallOwner {
                             name,
-                            method,
-                            per_call_requests,
-                            &PerCallBase {
-                                values,
-                                bindings: &bindings,
-                                receiver: Some(&receiver),
-                                owner: Some(PerCallOwner {
-                                    name,
-                                    module: template.module.as_deref(),
-                                    template: name,
-                                }),
-                                origin_binders: Some(&origin_binders),
-                                constructors: !bundled,
-                            },
-                            &consts,
-                        )
-                    })
-                    .into_iter()
-                    .flatten(),
-            );
+                            module: template.module.as_deref(),
+                            template: name,
+                        }),
+                        origin_binders: Some(&origin_binders),
+                        constructors: !bundled,
+                    },
+                    &consts,
+                )
+            };
+            if stub {
+                stubbed_clones.extend(
+                    per_call
+                        .iter()
+                        .map(|clone| (clone.name.clone(), method.name.clone())),
+                );
+            }
+            clones.extend(per_call);
             // A synthesized trait-default body (Copyable's `copy`, Hashable's
             // `__hash__`; no source provenance) has no instance-specific
             // behavior: the template's serves every instance.
@@ -1382,10 +1410,30 @@ impl Elab<'_> {
                 withheld.insert(method.name.clone());
                 continue;
             }
-            let Ok(mut clone) =
-                self.specialize_method_clone(method, clone_name, &bindings, &consts, &consts)
-            else {
-                continue;
+            let specialized = self.specialize_method_clone(
+                method,
+                clone_name.clone(),
+                &bindings,
+                &consts,
+                &consts,
+            );
+            if stub {
+                stubbed_clones.insert(clone_name.clone(), method.name.clone());
+            }
+            let mut clone = match specialized {
+                Ok(clone) => clone,
+                Err(error) if stub => {
+                    let Some(mut clone) = self
+                        .failed_method_clone(name, method, clone_name, &bindings, &consts, &error)
+                    else {
+                        continue;
+                    };
+                    clone.where_clauses.clear();
+                    clone.self_ty = Some(receiver.clone());
+                    clones.push(clone);
+                    continue;
+                }
+                Err(_) => continue,
             };
             clone.where_clauses.clear();
             clone.self_ty = Some(receiver.clone());
@@ -1472,10 +1520,12 @@ impl Elab<'_> {
                 .type_params
                 .splice(0..0, origin_binders.params().iter().cloned());
         }
+        stubbed_clones.retain(|clone, _| clones.iter().any(|minted| minted.name == *clone));
         Ok(InstanceClones {
             clones,
             field_types,
             withheld,
+            stubbed: stubbed_clones,
         })
     }
 
@@ -1489,11 +1539,14 @@ impl Elab<'_> {
     /// align, a `where` clause false for the instantiation, or a body that
     /// fails to elaborate mints nothing: the call keeps the erased path.
     /// `template` is the struct whose declaration `method` is, which owns
-    /// the method's binders.
+    /// the method's binders. A `stubbed` method, whose template body is the
+    /// trap stub, has no erased path: its clone that fails to elaborate is
+    /// minted anyway, its body reporting the failure.
     pub(super) fn per_call_method_clones(
         &self,
         template: &str,
         method: &Method,
+        stubbed: bool,
         requests: &[MethodSpecializationRequest],
         base: &PerCallBase<'_>,
         consts: &HashMap<String, CtValue>,
@@ -1553,10 +1606,23 @@ impl Elab<'_> {
             if !available {
                 continue;
             }
-            let Ok(mut clone) =
-                self.specialize_method_clone(method, clone_name, &bindings, consts, consts)
-            else {
-                continue;
+            let (mut clone, failed) = match self.specialize_method_clone(
+                method,
+                clone_name.clone(),
+                &bindings,
+                consts,
+                consts,
+            ) {
+                Ok(clone) => (clone, false),
+                Err(error) if stubbed => {
+                    let Some(clone) = self.failed_method_clone(
+                        template, method, clone_name, &bindings, consts, &error,
+                    ) else {
+                        continue;
+                    };
+                    (clone, true)
+                }
+                Err(_) => continue,
             };
             clone.where_clauses.clear();
             clone.self_ty = receiver.cloned();
@@ -1564,7 +1630,7 @@ impl Elab<'_> {
             clone
                 .type_params
                 .splice(0..0, binders.params()[first_own..].iter().cloned());
-            if let Some(owner) = owner {
+            if let (Some(owner), false) = (owner, failed) {
                 self.trace_per_call_clone(owner, method, &clone, &bindings, base_bindings.len());
             }
             clones.push(clone);
@@ -1670,6 +1736,29 @@ impl Elab<'_> {
             pending.extend(refines.iter().cloned());
         }
         names
+    }
+
+    /// The clone of `method`, of `owner`'s stubbed template, whose
+    /// elaboration under `bindings` failed with `error`: the instance's
+    /// signature over a body reporting the failure.
+    fn failed_method_clone(
+        &self,
+        owner: &str,
+        method: &Method,
+        clone_name: String,
+        bindings: &[MethodBinding],
+        consts: &HashMap<String, CtValue>,
+        error: &ComptimeError,
+    ) -> Option<Method> {
+        let mut marked = method.clone();
+        marked.body = vec![instantiation_failure_stub(
+            owner,
+            &method.name,
+            method,
+            error,
+        )];
+        self.specialize_method_clone(&marked, clone_name, bindings, consts, consts)
+            .ok()
     }
 
     /// Clone `method` with `bindings` baked: the bound parameters leave the
@@ -1967,7 +2056,7 @@ fn per_call_stubs(program: &[Stmt]) -> HashSet<String> {
 }
 
 /// Whether `body` is [`unspecialized_method_stub`]'s trap.
-fn is_unspecialized_method_stub(body: &[Stmt]) -> bool {
+pub(super) fn is_unspecialized_method_stub(body: &[Stmt]) -> bool {
     let [statement] = body else {
         return false;
     };
@@ -2011,6 +2100,32 @@ pub(super) fn template_stub(template: &Stmt, reason: &str) -> Stmt {
 }
 
 pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
+    intrinsic_statement(
+        "_mojito_abort",
+        format!("{owner}.{}{METHOD_STUB_REASON}", method.name),
+        method,
+    )
+}
+
+/// The body of a method clone of `owner`'s template method `name` whose
+/// elaboration failed with `error`: the elaborator below MIR reports the
+/// failure if a reachable call instantiates the clone.
+pub(super) fn instantiation_failure_stub(
+    owner: &str,
+    name: &str,
+    method: &Method,
+    error: &ComptimeError,
+) -> Stmt {
+    intrinsic_statement(
+        "_mojito_instantiation_failed",
+        format!("{owner}.{name}: {error}"),
+        method,
+    )
+}
+
+/// A statement calling the compiler-private intrinsic `callee` with the
+/// literal `message`, at `method`'s first statement.
+fn intrinsic_statement(callee: &str, message: String, method: &Method) -> Stmt {
     let span = method
         .body
         .first()
@@ -2018,12 +2133,9 @@ pub(super) fn unspecialized_method_stub(owner: &str, method: &Method) -> Stmt {
     mk(
         StmtKind::Expr(Expr::new(
             ExprKind::Call {
-                name: "_mojito_abort".to_string(),
+                name: callee.to_string(),
                 param_args: Vec::new(),
-                args: vec![Expr::new(
-                    ExprKind::Str(format!("{owner}.{}{METHOD_STUB_REASON}", method.name)),
-                    span,
-                )],
+                args: vec![Expr::new(ExprKind::Str(message), span)],
                 kwargs: Vec::new(),
             },
             span,

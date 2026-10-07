@@ -436,6 +436,12 @@ impl VmBackend {
                 };
                 Err(RuntimeError::Abort(message))
             }
+            // A method clone whose instantiation failed, reached on the
+            // erased path; the elaborator reports it before concrete MIR runs.
+            "_mojito_instantiation_failed" => Err(RuntimeError::Unsupported(match args.first() {
+                Some(Value::Str(message)) => format!("function instantiation failed: {message}"),
+                _ => "function instantiation failed".to_string(),
+            })),
             "String" => Ok(Value::Str(match args.into_iter().next() {
                 Some(value) => {
                     let static_ty = arg_types.first().and_then(Option::as_ref);

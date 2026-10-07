@@ -3403,12 +3403,16 @@ fn body_callees<'a>(
 /// What one closed instance of a generic struct mints: its per-instantiation
 /// method clones, its storage types with the parameters baked, and the
 /// methods it withholds — unavailable through a false `where` clause or a
-/// false conditional conformance, so no call reaches their erased bodies.
+/// false conditional conformance, so no call reaches their erased bodies —
+/// and, by clone name, the template method of each clone whose template body
+/// is the trap stub, so a clone of one that fails its walk reports the
+/// failure rather than falling back to the trap.
 #[derive(Default)]
 struct InstanceClones {
     clones: Vec<mojito_ast::ast::Method>,
     field_types: Vec<Type>,
     withheld: HashSet<String>,
+    stubbed: HashMap<String, String>,
 }
 
 /// One reference [`Mono::retain_abstract`] left on a template's abstract

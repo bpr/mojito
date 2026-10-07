@@ -94,7 +94,7 @@ pub(super) fn stmt_returns(stmt: &Stmt) -> bool {
         StmtKind::Expr(Expr {
             kind: ExprKind::Call { name, .. },
             ..
-        }) if name == "_mojito_abort" => true,
+        }) if is_diverging_intrinsic(name) => true,
         // A `comptime if` reaches here only under source validation, where
         // no arm is assumed selected: every arm must return.
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
@@ -163,7 +163,7 @@ pub(super) fn definitely_initializes_named_result(body: &[Stmt], name: &str) -> 
             StmtKind::Expr(Expr {
                 kind: ExprKind::Call { name, .. },
                 ..
-            }) if name == "_mojito_abort" => return true,
+            }) if is_diverging_intrinsic(name) => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
                 initialized |= definitely_initializes_named_result(body, name);
@@ -239,6 +239,12 @@ impl Collectors {
             keyword_only: effective_keyword_only_index(params, keyword_only, variadic_idx),
         }
     }
+}
+
+/// Whether the call `name` is a compiler-private intrinsic that never
+/// returns: the runtime trap, or a method clone's failed instantiation.
+fn is_diverging_intrinsic(name: &str) -> bool {
+    matches!(name, "_mojito_abort" | "_mojito_instantiation_failed")
 }
 
 /// Why a construction selected no constructor: the availability clause of a
@@ -1390,7 +1396,7 @@ impl Checker {
         // A constructor whose body is the runtime trap (an unspecialized
         // generic template's stub) never completes, so it initializes nothing.
         if body.first().is_some_and(|statement| {
-            matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) if name == "_mojito_abort")
+            matches!(&statement.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { name, .. }, .. }) if is_diverging_intrinsic(name))
         }) {
             return Ok(());
         }

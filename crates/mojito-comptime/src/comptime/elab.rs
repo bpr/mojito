@@ -927,6 +927,7 @@ impl Elab<'_> {
             clones.extend(self.per_call_method_clones(
                 name,
                 method,
+                super::specialize::is_unspecialized_method_stub(&template.body),
                 requests.map_or(&[][..], Vec::as_slice),
                 &base,
                 env,

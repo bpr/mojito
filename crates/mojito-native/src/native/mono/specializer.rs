@@ -450,6 +450,7 @@ impl<'a> Specializer<'a> {
         retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
+        self.discharge_instantiation_failures(&key.template, &function)?;
         self.discharge_rebinds(&key.template, &mut function)?;
         self.answer_param_constants(&key.template, &mut function.blocks, bindings)
             .map_err(|mut error| {

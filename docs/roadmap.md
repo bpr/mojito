@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R458**.
+Next free ID: **R461**.
 
 ## Ordered Work
 
@@ -86,25 +86,6 @@ correctness fix to existing behavior is allowed.
     `CloneClass::PackDef` as a regression counter.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
-
-- [ ] **R403 (P3) A struct method whose instance clone fails to elaborate
-  stops at run time instead of being rejected**
-
-  Problem: `comptime for x in [Self.g(Self.n), Self.n]:` over a static
-  method `g` of `struct S[n: Int]` stops with "S.f: unspecialized
-  type-keyed method", where the pin prints `12`, `2` for `S[2]`.
-  - `generate_instance_clones` (`comptime/specialize.rs`) drops a clone
-    whose body fails to elaborate and keeps the template's trap stub, so
-    the error never reaches the user.
-  - The same loop in a `def` (`[S[n].g(n), n]`) fails at elaboration with
-    "compile-time method 'g' needs a value receiver": compile-time
-    evaluation has no static-method callee.
-  - A clone is minted for every instance, called or not, so the failure
-    should surface at a call that reaches it, not at minting.
-  - The static-method callee itself is R401's "a method".
-  - Found while landing R400 (2026-10-06).
-  - Depends on R401.
-  - Model: Opus, Not Planned.
 
 - [ ] **R454 (P3b) A `comptime for` over `String`-bearing tuple or struct
   elements in a generic `def` is unrolled in the AST**
@@ -3080,6 +3061,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R458 A generic `def` whose clone fails to elaborate is rejected
+  even when no reachable call needs it**
+
+  Problem: `f[5]()` inside an uncalled `def unused()`, over a `def f[n: Int]`
+  whose `comptime q = [1, 2][i]` runs past the display at `n = 5`, is refused
+  with "comptime index 2 out of range"; the pin instantiates only what the
+  entry reaches and prints `ok`.
+  - The elaborator above MIR mints a `def`'s clone per discovered call and
+    fails the program when one does not elaborate.
+  - A struct method's clone already defers the same failure to
+    `native::mono`, which reports it only where reached: the clone's body
+    becomes `instantiation_failure_stub`'s `_mojito_instantiation_failed`
+    call (`comptime/specialize.rs`, `mono/failure.rs`). The `def` path can
+    reuse it.
+  - Pinned by `conformance/probes/keyed_def_clone_fails_unreached.mojo`.
+  - Found while landing R403 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R459 A reached struct instance instantiates every constructor
+  overload, called or not**
+
+  Problem: `S[5](3)` calls only `__init__(out self, y: Int)`, yet the
+  sibling `__init__(out self)`, whose `[1, 2][Self.n]` is out of range at
+  `n = 5`, fails the program with "keeps the parameter constant"; the pin
+  instantiates only the called overload and prints `8`.
+  - `Specializer`'s struct-instance declaration (`mono/specializer.rs`)
+    enqueues every `__init__` overload the instance does not disprove, beside
+    the copy, move, and destroy members lowering composes by name.
+  - A constructor should be instantiated only by a call that reaches it, as
+    an ordinary method already is.
+  - Pinned by `conformance/probes/constructor_overload_uncalled_instance.mojo`.
+  - Found while landing R403 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R70 A value-keyed `def` cannot forward its value to a keyed `def`**
 
   Problem: `def forward[n: Int](x: Int) -> Int: return keyed[n]() + x`, over
@@ -3663,6 +3680,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     out-of-range error `eval_ct` reports as `Unsupported`, so the verifier
     reports the surviving constant instead of the instantiation.
   - Found while landing R318 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R460 An out-of-range display index over a binder fails as an
+  unsupported constant**
+
+  Problem: `comptime q = [1, 2][n]` in `def f[n: Int]()` called as `f[5]()`
+  stops with "keeps the parameter constant `[1, 2][n]` in elaborated MIR",
+  where the pin rejects the instantiation at compile time.
+  - The verdict is right; the words are internal.
+  - The same cause as R327: `Specializer::param_constant`
+    (`mono/specializer.rs`) drops the out-of-range error, so the verifier
+    reports the surviving constant instead of a failed instantiation.
+  - Found while landing R403 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
