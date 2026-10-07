@@ -1008,20 +1008,23 @@ impl Checker {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, candidate)| {
-                        let specialized = self
+                        // Only a fitting candidate keeps the facts its
+                        // compile-time arguments recorded.
+                        let saved_argument_facts = self.compile_time_argument_facts(arguments);
+                        let fitting = self
                             .specialize_callable_value_candidate(
                                 name,
                                 arguments,
                                 candidate.clone(),
                                 signatures.get(index),
                             )
-                            .ok()?;
-                        self.value_coerces(&specialized, expected)
-                            .then(|| {
-                                callable_lowered_name(name, candidate)
-                                    .map(|target| (specialized, target))
-                            })
-                            .flatten()
+                            .ok()
+                            .filter(|specialized| self.value_coerces(specialized, expected))
+                            .zip(callable_lowered_name(name, candidate));
+                        if fitting.is_none() {
+                            self.restore_compile_time_argument_facts(saved_argument_facts);
+                        }
+                        fitting
                     })
                     .collect::<Vec<_>>();
                 match matches.len() {

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A template-served generic body's call over its own binder into an
+  overload family that keeps a member the cloner specializes (`kind(a)` in
+  `inferred[dt: DType]`, `kind[n](a)` in `by_value[n: Int]`) now runs, as at
+  the pin, served by the declaration the checker selected. It was rejected
+  with "requires compile-time parameter 'T'", naming a sibling's parameter,
+  or failed MIR verification with "value parameter 'n' has no runtime
+  register", which a losing overload's probe of `n` as a type also caused
+  outside a served body (`kind[T](1) + kind[n](a)`).
+
 - A `DType`- or lane-keyed `def` is now an ordinary generic `def`, served by
   its template unless its body keys a clone, as at the pin. A value binder
   a runtime parameter names outside a lane slot (`h[dt: DType, n: Int](a:

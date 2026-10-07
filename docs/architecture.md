@@ -1038,7 +1038,13 @@ compile-time-keyed declaration, or a type-pack one the template does not
 serve, among its overloads is a *family*
 (`collect_overload_families`); a member the template serves forms none. A
 call selecting such a served member is left as written, as a uniquely named
-served `def`'s call is (`Elab::family_call_is_served`). No other call to it is
+served `def`'s call is (`Elab::family_call_is_served`), even while its
+arguments are symbolic: a template-served body's call over its own binder
+(`kind[n](a)` in `by_value[n: Int]`) is not closed, so the driver ships the
+checker's selection at each unclosed family call as
+`ElaborationInputs::def_selections`, and a new selection counts as discovery
+growth. A selection of a member the cloner specializes keeps the abstract
+path, and its body is cloned. No other call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type
 arguments rather than an overload and overload selection is the checker's.
 Every call is served from the checker's recorded instantiation, which names

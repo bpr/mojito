@@ -664,6 +664,7 @@ impl Checker {
                 let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
                 let saved_consuming_receivers =
                     self.implicitly_copied_consuming_receivers.borrow().clone();
+                let saved_argument_facts = self.compile_time_argument_facts(param_args);
                 if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
                     name,
                     param_args,
@@ -762,6 +763,7 @@ impl Checker {
                 *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
                 *self.implicitly_copied_consuming_receivers.borrow_mut() =
                     saved_consuming_receivers;
+                self.restore_compile_time_argument_facts(saved_argument_facts);
             }
             return match select_callable_overload(matches) {
                 Ok((ret, target, selected_index, error)) => {
@@ -1010,6 +1012,56 @@ impl Checker {
 
     /// Record a direct callable's runtime parameters for the call at `span`;
     /// a callable struct value records none.
+    /// The adjustments recorded at a call's compile-time argument
+    /// expressions, so an overload probe can put them back: a candidate that
+    /// resolves an argument and is then rejected must not leave its reading
+    /// of that argument on the call the winner makes.
+    pub(super) fn compile_time_argument_facts(
+        &self,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Vec<(
+        SourceSpan,
+        Option<mojito_checked::checked::SemanticAdjustment>,
+    )> {
+        fn value(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
+            match argument {
+                mojito_ast::ast::ParamArg::Type(_) => None,
+                mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
+                mojito_ast::ast::ParamArg::Named { value: named, .. } => value(named),
+            }
+        }
+        let adjustments = self.operation_adjustments.borrow();
+        param_args
+            .iter()
+            .filter_map(value)
+            .map(|expression| {
+                let span = expression.source_span();
+                let fact = adjustments.get(&span).cloned();
+                (span, fact)
+            })
+            .collect()
+    }
+
+    pub(super) fn restore_compile_time_argument_facts(
+        &self,
+        saved: Vec<(
+            SourceSpan,
+            Option<mojito_checked::checked::SemanticAdjustment>,
+        )>,
+    ) {
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        for (span, fact) in saved {
+            match fact {
+                Some(fact) => {
+                    adjustments.insert(span, fact);
+                }
+                None => {
+                    adjustments.remove(&span);
+                }
+            }
+        }
+    }
+
     pub(super) fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
         if let Ty::Func {
             names,

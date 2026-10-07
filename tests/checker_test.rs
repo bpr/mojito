@@ -3020,6 +3020,24 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
 }
 
 #[test]
+fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
+    // `kind[T]` is probed first and tries `n` as a type; the winning
+    // `kind[n]` passes `n` as a runtime value register.
+    let source = "def kind[T: AnyType](a: Int) -> Int:\n    return a\n\ndef kind[n: Int](a: Float64) -> Int:\n    return n\n\ndef both[n: Int, T: AnyType](a: Float64) -> Int:\n    return kind[T](1) + kind[n](a)\n\ndef main():\n    print(both[5, Int](1.0))\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let erased = |name: &str| {
+        checked.expressions().iter().any(|expression| {
+            matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(id) if id == name)
+                && expression.adjustments.iter().any(|adjustment| {
+                    matches!(adjustment, SemanticAdjustment::EraseCompileTimeArgument)
+                })
+        })
+    };
+    assert!(erased("T"));
+    assert!(!erased("n"));
+}
+
+#[test]
 fn tuple_comparison_requires_the_same_tuple_self_type() {
     assert!(matches!(
         err("var result = Tuple(1) == Tuple(1, 2)\n"),

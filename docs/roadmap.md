@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R483**.
+Next free ID: **R484**.
 
 ## Ordered Work
 
@@ -105,24 +105,6 @@ correctness fix to existing behavior is allowed.
   - Found while landing R246 (2026-10-06).
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
-
-- [ ] **R478 (P3c) A served generic body's call over its own binder into a
-  surviving overload family fails**
-
-  Problem: in a family that keeps a member the cloner specializes, a call
-  from a template-served body over its own binder is rejected, where the pin
-  runs it.
-  - Inferred `kind(a)` from `inferred[dt: DType]` is rejected with "requires
-    compile-time parameter 'T'", which names another overload's parameter.
-  - Explicit `kind[n](a)` from `by_value[n: Int]` (and `kind[dt](a)` from a
-    lane binder) fails MIR verification: "value parameter 'n' has no runtime
-    register".
-  - The checker's instantiation is unclosed, so no request is seeded, and
-    the family branch of `Elab::mono_expr` records the call as an abstract
-    use of the whole name; it needs the selected declaration even then.
-  - Pinned by `conformance/probes/served_body_call_into_overload_family.mojo`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R312 (P3) A generic struct's method that binds a local `comptime`
   over its struct's parameters still clones per instance**
@@ -2512,6 +2494,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Its argument `s[Int16(5)]()` also stops the parser with "Expected ']'
     after a subscript", a different shape from R381's operator.
   - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R483 A method's explicit value parameter supplied from the caller's
+  own binder fails MIR typing**
+
+  Problem: `s.m[n](a)` or `S.st[n](a)` inside `def by_value[n: Int](a:
+  Float64)`, against `def m[n: Int](self, a: Float64) -> Int`, fails with
+  "register r4 has no checked type (UseVar …)", where the pin prints the
+  method's result.
+  - The same argument as a literal (`s.m[5](a)`) runs, and so does a free
+    `def`'s `k[n](a)` from the same body.
+  - MIR emits the binder as a runtime register, but the checker records no
+    type for the argument expression on the method path.
+  - Found while landing R478 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

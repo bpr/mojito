@@ -5,10 +5,11 @@ use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
-    MethodSpecializationRequest, StructInstanceRequest, TStringSpecializationRequest,
+    MethodSpecializationRequest, RecordedKeys, StructInstanceRequest, TStringSpecializationRequest,
     UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
-    elaborate_prepared, generated_names, instance_traces, pack_generic_template_names, prepare,
-    unserved_template_parameter, variadic_struct_template_names,
+    elaborate_prepared, generated_names, instance_traces, overload_family_names,
+    pack_generic_template_names, prepare, unserved_template_parameter,
+    variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -381,6 +382,10 @@ impl Compiler {
         let user_structs = user_struct_names(linked);
         let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
+        // The checker's selection at each unclosed call of an overload
+        // family, so elaboration serves a call whose selected declaration
+        // the template serves even while its arguments are symbolic.
+        let mut def_selections: Vec<DefSpecializationRequest> = Vec::new();
         let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
         let mut template_demand = template_reach::TemplateDemand::new();
@@ -421,6 +426,7 @@ impl Compiler {
             templates.extend(comptime_generic_template_names(linked, &templates_catalog));
             templates
         };
+        let families = overload_family_names(linked, &templates_catalog);
         // The abstract references of the elaboration `checked` was checked
         // from, and the generic structs whose erased method bodies can reach
         // a compile-time-keyed stub.
@@ -482,27 +488,39 @@ impl Compiler {
                     grew = true;
                 }
             }
-            for request in def_specialization_requests(checked.result(), &templates)
-                .into_iter()
-                .chain(scalar_range_requests(checked.result(), &range_templates))
-            {
-                if conflicted.contains(request.occurrence()) {
-                    continue;
-                }
-                match def_requests
-                    .iter()
-                    .position(|existing| existing.occurrence() == request.occurrence())
-                {
-                    None => {
-                        last_new_callee = request.callee().to_string();
-                        served.callees.push(request.callee().to_string());
-                        def_requests.push(request);
-                        grew = true;
+            let discovered = [
+                (
+                    &mut def_requests,
+                    def_specialization_requests(checked.result(), &templates)
+                        .into_iter()
+                        .chain(scalar_range_requests(checked.result(), &range_templates))
+                        .collect::<Vec<_>>(),
+                ),
+                (
+                    &mut def_selections,
+                    def_family_selections(checked.result(), &families),
+                ),
+            ];
+            for (accumulated, found) in discovered {
+                for request in found {
+                    if conflicted.contains(request.occurrence()) {
+                        continue;
                     }
-                    Some(index) if def_requests[index] != request => {
-                        conflicted.insert(def_requests.remove(index).occurrence().clone());
+                    match accumulated
+                        .iter()
+                        .position(|existing| existing.occurrence() == request.occurrence())
+                    {
+                        None => {
+                            last_new_callee = request.callee().to_string();
+                            served.callees.push(request.callee().to_string());
+                            accumulated.push(request);
+                            grew = true;
+                        }
+                        Some(index) if accumulated[index] != request => {
+                            conflicted.insert(accumulated.remove(index).occurrence().clone());
+                        }
+                        Some(_) => {}
                     }
-                    Some(_) => {}
                 }
             }
             for request in
@@ -593,6 +611,7 @@ impl Compiler {
                     ElaborationInputs {
                         tstring_requests: &tstring_requests,
                         def_requests: &def_requests,
+                        def_selections: &def_selections,
                         method_requests: &method_requests,
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
@@ -817,23 +836,29 @@ fn reject_unserved_template_calls(
             })
             .map(|(_, instantiation)| {
                 (
-                    instantiation.parameter_names.as_slice(),
+                    RecordedKeys {
+                        names: &instantiation.parameter_names,
+                        types: &instantiation.parameter_types,
+                        variadic: instantiation.variadic.as_ref(),
+                    },
                     instantiation.arguments.as_slice(),
                 )
             });
         match instantiation {
             Some(recorded) => Some((reference, recorded)),
-            None if reference.function_value => Some((reference, (&[][..], &[][..]))),
+            None if reference.function_value => {
+                Some((reference, (RecordedKeys::default(), &[][..])))
+            }
             None => None,
         }
     });
-    let Some((unserved, (parameter_names, arguments))) = unserved else {
+    let Some((unserved, (recorded, arguments))) = unserved else {
         return Ok(());
     };
     let parameter = unserved_template_parameter(
         linked,
         &unserved.callee,
-        parameter_names,
+        recorded,
         arguments,
         &closed_generic_argument,
     );
@@ -853,13 +878,37 @@ fn def_specialization_requests(
     checked: &DiscoveryResult,
     templates: &std::collections::HashSet<String>,
 ) -> Vec<DefSpecializationRequest> {
+    recorded_def_calls(checked, |instantiation| {
+        templates.contains(&instantiation.callee)
+            && instantiation.arguments.iter().all(closed_generic_argument)
+    })
+}
+
+/// The checker-recorded instantiations of overload families that are not
+/// closed: each names the declaration the checker selected while the call's
+/// arguments are still symbolic, as [`def_specialization_requests`] does for
+/// a closed one, conflicts and order included.
+fn def_family_selections(
+    checked: &DiscoveryResult,
+    families: &std::collections::HashSet<String>,
+) -> Vec<DefSpecializationRequest> {
+    recorded_def_calls(checked, |instantiation| {
+        families.contains(&instantiation.callee)
+            && !instantiation.arguments.iter().all(closed_generic_argument)
+    })
+}
+
+/// The checker-recorded `def` instantiations `keep` accepts, one per source
+/// occurrence and sorted by it.
+fn recorded_def_calls(
+    checked: &DiscoveryResult,
+    keep: impl Fn(&crate::checked::GenericInstantiation) -> bool,
+) -> Vec<DefSpecializationRequest> {
     use std::collections::hash_map::Entry;
     let mut by_occurrence = std::collections::HashMap::new();
     let mut conflicted = std::collections::HashSet::new();
     for (span, instantiation) in checked.generic_instantiations() {
-        if !templates.contains(&instantiation.callee)
-            || !instantiation.arguments.iter().all(closed_generic_argument)
-        {
+        if !keep(instantiation) {
             continue;
         }
         let request = DefSpecializationRequest::new(

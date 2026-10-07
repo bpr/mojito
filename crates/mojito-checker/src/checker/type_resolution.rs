@@ -1788,41 +1788,40 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
         match decl {
             ParamDecl::Type { name, bounds, .. } => {
-                let ty = match arg {
-                    ParamArg::Type(t) => self.ty_from_anno(t)?,
+                // A bare or parameterized type argument the parser encoded as a
+                // value expression carries a fact, recorded only once the
+                // argument resolves and satisfies its bounds: an overload
+                // probe that rejects this declaration leaves no fact behind
+                // for the declaration that wins.
+                let (ty, fact) = match arg {
+                    ParamArg::Type(t) => (self.ty_from_anno(t)?, None),
                     ParamArg::Value(
                         expression @ Expr {
                             kind: ExprKind::Identifier(id),
                             ..
                         },
                     ) => {
-                        // The parser encodes a bare type-argument identifier
-                        // as a value expression; once it resolves as a type,
-                        // MIR must not emit it as a runtime value register. A
-                        // runtime-constructible parameter's binding instead
-                        // reifies as the bound struct's name, so an abstract
-                        // (non-specialized) callee's `ConstructTypeParam`
-                        // constructs the supplied type, not the default.
-                        self.operation_adjustments.borrow_mut().insert(
-                            expression.source_span(),
-                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                        );
+                        // Once it resolves as a type, MIR must not emit it as
+                        // a runtime value register. A runtime-constructible
+                        // parameter's binding instead reifies as the bound
+                        // struct's name, so an abstract (non-specialized)
+                        // callee's `ConstructTypeParam` constructs the
+                        // supplied type, not the default.
                         let ty = self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?;
-                        if let Ty::Struct(struct_name, _) = &ty
-                            && mojito_types::types::constructible_type_parameter(decl)
-                        {
-                            self.operation_adjustments.borrow_mut().insert(
-                                expression.source_span(),
+                        let fact = match &ty {
+                            Ty::Struct(struct_name, _)
+                                if mojito_types::types::constructible_type_parameter(decl) =>
+                            {
                                 mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument {
                                     name: struct_name.clone(),
-                                },
-                            );
-                        }
-                        ty
+                                }
+                            }
+                            _ => mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
+                        };
+                        (ty, Some((expression.source_span(), fact)))
                     }
                     // A parameterized type argument (`Dict[Variant[Int, String],
-                    // Int]()`): the parser encodes it as a value expression;
-                    // specialization has already rewritten a variadic
+                    // Int]()`): specialization has already rewritten a variadic
                     // instance to its concrete name. Like the bare-identifier
                     // form, it resolves as a type and never as a runtime value.
                     ParamArg::Value(
@@ -1834,13 +1833,13 @@ impl Checker {
                                 },
                             ..
                         },
-                    ) => {
-                        self.operation_adjustments.borrow_mut().insert(
+                    ) => (
+                        self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?,
+                        Some((
                             expression.source_span(),
                             mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                        );
-                        self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?
-                    }
+                        )),
+                    ),
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {
                             expected: "a type".to_string(),
@@ -1861,6 +1860,9 @@ impl Checker {
                             reason: self.trait_failure_reason(&ty, bound),
                         });
                     }
+                }
+                if let Some((span, fact)) = fact {
+                    self.operation_adjustments.borrow_mut().insert(span, fact);
                 }
                 Ok(TyArg::Ty(ty))
             }

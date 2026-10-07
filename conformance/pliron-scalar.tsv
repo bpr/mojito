@@ -809,6 +809,7 @@ assets/ok/template_print_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_print_whole_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_raise_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_scalar_loop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_served_body_call_into_overload_family.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_def_closed_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_served_loan_carrying_instance.mojo	-	ineligible	no-scalar-entry-shape

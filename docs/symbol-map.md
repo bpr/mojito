@@ -981,7 +981,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overloaded name admits one declaration at
   a time, so one family may hold two classes, or two type packs, and
   `Elab::family_declaration` picks the declaration a request selected by its
-  parameter names, parameter types, and `symbol::VariadicKey`, and
+  parameter names, parameter types, and `symbol::VariadicKey`
+  (`recorded_overloads` in `comptime.rs`, shared with
+  `unserved_template_parameter`, whose `RecordedKeys` carry the three keys),
+  `seed_family_selections` (`comptime/specialize.rs`) records the
+  checker's selection at an unclosed family call
+  (`ElaborationInputs::def_selections`, which the driver's
+  `def_family_selections` collects over `overload_family_names`) into
+  `Mono::family_selections`, which `Elab::family_call_is_served` consults
+  after the closed `Mono::def_call_targets`, and
   `Elab::forwarded_family_target` (`comptime/mono.rs`) the one declaration a
   clone's whole-pack forward to a sibling binds; `template_stub` in
   `comptime/specialize.rs` stands in for either deferred template;

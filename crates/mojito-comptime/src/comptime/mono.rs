@@ -944,7 +944,9 @@ impl Elab<'_> {
                         // A call selecting a member the template serves is
                         // left as written, as a uniquely named served
                         // `def`'s call is: the elaborator instantiates that
-                        // declaration's MIR.
+                        // declaration's MIR. The checker's selection decides
+                        // this even while the call's arguments are symbolic
+                        // (a served body's call over its own binder).
                         if self.family_call_is_served(name, &source_span, mono) {
                             return Ok(());
                         }
@@ -952,8 +954,8 @@ impl Elab<'_> {
                         // resolved syntactically at all: explicit `[...]`
                         // arguments name type arguments, not an overload, and
                         // overload selection is the checker's. Inferred and
-                        // explicit calls alike are served only from the
-                        // checker's recorded instantiation.
+                        // explicit calls alike are specialized only from the
+                        // checker's closed recorded instantiation.
                         // A clone forwarding its own specialized pack
                         // whole (`tally(*a)`) is the one call no check can
                         // record: the checker sees the spread only once it
@@ -1467,14 +1469,25 @@ impl Elab<'_> {
         Some((target.vals.clone(), kept, target.decl))
     }
 
-    /// Whether the checker's recorded instantiation for this call of the
-    /// overload family `name` selected a declaration the template serves
-    /// (one that is not specializable), so the call stays as written.
+    /// Whether the checker's selection for this call of the overload family
+    /// `name` — its recorded instantiation, closed or not — is a declaration
+    /// the template serves (one that is not specializable), so the call
+    /// stays as written.
     fn family_call_is_served(&self, name: &str, source_span: &SourceSpan, mono: &Mono) -> bool {
-        mono.def_call_targets
-            .get(&source_span.clone().without_syntax())
+        let occurrence = source_span.clone().without_syntax();
+        let closed = mono
+            .def_call_targets
+            .get(&occurrence)
             .filter(|target| target.template == name)
-            .and_then(|target| target.decl)
+            .and_then(|target| target.decl);
+        let unclosed = || {
+            mono.family_selections
+                .get(&occurrence)
+                .filter(|(family, _)| family == name)
+                .map(|(_, decl)| *decl)
+        };
+        closed
+            .or_else(unclosed)
             .is_some_and(|decl| !self.is_specializable(self.selected_declaration(name, Some(decl))))
     }
 

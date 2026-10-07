@@ -575,6 +575,9 @@ pub struct Elaborated {
 pub struct ElaborationInputs<'a> {
     pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
+    /// The checker's selection at each unclosed call of an overload family:
+    /// which declaration the call names, with nothing to bake.
+    pub def_selections: &'a [DefSpecializationRequest],
     pub method_requests: &'a [MethodSpecializationRequest],
     pub struct_requests: &'a [StructInstanceRequest],
     /// Template methods of ordinary generic structs, as (struct, method),
@@ -590,6 +593,7 @@ impl<'a> ElaborationInputs<'a> {
         Self {
             tstring_requests: &[],
             def_requests: &[],
+            def_selections: &[],
             method_requests: &[],
             struct_requests: &[],
             keyed_methods: &[],
@@ -837,6 +841,30 @@ pub fn comptime_generic_template_names(
     collect_comptime_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
+/// The overloaded template names of a linked program: a name declared more
+/// than once with a declaration the template does not serve among them.
+///
+/// A call of one is served only from the checker's selection
+/// ([`ElaborationInputs::def_selections`] while its arguments are symbolic).
+pub fn overload_family_names(
+    program: &[Stmt],
+    templates: &mojito_checked::templates::TemplateCatalog,
+) -> HashSet<String> {
+    collect_overload_families(program, &ScalarReads::of(program, templates))
+        .into_keys()
+        .collect()
+}
+
+/// The keys a checker recording names its selected overload by: its
+/// caller-visible parameter names, their mangled types, and its `*args`
+/// collector.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RecordedKeys<'a> {
+    pub names: &'a [String],
+    pub types: &'a [String],
+    pub variadic: Option<&'a mojito_symbol::symbol::VariadicKey>,
+}
+
 /// The parameter an inferred application of `template` failed to close.
 ///
 /// That is the declaration of the first checker argument that is not closed;
@@ -844,11 +872,11 @@ pub fn comptime_generic_template_names(
 pub fn unserved_template_parameter(
     program: &[Stmt],
     template: &str,
-    parameter_names: &[String],
+    recorded: RecordedKeys<'_>,
     arguments: &[TyArg],
     is_closed: &dyn Fn(&TyArg) -> bool,
 ) -> String {
-    let Some(parameters) = declaration_type_params(program, template, parameter_names) else {
+    let Some(parameters) = declaration_type_params(program, template, recorded) else {
         return String::new();
     };
     let mut cursor = arguments
@@ -882,28 +910,78 @@ pub fn unserved_template_parameter(
 fn declaration_type_params<'a>(
     program: &'a [Stmt],
     template: &str,
-    parameter_names: &[String],
+    recorded: RecordedKeys<'_>,
 ) -> Option<&'a Vec<TypeParam>> {
-    fn in_block<'a>(
-        block: &'a [Stmt],
-        template: &str,
-        accepts: &dyn Fn(&Stmt) -> bool,
-    ) -> Option<&'a Vec<TypeParam>> {
-        block.iter().find_map(|statement| match &statement.kind {
-            StmtKind::Def {
-                name, type_params, ..
-            } if name == template && accepts(statement) => Some(type_params),
-            StmtKind::Def { body, .. } => in_block(body, template, accepts),
-            StmtKind::Struct { methods, .. } => methods
-                .iter()
-                .find_map(|method| in_block(&method.body, template, accepts)),
-            _ => None,
-        })
+    fn in_block<'a>(block: &'a [Stmt], template: &str, found: &mut Vec<&'a Stmt>) {
+        for statement in block {
+            match &statement.kind {
+                StmtKind::Def { name, body, .. } => {
+                    if name == template {
+                        found.push(statement);
+                    }
+                    in_block(body, template, found);
+                }
+                StmtKind::Struct { methods, .. } => {
+                    for method in methods {
+                        in_block(&method.body, template, found);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
-    in_block(program, template, &|statement| {
-        declaration_takes_names(statement, parameter_names)
+    let mut declarations = Vec::new();
+    in_block(program, template, &mut declarations);
+    let selected = recorded_overloads(
+        declarations.iter().copied().enumerate(),
+        recorded.names,
+        recorded.types,
+        recorded.variadic,
+    )
+    .first()
+    .map(|(_, declaration)| *declaration)
+    .or_else(|| declarations.first().copied())?;
+    match &selected.kind {
+        StmtKind::Def { type_params, .. } => Some(type_params),
+        _ => None,
+    }
+}
+
+/// The declarations among `declarations` a checker recording names, by its
+/// caller-visible parameter names, then their mangled types, then its `*args`
+/// collector. Names must match; a later key that rules out every remaining
+/// candidate is not applied. Empty when no declaration takes the names.
+fn recorded_overloads<'s>(
+    declarations: impl IntoIterator<Item = (usize, &'s Stmt)>,
+    parameter_names: &[String],
+    parameter_types: &[String],
+    variadic: Option<&mojito_symbol::symbol::VariadicKey>,
+) -> Vec<(usize, &'s Stmt)> {
+    let narrow = |candidates: Vec<(usize, &'s Stmt)>, takes: &dyn Fn(&Stmt) -> bool| {
+        if candidates.len() < 2 {
+            return candidates;
+        }
+        let narrowed: Vec<_> = candidates
+            .iter()
+            .copied()
+            .filter(|(_, declaration)| takes(declaration))
+            .collect();
+        if narrowed.is_empty() {
+            candidates
+        } else {
+            narrowed
+        }
+    };
+    let by_name = declarations
+        .into_iter()
+        .filter(|(_, declaration)| declaration_takes_names(declaration, parameter_names))
+        .collect();
+    let by_type = narrow(by_name, &|declaration| {
+        declaration_takes_types(declaration, parameter_types)
+    });
+    narrow(by_type, &|declaration| {
+        declaration_takes_variadic(declaration, variadic)
     })
-    .or_else(|| in_block(program, template, &|_| true))
 }
 
 /// Elaborate a [`prepare`]d, validated program while materializing
@@ -920,6 +998,7 @@ pub fn elaborate_prepared(
     let ElaborationInputs {
         tstring_requests,
         def_requests,
+        def_selections,
         method_requests,
         struct_requests,
         keyed_methods,
@@ -1018,7 +1097,7 @@ pub fn elaborate_prepared(
         generated: _,
         ctfe_template_stats: _,
         clones: _,
-    } = elab.monomorphize(materialized, tstring_requests, def_requests)?;
+    } = elab.monomorphize(materialized, tstring_requests, def_requests, def_selections)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -3321,6 +3400,10 @@ struct Mono {
     /// Checker-discovered inferred bound-generic applications: call occurrence
     /// (without its syntax id) → the concrete clone that call selects.
     def_call_targets: HashMap<SourceSpan, DefCallTarget>,
+    /// The checker's selection at an unclosed overload-family call: call
+    /// occurrence (without its syntax id) → the family name and the selected
+    /// declaration's index.
+    family_selections: HashMap<SourceSpan, (String, usize)>,
     /// Checker-selected constructor rewrites: call occurrence → the struct
     /// template plus the values its specialization bakes — a scalar
     /// `range(...)` with the linked range-family template and its dtype, or a
@@ -4014,41 +4097,15 @@ impl<'a> Elab<'a> {
         request: &DefSpecializationRequest,
     ) -> Option<(usize, &'a Stmt)> {
         let declarations = self.overload_families.get(name)?;
-        let by_name: Vec<(usize, &'a Stmt)> = declarations
-            .iter()
-            .enumerate()
-            .filter(|(_, declaration)| {
-                declaration_takes_names(declaration, request.parameter_names())
-            })
-            .map(|(index, declaration)| (index, *declaration))
-            .collect();
-        let candidates = match by_name.as_slice() {
-            [only] => return Some(*only),
-            [] => return None,
-            _ => by_name,
-        };
-        let by_type: Vec<(usize, &'a Stmt)> = candidates
-            .iter()
-            .copied()
-            .filter(|(_, declaration)| {
-                declaration_takes_types(declaration, request.parameter_types())
-            })
-            .collect();
-        let candidates = match by_type.as_slice() {
-            [only] => return Some(*only),
-            [] => candidates,
-            _ => by_type,
-        };
-        let by_collector: Vec<(usize, &'a Stmt)> = candidates
-            .iter()
-            .copied()
-            .filter(|(_, declaration)| declaration_takes_variadic(declaration, request.variadic()))
-            .collect();
-        let candidates = match by_collector.as_slice() {
-            [only] => return Some(*only),
-            [] => candidates,
-            _ => by_collector,
-        };
+        let candidates = recorded_overloads(
+            declarations.iter().copied().enumerate(),
+            request.parameter_names(),
+            request.parameter_types(),
+            request.variadic(),
+        );
+        if let [only] = candidates.as_slice() {
+            return Some(*only);
+        }
         let mut by_shape = candidates.into_iter().filter(|(_, declaration)| {
             self.def_request_values(declaration, request.arguments())
                 .is_some()

@@ -15,6 +15,7 @@ impl Elab<'_> {
         program: Vec<Stmt>,
         tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
+        def_selections: &[DefSpecializationRequest],
     ) -> Result<Elaborated, ComptimeError> {
         if self.specializable.is_empty()
             && tstring_requests.is_empty()
@@ -61,6 +62,7 @@ impl Elab<'_> {
             );
         }
         self.seed_def_call_targets(def_requests, &mut mono);
+        self.seed_family_selections(def_selections, &mut mono);
         // Rewrite call sites in every non-template statement, seeding the
         // worklist. A bound-generic template's body is live code whether the
         // template is retained or dropped, so it is scanned like any other
@@ -311,6 +313,25 @@ impl Elab<'_> {
                     decl,
                     vals,
                 });
+        }
+    }
+
+    /// Record the declaration each checker-recorded unclosed call of an
+    /// overload family selected, for `mono_expr` to serve the call by when
+    /// the template serves that declaration. A selection no declaration
+    /// answers leaves the call abstract.
+    fn seed_family_selections(&self, selections: &[DefSpecializationRequest], mono: &mut Mono) {
+        for request in selections {
+            let callee = request.callee();
+            if !self.overload_family(callee) {
+                continue;
+            }
+            let Some((index, _)) = self.family_declaration(callee, request) else {
+                continue;
+            };
+            mono.family_selections
+                .entry(request.occurrence().clone().without_syntax())
+                .or_insert_with(|| (callee.to_string(), index));
         }
     }
 

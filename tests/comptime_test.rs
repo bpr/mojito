@@ -26,6 +26,30 @@ fn run_compiled(src: &str) -> Result<String, String> {
 }
 
 #[test]
+fn unserved_family_use_names_the_selected_overloads_parameter() {
+    // Both overloads take `a`, so only the recorded parameter type tells
+    // them apart: the use selected `k[T]`, whichever is declared first.
+    let keyed = "def k[T: AnyType](a: Int) -> Int:\n    return a\n\n";
+    let served = "def k[n: Int](a: Float64) -> Int:\n    return n\n\n";
+    let names = vec!["a".to_string()];
+    let types = vec!["Int".to_string()];
+    let recorded = mojito::comptime::RecordedKeys {
+        names: &names,
+        types: &types,
+        variadic: None,
+    };
+    let open = [mojito::TyArg::Ty(Ty::Int)];
+    for source in [format!("{keyed}{served}"), format!("{served}{keyed}")] {
+        let program = parse(&source).expect("parse");
+        let parameter =
+            mojito::comptime::unserved_template_parameter(&program, "k", recorded, &open, &|_| {
+                false
+            });
+        assert_eq!(parameter, "T", "{source}");
+    }
+}
+
+#[test]
 fn ct_value_can_carry_a_type_without_runtime_materialization() {
     let ty = Ty::ComptimeList(Box::new(Ty::Int));
     let value = CtValue::Type(Box::new(ty));
