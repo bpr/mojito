@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait requirement may now declare a `*args` collector, homogeneous
+  (`def sum(self, *xs: Int) -> Int`) or a pack (`def take[*Ts: Writable](self,
+  *a: *Ts)`), read or `var`, as at the pin, where it was rejected with
+  "unsupported feature: variadic '*args' parameters". A call or a spread
+  through the bound (`s.take(*a)` over `S: Taker`) dispatches to the
+  witness, which may rename the collector but must match its element type
+  and convention.
 - A generic `def` that spreads its pack into a method's collector
   (`Sink().take(*a)`, `Sink().drain(*a^)`, `V[*Ts]().put(*a)`) is now served
   by its template, as at the pin, where it was cloned per call. A variadic

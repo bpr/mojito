@@ -2325,16 +2325,6 @@ impl Checker {
         }
         // Free functions, including generic functions, share one binder
         // for regular, `*args`, and homogeneous `**kwargs` parameters.
-        if let Some(feature) = Self::advanced_param_feature(
-            params,
-            *positional_only,
-            *keyword_only,
-            false,
-            false,
-            false,
-        ) {
-            return Err(TypeError::Unsupported(feature.to_string()));
-        }
         // A `*args` variadic is supported on non-generic functions; any
         // regular parameters after it are keyword-only.
         let variadic_idx = params

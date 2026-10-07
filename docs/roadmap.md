@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R418**.
+Next free ID: **R420**.
 
 ## Ordered Work
 
@@ -2436,16 +2436,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R413 A trait requirement cannot declare a `*args` collector**
+- [ ] **R418 A witness that renames a regular parameter does not conform**
 
-  Problem: a trait method with a collector (`def take[*Ts: Writable](self,
-  *a: *Ts)`) fails with "unsupported feature: variadic '*args'
-  parameters", where the pin accepts it and dispatches a spread through a
-  bound receiver (`s.take(*a)` over `S: Taker`).
-  - The rejection is in `checker/traits.rs`.
-  - `Writer.write` is the stdlib's own case, which the checker answers
-    intrinsically instead (R414).
-  - Found while landing R256 (2026-10-06).
+  Problem: `def f(self, y: Int)` for a requirement `def f(self, x: Int)`
+  fails with "does not match the signature required by trait", where the
+  pin accepts it and prints the call's result.
+  - `MethodSig::names` is part of the shape `method_satisfies_requirement`
+    (`checker/traits_support.rs`) compares.
+  - A regular parameter may be bound by keyword through the bound, so which
+    name such a call binds needs a pin study first; a renamed `*args`
+    collector already conforms.
+  - Found while landing R413 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R419 A trait method cannot declare a `*` or `/` marker**
+
+  Problem: `def f(self, *, k: Int) -> Int` in a trait body fails with
+  "positional-only/keyword-only markers on trait methods", where the pin
+  accepts it and dispatches `t.f(k=4)` through a bound.
+  - The rejection is in `Checker::check_trait` (`checker/traits.rs`).
+  - The requirement's keyword-only boundary is already built by the rule a
+    struct method uses (`Collectors::of`), so a `*args` collector's
+    boundary is modeled; the explicit markers are not.
+  - Found while landing R413 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

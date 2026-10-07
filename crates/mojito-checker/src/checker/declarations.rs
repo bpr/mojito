@@ -208,6 +208,39 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     }
 }
 
+/// The collector part of a method signature — its `*args` and `**kwargs`
+/// collectors and the keyword-only boundary a `*args` collector sets — built
+/// alike for a struct method and a trait requirement, so a witness compares
+/// against its requirement field for field.
+pub(super) struct Collectors {
+    pub(super) variadic: Option<Box<Ty>>,
+    pub(super) variadic_index: Option<usize>,
+    pub(super) variadic_convention: Option<ArgConvention>,
+    pub(super) variadic_name: Option<String>,
+    pub(super) kw_variadic: Option<Box<Ty>>,
+    pub(super) kw_variadic_index: Option<usize>,
+    pub(super) keyword_only: Option<usize>,
+}
+
+impl Collectors {
+    /// `keyword_only` is the declared `*` marker; `all_types` the resolved
+    /// type of every parameter in `params`.
+    pub(super) fn of(params: &[FnParam], keyword_only: Option<usize>, all_types: &[Ty]) -> Self {
+        let position = |kind| params.iter().position(|p| p.kind == kind);
+        let variadic_idx = position(mojito_ast::ast::ParamKind::Variadic);
+        let kw_variadic_idx = position(mojito_ast::ast::ParamKind::KwVariadic);
+        Self {
+            variadic: variadic_idx.map(|index| Box::new(all_types[index].clone())),
+            variadic_index: regular_marker_index(params, variadic_idx),
+            variadic_convention: variadic_idx.and_then(|index| params[index].convention),
+            variadic_name: variadic_idx.map(|index| params[index].name.clone()),
+            kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
+            kw_variadic_index: kw_variadic_idx,
+            keyword_only: effective_keyword_only_index(params, keyword_only, variadic_idx),
+        }
+    }
+}
+
 /// Why a construction selected no constructor: the availability clause of a
 /// candidate the arguments would have selected, a candidate's failed
 /// binding, or a bare miss.
@@ -446,22 +479,13 @@ impl Checker {
         all_types: &[Ty],
     ) -> Result<MethodSig, TypeError> {
         let error = self.declared_error(method.raises, method.raises_type.as_ref())?;
-        let variadic_idx = method
-            .params
-            .iter()
-            .position(|p| p.kind == mojito_ast::ast::ParamKind::Variadic);
-        let kw_variadic_idx = method
-            .params
-            .iter()
-            .position(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic);
+        let collectors = Collectors::of(&method.params, method.keyword_only, all_types);
         let regular: Vec<_> = method
             .params
             .iter()
             .enumerate()
             .filter(|(_, p)| p.kind == mojito_ast::ast::ParamKind::Regular && !p.is_named_result())
             .collect();
-        let keyword_only =
-            effective_keyword_only_index(&method.params, method.keyword_only, variadic_idx);
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
         Ok(MethodSig {
@@ -482,17 +506,17 @@ impl Checker {
             names: regular.iter().map(|(_, p)| p.name.clone()).collect(),
             required: required_mask(
                 &regular.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
-                keyword_only,
+                collectors.keyword_only,
             )?,
             defaults: regular.iter().map(|(_, p)| p.default.clone()).collect(),
-            variadic: variadic_idx.map(|index| Box::new(all_types[index].clone())),
-            variadic_index: regular_marker_index(&method.params, variadic_idx),
-            variadic_convention: variadic_idx.and_then(|index| method.params[index].convention),
-            variadic_name: variadic_idx.map(|index| method.params[index].name.clone()),
-            kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
-            kw_variadic_index: kw_variadic_idx,
+            variadic: collectors.variadic,
+            variadic_index: collectors.variadic_index,
+            variadic_convention: collectors.variadic_convention,
+            variadic_name: collectors.variadic_name,
+            kw_variadic: collectors.kw_variadic,
+            kw_variadic_index: collectors.kw_variadic_index,
             positional_only: regular_marker_index(&method.params, method.positional_only),
-            keyword_only,
+            keyword_only: collectors.keyword_only,
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
             ret: match &method.ret {
                 Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
@@ -560,31 +584,6 @@ impl Checker {
             per_call_constructor: method.provenance
                 == mojito_ast::ast::MethodProvenance::PerCallConstructor,
         })
-    }
-
-    /// The name of the first advanced parameter feature used by a signature (a
-    /// default value, a `*args`/`**kwargs` variadic, or an argument convention, or
-    /// `None` if the signature is supported by this checking path. `/` and bare
-    /// `*` markers are modeled by call matching and are not advanced anymore.
-    pub(super) fn advanced_param_feature(
-        params: &[mojito_ast::ast::FnParam],
-        _positional_only: Option<usize>,
-        _keyword_only: Option<usize>,
-        flag_defaults: bool,
-        flag_variadic: bool,
-        flag_kw_variadic: bool,
-    ) -> Option<&'static str> {
-        use mojito_ast::ast::ParamKind;
-        if flag_defaults && params.iter().any(|p| p.default.is_some()) {
-            return Some("default argument values");
-        }
-        if flag_variadic && params.iter().any(|p| p.kind == ParamKind::Variadic) {
-            return Some("variadic '*args' parameters");
-        }
-        if flag_kw_variadic && params.iter().any(|p| p.kind == ParamKind::KwVariadic) {
-            return Some("variadic '**kwargs' parameters");
-        }
-        None
     }
 
     /// Classify a `[...]` parameter list into type and value parameters, and
@@ -1267,19 +1266,6 @@ impl Checker {
                  not accepted"
                     .to_string(),
             ));
-        }
-        if !is_mojo_copy_constructor(m)
-            && !is_mojo_move_constructor(m)
-            && let Some(feature) = Self::advanced_param_feature(
-                &m.params,
-                m.positional_only,
-                m.keyword_only,
-                false,
-                false,
-                false,
-            )
-        {
-            return Err(TypeError::Unsupported(feature.to_string()));
         }
         // `out self` initializes the receiver: it is allowed on the **`__init__`**
         // lifecycle method (a hand-written constructor), where `self`'s fields are

@@ -817,6 +817,7 @@ assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	sanitized
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized

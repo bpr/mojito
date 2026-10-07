@@ -123,16 +123,6 @@ impl Checker {
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
-                if let Some(feature) = Self::advanced_param_feature(
-                    &m.params,
-                    m.positional_only,
-                    m.keyword_only,
-                    false,
-                    true,
-                    false,
-                ) {
-                    return Err(TypeError::Unsupported(feature.to_string()));
-                }
                 if m.positional_only.is_some() || m.keyword_only.is_some() {
                     return Err(TypeError::Unsupported(
                         "positional-only/keyword-only markers on trait methods".to_string(),
@@ -195,11 +185,8 @@ impl Checker {
                 })();
                 self.tparams.pop();
                 let (all_types, ret, error) = signature?;
-                let kw_variadic_idx = m
-                    .params
-                    .iter()
-                    .position(|param| param.kind == mojito_ast::ast::ParamKind::KwVariadic);
-                if let Some(index) = kw_variadic_idx {
+                let collectors = Collectors::of(&m.params, m.keyword_only, &all_types);
+                if let Some(index) = collectors.kw_variadic_index {
                     self.kwargs_collector_ty(
                         all_types[index].clone(),
                         &format!("trait method '{}.{}' keyword collector", name, m.name),
@@ -237,19 +224,19 @@ impl Checker {
                         .iter()
                         .map(|(_, param)| param.name.clone())
                         .collect(),
-                    required: required_mask(&regular_params, None)?,
+                    required: required_mask(&regular_params, collectors.keyword_only)?,
                     defaults: regular
                         .iter()
                         .map(|(index, _)| defaults[*index].clone())
                         .collect(),
-                    variadic: None,
-                    variadic_index: None,
-                    variadic_convention: None,
-                    variadic_name: None,
-                    kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
-                    kw_variadic_index: kw_variadic_idx,
+                    variadic: collectors.variadic,
+                    variadic_index: collectors.variadic_index,
+                    variadic_convention: collectors.variadic_convention,
+                    variadic_name: collectors.variadic_name,
+                    kw_variadic: collectors.kw_variadic,
+                    kw_variadic_index: collectors.kw_variadic_index,
                     positional_only: m.positional_only,
-                    keyword_only: m.keyword_only,
+                    keyword_only: collectors.keyword_only,
                     conventions: regular.iter().map(|(_, param)| param.convention).collect(),
                     ret,
                     ret_mlir_index: super::type_resolution::spells_mlir_index(m.ret.as_ref()),

@@ -1495,6 +1495,29 @@ fn a_witness_defaults_apart_from_its_requirement() {
 }
 
 #[test]
+fn a_collector_requirement_dispatches_through_its_bound() {
+    // A requirement may declare a `*args` collector; the witness may
+    // rename it, since a collector is never bound by name.
+    ok(
+        "trait Summer:\n    def sum(self, *xs: Int, scale: Int = 10) -> Int: ...\n\n@fieldwise_init\nstruct A(Summer):\n    var base: Int\n    def sum(self, *ys: Int, scale: Int = 1) -> Int:\n        return scale\n\ndef go[T: Summer](t: T) -> Int:\n    return t.sum(1, 2, 3, scale=2)\n",
+    );
+}
+
+#[test]
+fn a_collector_requirement_rejects_a_witness_without_it() {
+    let requirement = "trait Summer:\n    def sum(self, *xs: Int) -> Int: ...\n\n@fieldwise_init\nstruct A(Summer):\n    var base: Int\n";
+    for witness in ["x: Int", "var *xs: Int"] {
+        let error = err(&format!(
+            "{requirement}    def sum(self, {witness}) -> Int:\n        return 0\n"
+        ));
+        assert!(
+            matches!(error, TypeError::TraitMethodMismatch { .. }),
+            "{witness}: {error}"
+        );
+    }
+}
+
+#[test]
 fn typed_trait_method_effects_reject_a_wider_error_family() {
     ok_std(
         "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ntrait Validates:\n    def validate(self) raises ValidationError -> Int: ...\n\n@fieldwise_init\nstruct Validator(Validates):\n    var value: Int\n    def validate(self) raises ValidationError -> Int:\n        raise ValidationError(\"bad\")\n        return self.value\n",
