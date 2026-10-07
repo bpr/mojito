@@ -2034,12 +2034,14 @@ impl VmBackend {
             |ty: &Ty| Value::Str(reified_type_spelling(ty).unwrap_or_else(|| ty.to_string()));
         // A pack is its elements' spellings, read off the checked type
         // whatever the call's own arguments reified: the type binds it whole,
-        // or, keyed on the pack alone, element by element.
+        // or, keyed on the pack alone, element by element. A spread of the
+        // caller's own pack (`V[*Ts]`) keeps the elements the call forwarded.
         if let [ParamDecl::Type { variadic: true, .. }] = declarations
             && !matches!(
                 &arguments[..],
                 [TyArg::Val(_) | TyArg::Ty(Ty::RuntimePack(_))]
             )
+            && mojito_types::types::pack_spread_argument(arguments).is_none()
         {
             supplied[0] = Some(Value::Tuple(
                 arguments
@@ -2107,28 +2109,42 @@ impl VmBackend {
         declarations: &[ParamDecl],
         arguments: &[mojito_mir::mir::MirParamArg],
     ) -> Vec<Option<Value>> {
+        let bound = |spelling: &str| {
+            self.bound_type_parameter(
+                prog,
+                caller.function,
+                caller.frame,
+                caller.variables,
+                spelling,
+            )
+            .or_else(|| caller.comptime_binding(spelling))
+        };
         align_parameter_arguments(
             declarations,
             arguments
                 .iter()
-                .map(|argument| {
+                .flat_map(|argument| {
                     let value = argument
                         .value
-                        .map(|register| caller.registers[register.0 as usize].clone())
-                        .map(|value| match value {
-                            Value::Str(spelling) if !prog.structs.contains_key(&spelling) => self
-                                .bound_type_parameter(
-                                    prog,
-                                    caller.function,
-                                    caller.frame,
-                                    caller.variables,
-                                    &spelling,
-                                )
-                                .or_else(|| caller.comptime_binding(&spelling))
-                                .unwrap_or(Value::Str(spelling)),
-                            other => other,
-                        });
-                    (argument.name.clone(), value)
+                        .map(|register| caller.registers[register.0 as usize].clone());
+                    // A spread of the caller's own pack (`V[*Ts]`) forwards
+                    // each element the caller's frame bound for it.
+                    if let Some(Value::Str(spelling)) = &value
+                        && spelling.starts_with('*')
+                        && let Some(Value::Tuple(elements)) = bound(spelling)
+                    {
+                        return elements
+                            .into_iter()
+                            .map(|element| (argument.name.clone(), Some(element)))
+                            .collect();
+                    }
+                    let value = value.map(|value| match value {
+                        Value::Str(spelling) if !prog.structs.contains_key(&spelling) => {
+                            bound(&spelling).unwrap_or(Value::Str(spelling))
+                        }
+                        other => other,
+                    });
+                    vec![(argument.name.clone(), value)]
                 })
                 .collect(),
         )

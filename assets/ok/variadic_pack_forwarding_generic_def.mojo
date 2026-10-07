@@ -3,8 +3,8 @@
 # def spells the pack partially (`Variant[T, String]`) and is called by
 # inference, and a variadic struct stores the forwarded pack in a field,
 # constructed from a generic body over its own parameter too.
-# The retained template bodies check against the template's shell; each
-# clone's signature requests the concrete specialization.
+# The template serves every call, the pack spread into the result type
+# included: each closes `Variant[*Ts]` at its own pack.
 # requires: discovery
 from std.utils import Variant
 

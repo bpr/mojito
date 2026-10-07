@@ -1,12 +1,9 @@
-# A per-instantiation method clone inherits its checked template's facts when
-# the body calls a static method of a generic struct with binders of its own
-# (`docs/notes/instantiation-from-template.md`, class MethodBody, feature
-# `static_calls`) spelled with explicit compile-time arguments, or chosen
-# from an overload family one of whose members declares binders: each
-# instance calls the per-call clone of the template's member keyed by its
-# own receiver, or the instance's clone of a member without binders. A
-# string literal bound to the static's own binder converts into the per-call
-# clone's baked parameter type.
+# A generic struct's method body that calls a static method of a generic
+# struct with binders of its own, spelled with explicit compile-time
+# arguments or chosen from an overload family one of whose members declares
+# binders, is served by its template at every instance: each call runs the
+# member it selects, keyed by its own receiver. A string literal bound to
+# the static's own binder converts to the parameter type that call closes.
 
 
 @fieldwise_init

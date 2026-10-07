@@ -188,9 +188,7 @@ impl<'a> TemplateReach<'a> {
 
     /// The template bodies of the owners `requests` instantiate that only
     /// an instance's own check can serve, as (struct, method), or (`def`, "")
-    /// for a `def`'s:
-    /// one that builds a tuple over the struct's parameters, and one that calls an overloaded method with
-    /// compile-time parameters of its own, which runs as a per-call clone.
+    /// for a `def`'s: one that builds a tuple over the struct's parameters.
     fn keyed_methods(&mut self, requests: &[StructInstanceRequest]) -> Vec<(String, String)> {
         let mut templates: Vec<&str> = requests
             .iter()
@@ -276,16 +274,14 @@ struct Application {
     name: String,
     arguments: Vec<TyArg>,
     keyed: bool,
-    /// The binder owners the application names: the template's, a method's
-    /// own, or (`None`) every owner, for a construct keyed by its call.
-    owners: Option<Vec<String>>,
+    /// The binder owners the application names: the template's or a
+    /// method's own.
+    owners: Vec<String>,
 }
 
 impl Application {
     fn names(&self, owner: &str) -> bool {
-        self.owners
-            .as_ref()
-            .is_none_or(|owners| owners.iter().any(|named| named == owner))
+        self.owners.iter().any(|named| named == owner)
     }
 }
 
@@ -413,7 +409,7 @@ fn template_applications(
                 false
             });
             for (name, arguments, keyed, owners) in found.into_inner() {
-                self.record(name, arguments.into(), keyed, Some(owners));
+                self.record(name, arguments.into(), keyed, owners);
             }
         }
 
@@ -422,7 +418,7 @@ fn template_applications(
             name: String,
             arguments: Vec<TyArg>,
             keyed: bool,
-            owners: Option<Vec<String>>,
+            owners: Vec<String>,
         ) {
             let seen = self.found.iter().any(|application| {
                 application.method == self.method
@@ -446,13 +442,6 @@ fn template_applications(
     impl mojito_ast::visit::Visitor for Bodies<'_> {
         fn visit_expr(&mut self, expression: &Expr) {
             let checked = self.checked;
-            if checked
-                .method_instantiations
-                .get(&expression.source_span())
-                .is_some_and(|instantiation| instantiation.overload.is_some())
-            {
-                self.record(String::new(), Vec::new(), true, None);
-            }
             for ty in [
                 checked.expression_type(expression),
                 checked.expression_place_type(expression),

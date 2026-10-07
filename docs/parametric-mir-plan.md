@@ -648,9 +648,11 @@ branch for the class is deleted, and so is its certificate class.
   spread whole into `print` or another served `def` crosses the waist as
   the call's spread argument (`MirInstr::Call::spread`, schema 1.17), which
   the elaborator expands into the bound pack's element places, and a
-  spreading `def` is served when every callee it spreads into is. A
-  collector-less signature spread (`-> Variant[*Ts]`) and a spread into a
-  method still key a clone (R255, R256), the element-typed binding keeps
+  spreading `def` is served when every callee it spreads into is. On
+  2026-10-06 a collector-less signature spread (`-> Variant[*Ts]`) and a
+  call of an overloaded method with binders of its own were served too:
+  the driver no longer keys a body for the overload. A spread into a
+  method still keys a clone (R256), the element-typed binding keeps
   the clone (R252), and the certificate class waits on them and on the
   methods (R253).
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked

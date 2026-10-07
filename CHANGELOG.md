@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` that returns a variadic struct over its own pack
+  (`def first[*Ts]() -> Variant[*Ts]`), or calls an overloaded generic
+  method or constructor (`Box[T](x^, "t")`), is now served by its template
+  for every call, as at the pin, where it was cloned per call. The erased
+  oracle (`--erased`) now forwards such a pack element by element, where it
+  read an explicitly applied pack as one element and printed a wrong
+  length.
 - `Variant` is now a struct generator, as at the pin: its template serves
   every instance, each storage operation selecting the alternative
   `_get_type_index[T, *Ts]()` names, which elaboration closes per instance.

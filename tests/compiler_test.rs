@@ -302,10 +302,9 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
 #[test]
 fn variant_pack_forwarding_through_a_generic_def_runs() {
     // `Variant` is an ordinary variadic struct applied over an enclosing
-    // generic's own parameters: the pack-forwarding clone's expanded
-    // signature (`-> Variant[Int, String]`) requests the concrete
-    // specialization, and the retained bound-generic template checks
-    // `Variant[T, String]` against the template's shell.
+    // generic's own parameters. Each template serves every call: the pack
+    // spread into `first_variant`'s result closes per call, and `wrap`'s
+    // overloaded generic constructor is selected from the template.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -313,6 +312,9 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
             std::path::Path::new("/tmp/mojito_variant_type_pack.mojo"),
         )
         .expect("variadic-struct pack forwarding through generic defs");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::TypeDef), 0);
     let output = compiler.execute(&program).expect("run the forwarded packs");
     assert_eq!(output.output, "True\nTrue False\n");
 }

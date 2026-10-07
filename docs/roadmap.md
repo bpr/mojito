@@ -60,29 +60,6 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R255 (P3b) A collector-less pack-keyed `def` whose signature spreads
-  the pack keys a clone**
-
-  Problem: `first_variant[*Ts: Movable]() -> Variant[*Ts]` returning
-  `Variant[*Ts](3)` is cloned per explicit application
-  (`assets/ok/variadic_pack_forwarding_generic_def.mojo`), and it cannot
-  move to its template before R4 and R5 land.
-  - The clone is kept by the driver, not by the comptime pack gate:
-    `TemplateReach::keyed_methods` (`src/compiler/template_reach.rs`) keys
-    the `def` for `Variant[*Ts]`, a struct specialized whole (R4), and for
-    `Variant`'s generic `__init__`, a per-call constructor clone (R5).
-  - The template's own MIR already types the body as `Variant[param *Ts]`.
-  - The caller must close the result: `Checker::infer_generic_call`
-    substitutes the result type without `expand_pack_spread`, so a served
-    call leaves `Variant[*Ts]` unbound in the caller's slot.
-  - The elaborator must expand the spread: `substitute_ty`'s `Ty::Struct`
-    arm (`mono/substitute.rs`) would spell `Variant[RuntimePack[..]]`
-    instead of the checker's `Variant[(Int, String)]`.
-  - The non-pack `wrap` and `wrap_outer` in the same fixture close with R4
-    and R5 alone.
-  - Depends on R4 and R5.
-  - Model: Fable, Planned.
-
 - [ ] **R256 (P3b) A pack spread into a pack-keyed method keys a clone**
 
   Problem: a `def` that spreads its collector into a method's collector
@@ -383,23 +360,6 @@ correctness fix to existing behavior is allowed.
     `MethodFeatures` certificate bits.
   - Depends on R4, R6, R7, R307, and R308.
   - Model: Fable, Planned.
-
-- [ ] **R410 (P3e) A generic `def` calling an overloaded method with
-  compile-time parameters of its own is cloned per call**
-
-  Problem: `def wrap[T: Movable](var x: T) -> Variant[T, String]`, returning
-  `Variant[T, String](x^)`, mints a `def_type_arguments` clone per call,
-  where its template could serve every call.
-  - The driver keys the `def` (`TemplateReach`,
-    `src/compiler/template_reach.rs`) because the checker recorded an
-    overload selection at the constructor call: `Variant.__init__` is
-    overloaded, and such a method runs as a per-call clone.
-  - A user struct whose generic `__init__` has a sibling overload behaves
-    the same (`Box[T](v^)`).
-  - `wrap` and `wrap_outer` in
-    `assets/ok/variadic_pack_forwarding_generic_def.mojo` are such clones.
-  - Depends on R310, which serves such a method from its template.
-  - Model: Fable, Not Planned.
 
 - [ ] **R6 (P3e) A nested `def` over an enclosing compile-time parameter is
   cloned**

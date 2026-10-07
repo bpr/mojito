@@ -2,9 +2,10 @@
 # member (`pick[U: Writable](u: U)`) and a two-argument sibling
 # (`pick(u: Int, v: Int)`), called from a generic method on a spelled
 # receiver, calls the member each call selects at every instance, as the pin
-# does: the two-argument call keeps its own member rather than the per-call
-# clone the generic member minted. A static on `Pair[Self.T]` and an
-# instance method on a `Box[Self.T]` local behave alike.
+# does: the template serves the calling method, and the two-argument call
+# keeps its own member rather than the generic one. A static on
+# `Pair[Self.T]` and an instance method on a `Box[Self.T]` local behave
+# alike.
 
 
 @fieldwise_init

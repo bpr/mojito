@@ -530,3 +530,5 @@ float16-semantics	run	assets/ok/float16_semantics.mojo
 simd-dtype-alias	run	assets/ok/simd_dtype_alias.mojo
 dtype-float-queries	run	assets/ok/dtype_float_queries.mojo
 template-method-variadic-initializer	run	assets/ok/template_method_variadic_initializer.mojo
+pack-spread-result-overloaded-init-served	run	assets/ok/pack_spread_result_overloaded_init_served.mojo
+variant-pack-def-non-member	reject	assets/type_error/variant_pack_def_non_member.mojo

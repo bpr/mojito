@@ -393,6 +393,7 @@ assets/ok/pack_overload_method_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_sibling_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_overload_variadic_position.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_reverse_concat_types.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_spread_result_overloaded_init_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_element_alias_condition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_explicit_in_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
