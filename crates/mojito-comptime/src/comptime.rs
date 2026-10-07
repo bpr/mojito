@@ -2363,8 +2363,9 @@ fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
 }
 
 /// Whether a `DType`- or lane-keyed `def`'s own shape lets its template serve
-/// it: every compile-time parameter is a type parameter or an `Int`, `Bool`,
-/// or `DType` value the runtime parameters name only as a lane slot
+/// it: every compile-time parameter is a type parameter or a scalar value
+/// (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, or `DType`) the
+/// runtime parameters name only as a lane slot
 /// ([`template_serves_binders`]), and the body holds no form MIR has no
 /// symbolic lane for: a local `comptime` binding (which the cloner's body
 /// elaboration evaluates before the check), or a nested `def` or lambda.
@@ -2400,7 +2401,8 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
 /// the callees its body spreads its pack into when so: its binders are ones
 /// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
-/// pack among them and an `Int`, `Bool`, or `DType` value beside it, which
+/// pack among them and a scalar value beside it (`Int`, `UInt`, `Bool`,
+/// `Float64`, `StringLiteral`, or `DType`), which
 /// an explicit application binds from its brackets; every read of a value
 /// pack is its length or an element
 /// ([`value_packs_read_as_parameters`]); the collector is read
@@ -3943,8 +3945,9 @@ pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
 
 /// Whether every compile-time parameter of a `def` is one its template
 /// serves: a type parameter — a type pack included, which the elaborator
-/// binds from the call's recorded elements — or a scalar (`Int`, `Bool`,
-/// `DType`) value parameter, a value pack among them, that a runtime
+/// binds from the call's recorded elements — or a scalar (`Int`, `UInt`,
+/// `Bool`, `Float64`, `StringLiteral`, `DType`) value parameter, a value pack
+/// among them, that a runtime
 /// parameter type names only as a
 /// vector's lane slot (`a: Scalar[dt]`, `v: SIMD[dt, width]`), if at all, so
 /// the elaborator binds it from the call's recorded arguments or from the
@@ -3960,10 +3963,12 @@ pub(super) fn template_serves_binders(
             match classify_ct_param(parameter, type_params, owner) {
                 Some(ParamDecl::Type { .. }) => true,
                 Some(ParamDecl::Value { ty, .. }) => {
-                    matches!(ty.as_ref(), Ty::Int | Ty::Bool | Ty::Dtype)
-                        && !params
-                            .iter()
-                            .any(|param| type_names_outside_lanes(&param.ty, &parameter.name))
+                    matches!(
+                        ty.as_ref(),
+                        Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::Dtype
+                    ) && !params
+                        .iter()
+                        .any(|param| type_names_outside_lanes(&param.ty, &parameter.name))
                 }
                 _ => false,
             }
@@ -4747,6 +4752,46 @@ mod def_request_tests {
         // cloned per instance by the driver.
         assert!(!served.contains("ints"), "{served:?}");
         assert!(!served.contains("nested"), "{served:?}");
+    }
+
+    #[test]
+    fn pack_defs_the_template_does_not_serve_yet() {
+        let source = "def mk(n: Int) raises -> Int:\n    return n\n\n\
+                      def scaled[s: Float64, *Ts: Writable](*args: *Ts):\n    \
+                      comptime for i in range(args.__len__()):\n        print(args[i], s)\n\n\
+                      def tagged[t: StringLiteral, n: UInt, *Ts: Writable](*args: *Ts):\n    \
+                      print(t, n, len(args))\n\n\
+                      def nested[*Ts: Writable](*args: *Ts):\n    \
+                      def one() -> Int:\n        return 1\n    print(one())\n\n\
+                      def lambda_[*Ts: Writable](*args: *Ts):\n    \
+                      var g = lambda -> Int: 7\n    print(g())\n\n\
+                      def tuples[*Ts: Writable](*args: *Ts):\n    \
+                      comptime for p in [(1, 2), (3, 4)]:\n        print(p[0])\n\n\
+                      def raising[*Ts: Writable](*args: *Ts) raises:\n    \
+                      comptime for p in [mk(1), 2]:\n        print(p)\n\n\
+                      def field_type[T: AnyType, *Ts: Writable](*args: *Ts):\n    \
+                      comptime types = reflect[T].field_types()\n    \
+                      comptime for i in range(len(types)):\n        \
+                      comptime FT = types[i]\n        print(FT())\n\n\
+                      def names[T: AnyType, *Ts: Writable](*args: *Ts):\n    \
+                      comptime names = reflect[T].field_names()\n    \
+                      var all = materialize[names]()\n    print(len(all))\n";
+        let parsed = parse(source).expect("parse");
+
+        let served = super::served_pack_defs(&parsed);
+
+        // A scalar value binder beside the pack is bound from the brackets.
+        assert!(served.contains("scaled"), "{served:?}");
+        assert!(served.contains("tagged"), "{served:?}");
+        // Each shape below still keys a type-pack clone; its owner flips the
+        // line to `contains` when it lands, and R253 deletes the branch once
+        // none is left.
+        assert!(!served.contains("nested"), "R6: {served:?}");
+        assert!(!served.contains("lambda_"), "R6: {served:?}");
+        assert!(!served.contains("tuples"), "R405: {served:?}");
+        assert!(!served.contains("raising"), "R401: {served:?}");
+        assert!(!served.contains("field_type"), "R364: {served:?}");
+        assert!(!served.contains("names"), "R365: {served:?}");
     }
 
     #[test]

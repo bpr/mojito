@@ -392,6 +392,25 @@ fn pack_spread_into_static_method_after_arguments_is_template_served() {
 }
 
 #[test]
+fn pack_def_beside_scalar_value_binder_is_template_served() {
+    // A `Float64`, `StringLiteral`, or `UInt` binder beside a type pack, or
+    // alone, is bound from the explicit application's brackets, so the
+    // template serves every call and nothing clones.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def show[scale: Float64, *Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        print(args[i], scale)\n\ndef tag[label: StringLiteral, *Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        print(label, args[i])\n\ndef count[n: UInt, *Ts: Writable](*args: *Ts) -> UInt:\n    return n + UInt(args.__len__())\n\ndef half[x: Float64]() -> Float64:\n    return x / 2.0\n\ndef main():\n    show[1.5](1, \"a\")\n    tag[\"t\"](2)\n    print(count[4](1, 2, 3))\n    print(half[3.0]())\n",
+            std::path::Path::new("/tmp/mojito_pack_scalar_value_binder.mojo"),
+        )
+        .expect("a scalar value binder beside a pack");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::ValueDef), 0);
+    let output = compiler.execute(&program).expect("run the served defs");
+    assert_eq!(output.output, "1 1.5\na 1.5\nt 2\n7\n1.5\n");
+}
+
+#[test]
 fn pack_spread_into_struct_pack_method_is_template_served() {
     // A variadic struct's method collecting the struct's own pack
     // (`*b: *Self.Ts`) takes a spread of a forwarding `def`'s collector over

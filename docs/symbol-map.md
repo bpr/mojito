@@ -1587,5 +1587,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   top-level `def` on an unserved `comptime for` or a nested `def`'s
   `rebind` only, and
   `template_serves_binders` admits a scalar value parameter an application
-  binds (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Layout` keeps
+  binds (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`), and
+  native `mono::substitute`'s `scalar_parameter_ty` types its read at the
+  declared type (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Layout` keeps
   a layout constant symbolic through elaboration.

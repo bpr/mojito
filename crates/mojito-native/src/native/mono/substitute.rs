@@ -77,13 +77,10 @@ pub(super) fn substitute_function(
         &bindings.callables,
     )?;
     for (var, name) in function.var_names.iter().enumerate() {
-        if let Some(value) = locals.get(name.as_str()) {
-            let ty = match value {
-                CtValue::Int(_) => Ty::Int,
-                CtValue::Bool(_) => Ty::Bool,
-                CtValue::Dtype(_) => Ty::Dtype,
-                _ => continue,
-            };
+        if let Some(ty) = locals
+            .get(name.as_str())
+            .and_then(|value| scalar_parameter_ty(value, name, scope))
+        {
             function.var_tys.insert(var as u32, ty);
         }
     }
@@ -1317,6 +1314,39 @@ pub(super) fn bound_parameter_locals<'a>(
             Some((binder.name.trim_start_matches('*').to_string(), value))
         })
         .collect()
+}
+
+/// The type of the local a scalar value parameter's read binds: the
+/// binder's declared scalar type (`Int`, `UInt`, `Bool`, `Float64`,
+/// `StringLiteral`, `DType`), or the bound value's own scalar type where the
+/// declaration names none.
+fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Option<Ty> {
+    let declared = scope.iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            name: declared,
+            ty,
+            variadic: false,
+            ..
+        } if declared == name => Some(ty.as_ref()),
+        _ => None,
+    });
+    match (value, declared) {
+        (
+            CtValue::Int(_)
+            | CtValue::UInt(_)
+            | CtValue::Float(_)
+            | CtValue::Bool(_)
+            | CtValue::Dtype(_)
+            | CtValue::Str(_),
+            Some(
+                ty @ (Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::Dtype),
+            ),
+        ) => Some(ty.clone()),
+        (CtValue::Int(_), _) => Some(Ty::Int),
+        (CtValue::Bool(_), _) => Some(Ty::Bool),
+        (CtValue::Dtype(_), _) => Some(Ty::Dtype),
+        _ => None,
+    }
 }
 
 /// The associated type `name` of the instance `base` resolves to, read off

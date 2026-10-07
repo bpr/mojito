@@ -66,15 +66,25 @@ correctness fix to existing behavior is allowed.
   explicit-application dispatch (`comptime/mono.rs`), and the
   `unspecialized type-pack function` stub (`comptime/specialize.rs`) still
   clone the pack-keyed `def`s the template does not serve.
-  - They are reached by a spread into a method (R256), a spread into a
-    constructor (R316), and a `comptime for` over a list in a pack-keyed
-    `def` (R246).
-  - Delete the branch, `served_pack_defs` and its gate, and the
-    `Elab::pack_generics`/`served_packs` fields once nothing reaches them;
-    `--instantiation-census` over the pack fixtures must show `def_pack 0`.
+  - Every fixture already reports `def_pack 0`; the branch is reached only
+    by shapes no fixture holds.
+  - A nested `def` or a lambda in the body (R6: `holds_instance_construct`
+    gates both, so R6 must lift it for both).
+  - A `comptime for` over tuple elements (R405), or over a display that
+    calls a raising `def` or a method (R401).
+  - A loop that constructs a reflected field type (R364), or a reflected
+    list materialized whole (R365).
+  - Each shape is pinned by `pack_defs_the_template_does_not_serve_yet`
+    (`comptime.rs`); its owner flips its line when it lands.
+  - The clone is also semantically wrong: it accepts `range(len(args))` as
+    a `comptime for` bound, which the pin rejects.
+  - Then delete the branch, `served_pack_defs` and its gate, the
+    `Elab::pack_generics`/`served_packs` fields, and the `served_packs`
+    parameter of `is_specializable_declaration`.
   - Keep `def_pack_names`, `generate_spec`'s `type_pack_expansions` (R4,
-    R6), and `DefSpecializationRequest::with_variadic`.
-  - Depends on R256, R316, and R246.
+    R6), `DefSpecializationRequest::with_variadic`, and
+    `CloneClass::PackDef` as a regression counter.
+  - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
 
 - [ ] **R403 (P3) A struct method whose instance clone fails to elaborate

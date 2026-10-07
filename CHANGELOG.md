@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `def` keyed on a `UInt`, `Float64`, or `StringLiteral` value beside a
+  type pack (`def show[scale: Float64, *Ts: Writable](*args: *Ts)`) is now
+  served by its template, as one keyed on an `Int` is, where it was cloned
+  per call. The clone ran `range(len(args))` as a `comptime for` bound,
+  which the pin rejects; it is now rejected as at the pin. A `def` keyed on
+  a `Float64` or `StringLiteral` value now also compiles natively, where
+  the backend stopped on an untyped variable.
 - A pack-keyed `def` that spreads its pack into a constructor —
   `Tuple[*Ts](*args^)`, `Tuple(*args^)`, a user variadic struct's
   `Bag[*Ts](*args^)` or `Bag(*args^)`, or an own-pack `__init__` such as
