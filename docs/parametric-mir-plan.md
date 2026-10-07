@@ -36,7 +36,7 @@ instantiation mechanisms where upstream has one.
 
 | Mechanism | Where | What it serves |
 |---|---|---|
-| AST cloner | `mojito-comptime` (`rewrite`, `specialize`, `mono`, `nested`; about 10.7k lines), before the executable check | Bodies keyed by `comptime if`/`for`, packs, `DType` and vector values, value-keyed and variadic structs, per-instantiation and per-call method clones, nested defs |
+| AST cloner | `mojito-comptime` (`rewrite`, `specialize`, `mono`; about 10.7k lines), before the executable check | Bodies keyed by `comptime if`/`for`, packs, `DType` and vector values, value-keyed and variadic structs, per-instantiation and per-call method clones, nested defs |
 | Erased dispatch | the VM, at run time | Trait-bound generic bodies kept in MIR with their type parameters symbolic |
 | MIR monomorphizer | `mojito-native` (`native/mono`; about 5.6k lines), native builds only | The same erased bodies, substituted over verified MIR |
 
@@ -237,7 +237,6 @@ record. Taken at `86a25b67` plus the census itself, on the three
 | Per-instantiation method clone, no compile-time control flow | P2 | 0 | 80 | 417 |
 | Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 0 | 0 |
 | Per-call method clone | P3e | 14 | 14 | 14 |
-| Nested `def` clone | P3e | 0 | 0 | 0 |
 | Minted for a compile-time evaluation's subprogram | P3e | 0 | 0 | 0 |
 | **Checked**: inferred | | 21 | 26 | 48 |
 | **Checked**: derived from a checked template | | 223 | 303 | 618 |
@@ -774,6 +773,17 @@ regions. Later forms may bump it again (decision D5).
 
 ## Decisions for the owner
 
+  The second step landed 2026-10-07 (R6): a nested `def` or lambda is a
+  generator over its enclosing declarations' binders. MIR records the
+  declaration a lifted function is nested in (`MirFunctionDeclaration::
+  enclosing`, schema 1.32), the verifier's scope admits that declaration's
+  binders, a nested body reads an enclosing value parameter as a parameter
+  rather than a capture, and `native::mono` instantiates the body under each
+  enclosing instance (a generic one per call, beside the inherited
+  bindings). The cloner's nested gate, the comptime nested-function pass
+  (`comptime/nested.rs`), its `nested_def` census row, and the `NESTED_DEFS`
+  certificate class are gone; the nested-def fixtures' 108 enclosing-body
+  clones read 0.
 - **D1. The VM runs only concrete MIR.** Recommended: yes, from P1, with the
   erased path kept as an oracle until P5. Upstream's interpreter never runs a
   generator.
@@ -855,7 +865,7 @@ an estimate.
 
 | Component | Lines | Fate |
 |---|---|---|
-| `comptime/{rewrite,specialize,mono,nested}.rs` | 10,698 | Deleted at P5; CTFE, fuel, and value crossing stay |
+| `comptime/{rewrite,specialize,mono}.rs` | 10,698 | Deleted at P5; CTFE, fuel, and value crossing stay |
 | `checker/template_facts.rs` and submodules | 18,823 | Deleted by P5 |
 | `mojito-checked/src/templates.rs` | 2,681 | Mostly deleted; binder and obligation vocabulary moves to the generator |
 | `checker/comptime_validation.rs` | 1,623 | Merges into the one check at P4 |

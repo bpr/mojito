@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.31
+# Mojito Textual MIR Format, Version 1.32
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.31 is implemented end to end for inspection and loading: canonical
+Version 1.32 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.31
+mojito-mir 1.32
 ```
 
-The writer emits 1.31. The reader accepts 1.0 through 1.31; *Schema 1.0*
+The writer emits 1.32. The reader accepts 1.0 through 1.32; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -216,6 +216,15 @@ it (`Tuple[*TypeList._concat[Self.Ts.values, OtherTs.values]()]`, the result
 type of `Tuple.concat`). The elaborator closes it to the instance's element
 types. A 1.28 consumer rejects both spellings, which is the intended failure.
 
+Minor version 32 adds `enclosing` to a function declaration: `absent`, or
+the `present(symbol)` lowered name of the function or method a nested `def`
+or lambda is declared in. The nested body may name that declaration's
+binders, and its enclosing declaration's in turn, without capturing them;
+the elaborator instantiates it under the enclosing instance's bindings, and
+concrete MIR records `absent`. A 1.31 consumer rejects the field, which is
+the intended failure. A 1.32 consumer reads an older declaration as nested in
+nothing.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -371,6 +380,9 @@ The parameter names, types, defaults, required mask, conventions, and reference
 mask have equal lengths. Variadic conventions are independent of the fixed
 parameter list. Indexes use runtime ABI slot numbering. Receiver presence and
 convention are separate because a plain receiver has an absent convention.
+A nested function's `enclosing` names the declaration it is nested in; the
+verifier's binder scope for its body is its own `param_decls`, then each
+enclosing declaration's, then the struct of the outermost method.
 
 Abstract erased-dispatch requirements have no concrete declaration record.
 Their complete `subscript_call`, `iterator_call`, or stored `func`/`generic_func`
@@ -735,7 +747,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.31
+mojito-mir 1.32
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

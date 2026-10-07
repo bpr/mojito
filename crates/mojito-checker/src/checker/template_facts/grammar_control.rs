@@ -1,8 +1,8 @@
-//! Certificate grammar for control forms: `raise`, nested `def`, `with`,
-//! runtime `for`, tuple unpacking, and comprehensions.
+//! Certificate grammar for control forms: `raise`, `with`, runtime `for`,
+//! tuple unpacking, and comprehensions.
 
 use super::{BodyShape, LocalKind, closed_scalar, fact_at, grammar_scalar};
-use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
+use mojito_ast::ast::{Expr, ExprKind, Stmt};
 use mojito_checked::templates::{MethodFeatures, OccurrenceId};
 use mojito_types::types::Ty;
 
@@ -60,120 +60,6 @@ impl BodyShape<'_> {
                 .facts
                 .is_none_or(|facts| fact_at(&facts.expression_types, id) == Some(&Ty::Error));
         error || literal || reraised || self.construction(value)
-    }
-
-    /// A nested `def` (`NESTED_DEFS`), at any depth.
-    ///
-    /// It declares no compile-time parameters, decorators, or `where`
-    /// clause, and takes regular parameters, each read, `mut`, `var`, `out`,
-    /// or a bare `ref`, with at most a closed-scalar, string-literal, or
-    /// `None` default, or one constructing a declared struct
-    /// ([`Self::construction`]), which its lowered default function runs.
-    /// A raising one, bare or typed, keeps its effect in the
-    /// recipe, and an `out` one is a local of its result type. Its recorded parameter
-    /// and result types substitute in the recipe, where they may mention the
-    /// struct's parameters, and each parameter's deletability is judged at
-    /// the instance's type. Each capture, listed or reached through a
-    /// capture-all default, names a local, a parameter, or `self`, by any
-    /// convention, which an instance maps to its own binding; an owned one
-    /// owes its capability again at the instance's type. Its body is judged
-    /// in place with its parameters as locals: a `ref` one of a whole value
-    /// a handle, a `mut` or `var` one of a whole value a `var` local, and
-    /// any other read where it lies, a read one holding a struct as a
-    /// method's parameter is ([`Self::parameter_receiver`]). It returns a closed scalar or a whole
-    /// value, and its name is a local the body may only call.
-    pub(super) fn nested_def(&self, statement: &Stmt) -> bool {
-        use mojito_ast::ast::ArgConvention;
-        let StmtKind::Def {
-            name,
-            decorators,
-            type_params,
-            params,
-            positional_only,
-            keyword_only,
-            captures,
-            where_clauses,
-            body,
-            ..
-        } = &statement.kind
-        else {
-            return false;
-        };
-        let declaration = !mojito_ast::ast::has_body_decorator(decorators)
-            && type_params.is_empty()
-            && positional_only.is_none()
-            && keyword_only.is_none()
-            && where_clauses.is_empty()
-            && params.iter().all(|parameter| {
-                parameter.kind == mojito_ast::ast::ParamKind::Regular
-                    && matches!(
-                        parameter.convention,
-                        None | Some(
-                            ArgConvention::Imm
-                                | ArgConvention::Mut
-                                | ArgConvention::Var
-                                | ArgConvention::Out
-                                | ArgConvention::Ref
-                        )
-                    )
-                    && parameter.origin.is_none()
-                    && parameter.default.as_ref().is_none_or(|default| {
-                        (self.expression(default) && self.scalar(default))
-                            || matches!(default.kind, ExprKind::Str(_) | ExprKind::None)
-                            || self.construction(default)
-                    })
-            });
-        let captured = captures.as_ref().is_none_or(|list| {
-            list.entries.iter().all(|capture| {
-                self.declared(&capture.name)
-                    || self.params.contains(&capture.name.as_str())
-                    || (self.receiver && capture.name == "self")
-            })
-        });
-        let recipe = self
-            .facts
-            .map(|facts| fact_at(&facts.nested_defs, self.occurrence_of(statement)));
-        if !declaration || !captured || recipe.is_some_and(|recipe| recipe.is_none()) {
-            return false;
-        }
-        let scope = self.locals.borrow().len();
-        let read_scope = self.nested_params.borrow().len();
-        let kinds: Vec<_> = params
-            .iter()
-            .enumerate()
-            .map(|(index, parameter)| {
-                let whole = recipe.flatten().is_some_and(|recipe| {
-                    recipe
-                        .param_types
-                        .get(index)
-                        .is_some_and(|ty| !grammar_scalar(ty))
-                });
-                let kind = match parameter.convention {
-                    Some(ArgConvention::Ref) if whole => LocalKind::Reference,
-                    Some(ArgConvention::Mut | ArgConvention::Var | ArgConvention::Out) if whole => {
-                        LocalKind::Value
-                    }
-                    None | Some(ArgConvention::Imm) if whole => {
-                        self.nested_params.borrow_mut().push(scope + index);
-                        LocalKind::Scalar
-                    }
-                    _ => LocalKind::Scalar,
-                };
-                (parameter.name.clone(), kind)
-            })
-            .collect();
-        self.locals.borrow_mut().extend(kinds);
-        self.nested_depth.set(self.nested_depth.get() + 1);
-        let admitted = self.block(body);
-        self.nested_depth.set(self.nested_depth.get() - 1);
-        self.locals.borrow_mut().truncate(scope);
-        self.nested_params.borrow_mut().truncate(read_scope);
-        self.locals
-            .borrow_mut()
-            .push((name.clone(), LocalKind::Callable));
-        admitted
-            && self.holds(MethodFeatures::STATEMENTS)
-            && self.holds(MethodFeatures::NESTED_DEFS)
     }
 
     /// A `with` statement. Before capture it is judged from its syntax: each

@@ -2741,7 +2741,7 @@ impl Checker {
             self.capture_contexts.borrow_mut().push(policy);
         }
         self.raising_context.push(declared_error);
-        let mut result = self.capture_default_value_parameters(params);
+        let mut result = Ok(());
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
@@ -3007,14 +3007,7 @@ impl Checker {
                     .iter()
                     .flat_map(|capture| capture.origins.iter().cloned()),
             );
-            // A value parameter's snapshot folds per instance, so a
-            // function capturing nothing else stays thin, as upstream reads
-            // the parameter as a compile-time value.
-            let environment = if parameter_closure
-                || lambda_forces_closure
-                || !captures
-                    .iter()
-                    .all(|capture| self.is_value_parameter_snapshot(capture))
+            let environment = if parameter_closure || lambda_forces_closure || !captures.is_empty()
             {
                 mojito_types::origin::CallableEnvironment::Capturing(concrete)
             } else {
@@ -3122,30 +3115,6 @@ impl Checker {
             }
         }
         Ok(())
-    }
-
-    /// Record each enclosing value parameter a nested function's default
-    /// reads (`x: Int = n` inside `def outer[n: Int]()`) as a capture, as a
-    /// read in its body is: the default runs per instance of the enclosing
-    /// declaration, which only a captured binder distinguishes.
-    fn capture_default_value_parameters(&self, params: &[FnParam]) -> Result<(), TypeError> {
-        struct Names(Vec<String>);
-        impl mojito_ast::visit::Visitor for Names {
-            fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Identifier(name) = &expr.kind {
-                    self.0.push(name.clone());
-                }
-            }
-        }
-        let mut names = Names(Vec::new());
-        for default in params.iter().filter_map(|param| param.default.as_ref()) {
-            mojito_ast::visit::walk_expr(&mut names, default);
-        }
-        names
-            .0
-            .iter()
-            .filter(|name| self.implicit_value_parameter_capture(name).is_some())
-            .try_for_each(|name| self.check_capture_access(name, false))
     }
 
     /// The first runtime binding — an enclosing local or a parameter — a

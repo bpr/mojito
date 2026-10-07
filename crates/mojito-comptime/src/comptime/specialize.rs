@@ -143,17 +143,6 @@ impl Elab<'_> {
                 &mut mono,
             )?;
         }
-        // The nested pass runs after this walk and registers a nested `def`
-        // whose body is named here, so that its instances reach the clone the
-        // erased body could only leave on a stub. It is computed again after
-        // the drains: a generated clone's own nested `def` is walked there,
-        // and carries a source of its own.
-        self.stub_reaching.replace(
-            self.stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
-                .iter()
-                .map(|body| (*body).to_string())
-                .collect(),
-        );
         // Rebuild the program, replacing each template with its specializations at
         // the template's original position. Specializations are emitted in reverse
         // generation order so a callee is defined before its caller (the checker
@@ -255,10 +244,11 @@ impl Elab<'_> {
                 .filter_map(|body| body.split_once('.'))
                 .map(|(owner, _)| owner.to_string())
                 .collect(),
+            // Computed again after the drains: a generated clone's own
+            // bodies are walked there.
             stub_reaching_methods: {
                 let mut methods: Vec<(String, String)> = self
-                    .stub_reaching
-                    .borrow()
+                    .stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
                     .iter()
                     .filter(|body| owner_method(body).is_some())
                     .filter_map(|body| body.split_once('.'))
@@ -323,32 +313,6 @@ impl Elab<'_> {
             let Some(vals) = self.def_request_values(template, request.arguments()) else {
                 continue;
             };
-            // A call inside a nested instance is rewritten by the lexical
-            // pass, which runs after this walk and cannot queue work of its
-            // own, so its clone is queued here instead of at the consult. The
-            // occurrence names a real call, so a clone minted for a request
-            // whose occurrence has since drifted is dead code rather than a
-            // wrong answer.
-            if request
-                .occurrence()
-                .source
-                .as_deref()
-                .is_some_and(|source| source.contains(NESTED_MARKER_INFIX))
-            {
-                let Ok(output_name) = mangle(callee, &vals) else {
-                    continue;
-                };
-                if mono.queue_specialization(&output_name, decl) {
-                    mono.queue.push_back(Job {
-                        orig: callee.to_string(),
-                        decl,
-                        vals: vals.clone(),
-                        site: format!("a call inside a nested specialization of '{callee}'"),
-                        output_name,
-                        whole_pack_abi: false,
-                    });
-                }
-            }
             mono.def_call_targets
                 .entry(request.occurrence().clone())
                 .or_insert_with(|| DefCallTarget {
@@ -546,9 +510,10 @@ impl Elab<'_> {
     /// Whether the template of the `def` `name` serves every closed call of
     /// it, so no call mints a clone: the `def` is a plain trait-bound one
     /// whose compile-time parameters are all type parameters, and its body
-    /// neither holds a construct only an instance lowers (by its syntax, or
-    /// by its checked types as the driver read them) nor reaches a
-    /// compile-time-keyed stub. The elaborator instantiates the template's
+    /// neither holds a construct only an instance lowers (by its checked
+    /// types as the driver read them) nor reaches a compile-time-keyed stub.
+    /// A nested `def` or lambda is no such construct: its body is a generator
+    /// over this one's binders, instantiated per instance below MIR. The elaborator instantiates the template's
     /// MIR for each call, and a call's transfer summary names its loans by
     /// the stored type. A scalar value parameter an application spells is
     /// served too; one a call must infer from an argument type keeps the
@@ -559,7 +524,6 @@ impl Elab<'_> {
             return *served;
         }
         let StmtKind::Def {
-            body,
             type_params,
             params,
             ..
@@ -569,7 +533,6 @@ impl Elab<'_> {
         };
         let served = self.bound_generics.contains(name)
             && template_serves_binders(type_params, params, name)
-            && !holds_instance_construct(body)
             && !self
                 .keyed_methods
                 .contains(&(name.to_string(), String::new()))
@@ -584,14 +547,13 @@ impl Elab<'_> {
 
     /// Whether the template of the non-generic struct `owner`'s method
     /// serves every call of it, so no call mints a per-call clone: its
-    /// elaborated body is no trap stub, holds no construct only an instance
-    /// lowers, and is not keyed by what its checked body holds or reaches
+    /// elaborated body is no trap stub, and is not keyed by what its checked
+    /// body holds or reaches
     /// (the driver's `keyed_methods`, a compile-time-keyed stub among them).
     /// The elaborator instantiates its MIR per call, the method's own
     /// binders, a type pack among them, bound from the call.
     pub(super) fn template_serves_method(&self, owner: &str, method: &Method) -> bool {
         !is_unspecialized_method_stub(&method.body)
-            && !holds_instance_construct(&method.body)
             && !self
                 .keyed_methods
                 .contains(&(owner.to_string(), method.name.clone()))
@@ -1959,9 +1921,8 @@ fn owed_instance_clones(
 
 /// The methods of `template` whose bodies run only with the struct's
 /// parameters bound, by name: one whose template body is the trap stub (a
-/// compile-time construct folds only per instance), one that holds a
-/// construct only an instance lowers, and one whose erased body reaches a
-/// compile-time-keyed stub. Every other method's template serves each
+/// compile-time construct folds only per instance), and one whose erased
+/// body reaches a compile-time-keyed stub. Every other method's template serves each
 /// instance, so it mints no clone. An overload family is keyed
 /// whole.
 fn keyed_methods(
@@ -1974,7 +1935,6 @@ fn keyed_methods(
         .filter(|method| {
             method.self_ty.is_none()
                 && (is_unspecialized_method_stub(&method.body)
-                    || holds_instance_construct(&method.body)
                     || stub_reaching.contains(&super::method_owner(template, &method.name)))
         })
         .map(|method| method.name.clone())

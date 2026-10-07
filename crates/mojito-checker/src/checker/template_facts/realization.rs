@@ -10,12 +10,11 @@ use super::realization_folds::{
 use super::{
     BodyDeclaration, BodyParams, BodyRole, BodySite, DerivedBody, ElementIndices,
     InstanceSubstitution, Occurrence, VectorFold, bound_binder, callable_binder,
-    clone_origin_binder, element_construction_part, fact_at, inferred_value_binder,
-    nested_def_calls, note_realized_callee, origin_binder, push_unique, sig_origin_members,
-    sorted_applications, without_struct_origins,
+    clone_origin_binder, element_construction_part, fact_at, inferred_value_binder, origin_binder,
+    push_unique, sig_origin_members, sorted_applications, without_struct_origins,
 };
 use crate::checker::Checker;
-use mojito_ast::ast::{CaptureKind, Stmt, StmtKind};
+use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_checked::templates::{
     CheckedBodyFacts, CheckedTemplate, InstanceTrace, MethodFeatures, OccurrenceId,
     PackElementNode, TemplateAugmentedSubscript, TemplateCallContract, TemplateCallTransfer,
@@ -1079,21 +1078,6 @@ impl Checker {
         if !movable {
             return Err("a transferred value is not movable for the instance");
         }
-        // `check_capture_capability`'s demand on a nested `def`'s owned
-        // capture, at the instance's type.
-        let capturable = template
-            .nested_defs
-            .iter()
-            .flat_map(|(_, recipe)| &recipe.captures)
-            .filter(|capture| mojito_types::types::is_symbolic(&capture.ty))
-            .all(|capture| match capture.kind {
-                CaptureKind::Copy => self.is_implicitly_copyable(&substitute(&capture.ty)),
-                CaptureKind::Move => self.is_movable(&substitute(&capture.ty)),
-                CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Ref => true,
-            });
-        if !capturable {
-            return Err("a nested def's owned capture is not capturable for the instance");
-        }
         // The declaration's own judgment of each binding whose type mentions
         // a parameter, at the instance's type: deletable where the type is
         // `Deinitable`, linear where it is still a bare parameter. A type
@@ -1150,18 +1134,6 @@ impl Checker {
         {
             return Err("an occurrence still names a folded compile-time parameter");
         }
-        // A nested `def`'s snapshot of a parameter the instance folds is no
-        // capture there: the body reads the folded value.
-        for (_, recipe) in &mut facts.nested_defs {
-            recipe.captures.retain(|capture| !folded(&capture.owner));
-        }
-        // A nested `def`'s call selects the declaration the body itself
-        // introduces, whose signature no instance changes, and reads its
-        // summaries under the same name.
-        let nested_calls = nested_def_calls(template);
-        for (_, callee) in &nested_calls {
-            note_realized_callee(&mut facts, callee, callee);
-        }
         for (id, _) in &template.call_parameters {
             // A method call records its (empty) parameters here too. Its
             // callee is realized from its contract below, and a call through
@@ -1172,7 +1144,6 @@ impl Checker {
                     .iter()
                     .any(|(update, _)| update == id)
                 || template.callable_calls.contains(id)
-                || nested_calls.iter().any(|(call, _)| call == id)
             {
                 continue;
             }
@@ -1185,7 +1156,6 @@ impl Checker {
         self.realize_bound_builtins(template, &mut facts, occurrences)?;
         self.realize_iterations(&mut facts, &substitute)?;
         Self::realize_comprehension_bindings(&mut facts, &substitute);
-        Self::realize_nested_defs(&mut facts, &substitute);
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
         facts.struct_applications =
             self.instance_struct_applications(template, instance, &substitute);
@@ -1486,14 +1456,6 @@ fn renumber_locals(facts: &mut CheckedBodyFacts) -> Result<(), &'static str> {
                 .iter()
                 .flat_map(|(id, binders)| binders.iter().map(move |binder| (id, &binder.owner))),
         )
-        // A nested `def` declares its parameters at its statement, after
-        // the name the statement binds.
-        .chain(
-            facts
-                .nested_defs
-                .iter()
-                .flat_map(|(id, recipe)| recipe.params.iter().map(move |param| (id, param))),
-        )
         .filter_map(|(id, owner)| match owner {
             TemplateOwner::Local(index) => Some((position(*id)?, *index)),
             _ => None,
@@ -1598,25 +1560,6 @@ fn for_each_owner(
     for (id, binders) in &mut facts.comprehension_bindings {
         for binder in binders {
             visit(Some(*id), &mut binder.owner);
-        }
-    }
-    for (id, recipe) in &mut facts.nested_defs {
-        for param in &mut recipe.params {
-            visit(Some(*id), param);
-        }
-        for origin in &mut recipe.function_origins {
-            origin_owners(origin, Some(*id), visit);
-        }
-        for capture in &mut recipe.captures {
-            visit(Some(*id), &mut capture.owner);
-            for captured in &mut capture.origins {
-                origin_owners(&mut captured.origin, Some(*id), visit);
-            }
-        }
-    }
-    for (id, accesses) in &mut facts.capture_accesses {
-        for access in accesses {
-            origin_owners(&mut access.origin, Some(*id), visit);
         }
     }
     for (id, reference) in facts

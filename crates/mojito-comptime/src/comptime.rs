@@ -794,14 +794,6 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_pack_generic_templates(program)
 }
 
-/// The infix marking a name the lexical nested pass qualified: the enclosing
-/// specialization, this marker, and the nested `def`'s source name.
-///
-/// A declaration and a call spelled this way belong to a nested template the
-/// discovery check can still see, so the driver harvests its instantiation
-/// like a top-level one. `$` cannot occur in a parsed identifier.
-pub const NESTED_MARKER_INFIX: &str = "$nested$";
-
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
 /// T)` whose body holds a `comptime if`/`comptime for`) of a linked program.
 ///
@@ -823,16 +815,6 @@ pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 /// round mints; until then the template stands in as a signature-only stub.
 pub fn dtype_generic_template_names(program: &[Stmt]) -> HashSet<String> {
     collect_dtype_generic_templates(program)
-}
-
-/// The source name a template is reported under: a nested `def` is spelled by
-/// its qualified marker while the discovery check sees it, but a reader knows
-/// it by the name it was written with.
-pub fn template_display_name(template: &str) -> &str {
-    if template.contains(NESTED_MARKER_INFIX) {
-        return template.rsplit_once('$').map_or(template, |(_, name)| name);
-    }
-    template
 }
 
 /// The parameter an inferred application of `template` failed to close.
@@ -977,18 +959,7 @@ pub fn elaborate_prepared(
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         per_call_clones: RefCell::new(HashSet::new()),
-        nested_clones: Cell::new(0),
         ctfe_clones: Cell::new(0),
-        def_requests: def_requests
-            .iter()
-            .map(|request| {
-                (
-                    request.occurrence().clone().without_syntax(),
-                    request.clone(),
-                )
-            })
-            .collect(),
-        stub_reaching: RefCell::new(HashSet::new()),
         per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
@@ -1052,12 +1023,6 @@ pub fn elaborate_prepared(
             }
         }
     }
-    // Nested templates are specialized only after enclosing top-level
-    // specializations and source stamping. At that point every clone carries its
-    // concrete outer substitutions, and per-instance source tags will not be
-    // overwritten by the uniform module stamp above.
-    let mut unserved_template_uses = unserved_template_uses;
-    unserved_template_uses.extend(elab.monomorphize_nested_program(&mut result)?);
     let mut generated = elab.generated.take();
     generated.methods.extend(per_call_clones);
     let def_traces = elab.def_traces.take();
@@ -1069,7 +1034,6 @@ pub fn elaborate_prepared(
         method_traces: &method_traces,
         generated: &generated,
     });
-    clones.add(CloneClass::NestedDef, elab.nested_clones.get());
     clones.add(CloneClass::Ctfe, elab.ctfe_clones.get());
     Ok(Elaborated {
         program: result,
@@ -1912,29 +1876,7 @@ pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
     finder.found
 }
 
-/// Whether a body holds a construct only an instance can lower: a nested
-/// `def` or a lambda, whose lifted body is cloned per instance.
-pub(super) fn holds_instance_construct(body: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            self.found |= matches!(&statement.kind, StmtKind::Def { .. });
-        }
-
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.found |= matches!(&expr.kind, ExprKind::Lambda { .. });
-        }
-    }
-
-    let mut finder = Finder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.found
-}
-
-/// Whether a nested `def`'s or a compile-time evaluation's body can only
+/// Whether a compile-time evaluation's method body can only
 /// check once its own parameters are bound: it holds compile-time control
 /// flow, or a `rebind` assertion over them. Either way the template is
 /// stubbed and every instantiation clones.
@@ -1944,13 +1886,12 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
 
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
 /// holds a `comptime for` its template does not serve
-/// ([`comptime_for_is_template_served`]), it materializes a reflected list
-/// whole ([`ReflectedLists::materialized_in`]), or a `def` nested in it
-/// asserts a `rebind` — that nested body specializes per call, so the body
-/// holding it reaches it through a clone of its own. A `comptime if`, a served
-/// `comptime for`, and a `rebind` of its own do not: the template keeps the
-/// region or the assertion, the check types it with the binders symbolic,
-/// and the elaborator below MIR selects, unrolls, or judges it.
+/// ([`comptime_for_is_template_served`]), or it materializes a reflected
+/// list whole ([`ReflectedLists::materialized_in`]). A `comptime if`, a
+/// served `comptime for`, and a `rebind`, its own or a nested `def`'s, do
+/// not: the template keeps the region or the assertion, the check types it
+/// with the binders symbolic, and the elaborator below MIR selects, unrolls,
+/// or judges it.
 fn def_body_keys_specialization(
     type_params: &[TypeParam],
     params: &[FnParam],
@@ -1971,29 +1912,7 @@ fn def_body_keys_specialization(
         collection: &|name| !bound.contains(name),
         scalars,
     };
-    block_has_unkept_comptime_for(body, &names)
-        || reflected.materialized_in(body)
-        || nested_def_has_rebind(body)
-}
-
-/// Whether a `def` (or a lambda) nested anywhere in a block names
-/// `rebind[Dest](value)` ([`block_has_rebind`]).
-fn nested_def_has_rebind(stmts: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            if let StmtKind::Def { body, .. } = &statement.kind {
-                self.found |= block_has_rebind(body);
-            }
-        }
-    }
-
-    let mut finder = Finder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, stmts);
-    finder.found
+    block_has_unkept_comptime_for(body, &names) || reflected.materialized_in(body)
 }
 
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,
@@ -2395,7 +2314,7 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
     }
     let mut finder = Finder { found: false };
     mojito_ast::visit::walk_block(&mut finder, body);
-    !finder.found && !holds_instance_construct(body)
+    !finder.found
 }
 
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
@@ -2410,9 +2329,7 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
 /// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); and
-/// the body keys no clone and holds no nested `def` or lambda
-/// ([`holds_instance_construct`]), whose body the driver clones per instance
-/// whatever this judgment says (R6). The check types
+/// the body keys no clone. The check types
 /// such a body once, with the collector a pack of the symbolic `Ts` and each
 /// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
 /// pack from the call.
@@ -2430,8 +2347,7 @@ fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, params, name)
         && !def_body_keys_specialization(type_params, params, name, body, scalars)
-        && value_packs_read_as_parameters(type_params, name, body)
-        && !holds_instance_construct(body);
+        && value_packs_read_as_parameters(type_params, name, body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
 
@@ -3260,19 +3176,8 @@ struct Elab<'a> {
     /// clone name). They carry no receiver type, so source stamping names
     /// them here rather than by `Method::self_ty`.
     per_call_clones: RefCell<HashSet<(String, String)>>,
-    /// Nested `def` clones minted, for the instantiation census.
-    nested_clones: Cell<usize>,
     /// Bodies minted for VM CTFE subprograms, for the instantiation census.
     ctfe_clones: Cell<usize>,
-    /// The driver's checker-discovered bound-generic applications by call
-    /// occurrence. Top-level monomorphization consults its own seeded copy;
-    /// the lexical nested pass, which runs after that walk, reads these.
-    def_requests: HashMap<SourceSpan, DefSpecializationRequest>,
-    /// The bodies top-level monomorphization found could run a
-    /// compile-time-keyed stub, including the [`nested_body_owner`] keys of
-    /// nested `def`s. The nested pass registers a nested `def` named here,
-    /// so that its instances reach the callee's clone.
-    stub_reaching: RefCell<HashSet<String>>,
     /// The struct methods whose template is a trap stub that only a per-call
     /// clone serves (a `comptime if` over the method's own binders), as
     /// [`method_owner`] keys: a body calling one over its own binders reaches
@@ -3380,8 +3285,7 @@ const NESTED_OWNER_PREFIX: &str = "$nested-body$";
 ///
 /// A nested `def` has no unique name — the same spelling may declare
 /// unrelated helpers in two enclosing bodies — so the key is its declaration
-/// site. The lexical nested pass derives the same key from the template it
-/// registers, so the two passes agree on which bodies specialize.
+/// site.
 fn nested_body_owner(site: &SourceSpan) -> String {
     format!(
         "{NESTED_OWNER_PREFIX}{}${}${}",
@@ -3505,11 +3409,11 @@ struct Mono {
     /// [`nested_body_owner`] site. A `def`'s body runs only through a
     /// reference that stays abstract; a method's erased body only where
     /// [`Elab::unserved_template_uses`]'s table says so; a nested `def`'s
-    /// body only through the instances the lexical nested pass mints.
+    /// body only through the instances the elaborator below MIR mints.
     abstract_owner: Option<String>,
     /// How many function bodies enclose the walk. A generic `def` declared
-    /// directly in one (`def_depth == 1` on entry) is what the lexical nested
-    /// pass can specialize, so only that depth owns its abstract references.
+    /// directly in one (`def_depth == 1` on entry) owns its abstract
+    /// references.
     def_depth: usize,
     /// Every reference left on a bound-generic or compile-time-keyed
     /// template's abstract path, with the body it was made from.
@@ -3927,22 +3831,6 @@ fn comptime_keyed_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
             .any(|parameter| !retained_specialization_param(parameter, type_params))
 }
 
-/// The nested form of [`is_specializable_declaration`]: a nested `def`
-/// holding a `comptime if` still clones per call, since its body is minted
-/// with the enclosing clone (roadmap: nested definitions over compile-time
-/// parameters).
-pub(super) fn is_specializable_nested_declaration(statement: &Stmt) -> bool {
-    is_specializable_declaration(
-        statement,
-        &HashSet::new(),
-        &HashSet::new(),
-        &ScalarReads::default(),
-    ) || matches!(&statement.kind, StmtKind::Def { type_params, body, .. }
-            if !type_params.is_empty()
-                && (block_has_comptime(body)
-                    || type_params.iter().any(|parameter| parameter.name.starts_with('*'))))
-}
-
 /// Whether every compile-time parameter of a `def` is one its template
 /// serves: a type parameter — a type pack included, which the elaborator
 /// binds from the call's recorded elements — or a scalar (`Int`, `UInt`,
@@ -4271,8 +4159,6 @@ mod ctfe;
 mod eval;
 
 mod mono;
-
-mod nested;
 
 mod rewrite;
 
@@ -4783,11 +4669,12 @@ mod def_request_tests {
         // A scalar value binder beside the pack is bound from the brackets.
         assert!(served.contains("scaled"), "{served:?}");
         assert!(served.contains("tagged"), "{served:?}");
+        // A nested `def` or lambda is a generator over the pack's binders.
+        assert!(served.contains("nested"), "{served:?}");
+        assert!(served.contains("lambda_"), "{served:?}");
         // Each shape below still keys a type-pack clone; its owner flips the
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.
-        assert!(!served.contains("nested"), "R6: {served:?}");
-        assert!(!served.contains("lambda_"), "R6: {served:?}");
         assert!(!served.contains("tuples"), "R405: {served:?}");
         assert!(!served.contains("raising"), "R401: {served:?}");
         assert!(!served.contains("field_type"), "R364: {served:?}");

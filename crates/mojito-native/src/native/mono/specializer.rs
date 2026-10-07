@@ -430,11 +430,7 @@ impl<'a> Specializer<'a> {
                     format!("callee `{}` has no MIR body", key.template),
                 )
             })?;
-        let scope = self
-            .declarations
-            .get(key.template.as_str())
-            .copied()
-            .map_or(&[][..], |declaration| &declaration.param_decls);
+        let scope = &self.binder_scope(&key.template);
         let bindings = &Bindings {
             layout: self.layout_oracle(),
             applications: Some(Rc::clone(&self.applications)),
@@ -461,27 +457,10 @@ impl<'a> Specializer<'a> {
                 error
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
-        if !bindings.folded_captures.is_empty() {
-            let constants = bindings
-                .folded_captures
-                .iter()
-                .zip(&function.param_types)
-                .map(|((name, value), ty)| {
-                    value_parameter_constant(value, Some(ty)).ok_or_else(|| {
-                        self.error(
-                            Some(&key.template),
-                            format!("captured value parameter `{name}` has no native constant"),
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            fold_leading_captures(&mut function, &constants);
-        }
-        let folded_values = self.folded_parameter_values(&key.template, &function, bindings);
-        if !folded_values.is_empty() {
-            self.fold_parameter_closures(&mut function.blocks, &folded_values)?;
-        }
-        self.folded_slots = folded_values.into_keys().collect();
+        self.folded_slots = self
+            .folded_parameter_values(&key.template, &function, bindings)
+            .into_keys()
+            .collect();
         // A callable parameter the call site could not fold into this body
         // becomes its last runtime parameter, carrying the closure — and its
         // environment — that the body then calls indirectly.
@@ -493,10 +472,11 @@ impl<'a> Specializer<'a> {
                     .map(|ty| (parameter.name.to_string(), ty))
             })
             .collect();
+        self.enclosing.clone_from(bindings);
+        self.instantiate_nested_bodies(&key.template, &mut function.blocks)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
-        self.enclosing.clone_from(bindings);
         self.constant_values.extend(
             self.callable_targets
                 .iter()
@@ -522,7 +502,7 @@ impl<'a> Specializer<'a> {
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
             declaration.availability.clear();
-            fold_leading_capture_parameters(&mut declaration, bindings.folded_captures.len());
+            declaration.enclosing = None;
             for (parameter, ty) in promoted {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
             }
@@ -1333,6 +1313,100 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// The binders a body of `template` may name: those of each declaration
+    /// it is nested in, outermost first, then its own.
+    pub(super) fn binder_scope(&self, template: &str) -> Vec<ParamDecl> {
+        let mut chain = Vec::new();
+        let mut link = Some(template);
+        while let Some(declaration) = link.and_then(|name| self.declarations.get(name).copied()) {
+            chain.push(&declaration.param_decls);
+            link = declaration.enclosing.as_deref();
+        }
+        chain.into_iter().rev().flatten().cloned().collect()
+    }
+
+    /// Point each closure and function value naming a body nested in
+    /// `owner` at that body's instance under the instance of `owner` being
+    /// specialized: the nested body is a generator over `owner`'s binders,
+    /// not a function of its own.
+    fn instantiate_nested_bodies(
+        &mut self,
+        owner: &str,
+        blocks: &mut [MirBlock],
+    ) -> Result<(), MonoError> {
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            match instruction {
+                MirInstr::MakeClosure {
+                    function: target, ..
+                }
+                | MirInstr::Const {
+                    k: Const::Function(target),
+                    ..
+                } if self
+                    .declarations
+                    .get(target.as_str())
+                    .is_some_and(|declaration| {
+                        declaration.enclosing.as_deref() == Some(owner)
+                            && declaration.param_decls.is_empty()
+                    }) =>
+                {
+                    let (bindings, arguments) = self.nested_bindings(owner)?;
+                    *target = self.enqueue(target, bindings, arguments)?;
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    self.instantiate_nested_bodies(owner, body)?;
+                    for blocks in handler
+                        .iter_mut()
+                        .map(|(_, blocks)| blocks)
+                        .chain(orelse)
+                        .chain(finalbody)
+                    {
+                        self.instantiate_nested_bodies(owner, blocks)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The bindings and instance arguments of a body nested in the instance
+    /// of `owner` being specialized: that instance's bindings, keyed by the
+    /// solution of each binder in `owner`'s scope.
+    fn nested_bindings(&self, owner: &str) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
+        let bindings = self.enclosing.clone();
+        let arguments = self
+            .binder_scope(owner)
+            .iter()
+            .map(|decl| {
+                let binder = decl.binder();
+                let argument = match decl {
+                    ParamDecl::Type { .. } => {
+                        bindings.types.get(&binder).cloned().map(InstanceArg::Ty)
+                    }
+                    ParamDecl::Value { .. } => bindings
+                        .values
+                        .get(&binder)
+                        .cloned()
+                        .map(InstanceArg::Value),
+                };
+                argument.ok_or_else(|| {
+                    self.error(
+                        Some(owner),
+                        format!("nested body reading unresolved parameter `{}`", binder.name),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok((bindings, arguments))
+    }
+
     /// The bindings and instance arguments of the lowered default function
     /// `function` under its owner's `bindings`: each binder it declares takes
     /// the owner's solution, or a lifted body's folded capture of its name.
@@ -1362,17 +1436,7 @@ impl<'a> Specializer<'a> {
                     default_bindings.types.insert(binder, ty.clone());
                 }
                 ParamDecl::Value { .. } => {
-                    let value = bindings
-                        .values
-                        .get(&binder)
-                        .or_else(|| {
-                            bindings
-                                .folded_captures
-                                .iter()
-                                .find(|(name, _)| name.as_str() == binder.name.as_ref())
-                                .map(|(_, value)| value)
-                        })
-                        .ok_or_else(unresolved)?;
+                    let value = bindings.values.get(&binder).ok_or_else(unresolved)?;
                     arguments.push(InstanceArg::Value(value.clone()));
                     default_bindings.values.insert(binder, value.clone());
                 }
@@ -1998,6 +2062,7 @@ impl<'a> Specializer<'a> {
                         param_arg_regs,
                         param_decls: contract,
                         resolved,
+                        instantiated_args,
                         ..
                     } => {
                         let dependent_callable =
@@ -2038,9 +2103,14 @@ impl<'a> Specializer<'a> {
                                 // The call names the contract's parameters:
                                 // its supplied and defaulted values bind the
                                 // implementation's binders by position.
-                                let contract_values =
-                                    self.contract_values(&target, contract, param_arg_regs)?;
-                                let (target, mut bindings, arguments) = self.infer_call(
+                                // A spelled application of a generic nested
+                                // `def` carries its solved arguments.
+                                let contract_values = if instantiated_args.is_empty() {
+                                    self.contract_values(&target, contract, param_arg_regs)?
+                                } else {
+                                    instantiated_args.clone()
+                                };
+                                let (target, mut bindings, mut arguments) = self.infer_call(
                                     owner,
                                     function,
                                     &target,
@@ -2051,6 +2121,16 @@ impl<'a> Specializer<'a> {
                                     param_arg_regs,
                                     &contract_values,
                                 )?;
+                                // A generic `def` nested in this body binds
+                                // this instance's binders beside its own.
+                                if self.declarations.get(target.as_str()).is_some_and(
+                                    |declaration| declaration.enclosing.as_deref() == Some(owner),
+                                ) {
+                                    let (inherited, inherited_arguments) =
+                                        self.nested_bindings(owner)?;
+                                    inherit_bindings(&mut bindings, inherited);
+                                    arguments.splice(0..0, inherited_arguments);
+                                }
                                 // As at a direct call, a callable parameter
                                 // bound to a capturing closure becomes the
                                 // instance's trailing runtime parameter.
@@ -2158,12 +2238,11 @@ impl<'a> Specializer<'a> {
                     }
                     // A retained callable names its lifted body on the
                     // instruction; enqueue it so the reachable graph carries
-                    // the compiled target the thunk will call. Lifted bodies
-                    // are monomorphic in the supported subset — one whose
-                    // signature still spells generic parameters (a lambda
-                    // inside an unspecialized generic) rejects contextually.
-                    // A generic nested `def` is no body of its own: each
-                    // call site binding its parameters enqueues an instance.
+                    // the compiled target the thunk will call. A body nested
+                    // in this one already names its instance
+                    // ([`Self::instantiate_nested_bodies`]). A generic nested
+                    // `def` is no body of its own: each call site binding its
+                    // parameters enqueues an instance.
                     MirInstr::MakeClosure {
                         function: target, ..
                     }
@@ -2628,11 +2707,8 @@ impl<'a> Specializer<'a> {
         function: &MirFunction,
         bindings: &Bindings,
     ) -> HashMap<u32, CtValue> {
-        let scope = self
-            .declarations
-            .get(owner)
-            .map_or(&[][..], |declaration| &declaration.param_decls);
-        let locals = bound_parameter_locals(scope, bindings);
+        let scope = self.binder_scope(owner);
+        let locals = bound_parameter_locals(&scope, bindings);
         (0u32..)
             .zip(&function.var_names)
             .filter_map(|(slot, name)| {
@@ -2640,90 +2716,10 @@ impl<'a> Specializer<'a> {
                     .callables
                     .get(name)
                     .map(|callable| CtValue::Str(callable.clone()))
-                    .or_else(|| locals.get(name.as_str()).map(|value| (*value).clone()))
-                    .or_else(|| {
-                        bindings
-                            .folded_captures
-                            .iter()
-                            .find(|(folded, _)| folded == name)
-                            .map(|(_, value)| value.clone())
-                    })?;
+                    .or_else(|| locals.get(name.as_str()).map(|value| (*value).clone()))?;
                 Some((slot, value))
             })
             .collect()
-    }
-
-    /// Point each closure whose captures are all snapshots of folded value
-    /// parameters at its lifted body's instance over those values, which
-    /// takes no environment: the closure is the `thin` function the checker
-    /// typed, with no frame-local record to outlive.
-    fn fold_parameter_closures(
-        &mut self,
-        blocks: &mut [MirBlock],
-        values: &HashMap<u32, CtValue>,
-    ) -> Result<(), MonoError> {
-        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-            match instruction {
-                MirInstr::MakeClosure {
-                    function: target,
-                    captures,
-                    ..
-                } if !captures.is_empty()
-                    && self
-                        .declarations
-                        .get(target.as_str())
-                        .is_some_and(|declaration| declaration.param_decls.is_empty())
-                    && self
-                        .functions
-                        .get(target.as_str())
-                        .is_some_and(|body| !function_types(body).any(is_symbolic)) =>
-                {
-                    let Some(folded) = captures
-                        .iter()
-                        .map(|capture| {
-                            (capture.mode == MirCaptureMode::Copy && capture.place.proj.is_empty())
-                                .then_some(capture.place.root)
-                                .and_then(|root| values.get(&root))
-                                .cloned()
-                        })
-                        .collect::<Option<Vec<_>>>()
-                    else {
-                        continue;
-                    };
-                    let arguments = folded.iter().cloned().map(InstanceArg::Value).collect();
-                    let bindings = Bindings {
-                        folded_captures: self.functions[target.as_str()]
-                            .var_names
-                            .iter()
-                            .cloned()
-                            .zip(folded)
-                            .collect(),
-                        ..self.base_bindings()
-                    };
-                    *target = self.enqueue(target, bindings, arguments)?;
-                    captures.clear();
-                }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    self.fold_parameter_closures(body, values)?;
-                    for blocks in handler
-                        .iter_mut()
-                        .map(|(_, blocks)| blocks)
-                        .chain(orelse)
-                        .chain(finalbody)
-                    {
-                        self.fold_parameter_closures(blocks, values)?;
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     fn capture_arguments(
@@ -2992,5 +2988,22 @@ fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
             expressions.extend(of_operand(right));
             expressions
         }
+    }
+}
+
+/// Bind an enclosing instance's solutions in a nested body's call-site
+/// bindings, beside the body's own binders.
+fn inherit_bindings(bindings: &mut Bindings, inherited: Bindings) {
+    for (binder, ty) in inherited.types {
+        bindings.types.entry(binder).or_insert(ty);
+    }
+    for (binder, value) in inherited.values {
+        bindings.values.entry(binder).or_insert(value);
+    }
+    for (name, callee) in inherited.callables {
+        bindings.callables.entry(name).or_insert(callee);
+    }
+    if bindings.self_instance.is_none() {
+        bindings.self_instance = inherited.self_instance;
     }
 }

@@ -736,6 +736,16 @@ pub(super) fn erased_parameter_values(
         .collect()
 }
 
+/// Bind a nested body's inherited enclosing binders beside the call's own
+/// parameters, which shadow an enclosing binder of the same name.
+fn inherit_parameters(own: &mut Vec<(String, Value)>, inherited: Vec<(String, Value)>) {
+    for (name, value) in inherited {
+        if !own.iter().any(|(bound, _)| *bound == name) {
+            own.push((name, value));
+        }
+    }
+}
+
 /// The whole program the VM executes: the lowered MIR plus the struct and
 /// function-signature registries. Immutable during execution, so it threads as
 /// `&Prog` beside the mutable output.
@@ -842,6 +852,68 @@ fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
 impl Prog {
     fn index_of(&self, name: &str) -> Option<usize> {
         self.mir.functions.iter().position(|(n, _)| n == name)
+    }
+
+    /// The values of the enclosing declarations' value binders a body nested
+    /// in them reads, taken from the frame of `function` that builds a
+    /// closure over it: an erased nested body is not instantiated, so its
+    /// closure carries them.
+    fn inherited_parameters(
+        &self,
+        target: &str,
+        function: &MirFunction,
+        variables: &[Value],
+        comptime: &[(String, Value)],
+    ) -> Vec<(String, Value)> {
+        let mut parameters = Vec::new();
+        let mut link = self
+            .sigs
+            .get(target)
+            .and_then(|sig| sig.enclosing.as_deref());
+        while let Some(sig) = link.and_then(|name| self.sigs.get(name)) {
+            for decl in &sig.param_decls {
+                let name = match decl {
+                    ParamDecl::Value { name, .. }
+                    | ParamDecl::Type {
+                        name,
+                        variadic: true,
+                        ..
+                    } => name.trim_start_matches('*'),
+                    ParamDecl::Type { .. } => continue,
+                };
+                let pack = matches!(decl, ParamDecl::Type { .. })
+                    .then(|| erased_parameter_values(function, variables, comptime).remove(name))
+                    .flatten()
+                    .and_then(|pack| match pack {
+                        // Only the pack's length is read off an erased body.
+                        CtValue::Tuple(items) => {
+                            Some(Value::Tuple(vec![Value::Int(0); items.len()]))
+                        }
+                        _ => None,
+                    });
+                let value = pack.as_ref().or_else(|| {
+                    comptime
+                        .iter()
+                        .find(|(bound, _)| bound == name)
+                        .map(|(_, value)| value)
+                        .or_else(|| {
+                            function
+                                .var_names
+                                .iter()
+                                .position(|candidate| candidate == name)
+                                .and_then(|slot| variables.get(slot))
+                        })
+                        .filter(|value| !matches!(value, Value::None))
+                });
+                if let Some(value) = value
+                    && !parameters.iter().any(|(bound, _)| bound == name)
+                {
+                    parameters.push((name.to_string(), value.clone()));
+                }
+            }
+            link = sig.enclosing.as_deref();
+        }
+        parameters
     }
 
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
@@ -1042,6 +1114,9 @@ struct FnSig {
     /// Checker-resolved compile-time parameters. Value parameters become typed
     /// frame locals; type parameters remain erased.
     param_decls: Vec<ParamDecl>,
+    /// The declaration a nested function is nested in, whose value binders
+    /// its body reads.
+    enclosing: Option<String>,
 }
 
 impl FnSig {
@@ -2326,6 +2401,7 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     positional_only: declaration.positional_only,
                     keyword_only: declaration.keyword_only,
                     param_decls: declaration.param_decls.clone(),
+                    enclosing: declaration.enclosing.clone(),
                 },
             )
         })

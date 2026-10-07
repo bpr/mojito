@@ -1,7 +1,7 @@
 //! Certificate grammar for calls: methods, statics, siblings, generic
 //! module functions, callables, and the arguments they take.
 
-use super::{BodyShape, LocalKind, closed_differences, fact_at, names_method, push_unique};
+use super::{BodyShape, closed_differences, fact_at, names_method, push_unique};
 use crate::checker::annotations::existential_binder;
 use mojito_ast::ast::{Expr, ExprKind};
 use mojito_checked::templates::{
@@ -36,9 +36,7 @@ impl BodyShape<'_> {
             {
                 true
             }
-            ExprKind::Call {
-                name, param_args, ..
-            } => !param_args.is_empty() || self.local_kind(name) == Some(LocalKind::Callable),
+            ExprKind::Call { param_args, .. } => !param_args.is_empty(),
             _ => false,
         };
         call && self.expression(expr)
@@ -492,74 +490,6 @@ impl BodyShape<'_> {
     /// parameter borrows the place it names, a field read keeps its base as
     /// a handle, and a reference call records its own result, which an
     /// instance marks a copyable read again at its own referent.
-    /// An argument of a call of a nested `def`. A `mut` or `ref` parameter
-    /// keeps a named place of exactly its recorded type. Any other takes a
-    /// closed scalar, a string literal or `None` of its recorded type or
-    /// converted into it, or a whole value of exactly its recorded type, read
-    /// where it lies when it is a named place and a temporary otherwise, and
-    /// a `var` one a transfer or a temporary as it stands. The call records
-    /// its parameters and no contract, and only a literal converts, its
-    /// conversion recorded beside it, so an instance substitutes both sides
-    /// alike.
-    pub(super) fn nested_argument(
-        &self,
-        call: OccurrenceId,
-        index: usize,
-        argument: &Expr,
-    ) -> bool {
-        use mojito_ast::ast::ArgConvention;
-        let named = match &argument.kind {
-            ExprKind::Identifier(name) => {
-                self.declared(name) || self.params.contains(&name.as_str())
-            }
-            _ => self.receiver_field(argument),
-        };
-        let scalar = self.expression(argument) && self.scalar(argument);
-        let place = named || self.reference_argument(argument);
-        let literal = matches!(argument.kind, ExprKind::Str(_) | ExprKind::None);
-        let Some(facts) = self.facts else {
-            return scalar || place || literal || self.whole_value(argument);
-        };
-        let id = self.occurrence(argument);
-        let Some(parameter) =
-            fact_at(&facts.call_parameters, call).and_then(|params| params.get(index))
-        else {
-            return false;
-        };
-        let typed = fact_at(&facts.expression_types, id) == Some(&parameter.ty);
-        if matches!(
-            parameter.convention,
-            Some(ArgConvention::Mut | ArgConvention::Ref)
-        ) {
-            let kept = named && typed && facts.call_place_uses.contains(&id);
-            if kept {
-                let mut places = self.places.borrow_mut();
-                if !places.contains(&id) {
-                    places.push(id);
-                }
-            }
-            return kept && self.holds(MethodFeatures::PLACE_ARGUMENTS);
-        }
-        if facts.call_place_uses.contains(&id) {
-            return false;
-        }
-        if scalar {
-            return true;
-        }
-        if literal {
-            return !self.keyed
-                && (typed || fact_at(&facts.conversions, id).is_some())
-                && self.holds(MethodFeatures::VALUE_ARGUMENTS);
-        }
-        let read_in_place = facts.borrowed_read_call_places.contains(&id) && place;
-        matches!(
-            parameter.convention,
-            None | Some(ArgConvention::Imm | ArgConvention::Var)
-        ) && typed
-            && (read_in_place || self.whole_value(argument))
-            && self.holds(MethodFeatures::VALUE_ARGUMENTS)
-    }
-
     pub(super) fn reference_argument(&self, argument: &Expr) -> bool {
         let admitted = match &argument.kind {
             ExprKind::Identifier(name) => self.reference_local(name),

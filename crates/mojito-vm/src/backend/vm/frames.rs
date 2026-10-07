@@ -361,14 +361,21 @@ impl VmBackend {
             kwarg_places,
             param_arg_regs,
             param_decls,
+            instantiated_args,
             ..
         } = instruction
         {
             let callable = &caller.registers[callee.0 as usize];
             let mut nominal_receiver = None;
+            let inherited = match callable {
+                Value::Closure { parameters, .. } => parameters.clone(),
+                _ => Vec::new(),
+            };
             let (function_name, captured) = match callable {
                 Value::Function(function_name) => (function_name.clone(), Vec::new()),
-                Value::Closure { function, captures } => (
+                Value::Closure {
+                    function, captures, ..
+                } => (
                     function.clone(),
                     Self::closure_capture_arguments(
                         caller.id,
@@ -417,7 +424,7 @@ impl VmBackend {
                 ),
             };
             let definition = &prog.mir.functions[index].1;
-            let value_params = prog
+            let mut value_params: Vec<(String, Value)> = prog
                 .sigs
                 .get(&function_name)
                 .map(|signature| {
@@ -426,16 +433,18 @@ impl VmBackend {
                     } else {
                         param_decls
                     };
-                    let supplied = self.runtime_parameter_arguments(
+                    let supplied = self.supplied_parameter_arguments(
                         prog,
                         caller.into(),
                         contract,
                         param_arg_regs,
+                        instantiated_args,
                     );
                     let supplied = resolve_value_parameter_slots(contract, &supplied);
                     reify_value_parameters(prog, &signature.param_decls, &supplied)
                 })
                 .unwrap_or_default();
+            inherit_parameters(&mut value_params, inherited);
             if let Some(receiver) = nominal_receiver {
                 for parameter in 1..definition.ref_params.len() {
                     if !definition.ref_params[parameter] {

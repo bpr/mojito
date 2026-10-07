@@ -43,7 +43,7 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
 /// The program-wide concreteness findings: every function body, and every
 /// declaration the bodies are checked against. A declaration's availability
 /// clauses and conformance conditions are decided when it is instantiated,
-/// so none survives.
+/// and an instance has no enclosing binders, so none survives.
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
         errors.extend(concrete_function_findings(name, function));
@@ -53,6 +53,11 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         require_no_parameters(&head, &declaration.param_decls, errors);
         if !declaration.availability.is_empty() {
             errors.push(format!("{head} still carries an availability clause"));
+        }
+        if let Some(enclosing) = &declaration.enclosing {
+            errors.push(format!(
+                "{head} is still nested in `{enclosing}`, whose binders it may name"
+            ));
         }
         let types = declaration
             .param_types

@@ -278,7 +278,6 @@ impl Checker {
         }
         self.install_iterations(facts, &span, &rooted)?;
         self.install_comprehension_bindings(facts, &span, &owner)?;
-        self.install_nested_defs(facts, &span, &owner, &rooted)?;
         self.install_tuple_unpacks(facts, &span, &referenced)?;
         for id in &facts.call_place_uses {
             self.call_place_uses.borrow_mut().insert(span(id)?);

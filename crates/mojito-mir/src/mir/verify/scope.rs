@@ -210,23 +210,30 @@ struct Scope {
 }
 
 impl Scope {
+    /// The binders of the function `name`, of each declaration it is nested
+    /// in, and of the struct whose method the outermost one is.
     fn of_function(name: &str, declarations: &MirDeclarations) -> Self {
-        let own = declarations
-            .functions
-            .iter()
-            .find(|declaration| declaration.lowered_name == name)
-            .map_or(&[][..], |declaration| &declaration.param_decls);
-        let owner = name.split_once('.').and_then(|(owner, _)| {
+        let mut scope = Self {
+            kinds: HashMap::new(),
+        };
+        let mut root = name;
+        let mut link = Some(name);
+        while let Some(current) = link {
+            root = current;
+            let declaration = declarations
+                .functions
+                .iter()
+                .find(|declaration| declaration.lowered_name == current);
+            scope.declare(declaration.map_or(&[][..], |declaration| &declaration.param_decls));
+            link = declaration.and_then(|declaration| declaration.enclosing.as_deref());
+        }
+        let owner = root.split_once('.').and_then(|(owner, _)| {
             declarations
                 .structs
                 .iter()
                 .find(|declaration| declaration.name == owner)
                 .map(|declaration| &declaration.param_decls[..])
         });
-        let mut scope = Self {
-            kinds: HashMap::new(),
-        };
-        scope.declare(own);
         scope.declare(owner.unwrap_or(&[]));
         scope
     }
@@ -823,6 +830,7 @@ mod tests {
                 ref_params: Vec::new(),
                 param_writes: Vec::new(),
                 availability: Vec::new(),
+                enclosing: None,
             }],
             traits: Vec::new(),
         }

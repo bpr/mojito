@@ -344,10 +344,12 @@ impl Checker {
             return Ok(());
         };
         // Module globals are not captures, and neither is a compile-time
-        // binding (a literal once elaborated). For a value crossing more than
-        // one nested-function boundary, every intervening environment must
-        // forward it: an inner `{value}` cannot tunnel through a middle `{}`.
-        if scope == 0 || self.is_compile_time_binding(name) {
+        // binding (a literal once elaborated) or an enclosing declaration's
+        // value parameter, which a nested function reads as its own
+        // parameter. For a value crossing more than one nested-function
+        // boundary, every intervening environment must forward it: an inner
+        // `{value}` cannot tunnel through a middle `{}`.
+        if scope == 0 || self.is_compile_time_binding(name) || self.is_value_parameter(name) {
             return Ok(());
         }
         for policy in contexts
@@ -367,8 +369,7 @@ impl Checker {
                             mojito_ast::ast::CaptureKind::Imm
                         }
                     })
-                })
-                .or_else(|| self.implicit_value_parameter_capture(name));
+                });
             if let Some(kind) = kind {
                 self.check_capture_capability(name, kind)?;
                 let binding = self.lookup_owner(name).ok_or_else(|| {
@@ -428,7 +429,7 @@ impl Checker {
         let Some(scope) = self.binding_scope(name) else {
             return;
         };
-        if scope == 0 {
+        if scope == 0 || self.is_value_parameter(name) {
             return;
         }
         let Some(binding) = self.lookup_owner(name) else {
@@ -441,13 +442,7 @@ impl Checker {
             .iter()
             .filter(|policy| scope < policy.base && name != policy.function_name)
         {
-            let Some(kind) = policy
-                .entries
-                .get(name)
-                .copied()
-                .or(policy.default)
-                .or_else(|| self.implicit_value_parameter_capture(name))
-            else {
+            let Some(kind) = policy.entries.get(name).copied().or(policy.default) else {
                 continue;
             };
             let checked = self.checked_capture(name, binding, ty.clone(), kind);
@@ -530,37 +525,12 @@ impl Checker {
             .unwrap_or(false)
     }
 
-    /// Whether `capture` is a value parameter's implicit snapshot: a
-    /// compile-time value the nested function's instance folds, so it keeps
-    /// the function `thin`.
-    pub(super) fn is_value_parameter_snapshot(
-        &self,
-        capture: &mojito_checked::checked::CheckedCapture,
-    ) -> bool {
-        capture.kind == mojito_ast::ast::CaptureKind::Copy
-            && self.value_parameter_owners.contains(&capture.binding)
-    }
-
-    /// A value parameter denotes a compile-time value, so a nested function
-    /// reads it without naming it in a capture list: an implicitly copyable
-    /// value is snapshotted into the environment, any other borrows its
-    /// runtime slot immutably.
-    pub(super) fn implicit_value_parameter_capture(
-        &self,
-        name: &str,
-    ) -> Option<mojito_ast::ast::CaptureKind> {
+    /// Whether `name` binds a value parameter of a declaration in scope:
+    /// a compile-time value a nested function reads as its own parameter,
+    /// never as a capture.
+    pub(super) fn is_value_parameter(&self, name: &str) -> bool {
         self.lookup_owner(name)
-            .filter(|owner| self.value_parameter_owners.contains(owner))
-            .map(|_| {
-                if self
-                    .lookup(name)
-                    .is_some_and(|ty| self.is_implicitly_copyable(ty))
-                {
-                    mojito_ast::ast::CaptureKind::Copy
-                } else {
-                    mojito_ast::ast::CaptureKind::Imm
-                }
-            })
+            .is_some_and(|owner| self.value_parameter_owners.contains(&owner))
     }
 }
 

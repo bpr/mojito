@@ -5,11 +5,11 @@ use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
-    MethodSpecializationRequest, NESTED_MARKER_INFIX, StructInstanceRequest,
-    TStringSpecializationRequest, UnservedTemplateUse, bound_generic_template_names,
-    comptime_generic_template_names, dtype_generic_template_names, elaborate_prepared,
-    generated_names, instance_traces, pack_generic_template_names, prepare, template_display_name,
-    unserved_template_parameter, variadic_struct_template_names,
+    MethodSpecializationRequest, StructInstanceRequest, TStringSpecializationRequest,
+    UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
+    dtype_generic_template_names, elaborate_prepared, generated_names, instance_traces,
+    pack_generic_template_names, prepare, unserved_template_parameter,
+    variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -842,14 +842,14 @@ fn reject_unserved_template_calls(
     };
     let parameter = unserved_template_parameter(
         linked,
-        template_display_name(&unserved.callee),
+        &unserved.callee,
         parameter_names,
         arguments,
         &closed_generic_argument,
     );
     Err(CompilerError::Comptime(ComptimeError::Arity(format!(
         "generic '{}' requires compile-time parameter '{parameter}'",
-        template_display_name(&unserved.callee)
+        &unserved.callee
     ))))
 }
 
@@ -867,11 +867,7 @@ fn def_specialization_requests(
     let mut by_occurrence = std::collections::HashMap::new();
     let mut conflicted = std::collections::HashSet::new();
     for (span, instantiation) in checked.generic_instantiations() {
-        // A nested `def` the lexical pass could not resolve stands under its
-        // qualified marker for exactly this check; its instantiation seeds
-        // the instance that pass mints on the next round.
-        if !(templates.contains(&instantiation.callee)
-            || instantiation.callee.contains(NESTED_MARKER_INFIX))
+        if !templates.contains(&instantiation.callee)
             || !instantiation.arguments.iter().all(closed_generic_argument)
         {
             continue;

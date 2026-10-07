@@ -71,7 +71,7 @@ impl Checker {
         };
         let occurrences = self.body_occurrences(site.body);
         let mut reasons: Vec<String> = self
-            .unkeyed_growth(site.body, baseline)
+            .unkeyed_growth(baseline)
             .into_iter()
             .map(|store| format!("store:{store}"))
             .collect();
@@ -159,7 +159,7 @@ impl Checker {
         baseline: &BodyFactBaseline,
         reads: &BodyReads,
     ) -> Result<(), IncompleteReason> {
-        if let Some(store) = self.unkeyed_growth(body, baseline).first() {
+        if let Some(store) = self.unkeyed_growth(baseline).first() {
             return Err(IncompleteReason::UnkeyedFact(store));
         }
         // The body's locals are told from every other binding by their
@@ -254,9 +254,9 @@ impl Checker {
     }
 
     /// Entries in the fact stores a body inference can grow that are not
-    /// keyed by one of its occurrences. A derivation has a recipe only for
-    /// the entries a nested `def` statement keys (`unkeyed_growth`), so any
-    /// other growth refuses the body and names the store.
+    /// keyed by one of its occurrences. A derivation has no recipe for them,
+    /// so any growth refuses the body and names the store
+    /// (`unkeyed_growth`).
     pub(super) fn unkeyed_fact_entries(&self) -> [(&'static str, usize); UNKEYED_STORES] {
         let deletability = self.explicit_destroy_deletability.borrow();
         [
@@ -275,21 +275,14 @@ impl Checker {
         ]
     }
 
-    /// The unkeyed stores the body's check grew beyond the entries its
-    /// nested `def` statements key, which their recipe carries. The
-    /// transferred-origin store is told entry by entry elsewhere.
-    fn unkeyed_growth(&self, body: &[Stmt], baseline: &BodyFactBaseline) -> Vec<&'static str> {
-        let nested = self.nested_def_entries(body);
+    /// The unkeyed stores the body's check grew. The transferred-origin
+    /// store is told entry by entry elsewhere.
+    fn unkeyed_growth(&self, baseline: &BodyFactBaseline) -> Vec<&'static str> {
         self.unkeyed_fact_entries()
             .into_iter()
             .zip(baseline.unkeyed)
-            .zip(nested.into_iter().zip(baseline.nested_defs))
-            .filter(|(((store, now), (_, before)), (keyed, keyed_before))| {
-                let grown = now.checked_sub(*before);
-                let recipe = keyed.checked_sub(*keyed_before);
-                *store != TRANSFERRED_ORIGINS && grown != recipe
-            })
-            .map(|(((store, _), _), _)| store)
+            .filter(|((store, now), (_, before))| *store != TRANSFERRED_ORIGINS && now != before)
+            .map(|((store, _), _)| store)
             .collect()
     }
 

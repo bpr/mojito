@@ -45,7 +45,6 @@ mod grammar_simd;
 mod grammar_stores;
 mod install;
 mod iterations;
-mod nested_defs;
 mod realization;
 mod realization_calls;
 mod realization_folds;
@@ -90,9 +89,6 @@ impl BodyClass {
 pub(super) struct BodyFactBaseline {
     tables: [usize; FactTable::ALL.len()],
     unkeyed: [(&'static str, usize); UNKEYED_STORES],
-    /// How many of those unkeyed entries the body's nested `def` statements
-    /// key, which a recipe accounts for (`nested_def_entries`).
-    nested_defs: [usize; UNKEYED_STORES],
     /// The transferred-origin store as the body found it: what a replay
     /// merges is keyed by owner, so growth is told entry by entry.
     transferred: HashMap<OwnerId, Vec<mojito_types::origin::Origin>>,
@@ -604,7 +600,7 @@ impl Checker {
             || stub_template.is_some()
             || census
             || timing::notes_enabled())
-        .then(|| self.body_fact_baseline(body));
+        .then(|| self.body_fact_baseline());
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
         // A nested body records what it reads for its enclosing body too.
         let queries =
@@ -746,11 +742,10 @@ impl Checker {
         Ok(())
     }
 
-    fn body_fact_baseline(&self, body: &[Stmt]) -> BodyFactBaseline {
+    fn body_fact_baseline(&self) -> BodyFactBaseline {
         BodyFactBaseline {
             tables: FactTable::ALL.map(|table| self.span_table(table).entries()),
             unkeyed: self.unkeyed_fact_entries(),
-            nested_defs: self.nested_def_entries(body),
             transferred: (**self.transferred_origins.borrow()).clone(),
             owner_start: self.next_owner.get(),
         }
@@ -1273,26 +1268,6 @@ fn checked_origin(
     }
 }
 
-/// The calls a method body makes of a nested `def` it declares, each with
-/// the callee's name: the call's binding is the one the declaration's
-/// statement introduced.
-fn nested_def_calls(facts: &CheckedBodyFacts) -> Vec<(OccurrenceId, &str)> {
-    facts
-        .call_parameters
-        .iter()
-        .filter_map(|(call, _)| {
-            let callee = fact_at(&facts.expression_bindings, *call)?;
-            facts
-                .nested_defs
-                .iter()
-                .find(|(declaration, _)| {
-                    fact_at(&facts.statement_bindings, *declaration) == Some(callee)
-                })
-                .map(|(_, recipe)| (*call, recipe.name.as_str()))
-        })
-        .collect()
-}
-
 fn template_callee(facts: &CheckedBodyFacts, call: OccurrenceId) -> Option<&str> {
     facts
         .expression_bindings
@@ -1602,10 +1577,6 @@ struct BodyShape<'a> {
     features: std::cell::Cell<MethodFeatures>,
     /// The locals declared so far.
     locals: RefCell<Vec<(String, LocalKind)>>,
-    /// The positions in `locals` of the nested `def` read parameters holding
-    /// a whole value, each read where it lies as a method's parameter is
-    /// ([`Self::parameter_receiver`]).
-    nested_params: RefCell<Vec<usize>>,
     /// The occurrences admitted as reference handles.
     handles: RefCell<Vec<OccurrenceId>>,
     /// The calls admitted as reference-returning.
@@ -1680,8 +1651,6 @@ struct BodyShape<'a> {
     /// The `print(...)` calls admitted, whose arguments an instance proves
     /// `Writable` at its own types.
     print_calls: RefCell<Vec<OccurrenceId>>,
-    /// How many nested `def` bodies the statement being judged lies in.
-    nested_depth: std::cell::Cell<u32>,
     /// How many runtime `while` loops of a keyed body the statement being
     /// judged lies in: a `break` or `continue` there leaves the runtime
     /// loop, never an unrolled `comptime for`.
@@ -1726,8 +1695,6 @@ enum LocalKind {
     Value,
     /// A `ref` binding: a handle on a place, never a value to move.
     Reference,
-    /// A nested `def`'s name, which the body may only call.
-    Callable,
     /// A `var` bound to a lane comparison's mask
     /// ([`BodyShape::lane_comparison`]), read only as a condition or through
     /// `Bool(...)`: an instance re-types the binding and each read alike.

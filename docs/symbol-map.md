@@ -606,15 +606,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`WithForm`, the `WithDesugars` table's recipe) is kept at the statement;
   `instance_with_desugars` builds an instance's desugars from it before its
   occurrences are walked (`occurrences_over`, which reads each desugar in its
-  statement's place), and installation hands them to the final splice. The
-  submodule `template_facts/nested_defs.rs` keeps each nested `def`'s
-  declaration facts, keyed by its statement's identity, as a
-  `TemplateNestedDef` (`captured_nested_defs`, with the parameter owners
-  the checker-only `nested_def_params` table `statements.rs:check_def_inner`
-  fills), counts the unkeyed entries those statements key so capture tells
-  them from other growth (`nested_def_entries`), and writes them again under
-  an instance's own statement and bindings (`install_nested_defs`); a
-  capturing callable's environment is kept like a struct's origin slots
+  statement's place), and installation hands them to the final splice. A
+  nested `def` has no derivation recipe: a body holding one is served by its
+  template, and a clone kept for another reason infers it. A capturing
+  callable's environment is kept like a struct's origin slots
   (`map_struct_origins`). A retained struct type that
   names a binding in an origin argument is kept by template owner
   (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
@@ -720,9 +715,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the bodies source validation must check for this reason
   (`Checker.rebind_keyed_bodies`, read through `body_keys_rebind` by
   `validates_body` and `explicit_destroy::walks_body`); the elaborator's twin
-  is `comptime::block_has_rebind`, which keys a nested `def` and a
-  compile-time evaluation's method on it, and a top-level `def` holding
-  such a nested `def` (`nested_def_has_rebind`).
+  is `comptime::block_has_rebind`, which keys a compile-time evaluation's
+  method on it.
 - `checker/constraints.rs` owns compile-time evaluation and generic-constraint
   compilation/evaluation. `compile_where_clause` compiles a clause,
   `bind_constraint`/`bind_declared_constraints`/`compile_condition` bind its
@@ -839,7 +833,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `mir/lower_stmt.rs` owns statement, place, subscript-assignment, `try`-region,
   and terminator lowering, plus the borrowed-iteration source binding and loan
   re-establishment helpers shared with comprehension lowering.
-- `mir/nested.rs` owns capture analysis and nested-function lifting.
+- `mir/nested.rs` owns capture analysis and nested-function lifting; each
+  lifted declaration names the declaration it is nested in
+  (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the
+  nested frame declares its enclosing callable and type binders' locals
+  (`Enclosing`). `verify/scope.rs` (`Scope::of_function`) walks that chain
+  for the binders a body may name; `native::mono`
+  (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
+  `binder_scope`) instantiates a nested body under its enclosing instance;
+  the erased VM carries the enclosing values on the closure
+  (`Value::Closure::parameters`, `Prog::inherited_parameters`).
 
 ### VM and Comptime
 
@@ -985,8 +988,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elaborated::unserved_template_uses` (`UnservedTemplateUse`),
   `Elaborated::stub_reaching_structs` stops the driver's round cap from
   converging on such an instance, and `unserved_template_parameter` names the
-  parameter for the driver's `reject_unserved_template_calls`, which reports
-  a nested callee under `template_display_name`'s source name;
+  parameter for the driver's `reject_unserved_template_calls`;
   `clone_source_tag` stamps each method clone's body before it is walked, so
   its span-keyed requests find the checker's records for that
   instantiation), the
@@ -1046,7 +1048,6 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   clone's origin binders from its receiver, `bind_clone_receiver_origins` in
   `checker/origins/construct.rs`). `keyed_methods` there says which methods
   of an instance still clone: the ones whose template body is the trap stub,
-  the ones `holds_instance_construct` finds a nested `def` or a lambda in,
   the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
   whatever the instance's arguments carry, and a method with compile-time
@@ -1089,16 +1090,6 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elaborated::stub_reaching_methods`). `compile_linked` consults it every discovery round, and
   a body that reached a struct whose method becomes keyed is inferred again
   (`ServedRequests::keyed_templates`).
-- `comptime/nested.rs` owns the lexically scoped specialization of generic
-  nested functions (`monomorphize_nested_program`, the `NestedMono` registry,
-  its `NESTED_MARKER_INFIX` marker names, and the runtime-pack environment).
-  A nested `def` registers by its own shape or because `Elab::stub_reaching`
-  names its `nested_body_owner` site; a call only the checker can solve takes
-  its arguments from `Elab::nested_request_target`, and otherwise retains its
-  template (`NestedMono::retain_call`, `deferred`) for the discovery check,
-  reporting the site through `Elaborated::unserved_template_uses`. A
-  generated instance's calls to top-level templates are rewritten by
-  `Elab::instance_body_request_target`.
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
   friends), struct-specialization argument resolution, and the t-string
   desugar into a construction of the `TString` template.
@@ -1404,7 +1395,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - A type pack the template serves: `served_pack_defs` (a fixpoint over
   `pack_def_shape_served`, `pack_spread_callees` with its `SpreadCallee`,
   `pack_collector_methods`, `pack_collector_constructors` (both over
-  `collects_type_pack`), `holds_instance_construct`, `def_pack_names`, and
+  `collects_type_pack`), `def_pack_names`, and
   `def_body_keys_specialization`, `comptime.rs`) names the served `def`s and
   `pack_def_template_served` reads it; `PackRewriter::served_callees`
   (`comptime/rewrite.rs`) spells a clone's spread into a served callee

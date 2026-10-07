@@ -239,9 +239,6 @@ struct Bindings {
     /// a runtime parameter and its body keeps the indirect call, instead of
     /// folding the callable's name into a direct one.
     runtime_callables: Vec<ParamRef>,
-    /// The enclosing value parameters a lifted body's instance folds in
-    /// place of its leading captures, by name, in capture order.
-    folded_captures: Vec<(String, CtValue)>,
     /// What answers a layout application (`size_of[T]()`) a type of the
     /// instance carries: the target, and the struct declarations known when
     /// the layout is asked. `None` where no layout is answered.

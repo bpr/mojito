@@ -31,6 +31,9 @@ pub enum Value {
     Closure {
         function: String,
         captures: Vec<ClosureCapture>,
+        /// The enclosing declarations' value binders the lifted body reads,
+        /// by name: an erased nested body is not instantiated under them.
+        parameters: Vec<(String, Self)>,
     },
     /// A checked slice descriptor. Unlike the old fabricated struct layout,
     /// omitted bounds and descriptor kind are first-class runtime data.

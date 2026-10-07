@@ -146,6 +146,12 @@ impl VmBackend {
                     });
                 }
                 regs[dest.0 as usize] = Value::Closure {
+                    parameters: prog.inherited_parameters(
+                        function,
+                        &prog.mir.functions[caller_function].1,
+                        vars,
+                        comptime,
+                    ),
                     function: function.clone(),
                     captures: environment,
                 };
@@ -712,13 +718,20 @@ impl VmBackend {
                 kwarg_places,
                 param_arg_regs,
                 param_decls,
+                instantiated_args,
                 ..
             } => {
                 let callable = regs[callee.0 as usize].clone();
                 let mut nominal_receiver = None;
+                let inherited = match &callable {
+                    Value::Closure { parameters, .. } => parameters.clone(),
+                    _ => Vec::new(),
+                };
                 let (function, captures) = match &callable {
                     Value::Function(function) => (function.clone(), Vec::new()),
-                    Value::Closure { function, captures } => (
+                    Value::Closure {
+                        function, captures, ..
+                    } => (
                         function.clone(),
                         Self::closure_capture_arguments(
                             frame_id,
@@ -775,7 +788,7 @@ impl VmBackend {
                 // its real caller handle; the shared caller mirror keeps those
                 // handles valid through the child call.
                 let definition = &prog.mir.functions[index].1;
-                let value_params = prog
+                let mut value_params: Vec<(String, Value)> = prog
                     .sigs
                     .get(&function)
                     .map(|signature| {
@@ -784,7 +797,7 @@ impl VmBackend {
                         } else {
                             param_decls
                         };
-                        let supplied = self.runtime_parameter_arguments(
+                        let supplied = self.supplied_parameter_arguments(
                             prog,
                             CallerBindings {
                                 function: caller_function,
@@ -795,11 +808,13 @@ impl VmBackend {
                             },
                             contract,
                             param_arg_regs,
+                            instantiated_args,
                         );
                         let supplied = resolve_value_parameter_slots(contract, &supplied);
                         reify_value_parameters(prog, &signature.param_decls, &supplied)
                     })
                     .unwrap_or_default();
+                inherit_parameters(&mut value_params, inherited);
                 let mut reference_inputs: Vec<(usize, Value)> = Vec::new();
                 if let Some(receiver) = nominal_receiver {
                     for parameter in 1..definition.ref_params.len() {

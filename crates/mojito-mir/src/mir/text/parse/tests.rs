@@ -1432,6 +1432,7 @@ fn declaration_metadata_reprints_byte_identically() {
             }),
             "needs a default".into(),
         )],
+        enclosing: None,
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
@@ -1470,6 +1471,7 @@ fn declaration_metadata_reprints_byte_identically() {
         ref_params: vec![false, false, false, false],
         param_writes: vec![false, false, false, false],
         availability: Vec::new(),
+        enclosing: None,
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

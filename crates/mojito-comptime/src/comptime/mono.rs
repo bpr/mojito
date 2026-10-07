@@ -221,7 +221,7 @@ impl Elab<'_> {
                 ..
             } => {
                 // A generic `def` declared directly in another body runs only
-                // through the instances the lexical nested pass mints, so it
+                // through the instances the elaborator below MIR mints, so it
                 // owns the references its body leaves abstract, as a
                 // top-level bound-generic body does.
                 let nested_generic = mono.def_depth == 1 && !type_params.is_empty();

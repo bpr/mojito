@@ -307,8 +307,24 @@ impl Flatten<'_> {
             .contains_key(&info.binding)
             .then(|| self.binding_place(info.binding, name));
         let capture_accesses = self.checked_call_capture_accesses(e);
+        // A generic nested `def` called by name binds its own parameters
+        // from the call's solved arguments, as a module `def` does: the call
+        // carries them with the contract they instantiate.
         let (instantiated_contract, instantiated_args) = self
             .instantiated_callable_contract(e)
+            .or_else(|| {
+                let arguments = self.instantiated_args(e);
+                let contract = callable_ty.as_ref()?;
+                (!arguments.is_empty() && matches!(contract, Ty::GenericFunc { .. }))
+                    .then(|| {
+                        crate::mir::verify::instantiate_generic_callable_contract(
+                            contract, &arguments,
+                        )
+                        .ok()
+                    })
+                    .flatten()
+                    .map(|contract| (contract, arguments))
+            })
             .map_or((None, Vec::new()), |(contract, arguments)| {
                 (Some(contract), arguments)
             });

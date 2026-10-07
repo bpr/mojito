@@ -149,7 +149,11 @@ pub(super) fn lower_fn_nested(
             overloads,
             out,
             declarations,
-            &enclosing_binders,
+            Enclosing {
+                name,
+                binders: &enclosing_binders,
+                locals: &value_parameter_locals,
+            },
         );
     }
 }
@@ -312,6 +316,33 @@ fn scope_registry(
     registry
 }
 
+/// The declaration a nested function is lowered inside: its lowered name,
+/// the binders in scope there, and the frame locals of its callable and
+/// constructible type binders and of its own enclosing declarations', which
+/// the nested body reads as its own.
+#[derive(Clone, Copy)]
+struct Enclosing<'a> {
+    name: &'a str,
+    binders: &'a EnclosingBinders,
+    locals: &'a [(String, Ty)],
+}
+
+impl Enclosing<'_> {
+    /// The frame locals of a body nested here declaring `decls`: its own,
+    /// then each inherited one its own do not shadow.
+    fn frame_locals(&self, decls: &[ParamDecl]) -> Vec<(String, Ty)> {
+        let mut locals = value_parameter_locals(decls);
+        let inherited: Vec<_> = self
+            .locals
+            .iter()
+            .filter(|(name, _)| !locals.iter().any(|(own, _)| own == name))
+            .cloned()
+            .collect();
+        locals.extend(inherited);
+        locals
+    }
+}
+
 fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
     node: NestedNode<'_>,
@@ -319,7 +350,7 @@ fn lower_nested_node(
     overloads: &mojito_symbol::symbol::OverloadSets,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
-    enclosing_binders: &EnclosingBinders,
+    enclosing: Enclosing<'_>,
 ) {
     let ds = node.statement;
     if let StmtKind::Def {
@@ -366,8 +397,8 @@ fn lower_nested_node(
             .generic_parameters_at(&generic_site)
             .unwrap_or(&[])
             .to_vec();
-        let value_parameter_locals = value_parameter_locals(&param_decls);
-        let enclosing_binders = &enclosing_binders.with(&param_decls);
+        let value_parameter_locals = enclosing.frame_locals(&param_decls);
+        let enclosing_binders = &enclosing.binders.with(&param_decls);
         names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
         let mut ptys = capture_types.clone();
         ptys.extend(caller_params.iter().map(|(param, p)| {
@@ -412,6 +443,16 @@ fn lower_nested_node(
                 .iter()
                 .map(|(_, parameter)| is_ref(&parameter.convention)),
         );
+        let collector_ty = |index| {
+            checked
+                .checked_type_at(&AnnotationSite::FunctionParam {
+                    module: ds.module.clone(),
+                    declaration: ds.span,
+                    syntax: ds.syntax_id,
+                    param: index,
+                })
+                .cloned()
+        };
         let variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::Variadic);
         let kw_variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::KwVariadic);
         let regular: Vec<_> = dparams
@@ -493,31 +534,11 @@ fn lower_nested_node(
                         .map(|(_, parameter)| parameter.default.is_none()),
                 )
                 .collect(),
-            variadic: variadic_idx.map(|index| {
-                checked
-                    .checked_type_at(&AnnotationSite::FunctionParam {
-                        module: ds.module.clone(),
-                        declaration: ds.span,
-                        syntax: ds.syntax_id,
-                        param: index,
-                    })
-                    .cloned()
-                    .unwrap_or(Ty::None)
-            }),
+            variadic: variadic_idx.map(|index| collector_ty(index).unwrap_or(Ty::None)),
             variadic_convention: variadic_idx.and_then(|index| dparams[index].convention),
             variadic_index: runtime_variadic_index(dparams, variadic_idx)
                 .map(|index| capture_count + index),
-            kw_variadic: kw_variadic_idx.map(|index| {
-                checked
-                    .checked_type_at(&AnnotationSite::FunctionParam {
-                        module: ds.module.clone(),
-                        declaration: ds.span,
-                        syntax: ds.syntax_id,
-                        param: index,
-                    })
-                    .cloned()
-                    .unwrap_or(Ty::None)
-            }),
+            kw_variadic: kw_variadic_idx.map(|index| collector_ty(index).unwrap_or(Ty::None)),
             kw_variadic_convention: kw_variadic_idx.and_then(|index| dparams[index].convention),
             kw_variadic_index: runtime_parameter_index(dparams, kw_variadic_idx)
                 .map(|index| capture_count + index),
@@ -547,6 +568,7 @@ fn lower_nested_node(
                 .chain(effect.param_writes.iter().copied())
                 .collect(),
             availability: Vec::new(),
+            enclosing: Some(enclosing.name.to_string()),
         });
         let immutable_captures: HashSet<String> = captures
             .iter()
@@ -630,7 +652,11 @@ fn lower_nested_node(
                 overloads,
                 out,
                 declarations,
-                enclosing_binders,
+                Enclosing {
+                    name: mangled,
+                    binders: enclosing_binders,
+                    locals: &value_parameter_locals,
+                },
             );
         }
     }

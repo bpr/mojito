@@ -309,6 +309,11 @@ impl Decoder {
             .field(fields, "availability")
             .map(|value| self.constraints(value))
             .unwrap_or_default();
+        // Schema 1.32 names a nested function's enclosing declaration.
+        let enclosing = self
+            .field(fields, "enclosing")
+            .ok()
+            .and_then(|value| self.option_symbol(value));
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
@@ -355,6 +360,7 @@ impl Decoder {
                 "ref_params",
                 "param_writes",
                 "availability",
+                "enclosing",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -382,6 +388,7 @@ impl Decoder {
             ref_params,
             param_writes,
             availability,
+            enclosing,
         })
     }
 

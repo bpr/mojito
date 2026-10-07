@@ -346,7 +346,12 @@ policy or data-model responsibilities to focused children:
   directory modules split by responsibility. See `docs/symbol-map.md` for
   the per-file responsibility map.
 - `mir/mod.rs` lowers ordinary code; `mir/ir.rs` defines the MIR data model and
-  `mir/nested.rs` owns capture analysis and nested-function lifting.
+  `mir/nested.rs` owns capture analysis and nested-function lifting. A
+  lifted function is a generator over its enclosing declarations' binders:
+  its declaration names the declaration it is nested in
+  (`MirFunctionDeclaration::enclosing`), whose binders the verifier's scope
+  admits in its body, and `native::mono` instantiates it under each instance
+  of that declaration (`Specializer::instantiate_nested_bodies`).
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -604,7 +609,7 @@ the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
 spread of the pack a call argument into `print`, another served `def`, a
 method, or a constructor with a type-pack collector, no local `comptime`
-alias keying a clone, no nested `def` or lambda) keeps its body; the checker
+alias keying a clone) keeps its body; the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
@@ -687,8 +692,7 @@ selected — so a type error in an untaken arm rejects as upstream rejects it,
 a guard such as `T == Int` narrows nothing, and an unused template still
 checks. A `rebind` takes its target on faith here, where the operand's type
 is still symbolic, exactly as upstream does; the equality is asserted per
-instance by the elaborator below MIR, or on each clone of a body still
-cloned (a nested `def`). Every method body of a struct keyed on a vector value
+instance by the elaborator below MIR. Every method body of a struct keyed on a vector value
 (`value_keyed_struct`), which the elaborator specializes whole and drops, is
 checked the same way, to produce its template only: a body this check cannot
 type gets no verdict, and its specializations keep their own check. A
@@ -975,8 +979,7 @@ terminal type is the target, and the elaborator asserts each one's equality
 per instance once its `comptime if`s are decided, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
-error on a mismatch. Only a `def` nested in a body, which still clones, makes
-the assertion on each clone.
+error on a mismatch.
 Three comptime-class subsets take an inferred
 call through discovery instead: a type pack whose element types are not
 statically evident, a **compile-time-keyed** `def`
@@ -985,8 +988,8 @@ specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 without an argument for a required parameter, and a **`DType`-keyed** `def`
 (`dtype_generic_template_names`) the template does not serve — an
 overloaded one, or one whose body shuffles, slices, joins, or hashes a
-lane value, queries a float format over its binder, binds a local
-`comptime`, or holds a nested `def` — whose call omits only its lane: the
+lane value, queries a float format over its binder, or binds a local
+`comptime` — whose call omits only its lane: the
 lane is the argument's own, which the checker reads off a `Scalar[dt]` slot
 and the elaborator cannot. A call that omits a SIMD width is not in that
 subset — the pin does not infer one either. An overloaded name with a
@@ -1104,8 +1107,7 @@ binds it below MIR. A method keeps per-call AST clones only where its
 template cannot serve: its body reaches a compile-time-keyed
 stub (`per_call_stubs` and the elaborator's stub-reaching walk, reported to
 the driver as `Elaborated::stub_reaching_methods` and keyed the next round),
-holds a nested `def` or a lambda, or applies a tuple over its own
-binders.
+or applies a tuple over its own binders.
 Those clones share one minting path (`per_call_method_clones`): the
 elaborator's struct walk mints them for a named owner (`PerCallBase`), and
 `generate_instance_clones` for an instance (instance values first, then the
@@ -1257,8 +1259,7 @@ unrolls the loop per instance; a `rebind` stays too. The methods that still
 clone are the ones MIR cannot express yet (`keyed_methods`,
 `comptime/specialize.rs`): a body the template stubs (a local `comptime`
 binding over the struct's parameters, a `comptime for` the template does not
-serve), one holding a nested `def` or a lambda, and one that reaches a
-compile-time-keyed `def`. A type name over
+serve), and one that reaches a compile-time-keyed `def`. A type name over
 the struct's parameters clones nothing: the template carries the type in
 `MirInstr::TypeName`, and the elaborator writes the name from the
 substituted type. The driver adds the ones only checked types show
@@ -1537,8 +1538,8 @@ an `@implicit` conversion of one (`Construct`), or, for any other default,
 slot out. A default reading a binder in scope (`Self.n`, an enclosing `n`,
 `T`) declares the binders in scope as its function's parameters, and
 `native::mono` instantiates it under the owner instance's arguments; a
-nested `def`'s default reading an enclosing value parameter captures it, as
-its body would. The pin evaluates a default once at
+nested `def`'s default reading an enclosing value parameter reads it as a
+parameter, as its body does. The pin evaluates a default once at
 compile time, so the checker rejects one naming runtime storage and the
 elaborator one that does I/O; for what remains, evaluating at each call is
 indistinguishable.
@@ -2269,34 +2270,14 @@ not a nonzero length — identifies an empty pack. HIR loop lowering follows the
 same rule by assigning the loop target a scoped runtime slot instead of
 reusing/leaking an outer same-named slot.
 
-After top-level specialization, a contextual nested pass gives every
-specializable nested declaration a private scope-qualified marker. Calls resolve
-that marker through lexical value scopes, request independent specializations,
-and emit the generated declarations at the template's original source site.
-The parent specialization is part of the marker identity, so the same nested
-syntax in two outer instances cannot collide. A parallel lexical runtime-pack
-environment snapshots explicitly captured outer packs, masks them under local,
-parameter, loop, comprehension, import, and walrus bindings, and restores them
-when a scope ends. Generated declarations retain defaults, keywords, named
-results, capture lists, effects, and their concrete variadic ABI when nested
-function lowering registers the lifted MIR declaration.
-
-A nested declaration is specializable either by its own shape — compile-time
-control flow, a pack, a `DType` parameter — or because the top-level walk found
-its body able to reach a compile-time-keyed stub, which it reports by the
-nested body's declaration site. Such a body has no concrete argument to select
-the callee's arm with, so only an instance per call can run it. The nested pass
-therefore also joins the discovery fixpoint. A call whose compile-time
-arguments only the checker can solve leaves its template standing — verbatim,
-or as a stub when the body holds compile-time control flow — so the discovery
-check types the call against it and records the instantiation the next round
-serves; a template with any such call mints no instances that round, or an
-instance minted for a sibling call would be the clone the checker retargets the
-unsolved one to, consuming the recording. Calls the fixpoint never serves are
-reported like top-level ones and rejected there. A generated instance's calls
-to top-level templates are rewritten from the requests recorded against that
-instance's own source tag, and the clones they name are queued by the top-level
-walk, which alone can mint them.
+A nested declaration is not specialized above MIR. A nested `def` or lambda
+reads its enclosing declarations' value parameters as parameters, not
+captures, and names their binders in its types and compile-time control flow;
+the elaborator instantiates it under each enclosing instance, and a generic
+one once per call from the call's solved arguments
+(`MirInstr::CallIndirect::instantiated_args`), beside the inherited ones.
+The erased oracle passes the creating frame's parameter values through the
+closure value instead.
 
 Pack forwarding first flattens the one known spread into a virtual positional
 type sequence and runs the shared call-slot matcher; only positional overflow

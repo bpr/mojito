@@ -4,8 +4,7 @@
 
 use super::{
     BodyDeclaration, BodyShape, BodySite, GrammarNotes, adjustment_derives, bound_binder,
-    callable_binder, closed_scalar, fact_at, grammar_scalar, nested_def_calls, origin_binder,
-    template_callee,
+    callable_binder, closed_scalar, fact_at, grammar_scalar, origin_binder, template_callee,
 };
 use crate::checker::Checker;
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
@@ -227,7 +226,6 @@ impl Checker {
             struct_lanes: Vec::new(),
             struct_vectors: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
-            nested_depth: std::cell::Cell::new(0),
             runtime_loops: std::cell::Cell::new(0),
             borrowed_params: mut_params.clone(),
             mut_params,
@@ -254,7 +252,6 @@ impl Checker {
                 }),
             ),
             locals: RefCell::new(Vec::new()),
-            nested_params: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
@@ -597,13 +594,6 @@ impl Checker {
     ///   faith, which each instance discharges at its own type
     ///   (`TemplateObligation::RebindEqualities`): one that does not hold
     ///   refuses the derivation, and the clone check reports it.
-    /// - `NESTED_DEFS`: see [`BodyShape::nested_def`]. A nested `def`'s
-    ///   declaration facts are its signature, keyed by its statement and
-    ///   substituted, and its captures name the body's own bindings, so an
-    ///   instance writes them again under its own statement and bindings
-    ///   (`install_nested_defs`); a call of it selects the declaration the
-    ///   body introduces, under every instance. A nested body's effect reads
-    ///   are the enclosing body's too.
     /// - `STATIC_CALLS`: see [`BodyShape::static_call`]. A static records at
     ///   most its overload member and, behind a leading-dot root, the
     ///   expected type's head. An instance inherits the head, and the member
@@ -846,7 +836,6 @@ impl Checker {
             struct_lanes: self.validated_struct_binders(struct_lane_binders),
             struct_vectors: self.validated_struct_binders(struct_vector_binders),
             print_calls: RefCell::new(Vec::new()),
-            nested_depth: std::cell::Cell::new(0),
             runtime_loops: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
             mut_params: params_passed(&[ArgConvention::Mut]),
@@ -888,7 +877,6 @@ impl Checker {
                 features
             }),
             locals: RefCell::new(Vec::new()),
-            nested_params: RefCell::new(Vec::new()),
             handles: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             receivers: RefCell::new(Vec::new()),
@@ -1089,7 +1077,6 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
     let constructions = shape.constructions.borrow();
     let callable_calls = shape.callable_calls.borrow();
     let direct_calls = method_direct_calls(facts);
-    let nested_calls = nested_def_calls(facts);
     let static_calls = shape.static_calls.borrow();
     // An admitted operator's target is its reflected dunder's
     // ([`BodyShape::operator`]).
@@ -1106,7 +1093,6 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
             || constructions.contains(id)
             || callable_calls.contains(id)
             || direct_calls.iter().any(|(call, _)| call == id)
-            || nested_calls.iter().any(|(call, _)| call == id)
             || static_calls.iter().any(|(call, _)| call == id)
     };
     // A call through a bound, at an occurrence or embedded in a store,
@@ -1133,7 +1119,6 @@ fn stray_method_call(facts: &CheckedBodyFacts, shape: &BodyShape<'_>) -> bool {
         || !summary_callees(facts).all(|callee| {
             targets.contains(&callee.as_str())
                 || direct_calls.iter().any(|(_, direct)| direct == callee)
-                || nested_calls.iter().any(|(_, nested)| nested == callee)
                 || static_calls.iter().any(|(_, member)| member == callee)
                 || conformer_copy(callee)
                 || shape.callable_params.contains(&callee.as_str())

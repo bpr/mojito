@@ -46,6 +46,13 @@ def boxed[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:
     return Box(*args^).n
 
 
+def boxed_beside_nested[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:
+    def one() -> Int:
+        return 1
+
+    return Box(*args^).n + one()
+
+
 def sunk[*Ts: Writable](*a: *Ts) -> Int:
     return Sink(*a).n
 
@@ -57,4 +64,5 @@ def main():
     print(count(1, "a"), count(1.5), count())
     print(bag_explicit(1, "two", True), bag_inferred(1, "two"))
     print(boxed(1, "two"), boxed())
+    print(boxed_beside_nested(1, "two", 2.5))
     print(sunk(1, "x"))

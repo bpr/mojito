@@ -226,6 +226,10 @@ pub struct MirFunctionDeclaration {
     /// disprove one does not have the member. Empty on a concrete instance,
     /// whose clauses the elaborator decided.
     pub availability: Vec<GenericConstraint>,
+    /// The lowered name of the function or method a nested function is
+    /// declared in, whose binders (and its own enclosing declaration's) the
+    /// nested body may name. `None` at top level and on a concrete instance.
+    pub enclosing: Option<String>,
 }
 
 impl MirFunctionDeclaration {
@@ -474,6 +478,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
                     param_writes: effect.param_writes.clone(),
                     availability: Vec::new(),
+                    enclosing: None,
                 });
                 lower_fn_nested(
                     FunctionLowering {
@@ -821,6 +826,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                             .collect(),
                         param_writes: effect.param_writes.clone(),
                         availability: effect.availability.clone(),
+                        enclosing: None,
                     });
                     // A method's receiver `self` is the implicit first parameter,
                     // followed by the declared params.
@@ -1142,6 +1148,7 @@ fn lower_expression_thunk(
         ref_params: Vec::new(),
         param_writes: Vec::new(),
         availability: Vec::new(),
+        enclosing: None,
     });
 }
 

@@ -62,6 +62,7 @@ mod calls;
 mod concrete;
 mod instr;
 mod intrinsics;
+pub(in crate::mir) use intrinsics::instantiate_generic_callable_contract;
 mod iteration;
 mod loans;
 mod places;

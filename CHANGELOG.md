@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A nested `def` or lambda is now a generator over its enclosing
+  declarations' compile-time parameters, as at the pin: a generic `def` or
+  a generic struct's method holding one is served by its template, where it
+  was cloned per instance, and a nested `def` with binders of its own is
+  instantiated per call below MIR, where the comptime cloner minted it. A
+  nested body reads an enclosing value parameter as a parameter, not a
+  capture, so `var f = lambda (y: Int) -> Int: y + n` runs where it stopped
+  on an escaping closure. A nested body may now name an enclosing type or
+  value binder in its signature, its captures' types, and its own
+  `comptime if`/`comptime for`, where MIR verification rejected it; a
+  spelled application of a nested generic `def` (`inner[Int](3)`) binds its
+  own type parameters; and a pack-keyed `def` holding a nested `def` spreads
+  its pack into a generic constructor. MIR text schema 1.32 records each
+  nested function's enclosing declaration. The nested-function cloner and
+  the `NESTED_DEFS` derivation class are gone.
 - A `def` keyed on a `UInt`, `Float64`, or `StringLiteral` value beside a
   type pack (`def show[scale: Float64, *Ts: Writable](*args: *Ts)`) is now
   served by its template, as one keyed on an `Int` is, where it was cloned

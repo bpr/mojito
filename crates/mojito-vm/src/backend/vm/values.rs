@@ -609,7 +609,9 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let (function, captures) = match &callable {
             Value::Function(function) => (function.clone(), Vec::new()),
-            Value::Closure { function, captures } => {
+            Value::Closure {
+                function, captures, ..
+            } => {
                 let mut materialized = Vec::with_capacity(captures.len());
                 for capture in captures {
                     if capture.owned {
@@ -760,7 +762,11 @@ impl VmBackend {
                 index: *index,
                 value: Box::new(self.clone_typed_value(prog, value, alternatives.get(*index))?),
             }),
-            Value::Closure { function, captures } => {
+            Value::Closure {
+                function,
+                captures,
+                parameters,
+            } => {
                 let mut copied = Vec::with_capacity(captures.len());
                 for capture in captures {
                     copied.push(ClosureCapture {
@@ -775,6 +781,7 @@ impl VmBackend {
                 Ok(Value::Closure {
                     function: function.clone(),
                     captures: copied,
+                    parameters: parameters.clone(),
                 })
             }
             // Scalars alias/copy trivially; a bare pointer copy *aliases* (correct —

@@ -1258,7 +1258,6 @@ fn instantiation_census_counts_each_cloned_class() {
         1,
         "Box[Int].kind"
     );
-    assert_eq!(minted(CloneClass::NestedDef), 0);
     for census in [&baseline, &classes] {
         assert_eq!(
             census.inferred + census.derived,

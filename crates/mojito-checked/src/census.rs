@@ -36,15 +36,13 @@ pub enum CloneClass {
     InstanceMethodComptime,
     /// A per-call method clone, for the method's own compile-time parameters.
     PerCallMethod,
-    /// A clone of a `def` nested in another body.
-    NestedDef,
     /// A method clone minted for a compile-time evaluation's own
     /// subprogram.
     Ctfe,
 }
 
 impl CloneClass {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::TypeDef,
         Self::ComptimeIfDef,
         Self::ComptimeForDef,
@@ -54,7 +52,6 @@ impl CloneClass {
         Self::InstanceMethod,
         Self::InstanceMethodComptime,
         Self::PerCallMethod,
-        Self::NestedDef,
         Self::Ctfe,
     ];
 
@@ -72,7 +69,6 @@ impl CloneClass {
                 "instantiation.cloned.method_per_instantiation_comptime"
             }
             Self::PerCallMethod => "instantiation.cloned.method_per_call",
-            Self::NestedDef => "instantiation.cloned.nested_def",
             Self::Ctfe => "instantiation.cloned.ctfe",
         }
     }

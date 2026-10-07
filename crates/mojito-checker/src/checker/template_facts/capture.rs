@@ -721,8 +721,6 @@ impl Checker {
                     .map(|slots| (id, slots))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let (nested_defs, capture_accesses) =
-            self.captured_nested_defs(body, &occurrences, &local_owner, &local_place)?;
         Ok(CheckedBodyFacts {
             expression_types,
             construction_immutable_binders: self.captured_immutable_binders(&occurrences),
@@ -847,8 +845,6 @@ impl Checker {
             iterations: self.captured_iterations(&occurrences, &local_place)?,
             comprehension_bindings: self
                 .captured_comprehension_bindings(&occurrences, &local_owner)?,
-            nested_defs,
-            capture_accesses,
             with_forms: values(&occurrences, &self.with_desugars.borrow())
                 .into_iter()
                 .map(|(id, desugar)| (id, desugar.form))

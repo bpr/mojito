@@ -108,7 +108,7 @@ pub(super) fn verify_intrinsic_slice(
 /// The full dependent/type substitution is performed here rather than by
 /// inspecting parameter-materialization instructions; `arguments` is the
 /// checker-retained declaration-order witness.
-pub(super) fn instantiate_generic_callable_contract(
+pub(in crate::mir) fn instantiate_generic_callable_contract(
     contract: &Ty,
     arguments: &[TyArg],
 ) -> Result<Ty, String> {

@@ -244,16 +244,13 @@ impl BodyShape<'_> {
     /// Whether `expr` names a parameter holding a struct, such as `value` of a
     /// `value: Box[Self.T]` parameter: the parameter is bound to the
     /// instance's argument and read where it lies, as `self` is, and its
-    /// recorded type is the declared one under the instance's arguments. A
-    /// nested `def`'s read parameter holding one is bound to its caller's
-    /// argument alike.
+    /// recorded type is the declared one under the instance's arguments.
     pub(super) fn parameter_receiver(&self, expr: &Expr) -> bool {
         !self.keyed
             && matches!(&expr.kind, ExprKind::Identifier(name)
                 if (self.params.contains(&name.as_str())
                     && !self.callable_params.contains(&name.as_str())
-                    && self.local_kind(name).is_none())
-                    || self.nested_parameter(name))
+                    && self.local_kind(name).is_none()))
             && self.nominal(expr)
     }
 
@@ -288,10 +285,7 @@ impl BodyShape<'_> {
             // A `ref` local is read through its handle, as the scalar every
             // use site of `expression` also demands.
             ExprKind::Identifier(name) => match self.local_kind(name) {
-                Some(kind) => !matches!(
-                    kind,
-                    LocalKind::Value | LocalKind::Callable | LocalKind::Mask
-                ),
+                Some(kind) => !matches!(kind, LocalKind::Value | LocalKind::Mask),
                 None => {
                     self.params.contains(&name.as_str())
                         || self.folded_value(expr)
@@ -404,29 +398,6 @@ impl BodyShape<'_> {
                 if self.callable_binders.contains(&name.as_str()) && self.local_kind(name).is_none()
                 {
                     return self.callable_binder_call(id, param_args, args, kwargs, known);
-                }
-                if self.local_kind(name) == Some(LocalKind::Callable) {
-                    // A keyword argument binds the recorded parameter of its
-                    // name; with no facts yet its position decides nothing.
-                    let keyword = |kwarg: &mojito_ast::ast::KwArg| {
-                        self.facts
-                            .map_or(Some(0), |facts| {
-                                fact_at(&facts.call_parameters, id).and_then(|params| {
-                                    params
-                                        .iter()
-                                        .position(|parameter| parameter.name == kwarg.name)
-                                })
-                            })
-                            .is_some_and(|index| self.nested_argument(id, index, &kwarg.value))
-                    };
-                    return known
-                        && param_args.is_empty()
-                        && args
-                            .iter()
-                            .enumerate()
-                            .all(|(index, argument)| self.nested_argument(id, index, argument))
-                        && kwargs.iter().all(keyword)
-                        && self.holds(MethodFeatures::NESTED_DEFS);
                 }
                 if name == "_unqualified_type_name" || name == "repr" {
                     return self.string_builtin(id, name, param_args, args, kwargs);
@@ -552,20 +523,6 @@ impl BodyShape<'_> {
     }
     fn statement(&self, statement: &Stmt) -> bool {
         match &statement.kind {
-            // A nested body returns to its own caller: a closed scalar, a
-            // whole value of its declared result, or nothing.
-            StmtKind::Return(value) if self.nested_depth.get() > 0 => {
-                value.as_ref().is_none_or(|value| {
-                    (self.expression(value) && self.scalar(value)) || self.whole_value(value)
-                }) && self.holds(MethodFeatures::STATEMENTS)
-            }
-            StmtKind::Def { .. }
-                if !self.keyed
-                    && self.moved_result.is_some()
-                    && self.loop_vars.borrow().is_empty() =>
-            {
-                self.nested_def(statement)
-            }
             StmtKind::Return(value) if self.reference_result.is_some() => value
                 .as_ref()
                 .is_some_and(|value| self.returned_place(value)),
@@ -928,16 +885,6 @@ impl BodyShape<'_> {
         !self.keyed
             && matches!(&expr.kind, ExprKind::Member { object, .. }
                 if self.call_result(object) && self.nominal(object))
-    }
-
-    /// Whether the innermost local named `name` is a nested `def`'s read
-    /// parameter holding a whole value.
-    fn nested_parameter(&self, name: &str) -> bool {
-        self.locals
-            .borrow()
-            .iter()
-            .rposition(|(local, _)| local == name)
-            .is_some_and(|position| self.nested_params.borrow().contains(&position))
     }
 
     /// Whether the recorded type of `expr` is a struct, whose fields a body

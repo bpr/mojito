@@ -317,6 +317,10 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                     "availability",
                     list(declaration.availability.iter().map(constraint)),
                 ),
+                (
+                    "enclosing",
+                    option(declaration.enclosing.as_ref().map(|v| symbol(v))),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();

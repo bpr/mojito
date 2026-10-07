@@ -339,7 +339,6 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_if_condition_reads_index",
     "comptime_if_generic_struct_lifecycle",
     "comptime_if_layout_query",
-    "comptime_if_nested_def_call",
     "dtype_compile_time_values",
     "dtype_float_query_template_served",
     "lane_template_served",

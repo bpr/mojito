@@ -174,6 +174,7 @@ fn metadata_program() -> MirProgram {
             ref_params: vec![false, false],
             param_writes: vec![false, false],
             availability: Vec::new(),
+            enclosing: None,
         }],
         traits: Vec::new(),
     };
