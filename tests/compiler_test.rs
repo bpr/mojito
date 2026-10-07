@@ -356,6 +356,42 @@ fn pack_spread_into_writer_write_is_template_served() {
 }
 
 #[test]
+fn pack_spread_into_string_format_is_template_served() {
+    // A literal's `format` is the bundled stand-in's static call and a
+    // String's the declared `String.format`, so a spread into either is
+    // served by the spreading `def`'s template, as is the bundled formatter's
+    // own static-method spread (`_FormatUtils.format_to_runtime(w, f, *args)`).
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def lit[*Ts: Writable](*a: *Ts) -> String:\n    return \"{} and {}\".format(*a)\n\ndef str[*Ts: Writable](s: String, *a: *Ts) raises -> String:\n    return s.format(*a)\n\ndef main() raises:\n    print(lit(1, \"x\"))\n    print(str(\"{1}-{0!r}\", 2.5, True))\n",
+            std::path::Path::new("/tmp/mojito_pack_spread_into_format.mojo"),
+        )
+        .expect("a pack spread into format");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    let output = compiler.execute(&program).expect("run the served spreads");
+    assert_eq!(output.output, "1 and x\nTrue-Float64(2.5)\n");
+}
+
+#[test]
+fn pack_spread_into_static_method_after_arguments_is_template_served() {
+    // A static's collector takes a spread after leading arguments, and an
+    // explicit `[*Ts]` forwards the pack into a static's result type.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct B[*Ts: Writable](Movable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\nstruct U:\n    @staticmethod\n    def inner[*Ts: Writable](mut w: String, n: Int, *args: *Ts):\n        comptime for i in range(Ts.length):\n            args[i].write_to(w)\n\n    @staticmethod\n    def mk[*Ts: Writable](n: Int) -> B[*Ts]:\n        return B[*Ts](n + Ts.length)\n\ndef outer[*Ts: Writable](*args: *Ts) -> String:\n    var b = String()\n    U.inner(b, U.mk[*Ts](1).n, *args)\n    return b^\n\ndef main():\n    print(outer(3, \"y\", True))\n",
+            std::path::Path::new("/tmp/mojito_pack_spread_into_static.mojo"),
+        )
+        .expect("a pack spread into a static collector");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    let output = compiler.execute(&program).expect("run the served spread");
+    assert_eq!(output.output, "3yTrue\n");
+}
+
+#[test]
 fn pack_spread_into_struct_pack_method_is_template_served() {
     // A variadic struct's method collecting the struct's own pack
     // (`*b: *Self.Ts`) takes a spread of a forwarding `def`'s collector over

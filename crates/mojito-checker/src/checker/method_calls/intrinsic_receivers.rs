@@ -3,12 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// The collector methods the checker answers without a declared signature.
-///
-/// The one is `format` on a string. Such a call lowers with no resolved
-/// callee, so a template cannot serve a pack spread into it.
-pub const INTRINSIC_COLLECTOR_METHODS: &[&str] = &[STRING_FORMAT];
-
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
     /// the compiler-known collections, `SIMD` and `DType`, slice descriptors,
@@ -110,15 +104,12 @@ impl Checker {
             return Ok(Some(ty));
         }
         if method == STRING_FORMAT
-            && (*obj_ty == Ty::StringLiteral
-                || matches!(obj_ty, Ty::Struct(name, args)
-                    if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)))
+            && *obj_ty == Ty::StringLiteral
+            && self
+                .structs
+                .contains_key(mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT)
         {
-            // A template receiver may be the compile-time literal or the
-            // nominal String; the formatted result materializes nominally.
-            reject_kwargs(kwargs)?;
-            self.infer_print(args, &[])?;
-            return self.nominal_string_wrap(span.clone()).map(Some);
+            return self.infer_literal_format(site).map(Some);
         }
         if *obj_ty == Ty::StringLiteral
             && args.is_empty()
@@ -398,6 +389,35 @@ impl Checker {
             },
         );
         Ok(Ty::None)
+    }
+
+    /// `"…".format(args)`: a string literal declares no methods yet, so the
+    /// call types as the static call of the bundled stand-in for upstream's
+    /// `StringLiteral.format`, `_FormatUtils.format_literal(literal, args…)`,
+    /// and records the adjustment MIR lowers it by.
+    fn infer_literal_format(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
+        let MethodCallSite {
+            span, object, call, ..
+        } = site;
+        let arguments: Vec<Expr> = std::iter::once(object.clone())
+            .chain(call.args.iter().cloned())
+            .collect();
+        let ty = self.infer_struct_static_method(
+            span.clone(),
+            mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
+            &[],
+            mojito_symbol::symbol::FORMAT_LITERAL_METHOD,
+            MethodCallArguments {
+                args: &arguments,
+                parameterized_syntax: false,
+                ..call
+            },
+        )?;
+        self.operation_adjustments.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::LiteralFormat,
+        );
+        Ok(ty)
     }
 
     /// The `Hasher` requirements a `Hasher`-bounded parameter answers

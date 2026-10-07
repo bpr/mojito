@@ -42,7 +42,6 @@ pub use mojito_symbol::symbol::{mangle, tuple_specialization_values};
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
-use mojito_checker::checker::INTRINSIC_COLLECTOR_METHODS;
 use mojito_common::token::{SourceSpan, Span};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
@@ -2522,6 +2521,22 @@ fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<Sp
                             .map(|_| SpreadCallee::Method(method.clone())),
                     );
                 }
+                // The parameterized spellings: `f[*Ts](*a)`, `x.m[*Ts](*a)`.
+                ExprKind::Invoke { callee, args, .. } => {
+                    let spread_callee = match &callee.kind {
+                        ExprKind::Identifier(name) => Some(SpreadCallee::Def(name.clone())),
+                        ExprKind::Member { field, .. } => Some(SpreadCallee::Method(field.clone())),
+                        _ => None,
+                    };
+                    if let Some(spread_callee) = spread_callee {
+                        let count = args
+                            .iter()
+                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
+                            .count();
+                        self.callees
+                            .extend(std::iter::repeat_n(spread_callee, count));
+                    }
+                }
                 _ => {}
             }
         }
@@ -2539,6 +2554,7 @@ fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<Sp
 /// A callee a pack-keyed `def`'s body spreads its pack into: a `def` (or
 /// `print`) by name, or a method by name, whose receiver the pre-check
 /// judgment cannot type.
+#[derive(Clone)]
 enum SpreadCallee {
     Def(String),
     Method(String),
@@ -2547,10 +2563,9 @@ enum SpreadCallee {
 /// The method names a served pack-keyed body may spread its pack into: a
 /// struct in the program declares a method of the name whose collector is a
 /// type pack, the method's own (`*a: *Ts`) or the struct's (`*b: *Self.Ts`),
-/// which its template serves with the spread expanded per call. A name the
-/// checker answers intrinsically on some receiver
-/// ([`INTRINSIC_COLLECTOR_METHODS`]) is left out: that call has no declared
-/// callee for MIR to name.
+/// which its template serves with the spread expanded per call. Every such
+/// call names a declared callee: a string literal's `format` is the static
+/// call of the bundled stand-in.
 fn pack_collector_methods(program: &[Stmt]) -> HashSet<String> {
     let binders = |type_params: &[TypeParam]| -> HashSet<String> {
         type_params
@@ -2592,7 +2607,6 @@ fn pack_collector_methods(program: &[Stmt]) -> HashSet<String> {
                     .then(|| method.name.clone())
             })
         })
-        .filter(|name| !INTRINSIC_COLLECTOR_METHODS.contains(&name.as_str()))
         .collect()
 }
 

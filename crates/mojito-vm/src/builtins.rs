@@ -56,7 +56,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "__trunc__",
     "__ceildiv__",
     "__fma__",
-    "format",
     "write_string",
     "byte_length",
     "ptr",

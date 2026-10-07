@@ -50,8 +50,7 @@ impl VmBackend {
                 slots.get(i),
                 prog.sigs
                     .get(name)
-                    .and_then(|signature| signature.param_names.get(i))
-                    .map(String::as_str),
+                    .and_then(|signature| signature.frame_param_name(i)),
                 0,
                 arg_places,
                 &keyword_names,
@@ -415,18 +414,6 @@ impl VmBackend {
         if method == "copy" && !matches!(recv, Value::Struct { .. }) {
             return Ok(recv.clone());
         }
-        // `format` on a nominal String receiver reads the template back
-        // through the bridge and runs the builtin template formatter; the
-        // checker's recorded wrap materializes the literal result.
-        if method == "format"
-            && let Value::Struct { name, .. } = &recv
-            && mojito_symbol::symbol::is_stdlib_string_struct(name)
-        {
-            let Value::Str(template) = self.string_struct_literal(&recv)? else {
-                unreachable!("the string bridge reads back a literal");
-            };
-            return self.format_template(prog, &template, &args).map(Value::Str);
-        }
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         // Intrinsic dunders on a built-in numeric/hashable value; a struct with
         // its own implementation still dispatches to its method below.
@@ -521,9 +508,6 @@ impl VmBackend {
             }
         }
         match &recv {
-            Value::Str(template) if method == "format" => {
-                self.format_template(prog, template, &args).map(Value::Str)
-            }
             // The builtin text writer's `Writer.write_string`: append the
             // view's bytes.
             Value::Str(current) if method == "write_string" && args.len() == 1 => {
@@ -716,8 +700,7 @@ impl VmBackend {
                         slots.get(i - 1),
                         prog.sigs
                             .get(&fname)
-                            .and_then(|signature| signature.param_names.get(i - 1))
-                            .map(String::as_str),
+                            .and_then(|signature| signature.frame_param_name(i - 1)),
                         0,
                         arg_places,
                         &keyword_names,

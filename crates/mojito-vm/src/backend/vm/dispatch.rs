@@ -791,63 +791,6 @@ impl VmBackend {
         Ok(format!("{name}({})", cells.join(", ")))
     }
 
-    pub(super) fn format_template(
-        &mut self,
-        prog: &Prog,
-        template: &str,
-        arguments: &[Value],
-    ) -> Result<String, RuntimeError> {
-        let chars: Vec<char> = template.chars().collect();
-        let mut output = String::new();
-        let mut automatic = 0usize;
-        let mut cursor = 0usize;
-        while cursor < chars.len() {
-            if chars[cursor] == '{' {
-                if chars.get(cursor + 1) == Some(&'{') {
-                    output.push('{');
-                    cursor += 2;
-                    continue;
-                }
-                let Some(end_offset) = chars[cursor + 1..].iter().position(|ch| *ch == '}') else {
-                    return Err(RuntimeError::TypeError("unclosed format field".to_string()));
-                };
-                let end = cursor + 1 + end_offset;
-                let field: String = chars[cursor + 1..end].iter().collect();
-                let repr = field.contains("!r");
-                let spec = field.split_once(':').map_or("", |(_, spec)| spec);
-                let selector = field.split(['!', ':']).next().unwrap_or_default();
-                let index = if selector.is_empty() {
-                    let index = automatic;
-                    automatic += 1;
-                    index
-                } else {
-                    selector.parse::<usize>().map_err(|_| {
-                        RuntimeError::TypeError(format!("invalid format field '{{{field}}}'"))
-                    })?
-                };
-                let value = arguments
-                    .get(index)
-                    .ok_or_else(|| RuntimeError::ArityMismatch {
-                        name: "String.format".to_string(),
-                        expected: index + 1,
-                        got: arguments.len(),
-                    })?;
-                let rendered = self.format_value(prog, value.clone(), repr, None)?;
-                output.push_str(&apply_format_spec(value, &rendered, spec)?);
-                cursor = end + 1;
-                continue;
-            }
-            if chars[cursor] == '}' && chars.get(cursor + 1) == Some(&'}') {
-                output.push('}');
-                cursor += 2;
-                continue;
-            }
-            output.push(chars[cursor]);
-            cursor += 1;
-        }
-        Ok(output)
-    }
-
     /// The decimal text of a runtime integer: the bundled
     /// `std._intrinsics._int_digits`/`_uint_digits` bodies formatting into a
     /// reused heap scratch buffer, which is what the native backend calls

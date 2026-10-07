@@ -346,7 +346,14 @@ impl Checker {
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
                     return_type: clone_origins.substitute(&self.close_method_values(
-                        substitute(&substitute_at(&sig.ret, info, &tyargs), &method_subst),
+                        substitute(
+                            &super::super::generics::expand_solved_packs(
+                                &substitute_at(&sig.ret, info, &tyargs),
+                                &sig.decls,
+                                &method_arguments,
+                            ),
+                            &method_subst,
+                        ),
                         &sig.decls,
                         &method_arguments,
                     )),
@@ -719,8 +726,13 @@ impl Checker {
             patterns.push(sig.params[index].clone());
             actuals.push(self.infer(expression)?);
         }
+        // A forwarded pack that is still a parameter (`*args`) solves no
+        // struct parameter: the collector binds it whole.
         if let Some(element) = sig.variadic.as_deref() {
             for position in matched.positional_overflow {
+                if self.forwarded_pack(&args[position]).is_some() {
+                    continue;
+                }
                 patterns.push(element.clone());
                 actuals.push(self.infer(&args[position])?);
             }

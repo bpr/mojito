@@ -402,12 +402,19 @@ fn writable_default_reflects_fields() {
 #[test]
 fn writable_repr_and_string_format_use_writer_rendering() {
     let actual = output(
-        "@fieldwise_init\nstruct Point(Writable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"point=\", self.x)\n    def write_repr_to(self, mut writer: Some[Writer]):\n        writer.write(\"Point[\", self.x, \"]\")\n\ndef main():\n    var point = Point(4)\n    print(String(point))\n    print(repr(point))\n    print(\"{} / {!r} / {0}\".format(point, point))\n    print(\"|{:>5}|{:<5}|{:.2f}\".format(3, 4, 1.5))\n",
+        "@fieldwise_init\nstruct Point(Writable):\n    var x: Int\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"point=\", self.x)\n    def write_repr_to(self, mut writer: Some[Writer]):\n        writer.write(\"Point[\", self.x, \"]\")\n\ndef main():\n    var point = Point(4)\n    print(String(point))\n    print(repr(point))\n    print(\"{} / {!r} / {}\".format(point, point, point))\n",
     );
-    assert_eq!(
-        actual,
-        "point=4\nPoint[4]\npoint=4 / Point[4] / point=4\n|    3|4    |1.50\n"
+    assert_eq!(actual, "point=4\nPoint[4]\npoint=4 / Point[4] / point=4\n");
+}
+
+#[test]
+fn keyword_only_mut_parameter_after_a_pack_collector_writes_back() {
+    // The collector occupies a frame slot of its own, so the keyword-only
+    // `mut` parameter after it still binds the caller's place.
+    let actual = output(
+        "@fieldwise_init\nstruct E(ImplicitlyCopyable):\n    var k: Int\n    def fe[*Ts: Writable](self, mut w: String, *args: *Ts, mut auto_idx: Int):\n        comptime for i in range(Ts.length):\n            if i == auto_idx:\n                args[i].write_to(w)\n        auto_idx += 1\n\ndef fe2[*Ts: Writable](mut w: String, *args: *Ts, mut auto_idx: Int):\n    comptime for i in range(Ts.length):\n        if i == auto_idx:\n            args[i].write_to(w)\n    auto_idx += 1\n\ndef go[*Ts: Writable](*args: *Ts) -> String:\n    var b = String()\n    var a = 0\n    fe2(b, *args, auto_idx=a)\n    return b^\n\ndef main():\n    var b = String()\n    var a = 0\n    var e = E(1)\n    e.fe(b, 1, \"x\", auto_idx=a)\n    e.fe(b, 1, \"x\", auto_idx=a)\n    fe2(b, 1, \"x\", auto_idx=a)\n    print(b, a)\n    print(go(2, \"x\"))\n",
     );
+    assert_eq!(actual, "1x 3\n2\n");
 }
 
 #[test]

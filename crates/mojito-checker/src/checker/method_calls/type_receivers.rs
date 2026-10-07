@@ -291,7 +291,14 @@ impl Checker {
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
                     return_type: clone_origins.substitute(&self.close_method_values(
-                        substitute(&sig.ret, &method_subst),
+                        substitute(
+                            &super::super::generics::expand_solved_packs(
+                                &sig.ret,
+                                &sig.decls,
+                                &method_arguments,
+                            ),
+                            &method_subst,
+                        ),
                         &sig.decls,
                         &method_arguments,
                     )),

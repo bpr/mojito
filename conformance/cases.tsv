@@ -532,3 +532,6 @@ dtype-float-queries	run	assets/ok/dtype_float_queries.mojo
 template-method-variadic-initializer	run	assets/ok/template_method_variadic_initializer.mojo
 pack-spread-result-overloaded-init-served	run	assets/ok/pack_spread_result_overloaded_init_served.mojo
 variant-pack-def-non-member	reject	assets/type_error/variant_pack_def_non_member.mojo
+format-literal-template-runtime	mojito-only	conformance/fixtures/format_literal_template_runtime.mojo
+string-format-declared	run	assets/ok/string_format_declared.mojo
+static-method-pack-spread	run	assets/ok/static_method_pack_spread.mojo

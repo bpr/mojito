@@ -30,6 +30,23 @@ impl Flatten<'_> {
         } else {
             (object, args)
         };
+        // A string literal's `format`: the checker typed the static call of
+        // the bundled stand-in with the literal as its first argument.
+        if self.checked_adjustments(e).iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::LiteralFormat
+            )
+        }) {
+            let target = self.resolved_callable(e).unwrap_or_else(|| {
+                format!(
+                    "{}.{}",
+                    mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
+                    mojito_symbol::symbol::FORMAT_LITERAL_METHOD
+                )
+            });
+            return self.static_method_call(e, &target, None, Some(object), args, kwargs);
+        }
         if let Some(dest) = self.method_call_value_form(e, object, method, args, kwargs) {
             return dest;
         }
@@ -46,45 +63,11 @@ impl Flatten<'_> {
         // method's own parameters, so struct arguments must not
         // occupy its `param_arg_regs` slots.
         if let Some(type_name) = self.type_receiver_name(object) {
-            let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = self.call_anchors_arguments(e);
-            let (regs, arg_places) = self.lower_call_arguments(args, false);
-            self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
-            let d = self.fresh(span(e), None);
             let target = self
                 .resolved_callable(e)
                 .unwrap_or_else(|| format!("{type_name}.{method}"));
-            self.emit_call_invalidations(e, args, kwargs);
             let receiver = self.static_receiver(object);
-            // A generic static its template serves takes its inferred value
-            // parameters and solved arguments as a generic `def` does; a
-            // per-call clone (`Lanes.widen$y…`) has baked them.
-            let served =
-                mojito_symbol::symbol::split_method_symbol(&target).is_some_and(|(_, method)| {
-                    mojito_symbol::symbol::specialization_template(method).is_none()
-                });
-            let (param_arg_regs, instantiated_args) = if served {
-                (self.inferred_param_arg_regs(e), self.instantiated_args(e))
-            } else {
-                (Vec::new(), Vec::new())
-            };
-            self.emit(MirInstr::Call {
-                dest: d,
-                func: FuncRef::named(&target),
-                raises: self.checked_raises(e),
-                args: regs,
-                kwargs: kw,
-                arg_places,
-                kwarg_places,
-                capture_accesses: self.checked_call_capture_accesses(e),
-                param_arg_regs,
-                receiver,
-                instantiated_args,
-                spread: None,
-            });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
-            return d;
+            return self.static_method_call(e, &target, receiver, None, args, kwargs);
         }
         if let Some(dest) = self.lower_elided_receiver_call(e, object, &[], args, kwargs) {
             return dest;
@@ -132,6 +115,64 @@ impl Flatten<'_> {
             .filter(|ty| matches!(ty, Ty::Struct(_, arguments) if !arguments.is_empty()))?;
         self.intern_static_self();
         Some(receiver)
+    }
+
+    /// A call of the checker-selected static `target` over `args`, after a
+    /// `leading` argument the call spells as its receiver (a literal's
+    /// `format`), the receiver instance a spelled type names (`Pair[Int]`)
+    /// carried beside.
+    fn static_method_call(
+        &mut self,
+        e: &Expr,
+        target: &str,
+        receiver: Option<Ty>,
+        leading: Option<&Expr>,
+        args: &[Expr],
+        kwargs: &[KwArg],
+    ) -> Reg {
+        let saved_anchor_permission = self.allow_argument_anchors;
+        self.allow_argument_anchors = self.call_anchors_arguments(e);
+        let (mut regs, mut arg_places) = (Vec::new(), Vec::new());
+        for slice in [leading.map(std::slice::from_ref).unwrap_or_default(), args] {
+            let (slice_regs, slice_places) = self.lower_call_arguments(slice, false);
+            regs.extend(slice_regs);
+            arg_places.extend(slice_places);
+        }
+        self.allow_argument_anchors = saved_anchor_permission;
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let dest = self.fresh(span(e), None);
+        if let Some(leading) = leading {
+            self.emit_interior_invalidations(leading, None);
+        }
+        self.emit_call_invalidations(e, args, kwargs);
+        // A generic static its template serves takes its inferred value
+        // parameters and solved arguments as a generic `def` does; a
+        // per-call clone (`Lanes.widen$y…`) has baked them.
+        let served =
+            mojito_symbol::symbol::split_method_symbol(target).is_some_and(|(_, method)| {
+                mojito_symbol::symbol::specialization_template(method).is_none()
+            });
+        let (param_arg_regs, instantiated_args) = if served {
+            (self.inferred_param_arg_regs(e), self.instantiated_args(e))
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(target),
+            raises: self.checked_raises(e),
+            args: regs,
+            kwargs: kw,
+            arg_places,
+            kwarg_places,
+            capture_accesses: self.checked_call_capture_accesses(e),
+            param_arg_regs,
+            receiver,
+            instantiated_args,
+            spread: spread_position(args).map(|position| position + usize::from(leading.is_some())),
+        });
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        dest
     }
 
     /// Method calls the checker resolved to a value operation with no callee
@@ -725,14 +766,7 @@ impl Flatten<'_> {
         let (regs, arg_places) = self.lower_call_arguments(args, view_result);
         self.allow_argument_anchors = saved_anchor_permission;
         let (kw, kwarg_places) = self.lower_call_keywords(kwargs, view_result);
-        // A wrapped `.format(...)` keeps its own callee but types its
-        // register as the compile-time string the nominal-String
-        // conversion consumes (mirroring the free-call builtins).
-        let d = if method == "format" && self.implicit_conversion(e).is_some() {
-            self.fresh_typed(span(e), None, Ty::StringLiteral)
-        } else {
-            self.fresh(span(e), None)
-        };
+        let d = self.fresh(span(e), None);
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(e, args, kwargs);
         let capture_accesses = self.checked_call_capture_accesses(e);
@@ -785,9 +819,7 @@ impl Flatten<'_> {
             param_arg_regs,
             param_decls,
             instantiated_args,
-            spread: args
-                .iter()
-                .position(|argument| matches!(argument.kind, ExprKind::Spread(_))),
+            spread: spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);

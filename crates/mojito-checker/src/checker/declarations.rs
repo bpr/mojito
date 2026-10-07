@@ -3120,11 +3120,17 @@ impl Checker {
                         && let ParamDecl::Type { id, .. } = decl
                     {
                         let argument = self.collected_pack_argument(id, patterns, actuals);
-                        if let TyArg::Val(value) = &argument {
-                            value_environment.insert(
-                                decl.name().trim_start_matches('*').to_string(),
-                                value.clone(),
-                            );
+                        match &argument {
+                            TyArg::Val(value) => {
+                                value_environment.insert(
+                                    decl.name().trim_start_matches('*').to_string(),
+                                    value.clone(),
+                                );
+                            }
+                            TyArg::Ty(pack) => {
+                                subst.insert(id.clone(), pack.clone());
+                            }
+                            TyArg::Origin(_) => {}
                         }
                         tyargs.push(argument);
                         continue;
@@ -3167,6 +3173,9 @@ impl Checker {
                             .is_some()
                             || mojito_types::types::list_spread(pack).is_some())
                     {
+                        if let ParamDecl::Type { id, .. } = decl {
+                            subst.insert(id.clone(), (**pack).clone());
+                        }
                         tyargs.push(TyArg::Ty((**pack).clone()));
                         continue;
                     }

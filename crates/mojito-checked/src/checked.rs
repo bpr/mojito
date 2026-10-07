@@ -783,6 +783,11 @@ pub enum SemanticAdjustment {
     ReceiverFromFirstArgument {
         inner: Option<Box<Self>>,
     },
+    /// `"…".format(args)` on a string literal, which declares no methods
+    /// yet: the checker typed the static call of the bundled stand-in
+    /// (`STDLIB_FORMAT_UTILS_STRUCT.FORMAT_LITERAL_METHOD`) with the
+    /// receiver as its first argument, so MIR lowers that call.
+    LiteralFormat,
     /// A condition (`if`/`while`/ternary/comprehension filter) whose value
     /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
     /// struct's `__bool__`.

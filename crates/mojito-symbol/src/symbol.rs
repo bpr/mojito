@@ -626,8 +626,8 @@ impl VariadicKey {
 /// identity. The checker's construction routing and the VM's
 /// literal-to-struct bridge both key on this exact declaration.
 pub use mojito_types::types::{
-    STDLIB_STRING_SPAN_STRUCT, STDLIB_STRING_STRUCT, is_stdlib_string_span_struct,
-    is_stdlib_string_struct,
+    FORMAT_LITERAL_METHOD, STDLIB_FORMAT_UTILS_STRUCT, STDLIB_STRING_SPAN_STRUCT,
+    STDLIB_STRING_STRUCT, is_stdlib_string_span_struct, is_stdlib_string_struct,
 };
 
 /// The lowered symbol of an overloaded free function: `pick$ov$Int`.

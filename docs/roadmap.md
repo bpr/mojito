@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R425**.
+Next free ID: **R440**.
 
 ## Ordered Work
 
@@ -59,24 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R421 (P3b) A pack spread into `String.format` keys a clone**
-
-  Problem: a pack-keyed `def` that spreads its collector into `format`
-  (`"{} and {}".format(*a)`) stays on the cloner, where the pin serves it
-  from one template.
-  - The checker answers `format` intrinsically, so the MIR call has no
-    resolved callee and the spread gate leaves the name out
-    (`INTRINSIC_COLLECTOR_METHODS`, `checker/method_calls/intrinsic_receivers.rs`).
-  - The pin declares `format[*Ts: Writable](self, *args: *Ts) raises` on
-    `String` and `StringSlice` (`string.mojo`, `string_span.mojo`), so the
-    Mojo shape is a bundled `format` the call resolves to, as `write` now is.
-  - Probe: `def show[*Ts: Writable](*a: *Ts) raises -> String: return "{}
-    and {}".format(*a)` prints `1 and x` at both, with one `def_pack` clone
-    in Mojito's census.
-  - Found while landing R414 (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R316 (P3b) A pack spread into a constructor keys a clone**
 
@@ -963,6 +945,35 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R433 Natively, a struct pack element's `write_to` takes the
+  reflective default**
+
+  Problem: `a[i].write_to(w)` over a pack element whose type declares its
+  own `write_to` prints `P(1)` on the VM and at the pin, but `P(x=1)`
+  natively.
+  - Probe: `def f[*Ts: Writable](mut w: String, *a: *Ts)` writing each
+    `a[i]` into `w`, called as `f(s, P(1), 2)`.
+  - `"{}".format(P(1))` reaches the same call through the bundled
+    `_FormatCurlyEntry._format`, so native `format` of such a struct is
+    wrong too.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R434 Natively, a struct without its own `write_repr_to` cannot be
+  formatted through a pack**
+
+  Problem: `"{}".format(P(1))` over a struct declaring only `write_to`
+  stops natively with "unsupported repr of `P` without compiled
+  write_repr_to", where the VM and the pin print it.
+  - `_FormatCurlyEntry._format` holds both `write_to` and `write_repr_to`
+    calls per element, so every element type instantiates the repr branch.
+  - The reflective default `write_repr_to` is synthesized in the checker
+    (R424) and has no native body.
+  - Found while landing R421 (2026-10-06).
+  - Depends on R424.
+  - Model: Opus, Not Planned.
+
 - [ ] **R277 Native `Tuple.concat` double-frees a `String` element of its
   argument**
 
@@ -1075,6 +1086,16 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing. Every later change that needs an ABI bump joins this
     entry instead of waiting on it.
   - Model: Fable, Planned.
+
+- [ ] **R435 Natively, `Error` over a local `comptime` string is
+  unsupported**
+
+  Problem: `comptime msg = "boom"` then `raise Error(msg)` runs on the VM
+  and at the pin, while the native backend reports "unsupported string value
+  in register".
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Ownership, Origins, And Destruction
 
@@ -2484,6 +2505,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R437 `o = String(x)` into an `Optional[String]` fails MIR
+  verification**
+
+  Problem: `var o = Optional[String](None); o = String(3)` prints `3` at the
+  pin, while Mojito stops with "argument 0 of
+  'Optional$mono$TString.__init__$ov$T$AnyType' has type StringLiteral,
+  declared String".
+  - The checker records the `String` wrap of the builtin conversion and the
+    `Optional` conversion at the same span, and `implicit_conversions` keeps
+    one of them.
+  - Workaround: spell `Optional[String](String(3))`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -3626,6 +3662,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R436 A struct's `comptime` value member read through the type name
+  is rejected**
+
+  Problem: `print(E.k)` over `struct E: comptime k = 3` prints `3` at the
+  pin, while Mojito reports "Undefined variable 'E'", and `G(E.k)` reports
+  that no constructor overload matches.
+  - R279 is the same member read as `Self.k` inside the struct.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R438 A `ref` binding of a pack element inside a `comptime for` fails
+  elaboration**
+
+  Problem: `comptime for i in range(Ts.length): if i == idx: ref arg =
+  args[i]; arg.write_to(w)` runs at the pin, while Mojito stops with "slot
+  `arg` typed over a comptime for index is used outside its loop".
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -4366,6 +4423,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R276, which moves the scalar text into Mojo bodies.
   - Model: Opus, Not Planned.
 
+- [ ] **R425 A malformed literal `format` template aborts at run time where
+  the pin rejects it at compile time**
+
+  Problem: `"[{:>5}]".format(3)` and `"{} {}".format(1)` fail to compile at
+  the pin, while Mojito compiles them and aborts when the call runs.
+  - Upstream's `StringLiteral.format` parses its template at compile time
+    (`_FormatUtils.format_to_comptime[StaticString(Self())]`) and fails a
+    `comptime assert` with the parse error.
+  - Mojito's stand-in, `_FormatUtils.format_literal` in
+    `stdlib/std/string.mojo`, parses at run time and aborts with the same
+    message; a path the run never takes is accepted.
+  - Ledger: `format-literal-template-runtime`
+    (`conformance/fixtures/format_literal_template_runtime.mojo`).
+  - The stand-in and the checker's `LiteralFormat` adjustment go away when
+    `StringLiteral` declares upstream's `format`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on R213, R196.
+  - Model: Fable, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -4696,6 +4772,40 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R414 (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R426 The bundled `_FormatUtils` respells constructs upstream writes
+  differently**
+
+  Problem: the port of upstream's `collections/string/format.mojo` in
+  `stdlib/std/string.mojo` matches the pin's behaviour but not its text,
+  because Mojito rejects several of upstream's spellings.
+  - `_FieldVariantType = Variant[StringSlice, Int, NoneType, Bool]` is an
+    `Int` kind tag plus an `Int` value, the kinds module-level `comptime`
+    constants (R428, R436).
+  - `ord("{")` and friends are `UInt8(123)` runtime locals (R427), and the
+    `supported_conversion_flags` SIMD membership test is two comparisons
+    (R135).
+  - `Error("Index ", val, " not in *args")` concatenates (R429), and the
+    `comptime l_err`/`r_err` texts are inlined (R435).
+  - The nested `_format` closure is a method of `_FormatCurlyEntry` (R288),
+    and its `ref arg = args[i]` reads `args[i]` at each use (R438).
+  - `Int(field)` is `atol(String(field))` (R430), `fmt_bytes.unsafe_get(i)`
+    is `fmt_bytes[i]` (R431), and `_build_slice` is a `[byte = a : b]`
+    slice.
+  - `x and bytes[i] == …` and `manual and automatic` (Int truthiness) are
+    nested `if`s and `!= 0` tests (R97); `for i in range(n)` is a `while`
+    loop (R243); a `raised_kwarg_field = String(f)` store spells
+    `Optional[String](…)` (R437).
+  - `_PrecompiledEntriesRuntime` holds no `format` view and no origin
+    parameter: a struct field over a `def`'s auto-parameterized
+    `StringSpan` origin does not bind, so `format_precompiled` takes the
+    template beside the entries. The span-backed `_PrecompiledEntries`,
+    `format_to_comptime`, and `compile_entries_runtime_no_raises` are
+    omitted until R425.
+  - Found while landing R421 (2026-10-06).
+  - Depends on R427, R428, R429, R430, R431, R435, R436, R437, R438, R288,
+    R135, R97, R243.
+  - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 
@@ -5267,6 +5377,60 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on R74.
   - Model: Opus, Not Planned.
 
+- [ ] **R427 `ord` is undefined**
+
+  Problem: `ord("{")` returns `123` at the pin, while Mojito reports
+  "Undefined variable 'ord'".
+  - Upstream's `ord` lives in `builtin/string_literal.mojo` beside `chr`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R428 `NoneType` is not a type name**
+
+  Problem: `Variant[StringSlice, Int, NoneType, Bool]` builds at the pin,
+  while Mojito reports "Undefined variable 'NoneType'".
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R429 `Error` has no variadic `Writable` constructor**
+
+  Problem: `Error("Index ", 3, " not in *args")` builds the joined message
+  at the pin, while Mojito reports "'Error' expects 1 argument(s), got 3".
+  - Upstream declares `Error.__init__[*Ts: Writable](out self, *args: *Ts)`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R430 `Int` does not parse a `StringSpan`**
+
+  Problem: `Int(StringSpan("12"))` is `12` at the pin and raises on a
+  non-number, while Mojito reports "expected a numeric or Bool value, found
+  StringSpan".
+  - Workaround: `atol(String(view))`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R431 `Span` has no `unsafe_get`**
+
+  Problem: `bytes.unsafe_get(i)` over a `Span[UInt8]` reads the element at
+  the pin, while Mojito reports "type 'Span[UInt8]' has no method
+  'unsafe_get'".
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R432 `StaticString` is an unknown type**
+
+  Problem: a parameter typed `StaticString` compiles at the pin, while
+  Mojito reports "unknown type 'StaticString'".
+  - Upstream's `StaticString` is `StringSlice[StaticConstantOrigin]`.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
@@ -5438,6 +5602,18 @@ Track: `tooling`.
   - It stays last whatever else moves.
   - Depends on every other entry in this track.
   - Model: Fable, Planned.
+
+- [ ] **R439 The VM runs `format` about fifteen times slower than the Rust
+  formatter it replaced**
+
+  Problem: 10,000 `"{} and {}".format(i, "x")` calls take 35.6 s in a
+  release build, against 2.3 s before `format` became the bundled Mojo
+  port.
+  - Each call parses the template in interpreted Mojo; an
+    `Optional[Int]` round trip alone costs about 0.13 ms in the VM.
+  - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 ### Code Organization Follow-Ups *(behavior-preserving)*
 

@@ -635,6 +635,7 @@ assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
 assets/ok/static_call_origin_application.mojo	main	exe-differential	sanitized
 assets/ok/static_call_through_self.mojo	main	exe-differential	sanitized
 assets/ok/static_method_explicit_application.mojo	main	exe-differential	sanitized
+assets/ok/static_method_pack_spread.mojo	main	exe-differential	sanitized
 assets/ok/static_method_reads_struct_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/static_methods.mojo	main	exe-differential	sanitized
 assets/ok/std_traits_origin_imports.mojo	main	exe-differential	sanitized
@@ -643,6 +644,7 @@ assets/ok/string_capacity.mojo	main	exe-differential	sanitized
 assets/ok/string_default_construction.mojo	main	exe-differential	sanitized
 assets/ok/string_element_view_conversion.mojo	main	exe-differential	sanitized
 assets/ok/string_escapes.mojo	main	exe-differential	sanitized
+assets/ok/string_format_declared.mojo	main	exe-differential	sanitized
 assets/ok/string_grapheme_iteration.mojo	main	exe-differential	sanitized
 assets/ok/string_iadd_view_operand.mojo	main	exe-differential	sanitized
 assets/ok/string_literal_bytes.mojo	main	exe-differential	sanitized

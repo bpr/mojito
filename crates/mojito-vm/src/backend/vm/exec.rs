@@ -810,8 +810,7 @@ impl VmBackend {
                             slots.get(parameter - 1),
                             prog.sigs
                                 .get(&function)
-                                .and_then(|signature| signature.param_names.get(parameter - 1))
-                                .map(String::as_str),
+                                .and_then(|signature| signature.frame_param_name(parameter - 1)),
                             0,
                             arg_places,
                             &keyword_names,
@@ -861,8 +860,7 @@ impl VmBackend {
                                 slots.get(parameter),
                                 prog.sigs
                                     .get(&function)
-                                    .and_then(|signature| signature.param_names.get(parameter))
-                                    .map(String::as_str),
+                                    .and_then(|signature| signature.frame_param_name(parameter)),
                                 capture_count,
                                 arg_places,
                                 &keyword_names,

@@ -8,6 +8,33 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `String.format` and `StringSpan.format` are now upstream's declared
+  `format[*Ts: Writable](self, *args: *Ts) raises -> String`, over a bundled
+  port of upstream's `_FormatUtils` in `std/string.mojo`, where the checker
+  answered `format` intrinsically and the VM formatted the template in Rust.
+  A pack-keyed `def` spreading its collector into `format` is now served by
+  its template, as at the pin, where it was cloned per call. A String's
+  `format` now raises, so a call outside `raises` or `try` is rejected, and
+  a malformed template raises upstream's catchable errors instead of an
+  uncatchable run error. A string literal's `format` stays non-raising, as
+  upstream's `StringLiteral.format`, through the bundled stand-in
+  `_FormatUtils.format_literal`; a malformed literal template aborts at run
+  time where the pin rejects it at compile time (R425). Format specifiers
+  (`{:>5}`, `{:.2f}`) and mixed manual and automatic indexing, which
+  Mojito accepted and the pin rejects, now fail with the pin's messages. A
+  struct argument formatted through `{}` now writes through its own
+  `write_to`, where the VM fell back to the reflective default, and
+  `format` over built-in arguments now runs natively (a struct argument
+  does not yet: R433, R434). A format-heavy loop is about fifteen times
+  slower on the VM (10,000 calls: 2.3 s → 35.6 s, release build; R439).
+- A pack spread into a static method's collector now runs, after leading
+  arguments (`U.inner(w, n, *args)`) or alone (`U.show(*a)`), where the
+  checker rejected the first and the concrete VM bound the whole pack as
+  one argument. An explicit `[*Ts]` or `[Int, String]` now reaches a
+  generic `def`'s or static method's result type (`-> B[*Ts]`), and the
+  erased oracle forwards an explicit pack through a frame entered by a
+  spread. A keyword-only `mut` parameter after a `*args` collector now
+  writes back to the caller, where the VM rejected the call.
 - `Writer` is now upstream's library trait, bundled in
   `std/format/__init__.mojo` and exported by the prelude: a
   `write_string(mut self, string: StringSlice)` requirement and a default

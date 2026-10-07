@@ -228,6 +228,8 @@ pub fn derive_adjustment(
             interior: interior.clone(),
         }),
         SemanticAdjustment::InvertedReprWrite => Some(SemanticAdjustment::InvertedReprWrite),
+        // The stand-in a literal's `format` lowers to names no type.
+        SemanticAdjustment::LiteralFormat => Some(SemanticAdjustment::LiteralFormat),
         // A built-in value's copy construction names no type.
         SemanticAdjustment::BuiltinCopyConstruction => {
             Some(SemanticAdjustment::BuiltinCopyConstruction)

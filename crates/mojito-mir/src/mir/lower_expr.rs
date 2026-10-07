@@ -14,6 +14,8 @@ mod expr_access;
 mod expr_call;
 mod expr_method;
 
+use calls::spread_position;
+
 /// The checked inline uninit-storage method being lowered.
 enum UninitStorageOp {
     Write,

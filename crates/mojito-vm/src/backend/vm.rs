@@ -1044,6 +1044,29 @@ struct FnSig {
     param_decls: Vec<ParamDecl>,
 }
 
+impl FnSig {
+    /// The regular parameter at a frame slot, where the collectors
+    /// `bind_args` inserts occupy slots of their own;
+    /// `None` at a collector's slot.
+    fn frame_param_name(&self, frame_slot: usize) -> Option<&str> {
+        let mut index = frame_slot;
+        if let Some(keyword) = self.kw_variadic_index {
+            if index == keyword {
+                return None;
+            }
+            index -= usize::from(index > keyword);
+        }
+        if self.variadic.is_some() {
+            let positional = self.variadic_index.unwrap_or(self.param_names.len());
+            if index == positional {
+                return None;
+            }
+            index -= usize::from(index > positional);
+        }
+        self.param_names.get(index).map(String::as_str)
+    }
+}
+
 /// The name a solved type argument reifies to in an erased frame: the
 /// spelling [`MirInstr::ConstructTypeParam`] constructs from. A type with no
 /// runtime constructor by name (a symbolic one, a SIMD vector) reifies to
@@ -1971,14 +1994,15 @@ impl VmBackend {
         for ((slot, argument), declaration) in
             supplied.iter_mut().zip(instantiated).zip(declarations)
         {
+            // A forwarded pack (`f[*Ts]`, a spread) replaces the empty
+            // element list an unsupplied pack slot starts with.
+            let pack = matches!(declaration, ParamDecl::Type { variadic: true, .. });
             match argument {
-                TyArg::Ty(ty) if slot.is_none() => {
+                TyArg::Ty(ty) if slot.is_none() || pack => {
                     if let Some(value) = reified_type_value(prog, ty) {
                         *slot = Some(value);
-                    } else if let Ty::Param { binder, .. } = ty {
-                        // A binder of the caller's own forwards the type the
-                        // caller's frame reified for it.
-                        *slot = self
+                    } else if let Ty::Param { binder, .. } = ty
+                        && let Some(value) = self
                             .bound_type_parameter(
                                 prog,
                                 caller.function,
@@ -1986,7 +2010,11 @@ impl VmBackend {
                                 caller.variables,
                                 &binder.name,
                             )
-                            .or_else(|| caller.comptime_binding(&binder.name));
+                            .or_else(|| caller.comptime_binding(&binder.name))
+                    {
+                        // A binder of the caller's own forwards the type the
+                        // caller's frame reified for it.
+                        *slot = Some(value);
                     }
                 }
                 // A type pack's solution is its element list, which the
@@ -2302,42 +2330,6 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
             )
         })
         .collect()
-}
-
-fn apply_format_spec(value: &Value, rendered: &str, spec: &str) -> Result<String, RuntimeError> {
-    if spec.is_empty() {
-        return Ok(rendered.to_string());
-    }
-    if let Some(precision) = spec
-        .strip_prefix('.')
-        .and_then(|tail| tail.strip_suffix('f'))
-        .and_then(|digits| digits.parse::<usize>().ok())
-        && let Value::Float64(number) = value
-    {
-        return Ok(format!("{number:.precision$}"));
-    }
-    let (alignment, width_text) = match spec.chars().next() {
-        Some(character @ ('<' | '>' | '^')) => (character, &spec[1..]),
-        _ => ('>', spec),
-    };
-    let width = width_text.parse::<usize>().map_err(|_| {
-        RuntimeError::TypeError(format!("unsupported format specification '{spec}'"))
-    })?;
-    if rendered.len() >= width {
-        return Ok(rendered.to_string());
-    }
-    let padding = width - rendered.len();
-    let (left, right) = match alignment {
-        '<' => (0, padding),
-        '^' => (padding / 2, padding - padding / 2),
-        _ => (padding, 0),
-    };
-    Ok(format!(
-        "{}{}{}",
-        " ".repeat(left),
-        rendered,
-        " ".repeat(right)
-    ))
 }
 
 fn navigate_reference_mut<'a>(

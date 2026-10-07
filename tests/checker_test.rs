@@ -402,6 +402,18 @@ fn rejects_returning_an_array_storing_a_closure() {
     assert_eq!(e, TypeError::ClosureEscape);
 }
 
+#[test]
+fn string_format_is_a_declared_raising_method() {
+    // `String.format` and `StringSpan.format` are the bundled declarations,
+    // which raise; a literal's `format` is upstream's non-raising
+    // `StringLiteral.format`.
+    ok_std(
+        "def main():\n    print(\"{} x\".format(1))\n\ndef view() raises -> String:\n    var s: String = StringSpan(\"{}-{}\").format(1, 2)\n    return s\n",
+    );
+    let error = err_std("def main():\n    var s = String(\"{} x\")\n    print(s.format(1))\n");
+    assert!(matches!(error, TypeError::UnhandledRaise(_)), "{error:?}");
+}
+
 // --- Statically enforced Mojo rules ---
 
 #[test]

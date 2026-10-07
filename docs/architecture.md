@@ -629,11 +629,14 @@ carries no spread. A method call carries the same position
 erased oracle expand alike. The gate (`pack_spread_callees`) judges such a
 callee by name, before the check types its receiver: the name must be one
 some struct declares with a type-pack collector, the method's own
-(`*a: *Ts`) or the struct's (`*b: *Self.Ts`), and not one the checker
-answers without a declared callee (`INTRINSIC_COLLECTOR_METHODS`: `format`
-on a string), whose call MIR cannot name. `write` is not among them: it
-resolves to the bundled `Writer` trait's default or a conformer's own
-`write` (`stdlib/std/format/__init__.mojo`), as upstream's does. A clone that spreads its bound pack into a served
+(`*a: *Ts`) or the struct's (`*b: *Self.Ts`). Every such call names a
+declared callee: `write` resolves to the bundled `Writer` trait's default or
+a conformer's own `write` (`stdlib/std/format/__init__.mojo`), and `format`
+to `String.format`/`StringSpan.format` over the bundled `_FormatUtils`
+(`stdlib/std/string.mojo`), as upstream's do; a string literal's `format`
+is the static call of the stand-in `_FormatUtils.format_literal`
+(`SemanticAdjustment::LiteralFormat`) until the literal declares methods.
+A static call carries the spread too, after leading arguments or alone. A clone that spreads its bound pack into a served
 `def` spells the elements itself (`PackRewriter::served_callees`). A pack query
 read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
 `Ts.all_conforms_to[T]()` of a `def`'s or method's own pack — is upstream's

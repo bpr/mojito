@@ -4,6 +4,13 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// The argument position of a call's pack spread (`f(*a)`), the slot the
+/// elaborator expands into the collector's elements.
+pub(super) fn spread_position(args: &[Expr]) -> Option<usize> {
+    args.iter()
+        .position(|argument| matches!(argument.kind, ExprKind::Spread(_)))
+}
+
 impl Flatten<'_> {
     /// A `@staticmethod` reached through an instance (`value.static_method()`,
     /// `v.is_type_supported[Int]()`): the checker selected a target without a
@@ -51,7 +58,7 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver,
             instantiated_args,
-            spread: None,
+            spread: spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         Some(dest)

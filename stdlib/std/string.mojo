@@ -871,6 +871,9 @@ struct String(
     def write[T: Writable](mut self, value: T):
         value.write_to(self)
 
+    def format[*Ts: Writable](self, *args: *Ts) raises -> String:
+        return _FormatUtils.format(self, *args)
+
     # The result APIs (search, affix tests, replace, split, case, predicates,
     # justification, and the strip family) live on `StringSpan` in upstream's
     # shape; every String spelling forwards through a view of this buffer.
@@ -1833,6 +1836,9 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     def write_repr_to(self, mut writer: Some[Writer]):
         self.to_string().write_repr_to(writer)
 
+    def format[*Ts: Writable](self, *args: *Ts) raises -> String:
+        return _FormatUtils.format(self, *args)
+
     # A provenance-preserving sub-view over `[start, end)` of this buffer.
     def _sub_view(self, start: Int, end: Int) -> Self:
         var view = self
@@ -2321,6 +2327,288 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
                 return True
             pos += 1
         return False
+
+
+# ===-----------------------------------------------------------------------===#
+# Formatter
+# ===-----------------------------------------------------------------------===#
+# Upstream's `collections/string/format.mojo`, the body of `String.format` and
+# `StringSpan.format`: the template is parsed into `_FormatCurlyEntry`s at run
+# time, then the literal text between them is written and each replacement
+# field picks its argument from the pack.
+
+# The kinds of substitution field a `_FormatCurlyEntry` holds (upstream's
+# `_FieldVariantType` alternatives).
+comptime _MANUAL_INDEXING = 0
+comptime _AUTOMATIC_INDEXING = 1
+comptime _KWARGS_FIELD = 2
+comptime _ESCAPED_BRACE = 3
+
+
+@fieldwise_init
+struct _PrecompiledEntriesRuntime[*Ts: Writable](Movable):
+    var entries: List[_FormatCurlyEntry]
+    var size_hint: Int
+
+
+struct _FormatUtils:
+    @staticmethod
+    def format_precompiled[
+        *Ts: Writable,
+    ](
+        mut writer: Some[Writer],
+        format: StringSpan,
+        compiled: _PrecompiledEntriesRuntime[*Ts],
+        *args: *Ts,
+    ):
+        var offset = 0
+        var fmt_len = format.byte_length()
+        var auto_arg_index = 0
+        for e in compiled.entries:
+            writer.write(format[byte = offset : e.first_curly])
+            e._format_entry[*Ts](writer, *args, auto_idx=auto_arg_index)
+            offset = e.last_curly + 1
+        writer.write(format[byte = offset : fmt_len])
+
+    @staticmethod
+    def format[*Ts: Writable](format: StringSpan, *args: *Ts) raises -> String:
+        var buffer = String()
+        Self.format_to_runtime(buffer, format, *args)
+        return buffer^
+
+    # The body of `StringLiteral.format` until a literal declares methods:
+    # the pin parses a literal template at compile time and rejects a bad
+    # one there, where this aborts with the same message.
+    @staticmethod
+    def format_literal[*Ts: Writable](format: StringSpan, *args: *Ts) -> String:
+        var buffer = String()
+        try:
+            Self.format_to_runtime(buffer, format, *args)
+        except e:
+            _mojito_abort(String(e))
+        return buffer^
+
+    @staticmethod
+    def format_to_runtime[
+        *Ts: Writable,
+    ](mut writer: Some[Writer], format: StringSpan, *args: *Ts) raises:
+        var compiled = Self.compile_entries_runtime[*Ts](format)
+        Self.format_precompiled(writer, format, compiled, *args)
+
+    @staticmethod
+    def compile_entries_runtime[
+        *Ts: Writable
+    ](format: StringSpan) raises -> _PrecompiledEntriesRuntime[*Ts]:
+        var manual_indexing_count = 0
+        var automatic_indexing_count = 0
+        var raised_manual_index = Optional[Int](None)
+        var raised_automatic_index = Optional[Int](None)
+        var raised_kwarg_field = Optional[String](None)
+        comptime n_args = Ts.length
+        var r_curly = UInt8(125)
+        var l_curly = UInt8(123)
+
+        var entries = List[_FormatCurlyEntry]()
+        var start = Optional[Int](None)
+        var skip_next = False
+        var fmt_bytes = format.as_bytes()
+        var fmt_len = len(fmt_bytes)
+        var total_estimated_entry_byte_width = 0
+
+        var i = -1
+        while i + 1 < fmt_len:
+            i += 1
+            if skip_next:
+                skip_next = False
+                continue
+            if fmt_bytes[i] == l_curly:
+                if not start:
+                    start = i
+                    continue
+                if i - start.value() != 1:
+                    raise Error("there is a single curly { left unclosed or unescaped")
+                # python escapes double curlies
+                entries.append(_FormatCurlyEntry(start.value(), i, _ESCAPED_BRACE, 0))
+                start = None
+                continue
+            elif fmt_bytes[i] == r_curly:
+                if not start:
+                    # python escapes double curlies
+                    if (i + 1) < fmt_len:
+                        if fmt_bytes[i + 1] == r_curly:
+                            entries.append(_FormatCurlyEntry(i, i + 1, _ESCAPED_BRACE, 1))
+                            total_estimated_entry_byte_width += 2
+                            skip_next = True
+                            continue
+                    raise Error("there is a single curly } left unclosed or unescaped")
+
+                var start_value = start.value()
+                var current_entry = _FormatCurlyEntry(start_value, i, _AUTOMATIC_INDEXING, 0)
+
+                if i - start_value != 1:
+                    if current_entry._handle_field_and_break(
+                        format,
+                        n_args,
+                        i,
+                        start_value,
+                        automatic_indexing_count,
+                        raised_automatic_index,
+                        manual_indexing_count,
+                        raised_manual_index,
+                        raised_kwarg_field,
+                        total_estimated_entry_byte_width,
+                    ):
+                        break
+                else:  # automatic indexing
+                    if automatic_indexing_count >= n_args:
+                        raised_automatic_index = automatic_indexing_count
+                        break
+                    automatic_indexing_count += 1
+                    total_estimated_entry_byte_width += 8  # guessing
+                entries.append(current_entry)
+                start = None
+
+        if raised_automatic_index:
+            raise Error("Automatic indexing require more args in *args")
+        elif raised_kwarg_field:
+            var val = raised_kwarg_field.value()
+            raise Error("Index " + val + " not in kwargs")
+        elif manual_indexing_count != 0 and automatic_indexing_count != 0:
+            raise Error("Cannot both use manual and automatic indexing")
+        elif raised_manual_index:
+            var val = raised_manual_index.value()
+            raise Error("Index " + String(val) + " not in *args")
+        elif start:
+            raise Error("there is a single curly { left unclosed or unescaped")
+        return _PrecompiledEntriesRuntime[*Ts](entries^, total_estimated_entry_byte_width)
+
+
+# The struct that handles string formatting by curly braces entries.
+struct _FormatCurlyEntry(ImplicitlyCopyable):
+    # The index of an opening brace around a substitution field.
+    var first_curly: Int
+    # The index of a closing brace around a substitution field.
+    var last_curly: Int
+    # The type of conversion for the entry: {ord("s"), ord("r")}, or 0.
+    var conversion_flag: UInt8
+    # The substitution field: its kind, and the manual index, or for an
+    # escaped curly 0 for `{` and 1 for `}`.
+    var field_kind: Int
+    var field_value: Int
+
+    def __init__(
+        out self,
+        first_curly: Int,
+        last_curly: Int,
+        field_kind: Int,
+        field_value: Int,
+        conversion_flag: UInt8 = 0,
+    ):
+        self.first_curly = first_curly
+        self.last_curly = last_curly
+        self.field_kind = field_kind
+        self.field_value = field_value
+        self.conversion_flag = conversion_flag
+
+    def is_escaped_brace(self) -> Bool:
+        return self.field_kind == _ESCAPED_BRACE
+
+    def is_kwargs_field(self) -> Bool:
+        return self.field_kind == _KWARGS_FIELD
+
+    def is_automatic_indexing(self) -> Bool:
+        return self.field_kind == _AUTOMATIC_INDEXING
+
+    def is_manual_indexing(self) -> Bool:
+        return self.field_kind == _MANUAL_INDEXING
+
+    def _handle_field_and_break(
+        mut self,
+        fmt_src: StringSpan,
+        len_pos_args: Int,
+        i: Int,
+        start_value: Int,
+        mut automatic_indexing_count: Int,
+        mut raised_automatic_index: Optional[Int],
+        mut manual_indexing_count: Int,
+        mut raised_manual_index: Optional[Int],
+        mut raised_kwarg_field: Optional[String],
+        mut total_estimated_entry_byte_width: Int,
+    ) raises -> Bool:
+        var field = fmt_src[byte = start_value + 1 : i]
+        var field_bytes = field.as_bytes()
+        var field_len = i - (start_value + 1)
+        var exclamation_index = -1
+        var idx = 0
+        while idx < field_len:
+            if field_bytes[idx] == UInt8(33):
+                exclamation_index = idx
+                break
+            idx += 1
+        var new_idx = exclamation_index + 1
+        if exclamation_index != -1:
+            if new_idx == field_len:
+                raise Error("Empty conversion flag.")
+            var conversion_flag = field_bytes[new_idx]
+            var unrecognized = field_len - new_idx > 1
+            if conversion_flag != UInt8(115):
+                if conversion_flag != UInt8(114):
+                    unrecognized = True
+            if unrecognized:
+                var f = field[byte = new_idx : field_len]
+                raise Error("Conversion flag \"" + String(f) + "\" not recognized.")
+            self.conversion_flag = conversion_flag
+            field = field[byte = 0 : exclamation_index]
+        else:
+            new_idx += 1
+
+        if field.byte_length() == 0:
+            # an empty field, so it's automatic indexing
+            if automatic_indexing_count >= len_pos_args:
+                raised_automatic_index = automatic_indexing_count
+                return True
+            automatic_indexing_count += 1
+        else:
+            try:
+                # field is a number for manual indexing:
+                var number = atol(String(field))
+                self.field_kind = _MANUAL_INDEXING
+                self.field_value = number
+                if number >= len_pos_args or number < 0:
+                    raised_manual_index = number
+                    return True
+                manual_indexing_count += 1
+            except e:
+                # field is a keyword for **kwargs:
+                self.field_kind = _KWARGS_FIELD
+                raised_kwarg_field = Optional[String](String(field))
+                return True
+        return False
+
+    def _format_entry[
+        *Ts: Writable,
+    ](self, mut writer: Some[Writer], *args: *Ts, mut auto_idx: Int):
+        if self.is_escaped_brace():
+            writer.write("}" if self.field_value == 1 else "{")
+        elif self.is_manual_indexing():
+            self._format(self.field_value, writer, *args)
+        elif self.is_automatic_indexing():
+            self._format(auto_idx, writer, *args)
+            auto_idx += 1
+
+    # Upstream's nested `_format` closure over `self`, `args`, and `writer`.
+    def _format[*Ts: Writable](self, idx: Int, mut writer: Some[Writer], *args: *Ts):
+        var r_value = UInt8(114)
+        var s_value = UInt8(115)
+        comptime for i in range(Ts.length):
+            if i == idx:
+                var flag = self.conversion_flag
+                if flag == 0:
+                    args[i].write_to(writer)
+                elif flag == s_value:
+                    args[i].write_to(writer)
+                elif flag == r_value:
+                    args[i].write_repr_to(writer)
 
 
 # The grapheme-cluster iterator behind ordinary String/StringSpan

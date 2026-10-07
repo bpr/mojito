@@ -3132,7 +3132,6 @@ mod initializer_list;
 mod indexing;
 
 mod method_calls;
-pub use method_calls::INTRINSIC_COLLECTOR_METHODS;
 
 mod call_inference;
 mod ffi_calls;
