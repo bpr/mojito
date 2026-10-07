@@ -215,6 +215,11 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::TypeName { ty, .. } => {
             errors.push(format!("{head} names the type `{ty}` in elaborated MIR"));
         }
+        MirInstr::ConstructType { ty, .. } => {
+            errors.push(format!(
+                "{head} constructs the type `{ty}` in elaborated MIR"
+            ));
+        }
         MirInstr::SizeOf { ty, .. } => {
             errors.push(format!(
                 "{head} keeps the layout query of `{ty}` in elaborated MIR"

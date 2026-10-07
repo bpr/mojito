@@ -186,13 +186,10 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.push(dest);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
-            out.extend(
-                element
-                    .iter_mut()
-                    .filter_map(|argument| argument.value.as_mut()),
-            );
+            param_args(element.as_mut_slice(), &mut out);
         }
         MirInstr::Const { dest, .. }
+        | MirInstr::ConstructType { dest, .. }
         | MirInstr::SizeOf { dest, .. }
         | MirInstr::TypeName { dest, .. }
         | MirInstr::HasNext { dest, .. }
@@ -959,6 +956,15 @@ pub enum MirInstr {
         /// `value` the register the erased VM reads, `expr` the expression
         /// the elaborator evaluates.
         element: Option<MirParamArg>,
+    },
+    /// Construct the type a compile-time parameter expression denotes,
+    /// through the `Defaultable` initializer the checker proved of it: `FT()`
+    /// and `types[i]()` over `reflect[T].field_types()`. Only a template
+    /// holds one: the elaborator writes the closed type's default
+    /// construction.
+    ConstructType {
+        dest: Reg,
+        ty: Ty,
     },
     /// The byte size of one checker-resolved type: a layout query only a
     /// generator carries. The elaborator answers it under the compilation's

@@ -349,6 +349,7 @@ pub fn derive_adjustment(
         SemanticAdjustment::ResolveCallable(..)
         | SemanticAdjustment::ConstructTypeParam { .. }
         | SemanticAdjustment::ConstructPackElement { .. }
+        | SemanticAdjustment::ConstructType { .. }
         | SemanticAdjustment::ReifyTypeArgument { .. }
         | SemanticAdjustment::SelectedCall(..)
         | SemanticAdjustment::AugmentedSubscript(..)

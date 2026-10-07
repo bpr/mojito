@@ -636,8 +636,12 @@ branch for the class is deleted, and so is its certificate class.
   it (2026-10-06). An argument that applies a function to a binding, or
   compares one, is the application of a function the check names and MIR
   lifts (2026-10-06), and an alias of a binding is another name of it
-  (2026-10-06). An element that applies a function and a loop constructing
-  a reflected field type still key a clone (R363, R364). The second landed 2026-10-03 for a module-level
+  (2026-10-06). A loop constructing a reflected field type (`types[i]()`,
+  `FT()`, `x: types[i]`) is served too: the check records the construction
+  of the type expression, MIR carries it as `ConstructType`, and the
+  elaborator writes the closed type's default per unrolled copy
+  (2026-10-07). An element that applies a function still keys a clone
+  (R363). The second landed 2026-10-03 for a module-level
   `def` whose body neither spreads the pack nor binds an element's type
   under the loop, its collector read or owned: the pack binder, the
   `VariadicPack` collector, the dependent element `Ts[i]`, and the pack's

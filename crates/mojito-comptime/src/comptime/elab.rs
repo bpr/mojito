@@ -1044,7 +1044,6 @@ impl Elab<'_> {
             .borrow_mut()
             .push(TemplateLoopNames {
                 value_packs: def_value_pack_names(type_params, ""),
-                reflected: ReflectedLists::of(body),
                 displays: served_display_bindings(&binders, &self.scalar_reads, body),
             });
         self.template_binders.borrow_mut().push(binders);
@@ -1249,7 +1248,6 @@ impl Elab<'_> {
         };
         let TemplateLoopNames {
             value_packs,
-            reflected,
             displays,
         } = self
             .template_loop_names
@@ -1260,7 +1258,6 @@ impl Elab<'_> {
         let names = LoopNames {
             packs: &binders,
             value_packs: &value_packs,
-            reflected: &reflected,
             displays: &displays,
             collection: &|name| {
                 !binders.contains(name) && env.get(name).is_some_and(CtValue::is_scalar_collection)

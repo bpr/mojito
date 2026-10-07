@@ -1255,6 +1255,78 @@ fn defaultable_pack_instance_keeps_no_reification_slot_and_builds_its_elements()
 }
 
 #[test]
+fn reflected_field_type_construction_closes_per_unrolled_copy() {
+    let source = "struct Zero(Copyable, Defaultable, Writable):\n\
+                  \x20   var v: Int\n\
+                  \x20   def __init__(out self):\n\
+                  \x20       self.v = 0\n\
+                  \x20   def write_to(self, mut writer: Some[Writer]):\n\
+                  \x20       writer.write(\"Zero\")\n\
+                  \n\
+                  @fieldwise_init\n\
+                  struct Holder(Copyable):\n\
+                  \x20   var first: Zero\n\
+                  \x20   var second: Float64\n\
+                  \n\
+                  def describe[T: AnyType]():\n\
+                  \x20   comptime types = reflect[T].field_types()\n\
+                  \x20   comptime for i in range(reflect[T].field_count()):\n\
+                  \x20       comptime if conforms_to(types[i], Defaultable & Deinitable & Writable):\n\
+                  \x20           print(types[i]())\n\
+                  \n\
+                  def main():\n\
+                  \x20   describe[Holder]()\n";
+    let compiled = mojito::Compiler::default()
+        .with_snippet_module_scope()
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile reflection program");
+    let mir = compiled.drop_elaborated_mir();
+    let (_, template) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "describe")
+        .expect("the `describe` template");
+    assert!(
+        instructions(&template.blocks)
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::ConstructType { .. })),
+        "the template constructs the reflected field type"
+    );
+    let specialized =
+        specialize(mir, &["main".to_string()], host_target().as_ref()).expect("specialize");
+    let (_, instance) = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("describe$mono$"))
+        .expect("an instance of `describe`");
+    let body = instructions(&instance.blocks);
+    assert!(
+        !body
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::ConstructType { .. })),
+        "each copy's construction is written as its field type's default"
+    );
+    assert!(
+        body.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Call { func, .. } if func.0 == "Zero"
+        )),
+        "the `Zero` field constructs through its nullary initializer"
+    );
+    assert!(
+        body.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Const {
+                k: Const::Float(value),
+                ..
+            } if *value == 0.0
+        )),
+        "the `Float64` field constructs as `0.0`"
+    );
+}
+
+#[test]
 fn method_call_spread_expands_into_the_bound_pack_elements() {
     let pack = Ty::Tuple(vec![Ty::Int, Ty::Bool]);
     let collector = MirPlace::root(0, Some(pack.clone()));

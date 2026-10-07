@@ -368,6 +368,8 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // R323, the erased oracle: an erased frame carries no type argument to
     // answer a reflection query over a type parameter from.
     "reflection_comptime_for_served",
+    "reflection_field_type_construction",
+    "reflection_symbolic_fields",
     "reflection_template_served",
     // R366, the erased oracle: an erased frame runs no thunk for a
     // `comptime for` display over a binder.

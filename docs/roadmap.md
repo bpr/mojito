@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R443**.
+Next free ID: **R446**.
 
 ## Ordered Work
 
@@ -141,25 +141,6 @@ correctness fix to existing behavior is allowed.
   - Found while landing R363 (2026-10-06).
   - Depends on R367.
   - Model: Opus, Not Planned.
-
-- [ ] **R364 (P3) MIR cannot construct a reflected field type, so a loop
-  that spells one keys a clone**
-
-  Problem: `comptime FT = types[i]` then `FT()`, or `types[i]()`, over
-  `comptime types = reflect[T].field_types()` in a `comptime for` keeps the
-  generic `def` on the cloner (`assets/ok/reflection_symbolic_fields.mojo`).
-  - `MirInstr::ConstructTypeParam` names a type parameter or a pack
-    element, and has no form for a type a reflection query selects.
-  - Kept in a template, the construction lowers as a call of the alias and
-    the VM stops with "does not support the built-in or callee 'FT'".
-  - The cloner excludes the loop by syntax
-    (`ReflectedLists::type_spelled_in`, `comptime.rs`), an annotation `x:
-    FT` included.
-  - A `comptime if` over the field type (`types[i] == Int`,
-    `conforms_to(types[i], Writable)`) is already served.
-  - Found while landing R246 (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R365 (P3) A reflected list materialized whole over a type parameter
   has no template form**
@@ -2500,6 +2481,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R443 An initializer list at a reflected field type is rejected**
+
+  Problem: `var x: types[i] = {}` over `comptime types =
+  reflect[T].field_types()`, under a `conforms_to` arm proving
+  `Defaultable`, fails with "cannot emit initializer list for
+  'reflect[T].field_types()[i]': the type has no construction to spell",
+  where the pin prints each field's default.
+  - `Checker::initializer_list_construction`
+    (`checker/initializer_list.rs`) rewrites a brace into a spelled callee,
+    and a reflected element has no name to spell.
+  - The lever: have the brace record `SemanticAdjustment::ConstructType`,
+    which MIR already lowers to `MirInstr::ConstructType`, instead of
+    spelling a call.
+  - `types[i]()` and `x: types[i] = types[i]()` run
+    (`assets/ok/reflection_field_type_construction.mojo`).
+  - Found while landing R364 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R444 A reflected field type over a closed subject in a plain `def`
+  cannot be constructed**
+
+  Problem: `comptime types = reflect[Holder].field_types()` in `main`, then
+  `types[i]()` or `FT()` under `comptime if conforms_to(types[i],
+  Defaultable & ...)` inside `comptime for i in
+  range(reflect[Holder].field_count())`, fails with "type
+  'type_sequence[Int, Float64][i]' does not conform to trait
+  'Defaultable'", where the pin prints each field's default.
+  - Source validation types the element of the closed list as a selection
+    (`ParamKind::Select`), and `Checker::opaque_element`
+    (`checker/comptime_validation.rs`) gives the arm's proof only to a pack
+    element or a reflection over a parameter.
+  - Past that, the AST unroller leaves `types[0]()` naming a dropped
+    `comptime` binding ("Undefined variable 'types'"), the call-position
+    loss R319 describes for an alias.
+  - The same loop in a generic `def` runs, served by its template.
+  - Found while landing R364 (2026-10-07).
+  - Depends on R319, which loses a local alias at a call in an unrolled
+    body.
+  - Model: Opus, Not Planned.
+
 - [ ] **R368 A module `comptime` constant declared after the `def` that
   iterates it is undefined**
 
@@ -4748,6 +4770,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R421 (2026-10-06).
   - Depends on R427, R428, R429, R430, R431, R435, R436, R437, R438, R288,
     R135, R97, R243.
+  - Model: Opus, Not Planned.
+
+- [ ] **R445 `ConstructTypeParam` is a special case of `ConstructType`**
+
+  Problem: `T()` and `Ts[i]()` are carried by `MirInstr::ConstructTypeParam`
+  (a binder, plus a pack index), while `types[i]()` is carried by
+  `MirInstr::ConstructType` over the type expression, where the pin has one
+  operation: the `Defaultable` initializer of a type-valued parameter
+  expression.
+  - Folding the nullary forms gives `T()` the operand `Ty::Param` and
+    `Ts[i]()` the dependent selection, closed by the elaborator's one
+    `ConstructType` arm (`mono::substitute::default_construct_parameters`).
+  - The erased VM constructs those two forms from type reification by slot
+    name, so the fold waits for the erased oracle's removal.
+  - `T(copy=x)` keeps its own form, or becomes a selected `Copyable`
+    initializer call.
+  - Found while landing R364 (2026-10-07).
+  - Depends on R10, which deletes the erased oracle's reification.
   - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*

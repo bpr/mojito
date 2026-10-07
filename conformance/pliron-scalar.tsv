@@ -568,6 +568,7 @@ assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_name_materialize.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_field_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_runtime_query.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_template_served.mojo	-	ineligible	no-scalar-entry-shape

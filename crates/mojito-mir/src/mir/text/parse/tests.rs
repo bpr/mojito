@@ -1839,6 +1839,43 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
     assert!(recorded(&older).is_none());
 }
 
+/// Schema 1.33 carries the construction of a type a parameter expression
+/// denotes (`types[i]()` over `reflect[T].field_types()`).
+#[test]
+fn type_expression_constructions_round_trip() {
+    use mojito_types::param_expr::ReflectQuery;
+    let context = ParamContext::detached();
+    let types = context.reflect_query(
+        &context.type_shape(Ty::Param {
+            binder: test_binder("T"),
+            bounds: vec!["AnyType".into()],
+            callable_bound: None,
+        }),
+        ReflectQuery::FieldTypes,
+    );
+    let i = int_parameter("f", 1, "i");
+    let element = context.list_get(&types, &i).expect("element builds");
+    let ty = Ty::Dependent(DependentType::Parameter(element));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone()],
+            vec![MirInstr::ConstructType {
+                dest: Reg(0),
+                ty: ty.clone(),
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("type.construct_expr { dest: %r0, type: "));
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert!(matches!(
+        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        MirInstr::ConstructType { dest: Reg(0), ty: read } if *read == ty
+    ));
+}
+
 /// Schema 1.22 carries a method call's own solved compile-time arguments;
 /// an older artifact carries none.
 #[test]

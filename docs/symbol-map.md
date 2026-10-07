@@ -393,7 +393,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer_pack_element_construction` types an element's `Ts[i]()` and, over
   a symbolic pack, records `SemanticAdjustment::ConstructPackElement`, which
   `lower_expr/expr_call.rs:pack_element_construction` lowers as
-  `MirInstr::ConstructTypeParam` with its `element` index and
+  `MirInstr::ConstructTypeParam` with its `element` index (a reflected
+  field type's `types[i]()` or `FT()`, typed by
+  `checker/reflection.rs:construct_dependent`, records
+  `SemanticAdjustment::ConstructType` over the type expression instead,
+  which `Flatten::lower_call` lowers as `MirInstr::ConstructType`, a
+  template-only form the concrete verifier rejects) and
   `native::mono`'s `default_construct_parameters` (`mono/substitute.rs`,
   through `constructed_type` and `default_construction`, beside the
   unroller's per-copy call) writes as the element's default construction (each
@@ -1373,7 +1378,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - The cloner keys a top-level `def` on a `comptime for` its template does
   not serve (`comptime_for_is_template_served`, `comptime.rs`, over the
   `LoopNames` of the `def`: its packs, its value packs
-  (`def_value_pack_names`), its reflected lists (`ReflectedLists`), its
+  (`def_value_pack_names`), its
   local bindings of a display over the binders
   (`served_display_bindings` over `mojito_ast::visit::display_bindings`,
   none when `display_in_unserved_argument` finds a type or parameter

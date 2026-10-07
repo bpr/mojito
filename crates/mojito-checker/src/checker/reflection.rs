@@ -79,7 +79,7 @@ impl Checker {
                 && let Some((ReflectQuery::FieldTypes, list)) = self.reflection_list(bound)? =>
             {
                 let element = self.reflection_list_element(&list, index)?;
-                self.construct_dependent(element).map(Some)
+                self.construct_dependent(expr, element).map(Some)
             }
             // `FT()`: a construction of a field type bound as a local alias.
             ExprKind::Call {
@@ -92,7 +92,7 @@ impl Checker {
                 && kwargs.is_empty()
                 && let Some(alias @ Ty::Dependent(_)) = self.lookup_tparam(name) =>
             {
-                self.construct_dependent(alias).map(Some)
+                self.construct_dependent(expr, alias).map(Some)
             }
             _ => Ok(None),
         }
@@ -521,8 +521,9 @@ impl Checker {
     }
 
     /// `FT()` over a reflected field type: the type must be proved
-    /// `Defaultable`, as the pin requires.
-    fn construct_dependent(&self, ty: Ty) -> Result<Ty, TypeError> {
+    /// `Defaultable`, as the pin requires. The construction is recorded for
+    /// MIR, which constructs the type the expression denotes.
+    fn construct_dependent(&self, expr: &Expr, ty: Ty) -> Result<Ty, TypeError> {
         let view = self.opaque_element(&ty).unwrap_or_else(|| ty.clone());
         if !self.conforms_to(&view, "Defaultable") {
             return Err(TypeError::BadCall {
@@ -533,6 +534,10 @@ impl Checker {
                 ),
             });
         }
+        self.operation_adjustments.borrow_mut().insert(
+            expr.source_span(),
+            mojito_checked::checked::SemanticAdjustment::ConstructType { ty: ty.clone() },
+        );
         Ok(ty)
     }
 }

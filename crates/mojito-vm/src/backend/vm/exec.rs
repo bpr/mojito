@@ -300,6 +300,13 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     Value::Str(mojito_symbol::symbol::unqualified_instance_name(ty));
             }
+            // Only the erased oracle reaches the construction of a type an
+            // expression denotes, which its values cannot select.
+            MirInstr::ConstructType { ty, .. } => {
+                return Err(RuntimeError::Unsupported(format!(
+                    "the erased oracle cannot construct the type `{ty}` a parameter expression denotes"
+                )));
+            }
             // Only the erased oracle reaches a layout query: the elaborator
             // answers every one in concrete MIR. The oracle runs on the
             // host, so the host is its target.

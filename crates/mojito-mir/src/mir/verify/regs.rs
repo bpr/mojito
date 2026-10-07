@@ -15,6 +15,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::SizeOf { dest, .. }
         | MirInstr::TypeName { dest, .. }
         | MirInstr::ConstructTypeParam { dest, .. }
+        | MirInstr::ConstructType { dest, .. }
         | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::UseVar { dest, .. }
         | MirInstr::MovePlace { dest, .. }
@@ -340,6 +341,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::TypeName { .. }
+        | MirInstr::ConstructType { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::DropVar { .. }

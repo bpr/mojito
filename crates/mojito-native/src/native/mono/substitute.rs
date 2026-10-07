@@ -6,11 +6,12 @@ use super::*;
 use mojito_mir::mir::Proj;
 use mojito_types::types::VariantIndex;
 
-/// Rewrite each nullary `T()` or `Ts[i]()` whose constructed type these
-/// bindings decide into that type's default construction
-/// ([`default_construction`]). A construction they leave open — an element
-/// whose `comptime for` index is not yet unrolled — stays for the copy that
-/// binds it.
+/// Rewrite each nullary `T()`, `Ts[i]()`, or construction of a type
+/// expression (`types[i]()` over a reflected field-type list) whose
+/// constructed type these bindings decide into that type's default
+/// construction ([`default_construction`]). A construction they leave open
+/// — an element whose `comptime for` index is not yet unrolled — stays for
+/// the copy that binds it.
 pub(super) fn default_construct_parameters(
     blocks: &mut [MirBlock],
     n_regs: &mut u32,
@@ -30,6 +31,10 @@ pub(super) fn default_construct_parameters(
                 } if kwargs.is_empty() => {
                     constructed_type(param, element.as_ref(), bindings)?.map(|ty| (*dest, ty))
                 }
+                MirInstr::ConstructType { dest, ty } => substitute_ty(ty, bindings)
+                    .ok()
+                    .filter(|ty| !mojito_types::types::is_symbolic(ty))
+                    .map(|ty| (*dest, ty)),
                 MirInstr::Try {
                     body,
                     handler,
@@ -524,6 +529,15 @@ pub(super) fn substitute_instruction(
                         ),
                     });
                 }
+            }
+        }
+        // Every construction the bindings decide was written as its type's
+        // default construction (`default_construct_parameters`). One left
+        // sits in a compile-time branch not yet selected, or its type stays
+        // symbolic for the verifier's concrete mode to name.
+        MirInstr::ConstructType { ty, .. } => {
+            if let Ok(closed) = substitute_ty(ty, bindings) {
+                *ty = closed;
             }
         }
         // Every nullary construction the bindings decide was written as its

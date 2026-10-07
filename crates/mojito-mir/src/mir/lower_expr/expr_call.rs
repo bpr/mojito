@@ -59,6 +59,18 @@ impl Flatten<'_> {
         if let Some(dest) = self.pack_element_construction(e, param_args) {
             return dest;
         }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructType { ty }) =
+            self.checked_adjustments(e).into_iter().find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ConstructType { .. }
+                )
+            })
+        {
+            let dest = self.fresh_typed(span(e), None, ty.clone());
+            self.emit(MirInstr::ConstructType { dest, ty });
+            return dest;
+        }
         if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) =
             self.checked_adjustments(e).into_iter().find(|adjustment| {
                 matches!(

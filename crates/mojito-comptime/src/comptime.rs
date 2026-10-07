@@ -1239,8 +1239,6 @@ pub(super) struct LoopNames<'a> {
     pub(super) packs: &'a HashSet<String>,
     /// The `def`'s value packs (`*vals: Int`), bare.
     pub(super) value_packs: &'a HashSet<String>,
-    /// The body's reflected lists ([`ReflectedLists`]).
-    pub(super) reflected: &'a ReflectedLists,
     /// The body's local bindings of a display over the binders
     /// ([`served_display_bindings`]).
     pub(super) displays: &'a HashSet<String>,
@@ -1253,13 +1251,12 @@ pub(super) struct LoopNames<'a> {
 }
 
 /// The names a generic `def` body open as a template gives the loops it
-/// keeps ([`LoopNames`]): its value packs (`*vals: Int`, bare), its reflected
-/// lists, and its local bindings of a display over the binders
+/// keeps ([`LoopNames`]): its value packs (`*vals: Int`, bare) and its local
+/// bindings of a display over the binders
 /// ([`served_display_bindings`]).
 #[derive(Default, Clone)]
 pub(super) struct TemplateLoopNames {
     pub(super) value_packs: HashSet<String>,
-    pub(super) reflected: ReflectedLists,
     pub(super) displays: HashSet<String>,
 }
 
@@ -1361,50 +1358,6 @@ impl ReflectedLists {
         mojito_ast::visit::walk_block(&mut finder, body);
         finder.found
     }
-
-    /// Whether a loop body spells a reflected field type as a callee or an
-    /// annotation — `types[i]()`, or `FT()` and `x: FT` over an alias
-    /// `comptime FT = types[i]`. MIR has no form constructing a type a
-    /// reflection query selects, so such a loop is a clone's.
-    fn type_spelled_in(&self, body: &[Stmt]) -> bool {
-        struct Finder<'a> {
-            types: &'a HashSet<String>,
-            aliases: HashSet<String>,
-            found: bool,
-        }
-
-        impl mojito_ast::visit::Visitor for Finder<'_> {
-            fn visit_stmt(&mut self, statement: &Stmt) {
-                if let StmtKind::Comptime { name, value, .. } = &statement.kind
-                    && let ExprKind::Index { object, .. } = &value.kind
-                    && matches!(&object.kind, ExprKind::Identifier(list) if self.types.contains(list))
-                {
-                    self.aliases.insert(name.clone());
-                }
-            }
-
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.found |= matches!(&expr.kind, ExprKind::Call { name, .. }
-                    if self.types.contains(name) || self.aliases.contains(name));
-            }
-
-            fn visit_type(&mut self, ty: &Type) {
-                self.found |= matches!(ty, Type::Named(name, _)
-                    if self.types.contains(name) || self.aliases.contains(name));
-            }
-        }
-
-        if self.types.is_empty() {
-            return false;
-        }
-        let mut finder = Finder {
-            types: &self.types,
-            aliases: HashSet::new(),
-            found: false,
-        };
-        mojito_ast::visit::walk_block(&mut finder, body);
-        finder.found
-    }
 }
 
 impl mojito_ast::visit::Visitor for ReflectedLists {
@@ -1443,9 +1396,7 @@ impl mojito_ast::visit::Visitor for ReflectedLists {
 /// element ([`pack_element_alias`]), a literal, a parameter expression over
 /// the binders and the loop variable, an element of a named compile-time
 /// list at one, or a display a loop iterates ([`LoopNames::displays`]),
-/// which the check binds with them symbolic; and the body
-/// spells no reflected field type as a callee or an annotation
-/// ([`ReflectedLists::type_spelled_in`]). Such a loop is checked once with
+/// which the check binds with them symbolic. Such a loop is checked once with
 /// the variable symbolic, carried by MIR as a loop header, and unrolled
 /// below MIR; any other is unrolled in the AST, on a clone per
 /// instantiation.
@@ -1480,7 +1431,6 @@ pub(super) fn comptime_for_is_template_served(
         _ => false,
     };
     sequence
-        && !names.reflected.type_spelled_in(body)
         && !block_has_statement(body, &|kind| match kind {
             StmtKind::Comptime {
                 name,
@@ -1903,16 +1853,14 @@ fn def_body_keys_specialization(
     let value_packs = def_value_pack_names(type_params, owner);
     let bound = def_bound_names(type_params, params, body);
     let displays = served_display_bindings(&packs, scalars, body);
-    let reflected = ReflectedLists::of(body);
     let names = LoopNames {
         packs: &packs,
         value_packs: &value_packs,
-        reflected: &reflected,
         displays: &displays,
         collection: &|name| !bound.contains(name),
         scalars,
     };
-    block_has_unkept_comptime_for(body, &names) || reflected.materialized_in(body)
+    block_has_unkept_comptime_for(body, &names) || ReflectedLists::of(body).materialized_in(body)
 }
 
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,
@@ -4672,12 +4620,13 @@ mod def_request_tests {
         // A nested `def` or lambda is a generator over the pack's binders.
         assert!(served.contains("nested"), "{served:?}");
         assert!(served.contains("lambda_"), "{served:?}");
+        // A reflected field type is constructed by its expression.
+        assert!(served.contains("field_type"), "{served:?}");
         // Each shape below still keys a type-pack clone; its owner flips the
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.
         assert!(!served.contains("tuples"), "R405: {served:?}");
         assert!(!served.contains("raising"), "R401: {served:?}");
-        assert!(!served.contains("field_type"), "R364: {served:?}");
         assert!(!served.contains("names"), "R365: {served:?}");
     }
 

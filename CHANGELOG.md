@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` whose `comptime for` constructs a reflected field type —
+  `types[i]()` or `FT()` over `comptime FT = types[i]`, with `comptime types
+  = reflect[T].field_types()` — or annotates a local with it (`var y:
+  types[i]`) is now served by its template, as at the pin, where it was
+  cloned per instance. On the clone, `types[i]()` stopped on "Undefined
+  variable 'types'" and `x: types[i]` on "unknown type 'types'"; both now
+  run. MIR text schema 1.33 adds `type.construct_expr`, the construction of
+  the type a parameter expression denotes, which the elaborator closes per
+  unrolled copy.
 - A nested `def` or lambda is now a generator over its enclosing
   declarations' compile-time parameters, as at the pin: a generic `def` or
   a generic struct's method holding one is served by its template, where it

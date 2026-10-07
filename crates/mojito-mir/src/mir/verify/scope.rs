@@ -87,6 +87,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             ..
         } => types.push(("instruction", ty)),
         MirInstr::TypeName { ty, .. } => types.push(("type name", ty)),
+        MirInstr::ConstructType { ty, .. } => types.push(("constructed type", ty)),
         MirInstr::Call {
             raises,
             receiver,

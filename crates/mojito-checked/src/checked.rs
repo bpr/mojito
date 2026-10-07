@@ -552,6 +552,13 @@ pub enum SemanticAdjustment {
     ConstructPackElement {
         pack: mojito_types::param_expr::ParamRef,
     },
+    /// `FT()` / `types[i]()` over `comptime types = reflect[T].field_types()`:
+    /// construct the type the compile-time expression `ty` denotes, through
+    /// the `Defaultable` initializer a `conforms_to` arm proved of it. The
+    /// elaborator writes the closed type's default construction.
+    ConstructType {
+        ty: Ty,
+    },
     /// `Int(copy=x)`: the `Copyable` initializer of a built-in value type,
     /// whose copy is the read of its source, so MIR lowers the call as its
     /// one keyword argument's value.

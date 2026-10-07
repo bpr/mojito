@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.32
+# Mojito Textual MIR Format, Version 1.33
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.32 is implemented end to end for inspection and loading: canonical
+Version 1.33 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.32
+mojito-mir 1.33
 ```
 
-The writer emits 1.32. The reader accepts 1.0 through 1.32; *Schema 1.0*
+The writer emits 1.33. The reader accepts 1.0 through 1.33; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -224,6 +224,14 @@ the elaborator instantiates it under the enclosing instance's bindings, and
 concrete MIR records `absent`. A 1.31 consumer rejects the field, which is
 the intended failure. A 1.32 consumer reads an older declaration as nested in
 nothing.
+
+Minor version 33 adds the instruction `type.construct_expr { dest, type }`:
+the construction of the type a compile-time parameter expression denotes,
+through the `Defaultable` initializer the checker proved of it (`FT()` and
+`types[i]()` over `reflect[T].field_types()`). Only a template holds one;
+the elaborator writes the closed type's default construction, so elaborated
+MIR has none. A 1.32 consumer rejects the instruction, which is the
+intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -696,6 +704,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
+| `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `UseVar` / `DefVar` | `var.use` / `var.store` |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` |
@@ -747,7 +756,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.32
+mojito-mir 1.33
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

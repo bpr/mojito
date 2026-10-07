@@ -222,6 +222,10 @@ impl FnLowering<'_> {
                 Err(self
                     .unsupported_reg(format!("type name of `{ty}` after monomorphization"), *dest))
             }
+            MirInstr::ConstructType { dest, ty } => Err(self.unsupported_reg(
+                format!("constructing the type `{ty}` after monomorphization"),
+                *dest,
+            )),
             // The elaborator judges and erases every rebind; concrete
             // verification refuses one that survives.
             MirInstr::Rebind { dest, .. } => {

@@ -62,6 +62,7 @@ pub(super) fn verify_instruction(
         | MirInstr::StoreRef { .. } => verify_reference_instruction(&cx, instruction, errors),
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
+        | MirInstr::ConstructType { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
@@ -444,6 +445,15 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 errors.push(format!(
                     "{prefix}: type-parameter construction of '{}' has result type {found}",
                     param.name
+                ));
+            }
+        }
+        MirInstr::ConstructType { dest, ty } => {
+            if let Some(found) = cx.reg_ty(*dest)
+                && found != ty
+            {
+                errors.push(format!(
+                    "{prefix}: construction of the type {ty} has result type {found}"
                 ));
             }
         }
