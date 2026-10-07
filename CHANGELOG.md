@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time struct value with a `String` field, or a nested fieldwise
+  struct holding one, now works as at the pin: a display `comptime QS =
+  [Q(1, "x"), Q(2, "y"), mk(7)]` iterated by `comptime for`, a module or
+  body `comptime r = Q(3, "z")`, `W(Q(4, "in"), "out")`, and a field read
+  bound as `comptime`, on the VM and natively. It was rejected with "a
+  compile-time 'String' value needs fieldwise construction". The
+  elaborator now freezes every compile-time evaluation result with the
+  VM's own freezer instead of a weaker copy that read a `String` only at
+  the top level.
+
 - A tuple or struct value parameter with a `String` element or field now
   works as at the pin: `g[(1, "a")]()` against `def g[p: Tuple[Int,
   String]]()`, a default `(7, "d")`, a named `g[p=(1, "k")]()`, a nested

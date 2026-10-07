@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R464**.
+Next free ID: **R466**.
 
 ## Ordered Work
 
@@ -2857,17 +2857,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R456 A compile-time struct with a `String` field is rejected**
+- [ ] **R464 A compile-time value of a struct without fieldwise
+  construction is rejected**
 
-  Problem: `comptime QS = [Q(1, "x"), Q(2, "y")]` over `@fieldwise_init
-  struct Q` with fields `a: Int` and `s: String` fails, in a plain `def`
-  as in a generic one, with "a compile-time '__module$std$string$String'
-  value needs fieldwise construction", where the pin prints each element.
-  - `Elab::vm_value_to_ct` (`comptime/ctfe.rs`) freezes a field by its
-    struct's registration, and the bundled `String` is no fieldwise struct;
-    it does not read the field's text as `freeze_vm_result` reads a whole
-    `String`.
-  - Found while landing R405 (2026-10-07).
+  Problem: `comptime r = R(3)` over a `struct R` (`a: Int`, `s: String`)
+  whose only `__init__(out self, a: Int)` sets `self.s = String(a)` fails
+  with "a compile-time 'R' value needs fieldwise construction", where the
+  pin prints `r.s` as `3`.
+  - The VM freezes the result (`VmBackend::freeze`), but
+    `Elab::check_frozen_structs` (`comptime/ctfe.rs`) refuses it, since a
+    frozen `CtValue::Struct` comes back as a call to the fieldwise
+    constructor.
+  - Mojo materializes the parameter attribute directly, with no
+    constructor call.
+  - Not R196: the value is plain fieldwise data, not pointer-backed.
+  - Found while landing R456 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R465 A compile-time construction of a generic struct is rejected**
+
+  Problem: `comptime g = G[Int](5, "gen")` over `@fieldwise_init struct
+  G[T: Copyable & Movable & Writable & Deinitable]` fails with "'G' is not
+  a compile-time-callable function", where the pin prints `5 gen`.
+  - The same happens without the `String` field.
+  - The elaborator routes a parameterized callee to CTFE of a function by
+    that name rather than to `Elab::ctfe_struct_entry`.
+  - Found while landing R456 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

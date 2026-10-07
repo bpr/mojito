@@ -3099,12 +3099,6 @@ fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
     mojito_vm::crossing::ct_to_vm(value).map_err(crossing_error)
 }
 
-/// A runtime value the VM produced as a compile-time value
-/// (`mojito_vm::crossing`), a refusal reported as a compile-time error.
-fn vm_to_ct(value: Value) -> Result<CtValue, ComptimeError> {
-    mojito_vm::crossing::vm_to_ct(value).map_err(crossing_error)
-}
-
 fn crossing_error(error: mojito_vm::runtime::RuntimeError) -> ComptimeError {
     ComptimeError::NotComptime(match error {
         mojito_vm::runtime::RuntimeError::Unsupported(text) => text,
@@ -4552,7 +4546,7 @@ impl<'a> Elab<'a> {
 
 #[cfg(test)]
 mod vm_bridge_tests {
-    use super::{ct_to_vm, vm_to_ct};
+    use super::ct_to_vm;
     use mojito::{CtValue, Value};
 
     #[test]
@@ -4565,7 +4559,7 @@ mod vm_bridge_tests {
                 if values == &[Value::Int(1), Value::Bool(true)]
         ));
         assert_eq!(
-            vm_to_ct(runtime).expect("VM CTFE list crosses back to CtValue"),
+            mojito_vm::crossing::vm_to_ct(runtime).expect("VM CTFE list crosses back to CtValue"),
             source
         );
     }

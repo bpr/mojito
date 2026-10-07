@@ -34,7 +34,7 @@ comptime/elab.rs  Elab::stmt / comptime if / comptime for / resolve_ct_arg / …
                                   check_program_with_templates again
                                   -> mir::lower_checked_program -> elaborate_drops_program
                                   -> verify -> call_function on the ERASED body
-        5. freeze_vm_result / vm_value_to_ct / vm_to_ct    Value -> CtValue
+        5. freeze_vm_result -> VmBackend::freeze            Value -> CtValue
 ```
 
 What that costs, beyond the checker run inside the elaborator that P4

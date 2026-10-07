@@ -227,51 +227,17 @@ impl Elab<'_> {
         Ok(Some(self.freeze_vm_result(&vm, value)?))
     }
 
-    /// Convert a CTFE result back into a compile-time value, freezing a
-    /// fieldwise-constructible struct instance (recursively) where the plain
-    /// scalar/collection conversion cannot.
-    pub(super) fn vm_value_to_ct(&self, value: Value) -> Result<CtValue, ComptimeError> {
-        match value {
-            Value::Struct {
-                name,
-                fields,
-                value_params,
-            } if value_params.is_empty() => {
-                let Some(info) = self.structs.get(&name) else {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "VM CTFE returned an unregistered struct '{name}'"
-                    )));
-                };
-                if !info.fieldwise {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "a compile-time '{name}' value needs fieldwise construction \
-                         (@fieldwise_init or a field-mirroring __init__)"
-                    )));
-                }
-                Ok(CtValue::Struct {
-                    name,
-                    fields: fields
-                        .into_iter()
-                        .map(|(field, value)| Ok((field, self.vm_value_to_ct(value)?)))
-                        .collect::<Result<Vec<_>, ComptimeError>>()?,
-                })
-            }
-            other => vm_to_ct(other),
-        }
-    }
-
-    /// Freeze the result of a VM-CTFE run while `vm` still owns its heap: a
-    /// `String` becomes its text, anything else goes through
-    /// [`Self::vm_value_to_ct`].
+    /// Freeze the result of a VM-CTFE run while `vm` still owns its heap
+    /// ([`VmBackend::freeze`]), then check that every frozen struct can be
+    /// materialized as its fieldwise construction.
     pub(super) fn freeze_vm_result(
         &self,
         vm: &VmBackend,
         value: Value,
     ) -> Result<CtValue, ComptimeError> {
-        match vm.nominal_string_text(&value) {
-            Some(text) => Ok(CtValue::Str(text)),
-            None => self.vm_value_to_ct(value),
-        }
+        let frozen = vm.freeze(value).map_err(crossing_error)?;
+        self.check_frozen_structs(&frozen)?;
+        Ok(frozen)
     }
 
     /// Evaluate a struct construction (`method` = `None`) or a static method
@@ -657,7 +623,7 @@ impl Elab<'_> {
             ComptimeError::NotComptime(format!("VM CTFE failed for a compile-time expression: {e}"))
         })?;
         self.fuel.set(remaining_fuel);
-        self.vm_value_to_ct(value).map_err(|error| {
+        self.freeze_vm_result(&vm, value).map_err(|error| {
             ComptimeError::NotComptime(format!(
                 "a compile-time '{ty}' result cannot cross back from VM CTFE ({error}); bind a \
                  scalar, Bool, String, tuple, fieldwise struct, or a display instead"
@@ -679,6 +645,39 @@ impl Elab<'_> {
                 }),
             _ => None,
         })
+    }
+
+    /// Reject a frozen struct the elaborator cannot materialize: one it has
+    /// no registration for, or one without fieldwise construction.
+    fn check_frozen_structs(&self, value: &CtValue) -> Result<(), ComptimeError> {
+        match value {
+            CtValue::Struct { name, fields } => {
+                let info = self.structs.get(name).ok_or_else(|| {
+                    ComptimeError::NotComptime(format!(
+                        "VM CTFE returned an unregistered struct '{name}'"
+                    ))
+                })?;
+                if !info.fieldwise {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "a compile-time '{name}' value needs fieldwise construction \
+                         (@fieldwise_init or a field-mirroring __init__)"
+                    )));
+                }
+                fields
+                    .iter()
+                    .try_for_each(|(_, field)| self.check_frozen_structs(field))
+            }
+            CtValue::Tuple(elements) | CtValue::List(elements) | CtValue::Set { elements, .. } => {
+                elements
+                    .iter()
+                    .try_for_each(|element| self.check_frozen_structs(element))
+            }
+            CtValue::Dict { entries, .. } => entries.iter().try_for_each(|(key, value)| {
+                self.check_frozen_structs(key)?;
+                self.check_frozen_structs(value)
+            }),
+            _ => Ok(()),
+        }
     }
 
     /// Whether a struct's constructors (and, when named, one of its static
