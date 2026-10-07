@@ -1359,7 +1359,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   pick a loop and its body, `trip_elements` evaluates its sequence — a
   thunk's application through `Specializer::resolve_application`, whose
   result `VmBackend::freeze` (`freeze_collection`, `backend/vm.rs`) reads
-  out of a nominal `Array`, `List`, `Set`, or `Dict` — and
+  out of a nominal `Array`, `List`, `Set`, or `Dict`, freezing a nominal
+  `Tuple` element (`is_nominal_tuple`) to its elements and any other struct
+  to its fields — and
   `copy_body` appends one finished copy per
   iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
@@ -1394,7 +1396,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `reflected_names` are the admitted spellings, a call or method call
   admitted by `ScalarReads::call` from the verdict source validation
   recorded, `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
-  `TemplateCatalog::scalar_calls`), on a reflected list materialized whole
+  `TemplateCatalog::scalar_calls`; a closed-aggregate display element by
+  `literal_tuple` or by `aggregate_shaped` over `ScalarReads::aggregate`,
+  from `Checker::aggregate_elements` into
+  `TemplateCatalog::aggregate_elements`, the checker's own test being
+  `Checker::closed_aggregate_element`; a named collection by
+  `CtValue::is_parameter_value_collection`), on a reflected list materialized whole
   (`ReflectedLists::materialized_in`), or a nested `def` holding a
   `rebind`. The crossing pass spells a named collection as its display in
   a kept header (`cross_stmt`, `comptime/crossing.rs`), and leaves a
@@ -1467,15 +1474,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   included. `comptime/mono.rs` rewrites a checked `t"…"` occurrence into a
   `TString(...)` construction from the driver's
   `tstring_specialization_requests`.
-- A read of a closed vector or struct binder folds to `Const::Value(CtValue)`
-  (`mir/ir.rs`, text `value(...)`, schema 1.27): `Specializer::value_param_constant`
-  (`mono/instances.rs`) and `value_parameter_constant`
-  (`mono/substitute.rs`) build it, the field-projection loads folding through
-  the bound value (`substitute_value_parameter_reads`'s
-  `projected_parameter_constant`, and the `LoadPlace` arm of the specializer's
-  rewrite); `closed_parameter_value` (`verify/instr.rs`) admits it; the VM
-  materializes it through `ct_value_as_runtime` (`backend/vm.rs`) and Pliron
-  through `lower_parameter_value` (`lower/consts.rs`).
+- A read of a closed vector, struct, or tuple binder folds to
+  `Const::Value(CtValue)` (`mir/ir.rs`, text `value(...)`, schema 1.27):
+  `Specializer::value_param_constant` (`mono/instances.rs`) and
+  `value_parameter_constant` (`mono/substitute.rs`) build it, a whole
+  place read and the field-projection loads folding through the bound value
+  (`substitute_value_parameter_reads`'s `LoadPlace` arm and
+  `projected_parameter_constant`, and the `LoadPlace` arm of the
+  specializer's rewrite); `closed_parameter_value` (`verify/instr.rs`)
+  admits it; the VM materializes it through `ct_value_as_runtime`
+  (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
+  checked type names, `materialize_parameter_value`
+  (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
+  and `store_parameter_value` (`lower/consts.rs`). A borrow of a
+  compile-time value (a value parameter, a `comptime for` variable) is a
+  temporary the checker materializes (`materialized_reference_actual`,
+  `checker/origins/actuals.rs`).
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

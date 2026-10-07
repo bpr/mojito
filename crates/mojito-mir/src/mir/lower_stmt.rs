@@ -3081,10 +3081,10 @@ impl Flatten<'_> {
                     let slot = binding.map_or(*index, |owner| {
                         *self.owner_vars.entry(owner).or_insert(*index)
                     });
-                    // Typed even when no body read types it: each unrolled
-                    // copy stores its element there.
+                    // Typed by the binder, even when no body read types it:
+                    // each unrolled copy stores its element there.
                     if let Some(ty) = source.binder_meta().as_value() {
-                        self.var_types.entry(slot).or_insert_with(|| ty.clone());
+                        self.var_types.insert(slot, ty.clone());
                     }
                     MirTerm::ComptimeFor {
                         binder,

@@ -484,7 +484,9 @@ thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
 template keeps a `comptime for` over a `range` of parameter expressions
 (a reflection count among them), a list, set, or dictionary display of
-scalars, a named closed collection, the `def`'s own value pack, or a
+scalars, a list display of closed aggregates (tuples, or non-generic
+fieldwise structs, of numbers and booleans, nested ones included), a named
+closed collection of either, the `def`'s own value pack, or a
 reflected field-name list, whose body binds by `comptime` only parameter
 expressions over the binders (`comptime_for_is_template_served`,
 `comptime/elab.rs::keep_template_comptime_for`): the checker types the body
@@ -493,11 +495,20 @@ type, and records what the loop iterates
 (`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
 `ComptimeSequence` — a range, a closed display's elements, a value pack, a
 reflection query — or `Evaluated` for a display over the binders, which the
-check types and does not close). MIR lifts an evaluated display as a
+check types and does not close). An aggregate loop variable is a
+compile-time parameter of the element's type, as upstream's induction
+variable is: a tuple element's binder is the nominal `Tuple` over its
+elements' types (`ComptimeSequence::binder_meta`), a borrow of the variable
+(the `ref self` of `p[0]`) materializes the constant into a temporary
+(`Checker::materialized_reference_actual`), and `native::mono` folds every
+read of it, whole or by field, into a `Const::Value` per unrolled copy. A
+tuple or struct element with a `String` leaf is no closed aggregate; its loop
+is still unrolled in the AST or on a clone. MIR lifts an evaluated display as a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
-(`VmBackend::freeze`) into the list, set, or dictionary it iterates, as
+(`VmBackend::freeze`, which freezes a nominal `Tuple` to its elements and any
+other struct to its fields) into the list, set, or dictionary it iterates, as
 upstream runs the display on its interpreter per instance. A local
 `comptime` binding of such a display is a compile-time value with no runtime
 form, whatever reads it: the check types the name, records the binding on
@@ -709,8 +720,11 @@ as a template shell and keeps its per-instantiation check. Validation
 records, beside the applied module constants, the calls and method calls it
 typed as a scalar a `comptime for` binder takes without raising
 (`Checker::scalar_calls` into `TemplateCatalog::scalar_calls`, keyed by
-syntax identity): the elaborator's template-served decision for a display
-element (`ScalarReads`, `comptime.rs`) and the driver's template-name sets
+syntax identity), and the tuple displays, calls, and method calls it typed
+as a closed aggregate such a binder takes (`Checker::aggregate_elements`
+into `TemplateCatalog::aggregate_elements`): the elaborator's
+template-served decision for a display element (`ScalarReads`,
+`comptime.rs`) and the driver's template-name sets
 read that verdict, so they are computed after validation. Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
@@ -803,9 +817,12 @@ is a bound generic served by its template (`served_lane_defs`). A struct
 keyed on a `DType`, a lane width, a vector value, or a struct-typed value is
 an ordinary generic struct, a generator: the executable check types its
 members with the binder symbolic, its template crosses MIR, and
-`native::mono` mints each instance, folding a read of a closed vector or
-struct binder to a `Const::Value` and a field of a struct-typed one
-(`ParamKind::Field`) to its constant. The elaborator freezes a computed
+`native::mono` mints each instance, folding a read of a closed vector,
+struct, or tuple binder to a `Const::Value` and a field of a struct-typed one
+(`ParamKind::Field`) to its constant. A `Const::Value` tuple is the nominal
+`Tuple` its register's checked type names, over the private pack storage
+(the VM's `materialize_parameter_value`, Pliron's `store_parameter_value`);
+a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way. The elaborator freezes a computed
 struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
 which the checker reads as the frozen value. Every variadic struct is a
 generator too, `native::mono` binding its pack per instance; the cloner

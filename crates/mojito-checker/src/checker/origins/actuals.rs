@@ -199,6 +199,24 @@ impl Checker {
         expr: &Expr,
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
         use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
+        // A compile-time value (a value parameter, a `comptime for`
+        // variable) is a parameter constant, not storage: a borrow of it
+        // materializes the constant into a temporary, as upstream's
+        // `kgen.param.constant` does.
+        if let ExprKind::Identifier(name) = &expr.kind
+            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
+        {
+            let referent = self.infer(expr)?;
+            let owner = self.materialize_borrow_owner(expr, false)?;
+            return Ok(RefTy {
+                referent: Box::new(referent),
+                origin: Origin::Place(OriginPlace {
+                    root: owner,
+                    path: Vec::new(),
+                }),
+                mutability: Mutability::Immutable,
+            });
+        }
         match self.reference_actual(expr) {
             Err(TypeError::Unsupported(message))
                 if message.contains("reference binding to a non-place expression") =>

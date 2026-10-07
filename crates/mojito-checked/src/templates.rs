@@ -2434,6 +2434,11 @@ pub struct TemplateCatalog {
     /// template-served decision reads a display element's type from here.
     /// Absent until a validation run reaches its verdict.
     scalar_calls: Option<std::collections::HashSet<SyntaxId>>,
+    /// The tuple displays, calls, and method calls source validation typed
+    /// as a closed aggregate a `comptime for` binder takes (a tuple or
+    /// fieldwise struct of numbers and booleans), with no raise, by the same
+    /// syntax identity. Absent until a validation run reaches its verdict.
+    aggregate_elements: Option<std::collections::HashSet<SyntaxId>>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2551,6 +2556,7 @@ impl TemplateCatalog {
             body_fact_reuse: false,
             param_context: self.param_context.clone(),
             scalar_calls: self.scalar_calls.clone(),
+            aggregate_elements: self.aggregate_elements.clone(),
             ..Self::default()
         };
         catalog.set_traces(traces);
@@ -2611,6 +2617,18 @@ impl TemplateCatalog {
         self.scalar_calls = Some(calls);
     }
 
+    /// The display elements source validation typed as a `comptime for`
+    /// binder's closed aggregate, or `None` when no validation run reached
+    /// a verdict.
+    pub const fn aggregate_elements(&self) -> Option<&std::collections::HashSet<SyntaxId>> {
+        self.aggregate_elements.as_ref()
+    }
+
+    /// Keep the aggregate-typed display elements source validation found.
+    pub fn set_aggregate_elements(&mut self, elements: std::collections::HashSet<SyntaxId>) {
+        self.aggregate_elements = Some(elements);
+    }
+
     /// Keep the applied module constants source validation found.
     pub fn set_applied_constants(
         &mut self,
@@ -2640,6 +2658,7 @@ impl TemplateCatalog {
     pub fn abort_validation(&mut self) {
         self.validation_aborted = true;
         self.scalar_calls = None;
+        self.aggregate_elements = None;
         for template in self.templates.values_mut() {
             if template.producer == TemplateProducer::SourceValidation {
                 template.coverage =

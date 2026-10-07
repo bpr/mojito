@@ -191,53 +191,24 @@ impl Checker {
     /// program keeps. A node copied more than once (a trait default per
     /// conformer) qualifies only when every copy did.
     pub(super) fn scalar_calls(&self, program: &[Stmt]) -> HashSet<mojito_common::token::SyntaxId> {
-        struct Calls<'a> {
-            checker: &'a Checker,
-            verdicts: HashMap<mojito_common::token::SyntaxId, bool>,
-        }
-        impl mojito_ast::visit::Visitor for Calls<'_> {
-            fn visit_expr(&mut self, expression: &Expr) {
-                if !matches!(
-                    expression.kind,
-                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
-                ) {
-                    return;
-                }
-                let span = expression.source_span();
-                let scalar = self
-                    .checker
-                    .expression_types
-                    .borrow()
-                    .get(&span)
-                    .is_some_and(|ty| match ty {
-                        Ty::Int | Ty::Bool | Ty::Float64 | Ty::StringLiteral => true,
-                        Ty::Struct(name, args) => {
-                            args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
-                        }
-                        _ => false,
-                    });
-                let raises = self
-                    .checker
-                    .expression_effects
-                    .borrow()
-                    .get(&span)
-                    .is_some_and(|effects| effects.raises.is_some());
-                *self
-                    .verdicts
-                    .entry(self.checker.syntax_origins.origin(expression.syntax_id))
-                    .or_insert(true) &= scalar && !raises;
+        self.typed_display_elements(program, false, &|ty| match ty {
+            Ty::Int | Ty::Bool | Ty::Float64 | Ty::StringLiteral => true,
+            Ty::Struct(name, args) => {
+                args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
             }
-        }
-        let mut calls = Calls {
-            checker: self,
-            verdicts: HashMap::new(),
-        };
-        mojito_ast::visit::walk_block(&mut calls, program);
-        calls
-            .verdicts
-            .into_iter()
-            .filter_map(|(call, scalar)| scalar.then_some(call))
-            .collect()
+            _ => false,
+        })
+    }
+
+    /// The tuple displays, calls, and method calls of `program` this
+    /// validation typed as a closed aggregate a `comptime for` binder takes
+    /// ([`Self::closed_aggregate_element`]) without raising, under the
+    /// verdict rule of [`Self::scalar_calls`].
+    pub(super) fn aggregate_elements(
+        &self,
+        program: &[Stmt],
+    ) -> HashSet<mojito_common::token::SyntaxId> {
+        self.typed_display_elements(program, true, &|ty| self.closed_aggregate_element(ty))
     }
 
     /// Check the method bodies of a struct that hold compile-time control
@@ -602,7 +573,7 @@ impl Checker {
             None => names.or_else(|| self.value_pack_named(&iter)),
         };
         // A display the check does not close is evaluated per instance.
-        let evaluated = sequence.is_none() && evaluated_display(&iter, &element);
+        let evaluated = sequence.is_none() && self.evaluated_display(&iter, &element);
         let element = match element {
             Ty::Struct(name, args)
                 if evaluated
@@ -619,7 +590,8 @@ impl Checker {
         if !binds_index && !self.source_validation {
             return Err(TypeError::Unsupported(format!(
                 "'comptime for' over elements of type '{element}' in a generic body: its \
-                 variable binds an 'Int', 'Float64', 'Bool', or 'String' element"
+                 variable binds an 'Int', 'Float64', 'Bool', or 'String' element, or a \
+                 tuple or struct of numbers and booleans"
             )));
         }
         let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
@@ -1234,8 +1206,10 @@ impl Checker {
     /// in order, each materialized at the loop variable's `element` type: a
     /// list display's elements, a set display's distinct elements, a
     /// dictionary display's distinct keys. `None` for any other iterable, or
-    /// a display with an element that is not a literal of a scalar type a
-    /// loop binder takes (`Int`, `Float64`, `Bool`, `String`).
+    /// a display with an element that is not a literal of a type a loop
+    /// binder takes: a scalar (`Int`, `Float64`, `Bool`, `String`), or a
+    /// tuple or struct of numbers and booleans
+    /// ([`Self::closed_aggregate_element`]).
     fn closed_iteration_elements(
         &self,
         iter: &Expr,
@@ -1244,7 +1218,7 @@ impl Checker {
         let scalar = matches!(element, Ty::Int | Ty::Float64 | Ty::Bool)
             || matches!(element, Ty::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
-        if !scalar {
+        if !scalar && !self.closed_aggregate_element(element) {
             return None;
         }
         let (leaves, distinct): (Vec<&Expr>, bool) = match &iter.kind {
@@ -1265,6 +1239,98 @@ impl Checker {
             }
         }
         Some(elements)
+    }
+
+    /// Whether `element` is a nominal `Tuple`, or a non-generic fieldwise
+    /// struct, whose elements or fields are numbers, booleans, or such
+    /// aggregates: a parameter value a loop binder holds and a backend
+    /// materializes as a closed constant.
+    fn closed_aggregate_element(&self, element: &Ty) -> bool {
+        let leaf = |ty: &Ty| {
+            matches!(
+                ty,
+                Ty::Int | Ty::Float64 | Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral
+            ) || self.closed_aggregate_element(ty)
+        };
+        if let Some(elements) = mojito_types::types::tuple_elements(element) {
+            return !elements.is_empty() && elements.into_iter().all(leaf);
+        }
+        matches!(element, Ty::Struct(name, args) if args.is_empty()
+        && self.structs.get(name).is_some_and(|info| {
+            info.fieldwise_init
+                && info.decls.is_empty()
+                && !info.fields.is_empty()
+                && info.fields.iter().all(|(_, ty)| leaf(ty))
+        }))
+    }
+
+    /// Whether `iter` is a display the elaborator evaluates per instance
+    /// when the check does not close it: a collection display of scalars
+    /// ([`evaluated_display`]), or a list display of closed aggregates
+    /// ([`Self::closed_aggregate_element`]).
+    fn evaluated_display(&self, iter: &Expr, element: &Ty) -> bool {
+        evaluated_display(iter, element)
+            || (matches!(&iter.kind, ExprKind::ListLit(items) if !items.is_empty())
+                && self.closed_aggregate_element(element))
+    }
+
+    /// The calls and method calls of `program`, and its tuple displays when
+    /// `tuples` holds, this validation typed as `accept` takes without
+    /// raising, by the syntax identity the elaborated program keeps. A node
+    /// copied more than once qualifies only when every copy did.
+    fn typed_display_elements(
+        &self,
+        program: &[Stmt],
+        tuples: bool,
+        accept: &dyn Fn(&Ty) -> bool,
+    ) -> HashSet<mojito_common::token::SyntaxId> {
+        struct Elements<'a> {
+            checker: &'a Checker,
+            tuples: bool,
+            accept: &'a dyn Fn(&Ty) -> bool,
+            verdicts: HashMap<mojito_common::token::SyntaxId, bool>,
+        }
+        impl mojito_ast::visit::Visitor for Elements<'_> {
+            fn visit_expr(&mut self, expression: &Expr) {
+                let candidate = match expression.kind {
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
+                    ExprKind::TupleLit(_) => self.tuples,
+                    _ => false,
+                };
+                if !candidate {
+                    return;
+                }
+                let span = expression.source_span();
+                let accepted = self
+                    .checker
+                    .expression_types
+                    .borrow()
+                    .get(&span)
+                    .is_some_and(|ty| (self.accept)(ty));
+                let raises = self
+                    .checker
+                    .expression_effects
+                    .borrow()
+                    .get(&span)
+                    .is_some_and(|effects| effects.raises.is_some());
+                *self
+                    .verdicts
+                    .entry(self.checker.syntax_origins.origin(expression.syntax_id))
+                    .or_insert(true) &= accepted && !raises;
+            }
+        }
+        let mut elements = Elements {
+            checker: self,
+            tuples,
+            accept,
+            verdicts: HashMap::new(),
+        };
+        mojito_ast::visit::walk_block(&mut elements, program);
+        elements
+            .verdicts
+            .into_iter()
+            .filter_map(|(element, accepted)| accepted.then_some(element))
+            .collect()
     }
 
     /// The value-parameter scope beside the innermost open type-parameter
@@ -1371,6 +1437,7 @@ impl Checker {
 
     /// Type the display a local `comptime` binding of a template body holds
     /// (`comptime L = [n, n + 1]`): a collection display of scalar elements,
+    /// or a list display of closed aggregates (`[(1, n), (n, 2)]`),
     /// which the elaborator evaluates per instance as it does one written in
     /// a loop header. Gives the element a loop over it binds, the display's
     /// own type, and its checked construction; `None` for any other
@@ -1380,7 +1447,7 @@ impl Checker {
         value: &Expr,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
         let element = self.comptime_iteration_element(value).ok()?;
-        if !evaluated_display(value, &element) {
+        if !self.evaluated_display(value, &element) {
             return None;
         }
         let ty = self.infer(value).ok()?;
@@ -1469,7 +1536,7 @@ impl Checker {
         let Some((element, ty)) = self
             .comptime_iteration_element(value)
             .ok()
-            .filter(|element| evaluated_display(value, element))
+            .filter(|element| self.evaluated_display(value, element))
             .zip(self.infer(value).ok())
         else {
             return;
@@ -3082,12 +3149,24 @@ fn stmt_has_comptime(stmt: &Stmt) -> bool {
 /// runtime read, as the pin spells it: a list display is a fixed-size
 /// `Array[Int, Int(2)]`, a set `Set[Int]`, a dictionary `Dict[String, Int]`.
 fn materialized_collection_spelling(ty: &Ty) -> String {
-    let scalar = |element: &Ty| match element {
-        Ty::Int | Ty::IntLiteral => "Int".to_string(),
-        Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
-        Ty::StringLiteral => "String".to_string(),
-        other => mojito_types::types::unqualified_type_name(other),
-    };
+    fn scalar(element: &Ty) -> String {
+        match element {
+            Ty::Int | Ty::IntLiteral => "Int".to_string(),
+            Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
+            Ty::StringLiteral => "String".to_string(),
+            other => match mojito_types::types::tuple_elements(other) {
+                Some(elements) => format!(
+                    "Tuple[{}]",
+                    elements
+                        .into_iter()
+                        .map(scalar)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None => mojito_types::types::unqualified_type_name(other),
+            },
+        }
+    }
     if let Some((key, value)) = mojito_types::types::dict_elements(ty) {
         return format!("Dict[{}, {}]", scalar(key), scalar(value));
     }

@@ -498,16 +498,29 @@ pub enum ComptimeSequence {
 
 impl ComptimeSequence {
     /// The meta-type of the loop's binder: `Int` over a range, the
-    /// sequence's element otherwise.
+    /// sequence's element otherwise. A tuple element is a value of the
+    /// nominal `Tuple` over its elements' types.
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
         use mojito_types::param_expr::MetaTy;
+        fn nominal(meta: &MetaTy) -> Option<mojito_types::types::Ty> {
+            match meta {
+                MetaTy::Tuple(elements) => elements
+                    .iter()
+                    .map(nominal)
+                    .collect::<Option<Vec<_>>>()
+                    .map(mojito_types::types::tuple_type),
+                meta => meta.as_value().cloned(),
+            }
+        }
         match self {
             Self::Range { .. } => MetaTy::int(),
-            Self::Elements(elements) => elements
-                .meta()
-                .iteration_element()
-                .cloned()
-                .unwrap_or_else(MetaTy::int),
+            Self::Elements(elements) => match elements.meta().iteration_element() {
+                Some(element @ MetaTy::Tuple(_)) => {
+                    nominal(element).map_or_else(|| element.clone(), MetaTy::value)
+                }
+                Some(element) => element.clone(),
+                None => MetaTy::int(),
+            },
         }
     }
 

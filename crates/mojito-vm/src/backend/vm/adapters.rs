@@ -175,6 +175,65 @@ impl VmBackend {
         })
     }
 
+    /// Materialize a parameter constant's value at its checked type `target`:
+    /// each tuple, at any depth of tuples and struct fields, becomes the
+    /// nominal `Tuple` instance its checked type names over the private pack
+    /// storage ([`Self::materialize_checked_result`]).
+    pub(super) fn materialize_parameter_value(
+        &self,
+        prog: &Prog,
+        value: Value,
+        target: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        match value {
+            Value::Tuple(items) => {
+                let storage = target
+                    .and_then(|target| match target {
+                        Ty::Struct(name, _) => prog.structs.get(name),
+                        _ => None,
+                    })
+                    .and_then(|definition| match definition.fields.as_slice() {
+                        [(_, Ty::Tuple(elements))] => Some(elements.clone()),
+                        _ => None,
+                    });
+                let items = items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let element = storage.as_ref().and_then(|elements| elements.get(index));
+                        self.materialize_parameter_value(prog, item, element)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.materialize_checked_result(prog, Value::Tuple(items), target)
+            }
+            Value::Struct {
+                name,
+                fields,
+                value_params,
+            } => {
+                let declared = prog.structs.get(&name).map(|definition| &definition.fields);
+                let fields = fields
+                    .into_iter()
+                    .map(|(field, value)| {
+                        let ty = declared.and_then(|declared| {
+                            declared
+                                .iter()
+                                .find(|(candidate, _)| *candidate == field)
+                                .map(|(_, ty)| ty)
+                        });
+                        Ok((field, self.materialize_parameter_value(prog, value, ty)?))
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                Ok(Value::Struct {
+                    name,
+                    fields,
+                    value_params,
+                })
+            }
+            value => Ok(value),
+        }
+    }
+
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`), carrying
     /// the given reified `value_params`. Shared by `__init__`/`__copyinit__`/
     /// `__moveinit__` construction.

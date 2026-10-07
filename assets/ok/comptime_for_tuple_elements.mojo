@@ -1,8 +1,9 @@
 # A `comptime for` over tuple elements runs its body once per tuple, in a
 # generic `def`, a struct's method, and a plain `def` alike: a module or local
 # list of tuples, a display whose tuples read a parameter, and a dictionary's
-# keys beside tuple values. The loop variable is no binder MIR carries, so the
-# elaborator unrolls the loop in the AST. A tuple display subscripted as a
+# keys beside tuple values. A tuple of numbers is a parameter the template's
+# loop binds; a tuple with a string element is no constant MIR carries, so the
+# elaborator unrolls that loop in the AST. A tuple display subscripted as a
 # temporary (`(1, 2)[0]`) reads its elements materialized. Output matches the
 # pin.
 

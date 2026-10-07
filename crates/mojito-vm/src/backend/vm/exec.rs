@@ -158,8 +158,14 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => {
-                regs[dest.0 as usize] =
-                    const_value(k, &prog.mir.functions[function].1, vars, comptime)?;
+                let mut value = const_value(k, &prog.mir.functions[function].1, vars, comptime)?;
+                // An aggregate parameter constant holds each tuple as the
+                // nominal `Tuple` its checked type names.
+                if matches!(k, Const::Value(_)) {
+                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                    value = self.materialize_parameter_value(prog, value, target)?;
+                }
+                regs[dest.0 as usize] = value;
             }
             MirInstr::ConstructTypeParam {
                 dest,

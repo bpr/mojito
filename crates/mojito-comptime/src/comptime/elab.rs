@@ -1267,7 +1267,10 @@ impl Elab<'_> {
             value_packs: &value_packs,
             displays: &displays,
             collection: &|name| {
-                !binders.contains(name) && env.get(name).is_some_and(CtValue::is_scalar_collection)
+                !binders.contains(name)
+                    && env
+                        .get(name)
+                        .is_some_and(CtValue::is_parameter_value_collection)
             },
             scalars: &self.scalar_reads,
         };

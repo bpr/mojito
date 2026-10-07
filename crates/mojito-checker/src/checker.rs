@@ -150,10 +150,12 @@ pub fn validate_comptime_templates_into(
         .borrow_mut()
         .set_applied_constants(checker.comptime_applied.clone());
     let scalar_calls = checker.scalar_calls(&expanded);
-    checker
-        .template_catalog
-        .borrow_mut()
-        .set_scalar_calls(scalar_calls);
+    let aggregate_elements = checker.aggregate_elements(&expanded);
+    {
+        let mut catalog = checker.template_catalog.borrow_mut();
+        catalog.set_scalar_calls(scalar_calls);
+        catalog.set_aggregate_elements(aggregate_elements);
+    }
     *catalog = checker.template_catalog.take();
     let checked = body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());

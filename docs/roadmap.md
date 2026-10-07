@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R454**.
+Next free ID: **R458**.
 
 ## Ordered Work
 
@@ -106,21 +106,25 @@ correctness fix to existing behavior is allowed.
   - Depends on R401.
   - Model: Opus, Not Planned.
 
-- [ ] **R405 (P3b) A `comptime for` over tuple- or struct-valued elements
-  in a generic `def` is unrolled in the AST**
+- [ ] **R454 (P3b) A `comptime for` over `String`-bearing tuple or struct
+  elements in a generic `def` is unrolled in the AST**
 
-  Problem: `comptime for p in PAIRS:` over `comptime PAIRS = [(1, 2), (3,
-  4)]` in `def f[n: Int]()` runs, but the elaborator copies the body once
-  per element into the template, where Mojo keeps one loop in its IR.
-  - A loop binder MIR carries holds an `Int`, a `Float64`, a `Bool`, or a
-    `String` (`check_comptime_for`, `checker/comptime_validation.rs`), so
-    the elaborator keeps only a collection of those
-    (`CtValue::is_scalar_collection`).
-  - Serving the loop needs a binder that holds a tuple or a struct value
-    and a MIR constant that materializes one.
-  - R401's struct element waits on this, not on the landed R367.
-  - Found while landing R367 (2026-10-06).
-  - Depends on nothing.
+  Problem: `comptime for p in PAIRS:` over `comptime PAIRS = [(1, "a"), (2,
+  "b")]` in `def f[n: Int]()` runs, but the elaborator copies the body per
+  element (or keys a clone), where Mojo keeps one loop in its IR.
+  - A closed aggregate binder holds only numbers and booleans
+    (`Checker::closed_aggregate_element`, `CtValue::is_closed_aggregate`):
+    a `String` leaf is no pointer-free constant, so neither
+    `closed_parameter_value` nor Pliron's `store_parameter_value` carries it.
+  - Mojo materializes such a parameter by constructing it; `native::mono`
+    would fold a read into a `Tuple` construction over a materialized
+    `String`, with the drop the template places on its hidden slot.
+  - The value-parameter form needs the `Tuple[Int, String]` argument
+    conversion (R455), and a struct element needs a frozen `String` field
+    (R456).
+  - Output already matches the pin (`assets/ok/comptime_for_tuple_elements.mojo`).
+  - Found while landing R405 (2026-10-07).
+  - Depends on R455 and R456.
   - Model: Opus, Not Planned.
 
 - [ ] **R453 (P3b) A display element's call is judged by its callee's
@@ -2869,6 +2873,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The alias path evaluates the right-hand side as a type application.
   - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
   - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R455 A tuple value parameter with a `String` element rejects a
+  literal argument**
+
+  Problem: `g[(1, "a")]()` against `def g[p: Tuple[Int, String]]()` fails
+  with "type mismatch for value parameter 'p': expected Tuple[Int, String],
+  found Tuple[Int, StringLiteral]", where the pin prints `1 a`.
+  - The argument's tuple literal keeps its `StringLiteral` element; nothing
+    converts it to the declared element type, as a runtime tuple argument
+    would be.
+  - `g[p: Tuple[Int, Int]]` called as `g[(1, 2)]()` runs.
+  - Found while landing R405 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R456 A compile-time struct with a `String` field is rejected**
+
+  Problem: `comptime QS = [Q(1, "x"), Q(2, "y")]` over `@fieldwise_init
+  struct Q` with fields `a: Int` and `s: String` fails, in a plain `def`
+  as in a generic one, with "a compile-time '__module$std$string$String'
+  value needs fieldwise construction", where the pin prints each element.
+  - `Elab::vm_value_to_ct` (`comptime/ctfe.rs`) freezes a field by its
+    struct's registration, and the bundled `String` is no fieldwise struct;
+    it does not read the field's text as `freeze_vm_result` reads a whole
+    `String`.
+  - Found while landing R405 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5691,6 +5723,21 @@ stage. The rest needs semantic extraction, not line moves.
     `mir/text/write.rs` (2,116), `backend/vm/exec.rs` (2,085).
   - Depends on nothing. Split one of these only while touching it for
     another task.
+
+- [ ] **R457 HIR types a slot from the first identifier of its name in the
+  whole program**
+
+  Problem: `checked_var_types` (`mojito-hir/src/hir.rs`) types each slot of
+  a function's CFG from the first checked node anywhere in the program's
+  expression arena whose syntax is an identifier of the slot's name.
+  - A `comptime for` binder `p` over tuples was typed `Int` from an unrelated
+    stdlib `p`; MIR's loop header now types its slot from the binder, but any
+    other slot MIR does not retype keeps the stray type.
+  - Restricting the scan to the function body's own nodes should change no
+    current output, which is why the entry is here.
+  - Found while landing R405 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ## Task Lifecycle Policy
 

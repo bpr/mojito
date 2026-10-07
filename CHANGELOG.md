@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` over tuple or struct elements in a generic body now keeps
+  one loop in the template, as at the pin: `[(1, 2), (3, n)]`, a module
+  `PAIRS` or `PS = [P(1, 2), P(3, 4)]`, `[P(1, n), mk(n)]`, a local
+  `comptime L = [(1, n)]`, nested tuples and struct fields, and the same
+  loop in a pack-keyed `def` or a struct method, where each was unrolled in
+  the AST or cloned per instance. The variable is a compile-time parameter
+  of the element's type, passed whole, copied, subscripted, and read by
+  field, method, and `comptime if`, on the VM and natively. A tuple-typed
+  value parameter (`def g[p: Tuple[Int, Int]]`, `g[(1, 2)]()`), which failed
+  MIR verification, now runs too. Elements with a `String` leaf are still
+  unrolled in the AST.
 - A `comptime for` display element that calls a method now runs from the
   generic body's template, as at the pin: `[P(n).get(), n]`, `[S.g(n), n]`,
   `[S[n].g(n), n]`, `[String(n).upper(), "x"]`, a method on a local

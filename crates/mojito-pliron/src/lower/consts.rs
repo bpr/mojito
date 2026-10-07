@@ -66,9 +66,10 @@ impl FnLowering<'_> {
         }
     }
 
-    /// A closed vector or struct parameter value (`Self.key`, `Self.e`): a
-    /// vector built lane by lane as its explicit construction is, a struct
-    /// fieldwise into fresh storage as its fieldwise constructor is.
+    /// A closed vector, struct, or tuple parameter value (`Self.key`,
+    /// `Self.e`, a `comptime for` variable over pairs): a vector built lane
+    /// by lane as its explicit construction is, an aggregate fieldwise into
+    /// fresh storage as its fieldwise constructor is.
     fn lower_parameter_value(
         &mut self,
         ctx: &mut Context,
@@ -96,15 +97,22 @@ impl FnLowering<'_> {
                 self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector);
                 Ok(())
             }
-            CtValue::Struct { name, .. } => {
-                let ty = Ty::Struct(name.clone(), Vec::new().into());
+            CtValue::Struct { .. } | CtValue::Tuple(_) => {
+                // A struct value is typed by its own name; a tuple by the
+                // nominal `Tuple` instance its register names.
+                let ty = match value {
+                    CtValue::Struct { name, .. } => Ty::Struct(name.clone(), Vec::new().into()),
+                    _ => self.func.reg_types.get(&dest.0).cloned().ok_or_else(|| {
+                        self.unsupported_reg(format!("untyped parameter value `{value}`"), dest)
+                    })?,
+                };
                 let LowerTy::Aggregate { layout, .. } =
                     lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?
                 else {
                     return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
                 };
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                self.store_parameter_value(ctx, storage, value, dest)?;
+                self.store_parameter_value(ctx, storage, value, &ty, dest)?;
                 self.reg_values.insert(dest.0, storage);
                 Ok(())
             }
@@ -115,46 +123,62 @@ impl FnLowering<'_> {
         }
     }
 
-    /// Store a frozen struct value's fields at `address`, field by field at
-    /// the struct's layout offsets.
+    /// Store a frozen value of type `ty` at `address`: a struct's fields at
+    /// its layout offsets, a nominal `Tuple`'s elements in its pack storage,
+    /// and a scalar leaf as its constant.
     fn store_parameter_value(
         &mut self,
         ctx: &mut Context,
         address: Value,
         value: &mojito_types::ct::CtValue,
+        ty: &Ty,
         dest: Reg,
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
-        let CtValue::Struct { name, fields } = value else {
-            return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
+        let (leaves, leaf_tys): (Vec<&CtValue>, Vec<Ty>) = match (value, ty) {
+            (CtValue::Struct { .. } | CtValue::Tuple(_), Ty::Struct(name, _)) => {
+                let Some(decl) = self.struct_decls.get(name.as_str()) else {
+                    return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
+                };
+                let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, ty)| ty.clone()).collect();
+                match (value, field_tys.as_slice()) {
+                    (CtValue::Struct { fields, .. }, _) => {
+                        (fields.iter().map(|(_, field)| field).collect(), field_tys)
+                    }
+                    // A `Tuple` is one field, its private pack storage.
+                    (CtValue::Tuple(_), [storage]) => {
+                        return self.store_parameter_value(ctx, address, value, storage, dest);
+                    }
+                    _ => {
+                        return Err(
+                            self.unsupported_reg(format!("parameter value `{value}`"), dest)
+                        );
+                    }
+                }
+            }
+            (CtValue::Tuple(elements), Ty::Tuple(element_tys) | Ty::RuntimePack(element_tys)) => {
+                (elements.iter().collect(), element_tys.clone())
+            }
+            _ => {
+                let LowerTy::Scalar(scalar) =
+                    lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?
+                else {
+                    return Err(self.unsupported_reg(format!("parameter value `{value}`"), dest));
+                };
+                let constant = self.parameter_scalar(ctx, value, scalar, dest)?;
+                let store = StoreOp::new(ctx, constant, address);
+                self.append(ctx, store.get_operation(), Some(dest));
+                return Ok(());
+            }
         };
-        let Some(decl) = self.struct_decls.get(name.as_str()) else {
-            return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
-        };
-        let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, ty)| ty.clone()).collect();
-        let composed = self.struct_layout_of(&field_tys, dest)?;
-        for (((_, field), field_ty), offset) in fields.iter().zip(&field_tys).zip(&composed.offsets)
-        {
-            let field_address = if *offset == 0 {
+        let composed = self.struct_layout_of(&leaf_tys, dest)?;
+        for ((leaf, leaf_ty), offset) in leaves.into_iter().zip(&leaf_tys).zip(&composed.offsets) {
+            let leaf_address = if *offset == 0 {
                 address
             } else {
                 self.gep_byte(ctx, address, *offset, dest)
             };
-            if matches!(field, CtValue::Struct { .. }) {
-                self.store_parameter_value(ctx, field_address, field, dest)?;
-                continue;
-            }
-            let LowerTy::Scalar(scalar) =
-                lower_ty(self.name, field_ty, &self.layout, self.reg_span(dest))?
-            else {
-                return Err(self.unsupported_reg(
-                    format!("parameter value field `{field}` of `{name}`"),
-                    dest,
-                ));
-            };
-            let constant = self.parameter_scalar(ctx, field, scalar, dest)?;
-            let store = StoreOp::new(ctx, constant, field_address);
-            self.append(ctx, store.get_operation(), Some(dest));
+            self.store_parameter_value(ctx, leaf_address, leaf, leaf_ty, dest)?;
         }
         Ok(())
     }

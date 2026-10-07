@@ -796,7 +796,7 @@ pub fn bound_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_bound_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
+    collect_bound_generic_templates(program, &ScalarReads::of(program, Some(templates)))
 }
 
 /// The top-level type-pack template names (`def show[*Ts: Writable](*args:
@@ -810,7 +810,7 @@ pub fn pack_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_pack_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
+    collect_pack_generic_templates(program, &ScalarReads::of(program, Some(templates)))
 }
 
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
@@ -826,7 +826,7 @@ pub fn comptime_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_comptime_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
+    collect_comptime_generic_templates(program, &ScalarReads::of(program, Some(templates)))
 }
 
 /// The top-level `DType`-keyed template names (`def only_dt[dt: DType](a:
@@ -839,7 +839,7 @@ pub fn dtype_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_dtype_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
+    collect_dtype_generic_templates(program, &ScalarReads::of(program, Some(templates)))
 }
 
 /// The parameter an inferred application of `template` failed to close.
@@ -952,10 +952,7 @@ pub fn elaborate_prepared(
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let scalar_reads = ScalarReads::of(
-        program,
-        templates.and_then(mojito_checked::templates::TemplateCatalog::scalar_calls),
-    );
+    let scalar_reads = ScalarReads::of(program, templates);
     let bound_generics = collect_bound_generic_templates(program, &scalar_reads);
     let pack_generics = collect_pack_generic_templates(program, &scalar_reads);
     let elab = Elab {
@@ -1304,18 +1301,33 @@ pub(super) struct TemplateLoopNames {
 /// `def` every declaration of which returns such a scalar and does not
 /// raise, or constructs one (`Float64(n)`) whose name the module does not
 /// declare.
+///
+/// A tuple display, call, or method call shows a display element is a
+/// closed aggregate a loop binder takes (a tuple or fieldwise struct of
+/// numbers and booleans) only by source validation's verdict
+/// (`TemplateCatalog::aggregate_elements`).
 #[derive(Default, Clone)]
 pub(super) struct ScalarReads {
     functions: HashSet<String>,
     lists: HashSet<String>,
     declared: HashSet<String>,
     checked: Option<HashSet<SyntaxId>>,
+    aggregates: HashSet<SyntaxId>,
 }
 
 impl ScalarReads {
-    pub(super) fn of(program: &[Stmt], checked: Option<&HashSet<SyntaxId>>) -> Self {
+    pub(super) fn of(
+        program: &[Stmt],
+        templates: Option<&mojito_checked::templates::TemplateCatalog>,
+    ) -> Self {
         let mut reads = Self {
-            checked: checked.cloned(),
+            checked: templates
+                .and_then(mojito_checked::templates::TemplateCatalog::scalar_calls)
+                .cloned(),
+            aggregates: templates
+                .and_then(mojito_checked::templates::TemplateCatalog::aggregate_elements)
+                .cloned()
+                .unwrap_or_default(),
             ..Self::default()
         };
         let mut other = HashSet::new();
@@ -1347,6 +1359,12 @@ impl ScalarReads {
         }
         reads.functions.retain(|name| !other.contains(name));
         reads
+    }
+
+    /// Whether the tuple display, call, or method call `expression` is a
+    /// closed aggregate a loop binder takes.
+    fn aggregate(&self, expression: &Expr) -> bool {
+        self.aggregates.contains(&expression.syntax_id)
     }
 
     /// Whether the call or method call `expression` returns a scalar a loop
@@ -1465,7 +1483,10 @@ pub(super) fn comptime_for_is_template_served(
                 })
         }
         ExprKind::ListLit(items) => {
-            (!items.is_empty() && items.iter().all(literal_element))
+            (!items.is_empty()
+                && items
+                    .iter()
+                    .all(|item| literal_element(item) || literal_tuple(item)))
                 || evaluated_display_shaped(iter, packs, names.displays, names.scalars)
         }
         ExprKind::BraceLit(entries) => {
@@ -1720,8 +1741,9 @@ fn scalar_shaped(
 
 /// Whether `expression` is spelled as a list, set, or dictionary display of
 /// scalars over the binders and the body's display bindings
-/// ([`scalar_shaped`]), which the elaborator below MIR evaluates per
-/// instance.
+/// ([`scalar_shaped`]), or a list display of closed aggregates
+/// ([`literal_tuple`], [`aggregate_shaped`]), which the elaborator below MIR
+/// evaluates per instance.
 fn evaluated_display_shaped(
     expression: &Expr,
     packs: &HashSet<String>,
@@ -1730,7 +1752,14 @@ fn evaluated_display_shaped(
 ) -> bool {
     let shaped = |item: &Expr| scalar_shaped(item, packs, displays, scalars);
     match &expression.kind {
-        ExprKind::ListLit(items) => !items.is_empty() && items.iter().all(shaped),
+        ExprKind::ListLit(items) => {
+            !items.is_empty()
+                && items.iter().all(|item| {
+                    shaped(item)
+                        || literal_tuple(item)
+                        || aggregate_shaped(item, packs, displays, scalars)
+                })
+        }
         ExprKind::BraceLit(entries) => {
             !entries.is_empty()
                 && entries
@@ -1739,6 +1768,43 @@ fn evaluated_display_shaped(
         }
         _ => false,
     }
+}
+
+/// Whether `expression` is a display element source validation typed as a
+/// closed aggregate a loop binder takes ([`ScalarReads::aggregate`]) whose
+/// operands are scalars over the binders ([`scalar_shaped`]) or such
+/// aggregates: `(3, n)`, `P(1, n)`, `mk(n)`. The elaborator below MIR
+/// evaluates the display per instance.
+fn aggregate_shaped(
+    expression: &Expr,
+    packs: &HashSet<String>,
+    displays: &HashSet<String>,
+    scalars: &ScalarReads,
+) -> bool {
+    let shaped = |operand: &Expr| {
+        scalar_shaped(operand, packs, displays, scalars)
+            || aggregate_shaped(operand, packs, displays, scalars)
+    };
+    scalars.aggregate(expression)
+        && match &expression.kind {
+            ExprKind::TupleLit(items) => items.iter().all(shaped),
+            ExprKind::Call {
+                param_args,
+                args,
+                kwargs,
+                ..
+            } => {
+                param_args
+                    .iter()
+                    .all(|argument| scalar_parameter_argument(argument, &shaped))
+                    && args.iter().all(shaped)
+                    && kwargs.iter().all(|argument| shaped(&argument.value))
+            }
+            ExprKind::MethodCall { args, kwargs, .. } => {
+                args.iter().all(shaped) && kwargs.iter().all(|argument| shaped(&argument.value))
+            }
+            _ => false,
+        }
 }
 
 /// Whether `expression` is spelled as a scalar read off one of the body's
@@ -1763,6 +1829,16 @@ fn literal_element(expression: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `expression` is a tuple display of number and boolean literals,
+/// nested tuples included: a closed parameter value a loop binder holds.
+fn literal_tuple(expression: &Expr) -> bool {
+    matches!(&expression.kind, ExprKind::TupleLit(items) if !items.is_empty()
+    && items.iter().all(|item| {
+        literal_tuple(item)
+            || (literal_element(item) && !matches!(item.kind, ExprKind::Str(_)))
+    }))
 }
 
 /// Whether a compile-time argument is a type or a value `shaped` accepts.
@@ -4682,10 +4758,11 @@ mod def_request_tests {
         assert!(served.contains("lambda_"), "{served:?}");
         // A reflected field type is constructed by its expression.
         assert!(served.contains("field_type"), "{served:?}");
+        // A closed tuple display's loop binds each tuple as a parameter.
+        assert!(served.contains("tuples"), "{served:?}");
         // Each shape below still keys a type-pack clone; its owner flips the
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.
-        assert!(!served.contains("tuples"), "R405: {served:?}");
         assert!(!served.contains("raising"), "R404: {served:?}");
         assert!(!served.contains("names"), "R365: {served:?}");
     }
@@ -4709,7 +4786,7 @@ mod def_request_tests {
             super::served_pack_defs(&prepared, &super::ScalarReads::of(&prepared, None));
         let checked = super::served_pack_defs(
             &prepared,
-            &super::ScalarReads::of(&prepared, catalog.scalar_calls()),
+            &super::ScalarReads::of(&prepared, Some(&catalog)),
         );
 
         // The method's name says nothing about its result; the check does.

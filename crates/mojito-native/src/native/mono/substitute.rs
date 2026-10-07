@@ -288,9 +288,14 @@ pub(super) fn substitute_value_parameter_reads(
                 && let Some(value) = var_names
                     .get(place.root as usize)
                     .and_then(|name| locals.get(name))
-                && let Some(constant) = projected_parameter_constant(value, &place.proj)
+                && let Some(constant) = if place.proj.is_empty() {
+                    value_parameter_constant(value, var_tys.get(&place.root))
+                } else {
+                    projected_parameter_constant(value, &place.proj)
+                }
             {
-                // A field of a struct-typed value parameter (`e.rows`).
+                // A whole aggregate parameter read as a place (`h(p)`), or a
+                // field of a struct-typed one (`e.rows`).
                 *instruction = MirInstr::Const {
                     dest: *dest,
                     k: constant,
@@ -1215,7 +1220,7 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
             Some(Const::Function(value.clone()))
         }
         CtValue::Str(value) => Some(Const::Str(value.clone())),
-        value @ (CtValue::Simd { .. } | CtValue::Struct { .. }) => {
+        value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
             Some(Const::Value(value.clone()))
         }
         _ => None,
@@ -1340,8 +1345,8 @@ pub(super) fn bound_parameter_locals<'a>(
         .collect()
 }
 
-/// The declared type of the non-variadic value parameter `name` when it is
-/// a type binder of the declaration (`v: T`).
+/// The declared type of the non-variadic value parameter `name`: a type
+/// binder of the declaration (`v: T`) or an aggregate (`p: Tuple[Int, Int]`).
 fn declared_parameter_ty<'a>(name: &str, scope: &'a [ParamDecl]) -> Option<&'a Ty> {
     scope.iter().find_map(|decl| match decl {
         ParamDecl::Value {
@@ -1349,7 +1354,9 @@ fn declared_parameter_ty<'a>(name: &str, scope: &'a [ParamDecl]) -> Option<&'a T
             ty,
             variadic: false,
             ..
-        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. }) => Some(ty.as_ref()),
+        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. } | Ty::Struct(..)) => {
+            Some(ty.as_ref())
+        }
         _ => None,
     })
 }

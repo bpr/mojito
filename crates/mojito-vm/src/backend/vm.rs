@@ -526,15 +526,42 @@ impl VmBackend {
 
     /// A compile-time evaluation's result as a compile-time value: a nominal
     /// `String` becomes its text, a nominal collection (a display's value)
-    /// its frozen elements ([`Self::freeze_collection`]), and anything else
-    /// crosses as [`crate::crossing::vm_to_ct`] admits it.
+    /// its frozen elements ([`Self::freeze_collection`]), a nominal `Tuple`
+    /// its frozen elements, any other struct its frozen fields (the checker
+    /// admits only a fieldwise one where a frozen struct is materialized),
+    /// and anything else crosses as [`crate::crossing::vm_to_ct`] admits it.
     pub fn freeze(&self, value: Value) -> Result<CtValue, RuntimeError> {
         if let Some(text) = self.nominal_string_text(&value) {
             return Ok(CtValue::Str(text));
         }
-        match self.freeze_collection(&value)? {
-            Some(collection) => Ok(collection),
-            None => crate::crossing::vm_to_ct(value),
+        if let Some(collection) = self.freeze_collection(&value)? {
+            return Ok(collection);
+        }
+        match value {
+            Value::Struct {
+                name,
+                fields,
+                value_params,
+            } if value_params.is_empty() => {
+                if let [(storage, Value::Tuple(elements))] = fields.as_slice()
+                    && storage == "storage"
+                    && is_nominal_tuple(&name)
+                {
+                    return elements
+                        .iter()
+                        .map(|element| self.freeze(element.clone()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(CtValue::Tuple);
+                }
+                Ok(CtValue::Struct {
+                    name,
+                    fields: fields
+                        .into_iter()
+                        .map(|(field, value)| Ok((field, self.freeze(value)?)))
+                        .collect::<Result<Vec<_>, RuntimeError>>()?,
+                })
+            }
+            value => crate::crossing::vm_to_ct(value),
         }
     }
 
@@ -1343,6 +1370,14 @@ fn static_self_parameter(prog: &Prog, caller: CallerBindings<'_>, binder: &str) 
         .iter()
         .find(|(name, _)| name == binder)
         .map(|(_, value)| value.clone())
+}
+
+/// Whether the struct `name` is an instance of the nominal `Tuple`.
+fn is_nominal_tuple(name: &str) -> bool {
+    let template = name.split_once("$mono$").map_or(name, |(base, _)| base);
+    template
+        .strip_suffix(mojito_types::types::TUPLE_TYPE_NAME)
+        .is_some_and(|module| module.is_empty() || module.ends_with('$'))
 }
 
 fn ct_value_as_runtime(value: CtValue) -> Option<Value> {

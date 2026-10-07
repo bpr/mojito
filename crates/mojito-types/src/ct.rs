@@ -273,11 +273,12 @@ impl CtValue {
     }
 
     /// Whether this value is a runtime collection ([`Self::is_runtime_collection`])
-    /// whose iteration yields scalars a `comptime for` binder holds: an
-    /// `Int`, a `Float64`, a `Bool`, or a `String` (a dictionary yields its
-    /// keys).
-    pub fn is_scalar_collection(&self) -> bool {
-        let scalar = |value: &Self| {
+    /// whose iteration yields values a `comptime for` binder holds: an
+    /// `Int`, a `Float64`, a `Bool`, or a `String`, or a tuple or struct
+    /// over such values short of a `String` ([`Self::is_closed_aggregate`]).
+    /// A dictionary yields its keys.
+    pub fn is_parameter_value_collection(&self) -> bool {
+        let element = |value: &Self| {
             matches!(
                 value,
                 Self::Int(_)
@@ -286,11 +287,33 @@ impl CtValue {
                     | Self::FloatLiteral(_)
                     | Self::Bool(_)
                     | Self::Str(_)
-            )
+            ) || value.is_closed_aggregate()
         };
         match self {
-            Self::List(elements) | Self::Set { elements, .. } => elements.iter().all(scalar),
-            Self::Dict { entries, .. } => entries.iter().all(|(key, _)| scalar(key)),
+            Self::List(elements) | Self::Set { elements, .. } => elements.iter().all(element),
+            Self::Dict { entries, .. } => entries.iter().all(|(key, _)| element(key)),
+            _ => false,
+        }
+    }
+
+    /// Whether this value is a tuple or struct whose leaves are numbers and
+    /// booleans: a parameter constant a backend materializes without
+    /// constructing anything.
+    pub fn is_closed_aggregate(&self) -> bool {
+        let leaf = |value: &Self| {
+            matches!(
+                value,
+                Self::Int(_)
+                    | Self::UInt(_)
+                    | Self::IntLiteral(_)
+                    | Self::Float(_)
+                    | Self::FloatLiteral(_)
+                    | Self::Bool(_)
+            ) || value.is_closed_aggregate()
+        };
+        match self {
+            Self::Tuple(elements) => !elements.is_empty() && elements.iter().all(leaf),
+            Self::Struct { fields, .. } => fields.iter().all(|(_, field)| leaf(field)),
             _ => false,
         }
     }
@@ -405,6 +428,20 @@ impl CtValue {
                 .map(|(value, ty)| value.materialize_as(ty))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::Tuple),
+            // The nominal `Tuple[...]` holds its elements at its arguments.
+            (Self::Tuple(values), target) if crate::types::tuple_elements(target).is_some() => {
+                let types = crate::types::tuple_elements(target).expect("guard established Tuple");
+                (values.len() == types.len())
+                    .then(|| {
+                        values
+                            .into_iter()
+                            .zip(types)
+                            .map(|(value, ty)| value.materialize_as(ty))
+                            .collect::<Option<Vec<_>>>()
+                            .map(CtValue::Tuple)
+                    })
+                    .flatten()
+            }
             (Self::List(values), Ty::ComptimeList(element)) => values
                 .into_iter()
                 .map(|value| value.materialize_as(element))
