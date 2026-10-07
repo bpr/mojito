@@ -428,9 +428,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   marks),
   `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
-  `infer_unbound_pack_construction` types a spread of an unbound pack and
+  `infer_unbound_pack_construction` types the private `__RuntimeTuple`
+  over a spread of an unbound pack and
   `infer_validated_variadic_construction` a public `Tuple` (every other
-  variadic struct is matched against its template's constructor by
+  variadic struct, and every construction spreading a forwarded pack, is
+  matched against its declared constructor by
   `declarations.rs:infer_construction`),
   `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `symbolic_verdict`
   turns a `TypeError::SymbolicBoundary` into that one body's no-verdict.
@@ -1401,7 +1403,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
 - A type pack the template serves: `served_pack_defs` (a fixpoint over
   `pack_def_shape_served`, `pack_spread_callees` with its `SpreadCallee`,
-  `pack_collector_methods`, `def_pack_names`, and
+  `pack_collector_methods`, `pack_collector_constructors` (both over
+  `collects_type_pack`), `holds_instance_construct`, `def_pack_names`, and
   `def_body_keys_specialization`, `comptime.rs`) names the served `def`s and
   `pack_def_template_served` reads it; `PackRewriter::served_callees`
   (`comptime/rewrite.rs`) spells a clone's spread into a served callee

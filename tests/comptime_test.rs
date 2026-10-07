@@ -413,8 +413,9 @@ fn comptime_for_over_a_list_of_strings() {
 #[test]
 fn heterogeneous_type_pack_round_trips_through_tuple_spread() {
     // Mirrors current Mojo: a heterogeneous variadic pack can be transferred
-    // into `Tuple[*Ts]`; this is not general fixed-arity call spreading.
-    let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values: Tuple[Int, StringLiteral, Bool] = repack(3, \"seven\", True)\n    print(values)\n";
+    // into `Tuple[*Ts]`; this is not general fixed-arity call spreading. An
+    // annotation spelling a bare `StringLiteral` is rejected, as at the pin.
+    let src = "def repack[*Ts: Movable](var *args: *Ts) -> Tuple[*Ts]:\n    return Tuple[*Ts](*args^)\n\ndef main():\n    var values = repack(3, \"seven\", True)\n    print(values)\n";
     assert_eq!(run(src).unwrap(), "(3, seven, True)\n");
 }
 

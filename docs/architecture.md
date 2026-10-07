@@ -602,8 +602,9 @@ a generic struct's method — is unrolled in the AST as before (roadmap R363,
 R364). A type pack crosses the waist the same way: a pack-keyed `def`
 the template serves (`served_pack_defs`: binders a non-pack `def`'s template
 also serves (`template_serves_binders`), a read or owned collector, every
-spread of the pack a call argument into `print` or another served `def`, no
-local `comptime` alias keying a clone) keeps its body; the checker
+spread of the pack a call argument into `print`, another served `def`, a
+method, or a constructor with a type-pack collector, no local `comptime`
+alias keying a clone, no nested `def` or lambda) keeps its body; the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
@@ -629,7 +630,13 @@ carries no spread. A method call carries the same position
 erased oracle expand alike. The gate (`pack_spread_callees`) judges such a
 callee by name, before the check types its receiver: the name must be one
 some struct declares with a type-pack collector, the method's own
-(`*a: *Ts`) or the struct's (`*b: *Self.Ts`). Every such call names a
+(`*a: *Ts`) or the struct's (`*b: *Self.Ts`); a construction's
+(`Tuple(*args^)`, `Bag[*Ts](*args^)`) must be a struct whose `__init__`
+has one (`pack_collector_constructors`). The checker types such a
+construction as a call of the declared `__init__` it selects, the forwarded
+pack bound whole to its collector (`bind_forwarded_pack`), so MIR names the
+constructor overload and its collector's ownership is checked as at the
+pin. Every such call names a
 declared callee: `write` resolves to the bundled `Writer` trait's default or
 a conformer's own `write` (`stdlib/std/format/__init__.mojo`), and `format`
 to `String.format`/`StringSpan.format` over the bundled `_FormatUtils`

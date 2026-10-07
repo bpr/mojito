@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	525
+# swept-count	526
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -389,6 +389,7 @@ assets/type_error/pack_method_where_unqualified.mojo	compile-reject	agree	error:
 assets/type_error/pack_overload_ambiguous_bounds.mojo	compile-reject	agree	error: ambiguous call to 'show', each candidate requires 1 implicit conversion, disambiguate with an explicit cast
 assets/type_error/pack_overload_homogeneous_string_ambiguity.mojo	compile-reject	agree	error: ambiguous call to 'g'
 assets/type_error/pack_overload_string_regular_ambiguity.mojo	compile-reject	agree	error: ambiguous call to 'g'
+assets/type_error/pack_read_spread_into_tuple.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_init_arity.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pack_struct_runtime_getitem_index.mojo	compile-reject	agree	error: invalid call to '__getitem__': cannot use a dynamic value in a parameter list
 assets/type_error/pack_struct_runtime_index.mojo	compile-reject	agree	error: invalid call to '__getitem_param__': cannot use a dynamic value in a parameter list

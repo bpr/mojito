@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R440**.
+Next free ID: **R443**.
 
 ## Ordered Work
 
@@ -59,23 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R316 (P3b) A pack spread into a constructor keys a clone**
-
-  Problem: `return Tuple[*Ts](*args^)` and `return Tuple(*args^)` in a
-  pack-keyed `def` keep the `def` on the cloner, while the pin serves it
-  from one template.
-  - `pack_spread_callees` (`comptime.rs`) admits only `print` and a served
-    `def` as a spread's callee.
-  - `Tuple` and `Variant` are variadic structs specialized whole, so a
-    served body has no instance to name (R4).
-  - Reached by `conformance/fixtures/empty_runtime_pack.mojo`,
-    `tuple_values.mojo`, `pack_scope_restore.mojo`, and
-    `nested_heterogeneous_packs.mojo`, all pin-accepted.
-  - A spread into a plain struct's own-pack `__init__` is a method with a
-    pack of its own, so it can land with R256's admission by name.
-  - Depends on R4.
-  - Model: Fable, Planned.
 
 - [ ] **R253 (P3b) The cloner's type-pack branch is still live**
 
@@ -2539,6 +2522,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R440 A pack-keyed `def` holding a nested `def` rejects a spread
+  into a generic constructor**
+
+  Problem: `Box(*args^)` against `def __init__[*Us: Movable &
+  Deinitable](out self, var *a: *Us)`, in a pack-keyed `def` whose body also
+  holds a nested `def`, fails with "no constructor overload matches the
+  supplied arguments", where the pin runs it.
+  - Such a body is cloned per instance (`holds_instance_construct`), and the
+    clone's expanded spread does not select the generic constructor.
+  - Without the nested `def`, the template serves the body and the call
+    runs.
+  - Found while landing R316 (2026-10-06).
+  - Depends on R6, which serves the body from its template.
+  - Model: Opus, Not Planned.
+
 - [ ] **R319 A local type alias applied as a constructor in an unrolled
   `comptime for` body is an undefined variable**
 
@@ -3743,6 +3741,17 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `len-over-pack-in-comptime-for-header`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R442 `TString` is in scope in user code, where the pin has no such
+  name**
+
+  Problem: `TString(*args^)` in a user `def` runs in Mojito, where the pin
+  rejects it with "use of unknown declaration 'TString'".
+  - The bundled `TString` struct is visible as a prelude name, though the pin
+    keeps its t-string type out of the user's namespace.
+  - Found while landing R316 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R164 A trait method with a trailing `where` clause is accepted, though
   the pin does not support `where` on trait methods**

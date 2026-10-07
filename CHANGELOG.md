@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pack-keyed `def` that spreads its pack into a constructor —
+  `Tuple[*Ts](*args^)`, `Tuple(*args^)`, a user variadic struct's
+  `Bag[*Ts](*args^)` or `Bag(*args^)`, or an own-pack `__init__` such as
+  `Box(*args^)` or `Sink(*a)` — is now served by its template, as at the
+  pin, where it was cloned per call or rejected. The construction selects
+  the struct's declared `__init__` and binds the forwarded pack whole to its
+  collector, so a read pack spread into `Tuple`'s `var` collector is now
+  rejected, as at the pin. A pack-keyed `def` holding a nested `def` stays
+  on the cloner, where it was claimed served and minted its nested `def`
+  twice; it rejects a spread into a generic constructor (R440).
 - `String.format` and `StringSpan.format` are now upstream's declared
   `format[*Ts: Writable](self, *args: *Ts) raises -> String`, over a bundled
   port of upstream's `_FormatUtils` in `std/string.mojo`, where the checker

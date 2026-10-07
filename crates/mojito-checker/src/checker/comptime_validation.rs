@@ -2218,11 +2218,11 @@ impl Checker {
         Ok(forwarded.pack.clone())
     }
 
-    /// A construction from a whole pack that is still a parameter
-    /// (`Tuple(*args^)`, `__RuntimeTuple(*args^)`): storage over that pack.
-    /// The elaborator expands a spread per specialization, so any other
-    /// callee of one has no symbolic rule. `None` when the call spreads no
-    /// unbound pack.
+    /// The compiler-private storage aggregate constructed from a whole pack
+    /// that is still a parameter (`__RuntimeTuple(*args^)`, in `Tuple`'s own
+    /// `__init__`): storage over that pack. A declared struct's construction
+    /// from a forwarded pack selects its `__init__` (`infer_construction`).
+    /// `None` for every other call.
     pub(super) fn infer_unbound_pack_construction(
         &self,
         name: &str,
@@ -2257,9 +2257,9 @@ impl Checker {
         };
         let constructed = match name {
             "__RuntimeTuple" => Ty::Tuple(vec![pack]),
-            mojito_types::types::TUPLE_TYPE_NAME => mojito_types::types::tuple_type(vec![pack]),
             // Any other callee binds the forwarded pack to its own collector
-            // (`forwarded_pack_argument`, `bind_forwarded_pack`).
+            // (`forwarded_pack_argument`, `bind_forwarded_pack`), a struct
+            // through its declared `__init__` (`infer_construction`).
             _ => return None,
         };
         if !kwargs.is_empty() {
@@ -2291,8 +2291,9 @@ impl Checker {
     /// spelling, not the template's bound pack. Every other variadic struct
     /// (`Pair[Int, Bool](1, True)`) is matched against its template's
     /// constructor with the pack bound from the `[...]` arguments, the path
-    /// a bare construction takes once its pack is solved. `None` outside
-    /// validation and for every callee this does not type.
+    /// a bare construction takes once its pack is solved, as is a
+    /// construction spreading a forwarded pack. `None` outside validation
+    /// and for every callee this does not type.
     pub(super) fn infer_validated_variadic_construction(
         &self,
         call: &Expr,
@@ -2307,6 +2308,9 @@ impl Checker {
             || !self.structs.contains_key(name)
             || (name != mojito_types::types::TUPLE_TYPE_NAME
                 && name != mojito_types::types::TSTRING_TYPE_NAME)
+            || args
+                .iter()
+                .any(|argument| self.forwarded_pack(argument).is_some())
         {
             return None;
         }

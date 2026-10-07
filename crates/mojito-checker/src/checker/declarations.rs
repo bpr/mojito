@@ -1994,6 +1994,37 @@ impl Checker {
         Some(self.infer_construction(span, &specialization, &[], args, kwargs))
     }
 
+    /// The pack a constructor candidate's collector takes whole when the
+    /// call forwards one still a parameter (`Tuple(*args^)`): it binds to
+    /// the collector as a call's does, which checks its ownership and bounds
+    /// and solves the struct's pack to the caller's. `Ok(None)` when the
+    /// call forwards no pack; an error when this candidate cannot take the
+    /// spread, with the binding failure the miss reports when there is one.
+    fn constructor_forwarded_pack(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        args: &[Expr],
+        matched: &mojito_ast::call::CallSlots,
+    ) -> Result<Option<Ty>, Option<TypeError>> {
+        let forwarded = self
+            .forwarded_pack_argument(name, args, sig.variadic.is_some())
+            .map_err(|_| None)?;
+        let (Some((position, pack)), Some(collector)) = (forwarded, sig.variadic.as_deref()) else {
+            return Ok(None);
+        };
+        mojito_ast::call::bind_spread(matched, position).map_err(|_| None)?;
+        self.bind_forwarded_pack(
+            name,
+            &args[position],
+            &pack,
+            collector,
+            Some(sig.variadic_convention == Some(ArgConvention::Var)),
+        )
+        .map(Some)
+        .map_err(Some)
+    }
+
     /// Record a generic constructor's resolved compile-time arguments for
     /// per-call specialization and, once its clone exists on the struct,
     /// retarget the construction to it (`Variant$…​.__init__$y3:Int`). A
@@ -2554,6 +2585,13 @@ impl Checker {
                 if !matched.keyword_overflow.is_empty() {
                     continue;
                 }
+                let forwarded = match self.constructor_forwarded_pack(name, sig, args, &matched) {
+                    Ok(forwarded) => forwarded,
+                    Err(failure) => {
+                        bound_failure = bound_failure.or(failure);
+                        continue;
+                    }
+                };
                 let mut bound: Vec<(&Expr, Ty, Option<ArgConvention>)> = Vec::new();
                 let mut bound_slots: Vec<(usize, &Expr, &Ty)> = Vec::new();
                 for (index, slot) in matched.slots.iter().enumerate() {
@@ -2577,9 +2615,16 @@ impl Checker {
                         bound.push((&args[*position], element.clone(), None));
                     }
                 }
+                // The forwarded pack is the one overflow argument, so the
+                // last bound.
+                let forwarded_index = forwarded.as_ref().map(|_| bound.len() - 1);
                 let arg_tys = bound
                     .iter()
-                    .map(|(expression, ..)| self.infer(expression))
+                    .enumerate()
+                    .map(|(index, (expression, ..))| match &forwarded {
+                        Some(actual) if Some(index) == forwarded_index => Ok(actual.clone()),
+                        _ => self.infer(expression),
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let patterns: Vec<Ty> = bound
                     .iter()
@@ -2635,7 +2680,12 @@ impl Checker {
                     ) {
                         continue;
                     }
-                    for (index, (aty, pty)) in arg_tys.iter().zip(&patterns).enumerate() {
+                    for (index, (aty, pty)) in arg_tys
+                        .iter()
+                        .zip(&patterns)
+                        .enumerate()
+                        .filter(|(index, _)| Some(*index) != forwarded_index)
+                    {
                         let expected = index
                             .checked_sub(bound_slots.len())
                             .filter(|_| {
@@ -2765,9 +2815,15 @@ impl Checker {
                         Some((expression, sig.conventions.get(index).copied().flatten()))
                     })
                     .collect();
-                for position in &overflow {
-                    bound.push((&args[*position], sig.variadic_convention));
-                }
+                // A forwarded pack was bound whole while scoring, its
+                // ownership checked there.
+                bound.extend(
+                    overflow
+                        .iter()
+                        .map(|position| &args[*position])
+                        .filter(|argument| self.forwarded_pack(argument).is_none())
+                        .map(|argument| (argument, sig.variadic_convention)),
+                );
                 for (index, expected) in &conversions {
                     let (expression, _) = bound[*index];
                     let actual = self.infer(expression)?;

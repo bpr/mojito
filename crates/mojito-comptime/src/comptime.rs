@@ -1912,6 +1912,28 @@ pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
     finder.found
 }
 
+/// Whether a body holds a construct only an instance can lower: a nested
+/// `def` or a lambda, whose lifted body is cloned per instance.
+pub(super) fn holds_instance_construct(body: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.found |= matches!(&statement.kind, StmtKind::Def { .. });
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.found |= matches!(&expr.kind, ExprKind::Lambda { .. });
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    mojito_ast::visit::walk_block(&mut finder, body);
+    finder.found
+}
+
 /// Whether a nested `def`'s or a compile-time evaluation's body can only
 /// check once its own parameters are bound: it holds compile-time control
 /// flow, or a `rebind` assertion over them. Either way the template is
@@ -2261,14 +2283,16 @@ fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) ->
 /// The names of the pack-keyed top-level `def`s the template serves. Every
 /// declaration of the name passes the shape test ([`pack_def_shape_served`]),
 /// and every callee a body spreads its pack into is `print`, a served name,
-/// or a method with a type-pack collector ([`pack_collector_methods`]), by
+/// a method with a type-pack collector ([`pack_collector_methods`]), or a
+/// struct whose `__init__` has one ([`pack_collector_constructors`]), by
 /// fixpoint: a served body's spread is a call of the callee's template, which
 /// the elaborator expands into the bound pack's elements, so a spread into a
-/// cloned callee (a constructor, a `def` the template does not serve) keeps
-/// the spreading `def` on the cloner. An overloaded name is served or cloned
+/// cloned callee (a `def` the template does not serve) keeps the spreading
+/// `def` on the cloner. An overloaded name is served or cloned
 /// whole, since a forward (`tally(*rest)`) may bind any of its declarations.
 fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
     let methods = pack_collector_methods(program);
+    let constructors = pack_collector_constructors(program);
     let mut spreads: HashMap<String, Vec<SpreadCallee>> = HashMap::new();
     let mut cloned: HashSet<String> = HashSet::new();
     let scalars = ScalarReads::of(program);
@@ -2297,7 +2321,11 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
             .iter()
             .filter(|name| {
                 spreads[*name].iter().all(|callee| match callee {
-                    SpreadCallee::Def(callee) => callee == "print" || served.contains(callee),
+                    SpreadCallee::Def(callee) => {
+                        callee == "print"
+                            || served.contains(callee)
+                            || constructors.contains(callee)
+                    }
                     SpreadCallee::Method(method) => methods.contains(method),
                 })
             })
@@ -2347,14 +2375,7 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
 
     impl mojito_ast::visit::Visitor for Finder {
         fn visit_stmt(&mut self, statement: &Stmt) {
-            self.found |= matches!(
-                &statement.kind,
-                StmtKind::Def { .. } | StmtKind::Comptime { .. }
-            );
-        }
-
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.found |= matches!(&expr.kind, ExprKind::Lambda { .. });
+            self.found |= matches!(&statement.kind, StmtKind::Comptime { .. });
         }
     }
 
@@ -2373,7 +2394,7 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
     }
     let mut finder = Finder { found: false };
     mojito_ast::visit::walk_block(&mut finder, body);
-    !finder.found
+    !finder.found && !holds_instance_construct(body)
 }
 
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
@@ -2387,7 +2408,9 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
 /// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); and
-/// the body keys no clone. The check types
+/// the body keys no clone and holds no nested `def` or lambda
+/// ([`holds_instance_construct`]), whose body the driver clones per instance
+/// whatever this judgment says (R6). The check types
 /// such a body once, with the collector a pack of the symbolic `Ts` and each
 /// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
 /// pack from the call.
@@ -2405,7 +2428,8 @@ fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, params, name)
         && !def_body_keys_specialization(type_params, params, name, body, scalars)
-        && value_packs_read_as_parameters(type_params, name, body);
+        && value_packs_read_as_parameters(type_params, name, body)
+        && !holds_instance_construct(body);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
 }
 
@@ -2551,9 +2575,9 @@ fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<Sp
     (finder.callees.len() == finder.spreads).then_some(finder.callees)
 }
 
-/// A callee a pack-keyed `def`'s body spreads its pack into: a `def` (or
-/// `print`) by name, or a method by name, whose receiver the pre-check
-/// judgment cannot type.
+/// A callee a pack-keyed `def`'s body spreads its pack into: a `def`,
+/// `print`, or a struct's constructor by name, or a method by name, whose
+/// receiver the pre-check judgment cannot type.
 #[derive(Clone)]
 enum SpreadCallee {
     Def(String),
@@ -2562,51 +2586,78 @@ enum SpreadCallee {
 
 /// The method names a served pack-keyed body may spread its pack into: a
 /// struct in the program declares a method of the name whose collector is a
-/// type pack, the method's own (`*a: *Ts`) or the struct's (`*b: *Self.Ts`),
-/// which its template serves with the spread expanded per call. Every such
-/// call names a declared callee: a string literal's `format` is the static
-/// call of the bundled stand-in.
+/// type pack ([`collects_type_pack`]), which its template serves with the
+/// spread expanded per call. Every such call names a declared callee: a
+/// string literal's `format` is the static call of the bundled stand-in.
 fn pack_collector_methods(program: &[Stmt]) -> HashSet<String> {
-    let binders = |type_params: &[TypeParam]| -> HashSet<String> {
-        type_params
-            .iter()
-            .filter_map(|parameter| parameter.name.strip_prefix('*'))
-            .map(str::to_string)
-            .collect()
-    };
+    declared_structs(program)
+        .flat_map(|(_, struct_packs, methods)| {
+            methods
+                .iter()
+                .filter(move |method| collects_type_pack(method, &struct_packs))
+                .map(|method| method.name.clone())
+        })
+        .collect()
+}
+
+/// The struct names a served pack-keyed body may spread its pack into as a
+/// construction (`Tuple(*args^)`, `Bag[*Ts](*args^)`): the struct declares an
+/// `__init__` whose collector is a type pack ([`collects_type_pack`]), which
+/// the checker selects with the forwarded pack bound whole to it. A name
+/// the pre-check judgment cannot see (an import alias) keeps the clone.
+fn pack_collector_constructors(program: &[Stmt]) -> HashSet<String> {
+    declared_structs(program)
+        .filter(|(_, struct_packs, methods)| {
+            methods
+                .iter()
+                .any(|method| method.name == "__init__" && collects_type_pack(method, struct_packs))
+        })
+        .map(|(name, ..)| name.clone())
+        .collect()
+}
+
+/// Every struct the program declares: its name, the names of its own type
+/// packs, and its methods.
+fn declared_structs(
+    program: &[Stmt],
+) -> impl Iterator<Item = (&String, HashSet<String>, &Vec<mojito_ast::ast::Method>)> {
     program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Struct {
+                name,
                 type_params,
                 methods,
                 ..
-            } => Some((binders(type_params), methods)),
+            } => Some((name, type_pack_binders(type_params), methods)),
             _ => None,
         })
-        .flat_map(|(struct_packs, methods)| {
-            methods.iter().filter_map(move |method| {
-                let own_packs = binders(&method.type_params);
-                method
-                    .params
-                    .iter()
-                    .any(|parameter| {
-                        parameter.kind == ParamKind::Variadic
-                            && match &parameter.ty {
-                                Type::Named(spread, arguments) if arguments.is_empty() => {
-                                    spread.strip_prefix('*').is_some_and(|pack| {
-                                        own_packs.contains(pack) || struct_packs.contains(pack)
-                                    })
-                                }
-                                Type::SelfParam(spread) => spread
-                                    .strip_prefix('*')
-                                    .is_some_and(|pack| struct_packs.contains(pack)),
-                                _ => false,
-                            }
-                    })
-                    .then(|| method.name.clone())
-            })
-        })
+}
+
+/// Whether a method's positional collector is a type pack: the method's own
+/// (`*a: *Ts`) or its struct's (`*b: *Self.Ts`, one of `struct_packs`).
+fn collects_type_pack(method: &mojito_ast::ast::Method, struct_packs: &HashSet<String>) -> bool {
+    let own_packs = type_pack_binders(&method.type_params);
+    method.params.iter().any(|parameter| {
+        parameter.kind == ParamKind::Variadic
+            && match &parameter.ty {
+                Type::Named(spread, arguments) if arguments.is_empty() => spread
+                    .strip_prefix('*')
+                    .is_some_and(|pack| own_packs.contains(pack) || struct_packs.contains(pack)),
+                Type::SelfParam(spread) => spread
+                    .strip_prefix('*')
+                    .is_some_and(|pack| struct_packs.contains(pack)),
+                _ => false,
+            }
+    })
+}
+
+/// The names of the type packs a parameter list declares (`*Ts` as `Ts`).
+fn type_pack_binders(type_params: &[TypeParam]) -> HashSet<String> {
+    type_params
+        .iter()
+        .filter_map(|parameter| parameter.name.strip_prefix('*'))
+        .map(str::to_string)
         .collect()
 }
 
@@ -4671,6 +4722,31 @@ mod def_request_tests {
             "{defs:?}"
         );
         assert!(main_call_names(&elaborated).contains(&"ident".to_string()));
+    }
+
+    #[test]
+    fn a_pack_spread_into_a_pack_collector_constructor_is_template_served() {
+        let source = "struct Bag[*Ts: Movable](Movable):\n    var n: Int\n    \
+                      def __init__(out self, var *a: *Self.Ts):\n        self.n = 0\n\n\
+                      struct Box(Movable):\n    var n: Int\n    \
+                      def __init__[*Us: Movable](out self, var *a: *Us):\n        self.n = 0\n\n\
+                      struct Ints(Movable):\n    var n: Int\n    \
+                      def __init__(out self, *a: Int):\n        self.n = 0\n\n\
+                      def bag[*Ts: Movable](var *args: *Ts) -> Int:\n    return Bag[*Ts](*args^).n\n\n\
+                      def box[*Ts: Movable](var *args: *Ts) -> Int:\n    return Box(*args^).n\n\n\
+                      def ints[*Ts: Movable](*args: *Ts) -> Int:\n    return Ints(*args).n\n\n\
+                      def nested[*Ts: Movable](var *args: *Ts) -> Int:\n    \
+                      def one() -> Int:\n        return 1\n    return Box(*args^).n + one()\n";
+        let parsed = parse(source).expect("parse");
+
+        let served = super::served_pack_defs(&parsed);
+
+        assert!(served.contains("bag"), "{served:?}");
+        assert!(served.contains("box"), "{served:?}");
+        // A homogeneous collector takes no pack, and a nested `def` is
+        // cloned per instance by the driver.
+        assert!(!served.contains("ints"), "{served:?}");
+        assert!(!served.contains("nested"), "{served:?}");
     }
 
     #[test]

@@ -2006,28 +2006,6 @@ fn per_call_stubs(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-/// Whether a method body holds a construct only an instance can lower: a
-/// nested `def` or a lambda, whose lifted body is cloned per instance.
-fn holds_instance_construct(body: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            self.found |= matches!(&statement.kind, StmtKind::Def { .. });
-        }
-
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.found |= matches!(&expr.kind, ExprKind::Lambda { .. });
-        }
-    }
-
-    let mut finder = Finder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.found
-}
-
 /// Whether `body` is [`unspecialized_method_stub`]'s trap.
 fn is_unspecialized_method_stub(body: &[Stmt]) -> bool {
     let [statement] = body else {
