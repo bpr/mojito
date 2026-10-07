@@ -236,6 +236,44 @@ impl Checker {
         }
     }
 
+    /// A run-time read of a compile-time binding (a value parameter, a
+    /// `comptime for` variable) whose value is no constant — a tuple or
+    /// struct holding a `String` — is a temporary the parameter constant
+    /// materializes into, as upstream's `kgen.param.constant` is: the read
+    /// borrows a hidden slot the ownership analysis destroys, never storage
+    /// of the binding's own.
+    pub(in crate::checker) fn materialize_parameter_read(&self, expr: &Expr, ty: &Ty) {
+        if let ExprKind::Identifier(name) = &expr.kind
+            && self.comptime_positions.get() == 0
+            && matches!(ty, Ty::Struct(..))
+            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
+            && !self.is_trivial_register_passable(ty)
+            && !self
+                .copy_place_value_uses
+                .borrow()
+                .contains(&expr.source_span())
+        {
+            let _ = self.materialize_borrow_owner(expr, false);
+        }
+    }
+
+    /// A consumed read of a compile-time binding is the materialized value
+    /// itself, handed to its consumer, and so has no temporary of its own
+    /// ([`Self::materialize_parameter_read`]).
+    pub(in crate::checker) fn consume_parameter_read(&self, expr: &Expr) {
+        if matches!(&expr.kind, ExprKind::Identifier(name)
+            if self.is_compile_time_binding(name) || self.is_value_parameter(name))
+        {
+            let mut adjustments = self.operation_adjustments.borrow_mut();
+            if matches!(
+                adjustments.get(&expr.source_span()),
+                Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. })
+            ) {
+                adjustments.remove(&expr.source_span());
+            }
+        }
+    }
+
     /// A view-returning call's result type with the origin slots its contract
     /// resolved at this call (`call_result_origins`) written into the struct's
     /// origin tail: `h.view()` over `-> View[origin_of(self)]` is a

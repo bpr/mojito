@@ -201,14 +201,14 @@ impl Checker {
     }
 
     /// The tuple displays, calls, and method calls of `program` this
-    /// validation typed as a closed aggregate a `comptime for` binder takes
-    /// ([`Self::closed_aggregate_element`]) without raising, under the
+    /// validation typed as a parameter aggregate a `comptime for` binder takes
+    /// ([`Self::parameter_aggregate_element`]) without raising, under the
     /// verdict rule of [`Self::scalar_calls`].
     pub(super) fn aggregate_elements(
         &self,
         program: &[Stmt],
     ) -> HashSet<mojito_common::token::SyntaxId> {
-        self.typed_display_elements(program, true, &|ty| self.closed_aggregate_element(ty))
+        self.typed_display_elements(program, true, &|ty| self.parameter_aggregate_element(ty))
     }
 
     /// Check the method bodies of a struct that hold compile-time control
@@ -591,7 +591,7 @@ impl Checker {
             return Err(TypeError::Unsupported(format!(
                 "'comptime for' over elements of type '{element}' in a generic body: its \
                  variable binds an 'Int', 'Float64', 'Bool', or 'String' element, or a \
-                 tuple or struct of numbers and booleans"
+                 tuple or struct of them"
             )));
         }
         let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
@@ -1208,8 +1208,7 @@ impl Checker {
     /// dictionary display's distinct keys. `None` for any other iterable, or
     /// a display with an element that is not a literal of a type a loop
     /// binder takes: a scalar (`Int`, `Float64`, `Bool`, `String`), or a
-    /// tuple or struct of numbers and booleans
-    /// ([`Self::closed_aggregate_element`]).
+    /// tuple or struct of them ([`Self::parameter_aggregate_element`]).
     fn closed_iteration_elements(
         &self,
         iter: &Expr,
@@ -1218,7 +1217,7 @@ impl Checker {
         let scalar = matches!(element, Ty::Int | Ty::Float64 | Ty::Bool)
             || matches!(element, Ty::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
-        if !scalar && !self.closed_aggregate_element(element) {
+        if !scalar && !self.parameter_aggregate_element(element) {
             return None;
         }
         let (leaves, distinct): (Vec<&Expr>, bool) = match &iter.kind {
@@ -1242,15 +1241,23 @@ impl Checker {
     }
 
     /// Whether `element` is a nominal `Tuple`, or a non-generic fieldwise
-    /// struct, whose elements or fields are numbers, booleans, or such
-    /// aggregates: a parameter value a loop binder holds and a backend
-    /// materializes as a closed constant.
-    fn closed_aggregate_element(&self, element: &Ty) -> bool {
+    /// struct, whose elements or fields are numbers, booleans, strings, or
+    /// such aggregates: a parameter value a loop binder holds, which a
+    /// backend materializes as a closed constant, or constructs where a
+    /// string leaf makes it no constant.
+    fn parameter_aggregate_element(&self, element: &Ty) -> bool {
         let leaf = |ty: &Ty| {
             matches!(
                 ty,
-                Ty::Int | Ty::Float64 | Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral
-            ) || self.closed_aggregate_element(ty)
+                Ty::Int
+                    | Ty::Float64
+                    | Ty::Bool
+                    | Ty::IntLiteral
+                    | Ty::FloatLiteral
+                    | Ty::StringLiteral
+            ) || matches!(ty, Ty::Struct(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
+                || self.parameter_aggregate_element(ty)
         };
         if let Some(elements) = mojito_types::types::tuple_elements(element) {
             return !elements.is_empty() && elements.into_iter().all(leaf);
@@ -1266,12 +1273,12 @@ impl Checker {
 
     /// Whether `iter` is a display the elaborator evaluates per instance
     /// when the check does not close it: a collection display of scalars
-    /// ([`evaluated_display`]), or a list display of closed aggregates
-    /// ([`Self::closed_aggregate_element`]).
+    /// ([`evaluated_display`]), or a list display of parameter aggregates
+    /// ([`Self::parameter_aggregate_element`]).
     fn evaluated_display(&self, iter: &Expr, element: &Ty) -> bool {
         evaluated_display(iter, element)
             || (matches!(&iter.kind, ExprKind::ListLit(items) if !items.is_empty())
-                && self.closed_aggregate_element(element))
+                && self.parameter_aggregate_element(element))
     }
 
     /// The calls and method calls of `program`, and its tuple displays when

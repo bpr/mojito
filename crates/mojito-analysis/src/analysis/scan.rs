@@ -424,6 +424,38 @@ pub(super) fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
     f.var_names.get(vi).is_none_or(|name| name != "self")
 }
 
+/// The slots `comptime for` headers bind, deep through `try` regions. A
+/// binder holds a compile-time parameter, not storage: every run-time read
+/// materializes the parameter into a temporary of its own, so the binder
+/// owns nothing and is no drop root.
+pub(super) fn comptime_binder_slots(blocks: &[MirBlock]) -> HashSet<VarId> {
+    let mut slots = HashSet::new();
+    for block in blocks {
+        if let MirTerm::ComptimeFor { slot, .. } = &block.term {
+            slots.insert(*slot);
+        }
+        for instruction in &block.instrs {
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = instruction
+            {
+                for region in std::iter::once(body)
+                    .chain(handler.iter().map(|(_, blocks)| blocks))
+                    .chain(orelse)
+                    .chain(finalbody)
+                {
+                    slots.extend(comptime_binder_slots(region));
+                }
+            }
+        }
+    }
+    slots
+}
+
 /// Whether destroying a field of this type can do observable work (run a
 /// destructor, release storage). Scalars, pointers, and references die
 /// silently, so they need no instruction.

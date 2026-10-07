@@ -160,6 +160,9 @@ pub enum TypeError {
     /// A `^` transfer out of a place rooted at an immutable binding, such as
     /// a parameter with no owning convention.
     ImmutableTransfer(String),
+    /// A `^` transfer out of a compile-time binding (a value parameter, a
+    /// `comptime for` variable): a parameter is a value, not storage.
+    ParameterTransfer,
     /// A call assigned back over its destination borrows an owned interior
     /// of that destination through one of its direct arguments.
     AliasingResultArgument {
@@ -590,6 +593,10 @@ impl fmt::Display for TypeError {
             Self::ImmutableTransfer(name) => {
                 write!(f, "cannot transfer out of immutable reference ('{name}')")
             }
+            Self::ParameterTransfer => write!(
+                f,
+                "cannot transfer from a parameter expression; did you want to introduce a local 'var'?"
+            ),
             Self::AliasingResultArgument {
                 parameter,
                 callee,

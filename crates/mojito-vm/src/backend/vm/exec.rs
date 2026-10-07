@@ -2484,6 +2484,12 @@ impl VmBackend {
                         &mut self.comptime_cursors,
                         scope.id,
                     )?;
+                    self.materialize_comptime_binder(
+                        prog,
+                        &prog.mir.functions[function].1,
+                        header,
+                        vars,
+                    )?;
                 }
                 MirTerm::Return(r) => {
                     let v = r

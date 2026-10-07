@@ -3083,6 +3083,7 @@ impl Checker {
             self.copy_place_value_uses
                 .borrow_mut()
                 .insert(expr.source_span());
+            self.consume_parameter_read(expr);
         }
         Ok(())
     }

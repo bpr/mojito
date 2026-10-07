@@ -150,8 +150,15 @@ impl Checker {
     /// Reject `source^` out of a place rooted at an immutable value binding
     /// (a parameter or `self` with no owning convention), as upstream: the
     /// callee does not own the storage, so moving out of it would destroy
-    /// the caller's value. A trivial register value transfers as a copy.
+    /// the caller's value. A trivial register value transfers as a copy. A
+    /// compile-time binding is a parameter, which holds no storage to move
+    /// out of, whatever its type.
     pub(super) fn check_transfer_source(&self, source: &Expr, ty: &Ty) -> Result<(), TypeError> {
+        if let ExprKind::Identifier(name) = &source.kind
+            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
+        {
+            return Err(TypeError::ParameterTransfer);
+        }
         let Some(root) = field_chain_root(source) else {
             return Ok(());
         };

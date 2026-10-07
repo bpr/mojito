@@ -77,8 +77,11 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
         .zip(&generation_entries)
         .map(|(live, generations)| effective_drop_liveness(live.clone(), generations, &loan_roots))
         .collect();
+    let binders = comptime_binder_slots(&f.blocks);
+    let droppable = |v: VarId| is_droppable_root(f, v) && !binders.contains(&v);
     let region_ctx = RegionDropCtx {
         f,
+        binders: &binders,
         loan_roots: &loan_roots,
         generation_dests: &generation_dests,
         effective_live_in: &effective_live_in,
@@ -169,7 +172,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
                     .iter()
                     .copied()
                     .filter(|v| {
-                        is_droppable_root(f, *v)
+                        droppable(*v)
                             && !rdef.contains(v)
                             && !rmov.contains(v)
                             && !fin_used.contains(v)
@@ -213,7 +216,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
                         .into_iter()
                         .filter(|v| {
                             counts.get(v) != function_defs.get(v)
-                                && is_droppable_root(f, *v)
+                                && droppable(*v)
                                 && !moved.contains(v)
                                 && !live_after[i].contains(v)
                                 && !survivors.contains(v)
@@ -241,11 +244,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
                 let entry_dead: Vec<VarId> = live_before[i]
                     .iter()
                     .copied()
-                    .filter(|v| {
-                        is_droppable_root(f, *v)
-                            && !rmov.contains(v)
-                            && !body_entry_live.contains(v)
-                    })
+                    .filter(|v| droppable(*v) && !rmov.contains(v) && !body_entry_live.contains(v))
                     .collect();
                 append_drops(&mut new_instrs, entry_dead);
             }
@@ -266,7 +265,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
                 .chain(touched)
                 .chain(retired_roots);
             for v in deaths {
-                if is_droppable_root(f, v)
+                if droppable(v)
                     && !moved.contains(&v)
                     && !live_after[i].contains(&v)
                     && !dying.contains(&v)
@@ -284,7 +283,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
             let dying =
                 effective_drop_liveness(HashSet::new(), &generation_entries[b], &loan_roots)
                     .into_iter()
-                    .filter(|owner| is_droppable_root(f, *owner))
+                    .filter(|owner| droppable(*owner))
                     .collect();
             append_drops(&mut new_instrs, dying);
         }
@@ -302,7 +301,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
             effective_drop_liveness(live_in[0].clone(), &generation_entries[0], &loan_roots);
         let entry_dead: Vec<VarId> = (0..f.n_params)
             .map(|v| v as VarId)
-            .filter(|v| is_droppable_root(f, *v) && !entry_live.contains(v))
+            .filter(|v| droppable(*v) && !entry_live.contains(v))
             .collect();
         prepend_drops(&mut blocks[0].instrs, entry_dead);
     }
@@ -346,7 +345,7 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
             let dying: Vec<VarId> = live_out_p
                 .iter()
                 .copied()
-                .filter(|&v| !live_on_edge.contains(&v) && is_droppable_root(f, v))
+                .filter(|&v| !live_on_edge.contains(&v) && droppable(v))
                 .collect();
             if dying.is_empty() {
                 continue;
@@ -416,12 +415,22 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
 /// Shared analysis inputs for elaborating drops inside `try` region mini-CFGs.
 pub(super) struct RegionDropCtx<'a> {
     f: &'a MirFunction,
+    /// The function's `comptime for` binder slots ([`comptime_binder_slots`]).
+    binders: &'a HashSet<VarId>,
     /// Owner roots per loan generation, collected deep through regions.
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     /// Destination domain per generation marker, collected deep.
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
     /// Top-level effective live-in sets, bounding `EscapeJump` targets.
     effective_live_in: &'a [HashSet<VarId>],
+}
+
+impl RegionDropCtx<'_> {
+    /// Whether the region's function drops the value in `v`
+    /// ([`is_droppable_root`]), a `comptime for` binder never.
+    fn droppable(&self, v: VarId) -> bool {
+        is_droppable_root(self.f, v) && !self.binders.contains(&v)
+    }
 }
 
 /// Live-out seeds for one region's mini-CFG, per exit kind.
@@ -703,7 +712,7 @@ pub(super) fn elaborate_region_drops(
                     .iter()
                     .copied()
                     .filter(|v| {
-                        is_droppable_root(f, *v) && !moved.contains(v) && !nested_entry.contains(v)
+                        ctx.droppable(*v) && !moved.contains(v) && !nested_entry.contains(v)
                     })
                     .collect();
                 append_drops(&mut new_instrs, entry_dead);
@@ -725,7 +734,7 @@ pub(super) fn elaborate_region_drops(
                 .chain(touched)
                 .chain(retired_roots);
             for v in deaths {
-                if is_droppable_root(f, v)
+                if ctx.droppable(v)
                     && !moved.contains(&v)
                     && !live_after[i].contains(&v)
                     && !dying.contains(&v)
@@ -777,7 +786,7 @@ pub(super) fn elaborate_region_drops(
             let dying: Vec<VarId> = live_out_p
                 .iter()
                 .copied()
-                .filter(|&v| !live_on_edge.contains(&v) && is_droppable_root(f, v))
+                .filter(|&v| !live_on_edge.contains(&v) && ctx.droppable(v))
                 .collect();
             if dying.is_empty() {
                 continue;

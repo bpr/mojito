@@ -484,9 +484,9 @@ thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
 template keeps a `comptime for` over a `range` of parameter expressions
 (a reflection count among them), a list, set, or dictionary display of
-scalars, a list display of closed aggregates (tuples, or non-generic
-fieldwise structs, of numbers and booleans, nested ones included), a named
-closed collection of either, the `def`'s own value pack, or a
+scalars, a list display of parameter aggregates (tuples, or non-generic
+fieldwise structs, of numbers, booleans, and strings, nested ones
+included), a named closed collection of either, the `def`'s own value pack, or a
 reflected field-name list, whose body binds by `comptime` only parameter
 expressions over the binders (`comptime_for_is_template_served`,
 `comptime/elab.rs::keep_template_comptime_for`): the checker types the body
@@ -499,11 +499,15 @@ check types and does not close). An aggregate loop variable is a
 compile-time parameter of the element's type, as upstream's induction
 variable is: a tuple element's binder is the nominal `Tuple` over its
 elements' types (`ComptimeSequence::binder_meta`), a borrow of the variable
-(the `ref self` of `p[0]`) materializes the constant into a temporary
-(`Checker::materialized_reference_actual`), and `native::mono` folds every
-read of it, whole or by field, into a `Const::Value` per unrolled copy. A
-tuple or struct element with a `String` leaf is no closed aggregate; its loop
-is still unrolled in the AST or on a clone. MIR lifts an evaluated display as a
+(the `ref self` of `p[0]`, a read argument, a field read, a receiver)
+materializes it into a temporary (`Checker::materialized_reference_actual`,
+`Checker::materialize_parameter_read`) the ownership analysis destroys, the
+binder's own slot owning nothing and so no drop root
+(`analysis::scan::comptime_binder_slots`), and `native::mono` turns every
+read of it, per unrolled copy, into a `Const::Value` where its leaves are
+numbers and booleans, or into the element's construction where one is a
+`String` (`construct_binder_reads`), as upstream's `kgen.param.constant`
+materializes a parameter at each use. MIR lifts an evaluated display as a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
@@ -721,7 +725,7 @@ records, beside the applied module constants, the calls and method calls it
 typed as a scalar a `comptime for` binder takes without raising
 (`Checker::scalar_calls` into `TemplateCatalog::scalar_calls`, keyed by
 syntax identity), and the tuple displays, calls, and method calls it typed
-as a closed aggregate such a binder takes (`Checker::aggregate_elements`
+as a parameter aggregate such a binder takes (`Checker::aggregate_elements`
 into `TemplateCatalog::aggregate_elements`): the elaborator's
 template-served decision for a display element (`ScalarReads`,
 `comptime.rs`) and the driver's template-name sets

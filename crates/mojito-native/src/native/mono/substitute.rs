@@ -346,6 +346,74 @@ pub(super) fn substitute_value_parameter_reads(
     Ok(())
 }
 
+/// Construct the iteration's value `value` wherever a copy of a `comptime
+/// for` body reads the binder `slot`, at the read's type (`ty`, the binder's,
+/// where the read has none — a binder over a literal display keeps the
+/// literal element type the read defaults): a value
+/// holding a string is no constant, so each read is the construction
+/// upstream's `kgen.param.constant` materializes
+/// ([`parameter_value_construction`]), whose result the read's consumer — a
+/// materialized temporary or a copy — owns. A place rooted at the binder
+/// remains only where the check left a read unmaterialized, and is an
+/// error, since the binder holds no storage.
+pub(super) fn construct_binder_reads(
+    blocks: &mut [MirBlock],
+    slot: u32,
+    value: &CtValue,
+    ty: &Ty,
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+    structs: &HashMap<&str, &MirStructDeclaration>,
+) -> Result<(), MonoError> {
+    for block in blocks {
+        let mut instrs = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            if let MirInstr::UseVar { dest, var, .. } = instruction
+                && var == slot
+            {
+                let read = reg_types
+                    .get(&dest.0)
+                    .cloned()
+                    .unwrap_or_else(|| ty.clone());
+                instrs.extend(parameter_value_construction(
+                    dest, value, &read, n_regs, reg_types, structs,
+                )?);
+                continue;
+            }
+            if let MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } = &mut instruction
+            {
+                for region in std::iter::once(body)
+                    .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                    .chain(orelse.iter_mut())
+                    .chain(finalbody.iter_mut())
+                {
+                    construct_binder_reads(region, slot, value, ty, n_regs, reg_types, structs)?;
+                }
+            } else if mojito_mir::mir::verify::instruction_places(&instruction)
+                .iter()
+                .any(|place| place.root == slot || place.through == Some(slot))
+            {
+                return Err(MonoError {
+                    kind: MonoErrorKind::Unsupported,
+                    function: None,
+                    construct: format!(
+                        "a place read of the comptime for element `{value}`, which holds no storage"
+                    ),
+                });
+            }
+            instrs.push(instruction);
+        }
+        block.instrs = instrs;
+    }
+    Ok(())
+}
+
 pub(super) fn substitute_declaration(
     decl: &mut MirFunctionDeclaration,
     bindings: &Bindings,

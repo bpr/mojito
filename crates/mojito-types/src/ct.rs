@@ -275,8 +275,10 @@ impl CtValue {
     /// Whether this value is a runtime collection ([`Self::is_runtime_collection`])
     /// whose iteration yields values a `comptime for` binder holds: an
     /// `Int`, a `Float64`, a `Bool`, or a `String`, or a tuple or struct
-    /// over such values short of a `String` ([`Self::is_closed_aggregate`]).
-    /// A dictionary yields its keys.
+    /// over such values, closed ([`Self::is_closed_aggregate`]) or holding a
+    /// string an instance constructs
+    /// ([`Self::is_constructed_parameter_value`]). A dictionary yields its
+    /// keys.
     pub fn is_parameter_value_collection(&self) -> bool {
         let element = |value: &Self| {
             matches!(
@@ -288,6 +290,7 @@ impl CtValue {
                     | Self::Bool(_)
                     | Self::Str(_)
             ) || value.is_closed_aggregate()
+                || value.is_constructed_parameter_value()
         };
         match self {
             Self::List(elements) | Self::Set { elements, .. } => elements.iter().all(element),

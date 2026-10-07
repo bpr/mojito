@@ -178,9 +178,10 @@ impl VmBackend {
     /// Materialize a parameter constant's value at its checked type `target`:
     /// each tuple, at any depth of tuples and struct fields, becomes the
     /// nominal `Tuple` instance its checked type names over the private pack
-    /// storage ([`Self::materialize_checked_result`]).
+    /// storage ([`Self::materialize_checked_result`]), and each string at the
+    /// nominal `String` a `String` over a fresh buffer.
     pub(super) fn materialize_parameter_value(
-        &self,
+        &mut self,
         prog: &Prog,
         value: Value,
         target: Option<&Ty>,
@@ -230,8 +231,33 @@ impl VmBackend {
                     value_params,
                 })
             }
+            Value::Str(text)
+                if matches!(target, Some(Ty::Struct(name, _))
+                    if mojito_symbol::symbol::is_stdlib_string_struct(name)) =>
+            {
+                self.nominal_string_value(prog, &text)
+            }
             value => Ok(value),
         }
+    }
+
+    /// Materialize the element a `comptime for` header just bound into its
+    /// slot at the slot's checked type, as a parameter constant is
+    /// ([`Self::materialize_parameter_value`]).
+    pub(super) fn materialize_comptime_binder(
+        &mut self,
+        prog: &Prog,
+        function: &MirFunction,
+        header: &MirTerm,
+        variables: &mut [Value],
+    ) -> Result<(), RuntimeError> {
+        let MirTerm::ComptimeFor { slot, .. } = header else {
+            return Ok(());
+        };
+        let value = std::mem::replace(&mut variables[*slot as usize], Value::None);
+        variables[*slot as usize] =
+            self.materialize_parameter_value(prog, value, function.var_tys.get(slot))?;
+        Ok(())
     }
 
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`), carrying

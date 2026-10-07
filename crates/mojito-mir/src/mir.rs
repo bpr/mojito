@@ -2701,6 +2701,9 @@ impl Flatten<'_> {
     }
 
     fn expression_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
+        if let Some(place) = self.materialized_parameter_place(expression) {
+            return place;
+        }
         let checked_var = self
             .checked_owner(expression)
             .map(|owner| self.binding_var(owner, name));

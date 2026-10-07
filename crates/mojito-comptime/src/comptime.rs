@@ -1741,7 +1741,7 @@ fn scalar_shaped(
 
 /// Whether `expression` is spelled as a list, set, or dictionary display of
 /// scalars over the binders and the body's display bindings
-/// ([`scalar_shaped`]), or a list display of closed aggregates
+/// ([`scalar_shaped`]), or a list display of parameter aggregates
 /// ([`literal_tuple`], [`aggregate_shaped`]), which the elaborator below MIR
 /// evaluates per instance.
 fn evaluated_display_shaped(
@@ -1771,7 +1771,7 @@ fn evaluated_display_shaped(
 }
 
 /// Whether `expression` is a display element source validation typed as a
-/// closed aggregate a loop binder takes ([`ScalarReads::aggregate`]) whose
+/// parameter aggregate a loop binder takes ([`ScalarReads::aggregate`]) whose
 /// operands are scalars over the binders ([`scalar_shaped`]) or such
 /// aggregates: `(3, n)`, `P(1, n)`, `mk(n)`. The elaborator below MIR
 /// evaluates the display per instance.
@@ -1831,14 +1831,11 @@ fn literal_element(expression: &Expr) -> bool {
     }
 }
 
-/// Whether `expression` is a tuple display of number and boolean literals,
-/// nested tuples included: a closed parameter value a loop binder holds.
+/// Whether `expression` is a tuple display of number, boolean, and string
+/// literals, nested tuples included: a parameter value a loop binder holds.
 fn literal_tuple(expression: &Expr) -> bool {
     matches!(&expression.kind, ExprKind::TupleLit(items) if !items.is_empty()
-    && items.iter().all(|item| {
-        literal_tuple(item)
-            || (literal_element(item) && !matches!(item.kind, ExprKind::Str(_)))
-    }))
+    && items.iter().all(|item| literal_tuple(item) || literal_element(item)))
 }
 
 /// Whether a compile-time argument is a type or a value `shaped` accepts.
@@ -4735,6 +4732,8 @@ mod def_request_tests {
                       var g = lambda -> Int: 7\n    print(g())\n\n\
                       def tuples[*Ts: Writable](*args: *Ts):\n    \
                       comptime for p in [(1, 2), (3, 4)]:\n        print(p[0])\n\n\
+                      def string_tuples[*Ts: Writable](*args: *Ts):\n    \
+                      comptime for p in [(1, \"x\"), (3, \"y\")]:\n        print(p[1])\n\n\
                       def raising[*Ts: Writable](*args: *Ts) raises:\n    \
                       comptime for p in [mk(1), 2]:\n        print(p)\n\n\
                       def field_type[T: AnyType, *Ts: Writable](*args: *Ts):\n    \
@@ -4758,6 +4757,8 @@ mod def_request_tests {
         assert!(served.contains("field_type"), "{served:?}");
         // A closed tuple display's loop binds each tuple as a parameter.
         assert!(served.contains("tuples"), "{served:?}");
+        // So does one whose tuples hold a string, which each read constructs.
+        assert!(served.contains("string_tuples"), "{served:?}");
         // Each shape below still keys a type-pack clone; its owner flips the
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.

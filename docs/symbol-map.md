@@ -1406,7 +1406,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `literal_tuple` or by `aggregate_shaped` over `ScalarReads::aggregate`,
   from `Checker::aggregate_elements` into
   `TemplateCatalog::aggregate_elements`, the checker's own test being
-  `Checker::closed_aggregate_element`; a named collection by
+  `Checker::parameter_aggregate_element`; a named collection by
   `CtValue::is_parameter_value_collection`), on a reflected list materialized whole
   (`ReflectedLists::materialized_in`), or a nested `def` holding a
   `rebind`. The crossing pass spells a named collection as its display in
@@ -1497,10 +1497,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
   checked type names, `materialize_parameter_value`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
-  and `store_parameter_value` (`lower/consts.rs`). A borrow of a
-  compile-time value (a value parameter, a `comptime for` variable) is a
-  temporary the checker materializes (`materialized_reference_actual`,
-  `checker/origins/actuals.rs`).
+  and `store_parameter_value` (`lower/consts.rs`). A `comptime for`
+  element with a `String` leaf is constructed at each read of its binder
+  instead (`construct_binder_reads`, `mono/substitute.rs`, from
+  `Specializer::copy_body`, `mono/unroll.rs`), and the erased VM
+  materializes the element it binds at the slot's type
+  (`VmBackend::materialize_comptime_binder`, `backend/vm/adapters.rs`). A
+  borrow of a compile-time value (a value parameter, a `comptime for`
+  variable) is a temporary the checker materializes
+  (`materialized_reference_actual`, and for a read of a tuple or struct
+  that is not trivially register-passable, any place read,
+  `materialize_parameter_read`, both `checker/origins/actuals.rs`), which
+  MIR roots any place read at (`Flatten::materialized_parameter_place`,
+  `mir/calls.rs`); a consumed read hands the value over instead
+  (`consume_parameter_read`), and a `comptime for` binder slot is no drop
+  root (`comptime_binder_slots`, `analysis/scan.rs`, read by
+  `elaborate_drops` and `RegionDropCtx::droppable`).
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

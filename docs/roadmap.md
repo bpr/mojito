@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R466**.
+Next free ID: **R467**.
 
 ## Ordered Work
 
@@ -87,27 +87,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
 
-- [ ] **R454 (P3b) A `comptime for` over `String`-bearing tuple or struct
-  elements in a generic `def` is unrolled in the AST**
-
-  Problem: `comptime for p in PAIRS:` over `comptime PAIRS = [(1, "a"), (2,
-  "b")]` in `def f[n: Int]()` runs, but the elaborator copies the body per
-  element (or keys a clone), where Mojo keeps one loop in its IR.
-  - A closed aggregate binder holds only numbers and booleans
-    (`Checker::closed_aggregate_element`, `CtValue::is_closed_aggregate`):
-    a `String` leaf is no pointer-free constant, so neither
-    `closed_parameter_value` nor Pliron's `store_parameter_value` carries it.
-  - Mojo materializes such a parameter by constructing it; `native::mono`
-    would fold a read into a `Tuple` construction over a materialized
-    `String`, with the drop the template places on its hidden slot.
-  - The value-parameter form needs the `Tuple[Int, String]` argument
-    conversion (R455), and a struct element needs a frozen `String` field
-    (R456).
-  - Output already matches the pin (`assets/ok/comptime_for_tuple_elements.mojo`).
-  - Found while landing R405 (2026-10-07).
-  - Depends on R455 and R456.
-  - Model: Opus, Not Planned.
-
 - [ ] **R453 (P3b) A display element's call is judged by its callee's
   declaration when source validation reaches no verdict**
 
@@ -124,6 +103,21 @@ correctness fix to existing behavior is allowed.
   - An elaboration no validation precedes (the `elaborate_with_requests`
     test seam) takes the same fallback.
   - Found while landing R401 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R466 (P3) A value parameter holding a `String` is built into a slot
+  at entry, not materialized at each use**
+
+  Problem: `def g[p: Tuple[Int, String]]()` constructs `p` into its slot on
+  entry and destroys it at exit, where Mojo materializes the parameter at
+  each use, as a `comptime for` element holding a `String` now is.
+  - Every borrow of such a parameter already reads a temporary
+    (`materialize_parameter_read`), so the slot is read only by copies.
+  - Constructing at each copy, as `construct_binder_reads` does for a loop
+    binder, would delete `seed_parameter_slots`'s constructed arm.
+  - No visible difference: output already matches the pin.
+  - Found while landing R454 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

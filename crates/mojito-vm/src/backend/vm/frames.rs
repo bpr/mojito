@@ -268,6 +268,12 @@ impl VmBackend {
                         &mut self.comptime_cursors,
                         frame.id,
                     )?;
+                    self.materialize_comptime_binder(
+                        prog,
+                        &prog.mir.functions[frame.function].1,
+                        header,
+                        &mut frame.variables,
+                    )?;
                     frame.instruction = 0;
                     self.frames.push(frame);
                     continue;

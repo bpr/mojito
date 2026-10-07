@@ -254,17 +254,37 @@ impl Specializer<'_> {
         // are over this iteration's binding and their own, which nothing
         // else of the copy may be substituted without.
         self.unroll_in(blocks, first, frame, &iteration, tables)?;
-        // A value the instance constructs into its slot keeps its slot
-        // reads (`substitute_function`); no loop element owns a string.
-        if bound.is_constructed_parameter_value() {
-            return Err(self.error(
-                Some(frame.template),
-                format!("comptime for element `{bound}` owns a string no constant can hold"),
-            ));
-        }
+        // An element holding a string is constructed at each read; any other
+        // folds there. An enclosing value the instance constructs into its
+        // slot keeps its slot reads (`substitute_function`).
         let mut locals = bound_parameter_locals(frame.scope, bindings);
         locals.retain(|_, value| !value.is_constructed_parameter_value());
-        if let Some(name) = tables.var_names.get(slot as usize) {
+        if bound.is_constructed_parameter_value() {
+            let ty = tables
+                .var_tys
+                .get(&slot)
+                .map(|ty| substitute_ty(ty, &iteration))
+                .transpose()?
+                .ok_or_else(|| {
+                    self.error(
+                        Some(frame.template),
+                        format!("comptime for element `{bound}` has no binder type"),
+                    )
+                })?;
+            construct_binder_reads(
+                &mut blocks[first..],
+                slot,
+                &bound,
+                &ty,
+                tables.n_regs,
+                tables.reg_types,
+                &self.structs,
+            )
+            .map_err(|mut error| {
+                error.function = Some(frame.template.to_string());
+                error
+            })?;
+        } else if let Some(name) = tables.var_names.get(slot as usize) {
             locals.insert(name.clone(), &bound);
         }
         substitute_value_parameter_reads(

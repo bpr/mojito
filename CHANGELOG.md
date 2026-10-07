@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` over tuple or struct elements holding a `String` in a
+  generic `def` or a generic struct's method (`comptime PAIRS = [(1, "a"),
+  (2, "b")]`, a literal display, `[(n, "c"), (4, "d")]`, `[Q(n, "z"),
+  mk(n)]`) now keeps one loop in the template, its variable a compile-time
+  parameter, as at the pin, where the elaborator copied the body per
+  element or keyed a clone. Each run-time use of the variable — a read
+  argument, a copy, a field read, a method receiver — constructs the
+  element afresh into a temporary the ownership analysis destroys, and the
+  variable's own slot owns nothing. The erased oracle now materializes a
+  tuple element at its checked type.
+
 - A compile-time struct value with a `String` field, or a nested fieldwise
   struct holding one, now works as at the pin: a display `comptime QS =
   [Q(1, "x"), Q(2, "y"), mk(7)]` iterated by `comptime for`, a module or
@@ -949,6 +960,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A transfer out of a compile-time parameter (`take(p^)` in `def g[p:
+  Int]()`, or over a `comptime for` variable) is now rejected with "cannot
+  transfer from a parameter expression", as at the pin, where an `Int`
+  value parameter was accepted and moved.
 - A struct method whose clone fails to elaborate for a reached instance
   (`comptime q = [1, 2][i]` in a loop over `range(Self.n)`, called on
   `S[5]`), or a generic method's per-call instantiation that fails the same

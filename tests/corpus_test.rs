@@ -376,9 +376,12 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_display_binding_alias",
     "comptime_display_binding_arguments",
     "comptime_display_binding_reads",
+    "comptime_for_aggregate_binder",
     "comptime_for_display_binding",
     "comptime_for_display_element_reads",
     "comptime_for_display_over_binder",
+    "comptime_for_string_aggregates",
+    "comptime_for_tuple_elements",
     // R385, the erased oracle: an erased frame runs no function lifted for
     // an application a type spells.
     "comptime_application_argument",
