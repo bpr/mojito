@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R477**.
+Next free ID: **R479**.
 
 ## Ordered Work
 
@@ -106,26 +106,39 @@ correctness fix to existing behavior is allowed.
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
 
-- [ ] **R260 (P3c) An overloaded lane-keyed `def` is cloned per call**
+- [ ] **R477 (P3c) A lane-keyed `def` whose value binder a runtime
+  parameter names outside a lane slot is cloned per call**
 
-  Problem: a `DType`- or width-keyed `def` sharing its name with another
-  declaration (`kind[dt: DType](a: Scalar[dt])` beside `kind(a: String)`)
-  stays a template family on the cloner (`dtype_generic_template_names`),
-  while a uniquely named one is served by its template.
-  - A bound generic is admitted by name (`collect_bound_generic_templates`
-    requires a unique name), since overload selection is the checker's and
-    the elaborator's registry is name-keyed; the checker's recorded
-    instantiation names the selected overload, which is what a served call
-    would carry.
-  - The `DTypeVectorDef` census class and the `DType` stub path
-    (`dtype_generic_template_names`, `omits_dtype_param`) go when this and
-    R257–R259 land; a lane-keyed struct member is R4's and a method's own
-    lane binder R5's.
-  - `assets/ok/dtype_keyed_overload_family.mojo` and
-    `assets/ok/dtype_keyed_overload_beside_plain.mojo` are the bodies that
-    wait.
+  Problem: `def h[dt: DType, n: Int](a: Box[n], b: Scalar[dt])` is not served
+  by its template, and its inferred call `h(Box[3](0), Int32(1))` is
+  rejected with "generic 'h' requires compile-time parameter 'dt'", where the
+  pin prints `3`.
+  - `template_serves_binders` rejects the shape, so the `def` takes the
+    `DType` stub path (`dtype_generic_template_names`, `omits_dtype_param`)
+    and the `DTypeVectorDef` census class.
+  - That path and class are deleted once this lands; it is the last shape
+    on them, overloaded lane-keyed `def`s being served per declaration.
+  - Pinned by `conformance/probes/lane_def_value_binder_outside_lane_slot.mojo`.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R478 (P3c) A served generic body's call over its own binder into a
+  surviving overload family fails**
+
+  Problem: in a family that keeps a member the cloner specializes, a call
+  from a template-served body over its own binder is rejected, where the pin
+  runs it.
+  - Inferred `kind(a)` from `inferred[dt: DType]` is rejected with "requires
+    compile-time parameter 'T'", which names another overload's parameter.
+  - Explicit `kind[n](a)` from `by_value[n: Int]` (and `kind[dt](a)` from a
+    lane binder) fails MIR verification: "value parameter 'n' has no runtime
+    register".
+  - The checker's instantiation is unclosed, so no request is seeded, and
+    the family branch of `Elab::mono_expr` records the call as an abstract
+    use of the whole name; it needs the selected declaration even then.
+  - Pinned by `conformance/probes/served_body_call_into_overload_family.mojo`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R312 (P3) A generic struct's method that binds a local `comptime`
   over its struct's parameters still clones per instance**

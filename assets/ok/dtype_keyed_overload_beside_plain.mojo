@@ -1,7 +1,7 @@
 # A `DType`-keyed `def` overloaded with a concrete one and a trait-bound
-# generic one that holds no compile-time construct. The `DType` member alone
-# makes the name a template family, so the other two are ordinary overloads:
-# the concrete `Float64` beats both generics, and between the generics an
+# generic one that holds no compile-time construct. All three are ordinary
+# overloads the template serves: the checker selects among them, the
+# concrete `Float64` beats both generics, and between the generics an
 # argument with a lane selects the `Scalar[dt]` pattern over the bare `T`.
 # requires: discovery
 

@@ -368,7 +368,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   verdict where it cannot be typed (a `def` keyed on a
   `DType` binder or using a parameter as a lane width, which the executable
   pass checks again as a bound generic when `comptime.rs`'s
-  `served_lane_defs` serves it and the elaborator clones per call otherwise
+  `lane_def_template_served` serves it and the elaborator clones per call otherwise
   — `mojito_ast::simd_width::def_uses_layout_dependent_param`, shared with
   the elaborator, is the lane-width scan), and
   `validate_comptime_method_bodies` checks a method body
@@ -977,7 +977,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   if`/`for` body, whose inferred calls do the same, gated by
   `omits_required_param` in `comptime/mono.rs`, and
   `dtype_generic_template_names` for defs keyed on a `DType` parameter,
-  whose calls may omit the lane alone (`omits_dtype_param`) — each
+  whose calls may omit the lane alone (`omits_dtype_param`), a declaration
+  the template does not serve (`lane_def_template_served`) — each
   classification is a per-declaration predicate
   (`comptime_keyed_declaration`, `pack_keyed_declaration`,
   `dtype_keyed_declaration`) that an overloaded name admits one declaration at
@@ -1078,9 +1079,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which generic `def` keeps its template at every closed call: a plain
   trait-bound one, with type parameters and scalar or `DType` value
   parameters named at most as lane slots (`template_serves_binders`), and no
-  such construct; `comptime.rs`'s `served_lane_defs` admits every uniquely
-  named `DType`- or lane-keyed `def` whose binders `template_serves_binders`
-  accepts, whatever its body holds. An
+  such construct; `comptime.rs`'s `lane_def_template_served` admits every
+  `DType`- or lane-keyed `def` declaration, overloaded or not, whose binders
+  `template_serves_binders` accepts, whatever its body holds. An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type` over `struct_instance`,

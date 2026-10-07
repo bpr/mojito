@@ -826,9 +826,10 @@ application's values, to a concrete lane or to the caller's own symbolic
 `MakeSimd`, `SimdCast`, and `SimdBitcast` (schema 1.18): the parametric
 verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
-uniquely named `DType`- or lane-keyed `def` is a bound generic served by its
-template (`served_lane_defs`), a local `comptime` binding of its binder
-(`comptime lane = dt`) an alias of the binder's parameter expression. A struct
+`DType`- or lane-keyed `def`, overloaded or not, is a bound generic served by
+its template (`lane_def_template_served`, a per-declaration verdict, since
+overload selection is the checker's), a local `comptime` binding of its
+binder (`comptime lane = dt`) an alias of the binder's parameter expression. A struct
 keyed on a `DType`, a lane width, a vector value, or a struct-typed value is
 an ordinary generic struct, a generator: the executable check types its
 members with the binder symbolic, its template crosses MIR, and
@@ -1031,15 +1032,17 @@ statically evident, a **compile-time-keyed** `def`
 specialized only for its `comptime if`/`for` body or `rebind` (no pack,
 `DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
 without an argument for a required parameter, and a **`DType`-keyed** `def`
-(`dtype_generic_template_names`) the template does not serve — an
-overloaded one, or one whose body shuffles, slices, joins, or hashes a
-lane value, queries a float format over its binder, or binds a local
-`comptime` — whose call omits only its lane: the
+(`dtype_generic_template_names`) the template does not serve — a
+declaration whose value binder a runtime parameter names outside a lane
+slot (R477) — whose call omits only its lane: the
 lane is the argument's own, which the checker reads off a `Scalar[dt]` slot
 and the elaborator cannot. A call that omits a SIMD width is not in that
 subset — the pin does not infer one either. An overloaded name with a
-compile-time-keyed or type-pack declaration among its overloads is a *family*
-(`collect_overload_families`): no call to it is
+compile-time-keyed declaration, or a type-pack or `DType`-keyed one the
+template does not serve, among its overloads is a *family*
+(`collect_overload_families`); a member the template serves forms none. A
+call selecting such a served member is left as written, as a uniquely named
+served `def`'s call is (`Elab::family_call_is_served`). No other call to it is
 ever resolved syntactically, since explicit `[...]` arguments name type
 arguments rather than an overload and overload selection is the checker's.
 Every call is served from the checker's recorded instantiation, which names

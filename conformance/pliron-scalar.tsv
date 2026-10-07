@@ -150,6 +150,7 @@ assets/ok/dtype_keyed_bool_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_method_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_method_value_struct.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_keyed_overload_beside_keyed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_overload_beside_plain.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_overload_family.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_runtime_surface.mojo	-	ineligible	no-scalar-entry-shape

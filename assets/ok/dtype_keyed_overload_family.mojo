@@ -1,7 +1,7 @@
 # A `DType`-keyed `def` overloaded with a compile-time-keyed one and a plain
-# one. The `DType` member survives round one as a stub beside the keyed
-# sibling, so its explicit application binds against its own signature rather
-# than the sibling's; an inferred call over an argument with a lane selects the
+# one. Each is an ordinary overload the template serves, so the `DType`
+# member's explicit application binds against its own signature rather than
+# the sibling's; an inferred call over an argument with a lane selects the
 # `Scalar[dt]` pattern over the bare `T`, and a numeric literal binds the lane
 # at its default type, as the pinned Mojo does.
 # requires: discovery

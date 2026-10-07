@@ -978,7 +978,6 @@ pub fn elaborate_prepared(
         bound_generics,
         pack_generics,
         served_packs: served_pack_defs(program, &scalar_reads),
-        served_lanes: served_lane_defs(program),
         comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
         dtype_generics: collect_dtype_generic_templates(program, &scalar_reads),
         overload_families: collect_overload_families(program, &scalar_reads),
@@ -2290,38 +2289,29 @@ fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> 
     }
 }
 
-/// The names of the `DType`- or lane-keyed top-level `def`s the template
-/// serves: a uniquely named `def` keyed on a `DType` binder, on a parameter
-/// used as a lane width, or on a layout operand, whose every compile-time
-/// parameter is a type parameter or a scalar value (`Int`, `UInt`, `Bool`,
-/// `Float64`, `StringLiteral`, or `DType`) the runtime parameters name only
-/// as a lane slot ([`template_serves_binders`]). Such a body is checked once
-/// with its lane slots symbolic, a local `comptime` binding of a binder an
-/// alias of its parameter expression; MIR carries the slots in its register
-/// types and SIMD instructions, and the elaborator closes them per instance.
-/// An overloaded name stays a template family, since overload selection is
-/// the checker's.
-fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
-    let def_counts = def_name_counts(program);
-    program
-        .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def {
-                name,
-                type_params,
-                params,
-                ..
-            } = &statement.kind
-            else {
-                return None;
-            };
-            (def_counts[name.as_str()] == 1
-                && (dtype_keyed_declaration(statement)
-                    || def_uses_layout_dependent_param(statement))
-                && template_serves_binders(type_params, params, name))
-            .then(|| name.clone())
-        })
-        .collect()
+/// Whether a `DType`- or lane-keyed top-level `def` is served by its
+/// template: it is keyed on a `DType` binder, on a parameter used as a lane
+/// width, or on a layout operand, and its every compile-time parameter is a
+/// type parameter or a scalar value (`Int`, `UInt`, `Bool`, `Float64`,
+/// `StringLiteral`, or `DType`) the runtime parameters name only as a lane
+/// slot ([`template_serves_binders`]). Such a body is checked once with its
+/// lane slots symbolic, a local `comptime` binding of a binder an alias of
+/// its parameter expression; MIR carries the slots in its register types and
+/// SIMD instructions, and the elaborator closes them per instance. The
+/// verdict is per declaration, overloaded or not, since overload selection
+/// is the checker's: a call names the declaration it selected.
+fn lane_def_template_served(statement: &Stmt) -> bool {
+    let StmtKind::Def {
+        name,
+        type_params,
+        params,
+        ..
+    } = &statement.kind
+    else {
+        return false;
+    };
+    (dtype_keyed_declaration(statement) || def_uses_layout_dependent_param(statement))
+        && template_serves_binders(type_params, params, name)
 }
 
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and
@@ -3066,7 +3056,6 @@ struct CtStruct<'a> {
 fn is_specializable_declaration(
     statement: &Stmt,
     served_packs: &HashSet<String>,
-    served_lanes: &HashSet<String>,
     scalars: &ScalarReads,
 ) -> bool {
     match &statement.kind {
@@ -3088,12 +3077,12 @@ fn is_specializable_declaration(
                     // A `[dtype: DType]` parameter, or a parameter used as a
                     // lane width or a layout operand, keys a clone per call
                     // unless the template serves the body
-                    // (`served_lane_defs`): the body is checked once with the
-                    // lane symbolic, and the elaborator closes it per
-                    // instance.
+                    // (`lane_def_template_served`): the body is checked once
+                    // with the lane symbolic, and the elaborator closes it
+                    // per instance.
                     || ((dtype_keyed_declaration(statement)
                         || def_uses_layout_dependent_param(statement))
-                        && !served_lanes.contains(name)))
+                        && !lane_def_template_served(statement)))
         }
         _ => false,
     }
@@ -3130,9 +3119,6 @@ struct Elab<'a> {
     pack_generics: HashSet<String>,
     /// The pack-keyed `def`s the template serves ([`served_pack_defs`]).
     served_packs: HashSet<String>,
-    /// The `DType`- or lane-keyed `def`s the template serves
-    /// ([`served_lane_defs`]).
-    served_lanes: HashSet<String>,
     /// The module's scalar-valued declarations ([`ScalarReads`]).
     scalar_reads: ScalarReads,
     /// The subset of `specializable` specialized only for its compile-time
@@ -3685,11 +3671,10 @@ fn collect_specializable<'a>(
     scalars: &ScalarReads,
 ) -> HashMap<String, &'a Stmt> {
     let served_packs = served_pack_defs(program, scalars);
-    let served_lanes = served_lane_defs(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s, &served_packs, &served_lanes, scalars)
+            && (is_specializable_declaration(s, &served_packs, scalars)
                 || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
@@ -3705,8 +3690,9 @@ fn collect_specializable<'a>(
 }
 
 /// The declarations of every overloaded template name, in declaration order:
-/// a name declared more than once with a compile-time-keyed, type-pack, or
-/// `DType`-keyed declaration among them.
+/// a name declared more than once with a compile-time-keyed declaration, a
+/// type-pack one the template does not serve, or a `DType`-keyed one the
+/// template does not serve among them.
 ///
 /// Overload selection is the checker's, so the elaborator cannot pick among
 /// these itself: a call reaches one of them only through the checker's
@@ -3732,7 +3718,7 @@ fn collect_overload_families<'a>(
             && declarations.iter().any(|s| {
                 comptime_keyed_declaration(s, scalars)
                     || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
-                    || dtype_keyed_declaration(s)
+                    || (dtype_keyed_declaration(s) && !lane_def_template_served(s))
             })
     });
     families
@@ -4008,16 +3994,14 @@ fn variadic_keyed_declaration(statement: &Stmt) -> bool {
         if type_params.iter().any(|parameter| parameter.name.starts_with('*')))
 }
 
-/// Top-level compile-time-keyed templates (see
-/// [`comptime_generic_template_names`]): a uniquely named `def` specializable
-/// only because its body holds compile-time control flow or a `rebind`
-/// assertion over its own parameters. Packs, `DType`
-/// parameters, and SIMD-width parameters stay on their own paths: their
-/// signatures cannot stand in as a checkable stub.
+/// Top-level `DType`-keyed templates the template does not serve
+/// ([`lane_def_template_served`]): a uniquely named such `def`, or an
+/// overload family's such member, which the cloner specializes per call. Its
+/// signature, with the `DType` parameter omitted, stands in as a checkable
+/// stub until a call's request closes it.
 fn collect_dtype_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let families = collect_overload_families(program, scalars);
     let def_counts = def_name_counts(program);
-    let served_lanes = served_lane_defs(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -4026,7 +4010,7 @@ fn collect_dtype_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
             };
             let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
                 && dtype_keyed_declaration(statement)
-                && !served_lanes.contains(name);
+                && !lane_def_template_served(statement);
             admitted.then(|| name.clone())
         })
         .collect()
@@ -4061,7 +4045,6 @@ fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -
 fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     let served_packs = served_pack_defs(program, scalars);
-    let served_lanes = served_lane_defs(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -4074,7 +4057,7 @@ fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
             let StmtKind::Def { params, .. } = &statement.kind else {
                 return None;
             };
-            if is_specializable_declaration(statement, &served_packs, &served_lanes, scalars)
+            if is_specializable_declaration(statement, &served_packs, scalars)
                 || def_counts[name.as_str()] != 1
             {
                 return None;
@@ -4256,12 +4239,7 @@ impl<'a> Elab<'a> {
             return false;
         };
         self.overload_families.contains_key(name)
-            && !is_specializable_declaration(
-                statement,
-                &self.served_packs,
-                &self.served_lanes,
-                &self.scalar_reads,
-            )
+            && !is_specializable_declaration(statement, &self.served_packs, &self.scalar_reads)
     }
 
     /// Whether `name` is an overloaded template family: a call to it

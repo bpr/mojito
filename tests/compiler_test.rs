@@ -2718,6 +2718,35 @@ fn template_value_keyed_lane_def_is_template_served() {
 }
 
 #[test]
+fn template_overloaded_lane_def_is_template_served() {
+    // An overloaded `DType`-keyed `def` is served by its template like a
+    // uniquely named one: the checker selects the overload, and a call
+    // selecting the lane member is left as written, beside a plain sibling
+    // and beside a compile-time-keyed sibling the cloner still specializes.
+    let source = "@fieldwise_init\nstruct P(Copyable):\n    var a: Int\n    var b: Int\n\ndef lane[dt: DType](a: Scalar[dt]) -> Int:\n    return 1\n\ndef lane(a: String) -> Int:\n    return 2\n\ndef kind[T: AnyType](a: Int) -> Int:\n    comptime names = reflect[T].field_names()\n    var all = materialize[names]()\n    return len(all) + a\n\ndef kind[dt: DType](a: Scalar[dt]) -> Int:\n    return 3\n\ndef kind(a: String) -> Int:\n    return 4\n\ndef main():\n    print(lane(Int32(1)), lane[DType.float64](2.0), lane(String(\"s\")))\n    print(kind[P](10), kind[DType.float64](1.8), kind(Int32(4)), kind(String(\"s\")))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let census = program.instantiation_census();
+        assert_eq!(
+            census
+                .cloned
+                .count(mojito::census::CloneClass::DTypeVectorDef),
+            0,
+            "no lane-keyed def clone: {census:?}"
+        );
+        assert!(
+            !census.cloned.minted("lane"),
+            "the template serves every lane call: {census:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "1 1 2\n12 3 3 4\n"
+        );
+    }
+}
+
+#[test]
 fn template_local_comptime_lane_binding_is_template_served() {
     // A local `comptime` binding of a lane binder (`comptime lane = dt`) is
     // an alias of the binder's parameter expression: the template serves the

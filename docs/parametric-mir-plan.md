@@ -671,9 +671,9 @@ branch for the class is deleted, and so is its certificate class.
   1.18), a symbolic lane count or dtype read is the evaluation of its
   parameter expression, and the elaborator binds the lane binders from the
   call's recorded arguments or a vector argument's slots and closes the slots
-  per instance. The cloner keeps a `def` whose body shuffles, slices, joins,
-  or hashes a lane value, queries a float format over its binder, or holds
-  a nested `def`, and every overloaded one (R257–R260); a method's own lane
+  per instance. An overloaded lane-keyed `def` is served per declaration
+  since R260; the cloner keeps one whose value binder a runtime parameter
+  names outside a lane slot (R477); a method's own lane
   binder is served since P3e's first step, and a local `comptime` binding
   of a lane binder (`comptime lane = dt`) is served as an alias of the
   binder since R261.

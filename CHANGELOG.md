@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An overloaded `DType`- or lane-keyed `def` (`kind[dt: DType](a:
+  Scalar[dt])` beside `kind(a: String)`) is now served by its template per
+  declaration, as at the pin, instead of making its name a template family
+  that cloned every member per call; a call selecting it in a family that
+  keeps a compile-time-keyed member is left as written.
+
 - A local `comptime` binding of a compile-time parameter in a `DType`- or
   lane-keyed `def` (`comptime lane = dt`) is now an alias of the parameter,
   as at the pin, and the template serves the body: a read in a type, at run

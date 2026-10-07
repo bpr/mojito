@@ -941,6 +941,13 @@ impl Elab<'_> {
                     // this call selected; `None` on every other path.
                     let mut selected_decl = None;
                     let (vals, kept_type_args, whole_pack_abi) = if self.overload_family(name) {
+                        // A call selecting a member the template serves is
+                        // left as written, as a uniquely named served
+                        // `def`'s call is: the elaborator instantiates that
+                        // declaration's MIR.
+                        if self.family_call_is_served(name, &source_span, mono) {
+                            return Ok(());
+                        }
                         // An overloaded template name cannot be
                         // resolved syntactically at all: explicit `[...]`
                         // arguments name type arguments, not an overload, and
@@ -1475,6 +1482,17 @@ impl Elab<'_> {
         }
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
         Some((target.vals.clone(), kept, target.decl))
+    }
+
+    /// Whether the checker's recorded instantiation for this call of the
+    /// overload family `name` selected a declaration the template serves
+    /// (one that is not specializable), so the call stays as written.
+    fn family_call_is_served(&self, name: &str, source_span: &SourceSpan, mono: &Mono) -> bool {
+        mono.def_call_targets
+            .get(&source_span.clone().without_syntax())
+            .filter(|target| target.template == name)
+            .and_then(|target| target.decl)
+            .is_some_and(|decl| !self.is_specializable(self.selected_declaration(name, Some(decl))))
     }
 
     /// The one declaration of the overload family `name` whose positional
