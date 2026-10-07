@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R475**.
+Next free ID: **R477**.
 
 ## Ordered Work
 
@@ -105,23 +105,6 @@ correctness fix to existing behavior is allowed.
   - Found while landing R246 (2026-10-06).
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
-
-- [ ] **R261 (P3c) A local `comptime` binding in a lane-keyed `def` keys a
-  clone**
-
-  Problem: `comptime lane = dt` in a `DType`-keyed `def` keeps the `def` on
-  the cloner (`lane_def_shape_served`): the cloner's body elaboration
-  evaluates a local `comptime` binding before the check, and a value over
-  the `def`'s own binder is "not a compile-time type" there.
-  - A served template needs the binding left to the checker, which already
-    binds a local `comptime` `DType` symbolically (`comptime_dtypes`), and
-    MIR lowers the statement as an ordinary binding of its value.
-  - The same gap keeps a `comptime for` with such a binding on the cloner
-    (R246).
-  - `assets/ok/simd_symbolic_surface.mojo`'s `rebound` is the body that
-    waits.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R260 (P3c) An overloaded lane-keyed `def` is cloned per call**
 
@@ -2506,6 +2489,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     loop works, so the AST unroller (`Elab::unroll_comptime_for`) loses the
     alias's binding for a call position.
   - Found while planning R246 (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R475 A local type alias over `Scalar` or `SIMD` is rejected**
+
+  Problem: `comptime S = Scalar[DType.float64]` then `S(2) * 1.25` in a
+  plain `main` fails with "not a compile-time value: 'Scalar' is not a
+  compile-time type", where the pin prints `2.5`.
+  - In a lane-keyed `def`, `comptime S = Scalar[dt]` fails with "Undefined
+    variable 'Scalar'" and `comptime S = SIMD[dt, 1]` with "Undefined
+    variable 'S'".
+  - The elaborator's `Elab::type_from_name` (`comptime/elab.rs`) has no
+    type for a parametric alias or `SIMD`, and the checker's
+    `comptime_type_operand` does not bind one either.
+  - Found while landing R261 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R476 `comptime k = Self.n` in a generic struct's method is
+  rejected**
+
+  Problem: `comptime k = Self.n` (a bare member) in a method or static
+  method of `struct S[n: Int]` fails with "type 'S[n]' has no associated
+  type 'n'", where the pin prints `4` for `S[4]`.
+  - `comptime_type_operand`'s `Self.` arm
+    (`checker/comptime_validation.rs`) takes the member for a type.
+  - R312 covers `Self.n + 1` cloning per instance; this is a rejection.
+  - Found while landing R261 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

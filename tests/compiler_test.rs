@@ -2718,6 +2718,35 @@ fn template_value_keyed_lane_def_is_template_served() {
 }
 
 #[test]
+fn template_local_comptime_lane_binding_is_template_served() {
+    // A local `comptime` binding of a lane binder (`comptime lane = dt`) is
+    // an alias of the binder's parameter expression: the template serves the
+    // body, a type naming the alias and a thunk calling a method on it
+    // included, so the cloner mints no instance.
+    let source = "def rebound[dt: DType](a: Scalar[dt]) -> Scalar[dt]:\n    comptime lane = dt\n    return a + Scalar[lane](1)\n\ndef single[dt: DType](a: Scalar[dt]) -> Scalar[dt]:\n    comptime lane = dt\n    comptime if lane.is_floating_point():\n        return a / Scalar[lane](2)\n    return a + Scalar[lane](2)\n\ndef main():\n    print(rebound[DType.int32](6), rebound[DType.float32](3.0))\n    print(single[DType.int64](5), single[DType.float16](5))\n";
+    for verify in [false, true] {
+        let compiler = Compiler::default().with_template_verification(verify);
+        let program = compiler.compile_unlinked(source).expect("compile");
+        let census = program.instantiation_census();
+        assert_eq!(
+            census
+                .cloned
+                .count(mojito::census::CloneClass::DTypeVectorDef),
+            0,
+            "no lane-keyed def clone: {census:?}"
+        );
+        assert!(
+            !census.cloned.minted("rebound") && !census.cloned.minted("single"),
+            "the templates serve every call: {census:?}"
+        );
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            "7 4.0\n7 2.5\n"
+        );
+    }
+}
+
+#[test]
 fn template_served_method_own_binders_mint_no_clone() {
     // A method with a bounded binder of its own is a generator: its template
     // serves every call, beside its struct's binder on a generic struct's

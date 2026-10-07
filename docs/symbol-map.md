@@ -95,7 +95,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   registry of `ComptimeAlias` entries — classified `ParamDecl`s plus an
   `AliasBody`: a symbolic type template or, for a Bool-bodied predicate
   alias, a symbolic `GenericConstraint`; `check_program` pre-registers
-  module-level aliases like struct shells). `check_def` checks one function declaration — the
+  module-level aliases like struct shells). A local `comptime` binding whose
+  value names a compile-time value in scope (`comptime lane = dt`,
+  `Checker::names_value_binder`) is no generic alias: it binds as an alias
+  of that parameter expression (`local_comptime_parameters`, and the
+  block-scoped `Checker.comptime_dtypes` read through
+  `Checker::comptime_dtype` for a `DType`). `check_def` checks one function declaration — the
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
@@ -1073,9 +1078,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which generic `def` keeps its template at every closed call: a plain
   trait-bound one, with type parameters and scalar or `DType` value
   parameters named at most as lane slots (`template_serves_binders`), and no
-  such construct; `comptime.rs`'s `served_lane_defs` admits a `DType`- or
-  lane-keyed `def` whose body holds no form MIR lacks a symbolic lane for
-  (`lane_def_shape_served`). An
+  such construct; `comptime.rs`'s `served_lane_defs` admits every uniquely
+  named `DType`- or lane-keyed `def` whose binders `template_serves_binders`
+  accepts, whatever its body holds. An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type` over `struct_instance`,
@@ -1330,7 +1335,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `comptime` value (`comptime k = n + 1`) as its parameter expression:
   `lower_comptime_binding` records it (`ComptimeThunks::bind_value`), each
   request carries the bindings so far (`EnclosingBinders::comptime_bindings`),
-  and `Flatten::identifier_read` (`mir/lower_expr/expr.rs`) answers the read. The header's `source` is the
+  and `Flatten::identifier_read` (`mir/lower_expr/expr.rs`) answers the read.
+  The same holds for such a binding as a method receiver
+  (`lane.is_floating_point()` over `comptime lane = dt`):
+  `Flatten::lower_call_receiver` (`mir/calls.rs`) reads it as a value, not
+  a place, and `type_receiver_name` never takes a checked binding for a
+  type name. The header's `source` is the
   `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
   or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the

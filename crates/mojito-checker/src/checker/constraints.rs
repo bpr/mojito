@@ -265,7 +265,7 @@ impl Checker {
                 }
                 // A local `comptime` `DType` binding (`comptime c = pick(True)`)
                 // is its dtype, known or the expression a template names.
-                if let Some(dtype) = self.comptime_dtypes.get(name) {
+                if let Some(dtype) = self.comptime_dtype(name) {
                     return Ok(match dtype {
                         SimdDtype::Known(dtype) => CtValue::Dtype(*dtype),
                         SimdDtype::Expr(expr) => CtValue::Expr(expr.clone()),
@@ -755,6 +755,14 @@ impl Checker {
             .map(|(_, expression)| expression)
             .or_else(|| parameter.map(|(_, reference)| reference))
             .map(|expression| self.param_context.intern(expression))
+    }
+
+    /// Whether `value` is a bare name of a compile-time value in scope — a
+    /// value binder, a `comptime for` index, or a local `comptime` binding of
+    /// one — so a `comptime NAME = value` over it is an alias of that
+    /// parameter expression, never a type alias.
+    pub(super) fn names_value_binder(&self, value: &Expr) -> bool {
+        matches!(&value.kind, ExprKind::Identifier(name) if self.value_parameter_in_scope(name).is_some())
     }
 
     /// Open the scope of a declaration's own binders: its type parameters and,

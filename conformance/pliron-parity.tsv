@@ -110,6 +110,7 @@ assets/ok/comptime_if_overloaded_def_explicit.mojo	main	exe-differential	sanitiz
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized
+assets/ok/comptime_local_binder_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_over_binder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized

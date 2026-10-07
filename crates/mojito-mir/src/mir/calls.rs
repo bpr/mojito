@@ -933,10 +933,11 @@ impl Flatten<'_> {
             return self.anchor_borrowing_temporary(expression, value, loans, "$view_recv_r");
         }
         // A value binder of the enclosing declaration (`dt.is_integral()` in
-        // a `DType`-keyed body), or an enclosing `comptime for` variable
-        // under any shadow spelling, is a value the elaborator folds, not a
-        // place: the receiver is read through its slot and no place is
-        // retained.
+        // a `DType`-keyed body), an enclosing `comptime for` variable under
+        // any shadow spelling, or, in a lifted thunk, a local `comptime`
+        // binding of a parameter expression (`lane` of `comptime lane =
+        // dt`), is a value the elaborator folds, not a place: the receiver
+        // is read as such and no place is retained.
         if let ExprKind::Identifier(name) = &expression.kind
             && (self
                 .enclosing_binders
@@ -948,6 +949,7 @@ impl Flatten<'_> {
                         .loop_bindings
                         .iter()
                         .any(|(binding, _)| *binding == owner)
+                        || self.enclosing_binders.comptime_value(owner).is_some()
                 }))
         {
             return (self.expr(expression), None);

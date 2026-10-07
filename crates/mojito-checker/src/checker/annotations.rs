@@ -80,6 +80,10 @@ impl Checker {
             }) => {
                 format!("DType.{field}")
             }
+            mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }) => format!("'{name}' does not name a DType in scope"),
             _ => "a non-DType argument".to_string(),
         }))
     }
@@ -89,12 +93,21 @@ impl Checker {
     /// template. The binding table and the parameter scope agree here, so a
     /// `comptime d = dt` binding names the same lane its parameter does.
     pub(super) fn dtype_named(&self, name: &str) -> Option<SimdDtype> {
-        if let Some(dtype) = self.comptime_dtypes.get(name) {
+        if let Some(dtype) = self.comptime_dtype(name) {
             return Some(dtype.clone());
         }
         self.value_parameter_in_scope(name)
             .filter(|expr| expr.meta().as_value() == Some(&Ty::Dtype))
             .map(SimdDtype::Expr)
+    }
+
+    /// The dtype a local or module `comptime` binding named `name` holds,
+    /// innermost scope first.
+    pub(super) fn comptime_dtype(&self, name: &str) -> Option<&SimdDtype> {
+        self.comptime_dtypes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
     }
 }
 

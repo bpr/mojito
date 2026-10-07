@@ -83,9 +83,13 @@ impl Flatten<'_> {
     /// checker already resolved into its symbol selection — never lowered.
     pub(super) fn type_receiver_name<'e>(&self, object: &'e Expr) -> Option<&'e str> {
         // A value binder of the enclosing declaration (`dt.is_integral()` in
-        // a `DType`-keyed body) is a value, read through its slot.
+        // a `DType`-keyed body) is a value, read through its slot, and so is
+        // a name the check bound (`lane.is_floating_point()` over `comptime
+        // lane = dt`, which a lifted thunk reads as the expression it
+        // denotes).
         let not_a_local = |name: &'e String| {
             (!self.vars.iter().any(|local| local == name)
+                && self.checked_owner(object).is_none()
                 && !self
                     .enclosing_binders
                     .values

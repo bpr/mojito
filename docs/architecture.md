@@ -826,8 +826,9 @@ application's values, to a concrete lane or to the caller's own symbolic
 `MakeSimd`, `SimdCast`, and `SimdBitcast` (schema 1.18): the parametric
 verifier checks its binders and kind, the concrete verifier rejects it, and
 the elaborator closes it per instance as it closes a register type. A
-uniquely named `DType`- or lane-keyed `def` whose body holds no other form
-is a bound generic served by its template (`served_lane_defs`). A struct
+uniquely named `DType`- or lane-keyed `def` is a bound generic served by its
+template (`served_lane_defs`), a local `comptime` binding of its binder
+(`comptime lane = dt`) an alias of the binder's parameter expression. A struct
 keyed on a `DType`, a lane width, a vector value, or a struct-typed value is
 an ordinary generic struct, a generator: the executable check types its
 members with the binder symbolic, its template crosses MIR, and

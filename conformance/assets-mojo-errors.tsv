@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	534
+# swept-count	535
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -205,6 +205,7 @@ assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	erro
 assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
 assets/type_error/comptime_display_binding_runtime_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(2)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_display_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (load_from_mem vals.__getitem_param__[Int(1)]())]' value to 'SIMD[.int32, ((load_from_mem vals.__getitem_param__[Int(0)]()) * Int(2))]'
+assets/type_error/comptime_dtype_binding_scope.mojo	compile-reject	agree	error: use of unknown declaration 'lane'
 assets/type_error/comptime_field_names_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[StringSpan[ImmStaticOrigin], Int(len(#kgen.struct_field_types<:trait<@std::@traits::@anytype::@AnyType> T>))]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_for_runtime_pack_length.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
 assets/type_error/comptime_for_runtime_pack_length_value_binder.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument

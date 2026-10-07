@@ -2292,62 +2292,36 @@ fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> 
 
 /// The names of the `DType`- or lane-keyed top-level `def`s the template
 /// serves: a uniquely named `def` keyed on a `DType` binder, on a parameter
-/// used as a lane width, or on a layout operand, whose shape passes
-/// [`lane_def_shape_served`]. Such a body is checked once with its lane
-/// slots symbolic, MIR carries the slots in its register types and SIMD
-/// instructions, and the elaborator closes them per instance. An overloaded
-/// name stays a template family, since overload selection is the checker's.
+/// used as a lane width, or on a layout operand, whose every compile-time
+/// parameter is a type parameter or a scalar value (`Int`, `UInt`, `Bool`,
+/// `Float64`, `StringLiteral`, or `DType`) the runtime parameters name only
+/// as a lane slot ([`template_serves_binders`]). Such a body is checked once
+/// with its lane slots symbolic, a local `comptime` binding of a binder an
+/// alias of its parameter expression; MIR carries the slots in its register
+/// types and SIMD instructions, and the elaborator closes them per instance.
+/// An overloaded name stays a template family, since overload selection is
+/// the checker's.
 fn served_lane_defs(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     program
         .iter()
         .filter_map(|statement| {
-            let StmtKind::Def { name, .. } = &statement.kind else {
+            let StmtKind::Def {
+                name,
+                type_params,
+                params,
+                ..
+            } = &statement.kind
+            else {
                 return None;
             };
             (def_counts[name.as_str()] == 1
                 && (dtype_keyed_declaration(statement)
                     || def_uses_layout_dependent_param(statement))
-                && lane_def_shape_served(statement))
+                && template_serves_binders(type_params, params, name))
             .then(|| name.clone())
         })
         .collect()
-}
-
-/// Whether a `DType`- or lane-keyed `def`'s own shape lets its template serve
-/// it: every compile-time parameter is a type parameter or a scalar value
-/// (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, or `DType`) the
-/// runtime parameters name only as a lane slot
-/// ([`template_serves_binders`]), and the body holds no form MIR has no
-/// symbolic lane for: a local `comptime` binding (which the cloner's body
-/// elaboration evaluates before the check), or a nested `def` or lambda.
-fn lane_def_shape_served(statement: &Stmt) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            self.found |= matches!(&statement.kind, StmtKind::Comptime { .. });
-        }
-    }
-
-    let StmtKind::Def {
-        name,
-        type_params,
-        params,
-        body,
-        ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    if !template_serves_binders(type_params, params, name) {
-        return false;
-    }
-    let mut finder = Finder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, body);
-    !finder.found
 }
 
 /// Whether a pack-keyed `def`'s own shape lets its template serve it, and

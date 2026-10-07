@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` binding of a compile-time parameter in a `DType`- or
+  lane-keyed `def` (`comptime lane = dt`) is now an alias of the parameter,
+  as at the pin, and the template serves the body: a read in a type, at run
+  time, inside a `comptime for`, or as a `comptime if` receiver
+  (`lane.is_floating_point()`) no longer keys a clone per call. The same
+  binding of an `Int` parameter (`comptime k = n`) in any generic `def`,
+  which was rejected as a generic alias outside module scope, now runs.
+
 - A `comptime for` over tuple or struct elements holding a `String` in a
   generic `def` or a generic struct's method (`comptime PAIRS = [(1, "a"),
   (2, "b")]`, a literal display, `[(n, "c"), (4, "d")]`, `[Q(n, "z"),
@@ -959,6 +967,10 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- A local `comptime` `DType` binding (`comptime lane = DType.int8`) no
+  longer stays visible after its block: a later, unrelated function naming
+  `Scalar[lane]` was accepted, where the pin reports an unknown declaration.
 
 - A closed compile-time argument in a generic call's brackets
   (`tup[(1, Tag(8, "x"))]()`, `one[Q(8)]()`, `s[1 + 2]()`) is now

@@ -3,10 +3,11 @@
 # validated once with `Scalar[dt]`/`SIMD[dt, width]` symbolic before any
 # clone is minted — a dtype gate (`&` on an integer lane, `/` on a float
 # lane) is the instantiation's to check, an integer or float literal splats
-# into the symbolic lane, a compile-time binding of the symbolic dtype keys
-# a lane of its own, and a width expression (`width * 2`, `n + 1`) compares
-# in the pin's normal form. A call that spells no lane takes it from the
-# argument's own type, whether or not the body holds a `comptime if`.
+# into the symbolic lane, a compile-time binding of the symbolic dtype is an
+# alias of it the template serves (in a type, a `comptime if` method query,
+# or a `comptime for` body), and a width expression (`width * 2`, `n + 1`)
+# compares in the pin's normal form. A call that spells no lane takes it from
+# the argument's own type, whether or not the body holds a `comptime if`.
 # requires: discovery
 
 
@@ -37,6 +38,21 @@ def rebound[dt: DType](a: Scalar[dt]) -> Scalar[dt]:
         return a
     var doubled: Scalar[lane] = a + a
     return Scalar[lane](doubled) + Scalar[lane](1)
+
+
+def rebound_query[dt: DType](a: Scalar[dt]) -> Scalar[dt]:
+    comptime lane = dt
+    comptime if lane.is_floating_point():
+        return a / Scalar[lane](2)
+    return a + Scalar[lane](2)
+
+
+def rebound_in_loop[dt: DType](a: Scalar[dt]) -> Scalar[dt]:
+    var acc = a
+    comptime for i in range(3):
+        comptime lane = dt
+        acc += Scalar[lane](i)
+    return acc
 
 
 def inferred_lane[dt: DType](a: Scalar[dt], b: Scalar[dt]) -> Scalar[dt]:
@@ -104,6 +120,8 @@ def main():
     print(guarded[DType.int32](6, 3), guarded[DType.float64](6, 3))
     print(literals[DType.float32](1.0), literals[DType.int16](2))
     print(rebound[DType.int32](3), rebound[DType.float32](1.5))
+    print(rebound_query[DType.int64](5), rebound_query[DType.float16](5))
+    print(rebound_in_loop[DType.int8](1), rebound_in_loop[DType.float32](0.5))
     print(conversions[DType.float32](1.5), conversions[DType.int8](7))
     var v = SIMD[DType.int32, 4](1, 2, 3, 4)
     print(lanes[DType.int32, 4](v), lanes[DType.int32, 1](Int32(9)))

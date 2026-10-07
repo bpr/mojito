@@ -659,9 +659,10 @@ pub struct Checker {
     /// the executable check sees the elaborator's folded literal.
     comptime_applied: HashMap<String, ParamExpr>,
     /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
-    /// arguments. A binding of a `[dt: DType]` parameter keys a lane
+    /// arguments, one map per lexical scope: a binding is visible to the
+    /// rest of its block. A binding of a `[dt: DType]` parameter keys a lane
     /// symbolically, so a template body may name its own dtype through one.
-    comptime_dtypes: HashMap<String, SimdDtype>,
+    comptime_dtypes: Vec<HashMap<String, SimdDtype>>,
     /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
     /// expanded per application during type resolution. See [`ComptimeAlias`].
     comptime_aliases: HashMap<String, ComptimeAlias>,
@@ -1084,7 +1085,7 @@ impl Checker {
             comptimes: HashMap::new(),
             comptime_literals: HashMap::new(),
             comptime_applied: HashMap::new(),
-            comptime_dtypes: HashMap::new(),
+            comptime_dtypes: vec![HashMap::new()],
             comptime_aliases: HashMap::new(),
             self_mutable: false,
             self_initializing: false,

@@ -1747,7 +1747,10 @@ impl Checker {
                     self.mark_compile_time_binding(name);
                     return Ok(());
                 }
+                // A type name takes the alias route; an alias of a value
+                // binder (`comptime lane = dt`) is the ordinary path below.
                 if !local_validation
+                    && !self.names_value_binder(value)
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
                         || matches!(
@@ -1800,7 +1803,14 @@ impl Checker {
                     _ => None,
                 };
                 if let Some(dtype) = bound_dtype {
-                    self.comptime_dtypes.insert(name.clone(), dtype);
+                    self.comptime_dtypes
+                        .last_mut()
+                        .ok_or_else(|| {
+                            TypeError::InvariantViolation(
+                                "checker scope stack is empty".to_string(),
+                            )
+                        })?
+                        .insert(name.clone(), dtype);
                 }
                 let annotated = ty
                     .as_ref()

@@ -672,10 +672,11 @@ branch for the class is deleted, and so is its certificate class.
   parameter expression, and the elaborator binds the lane binders from the
   call's recorded arguments or a vector argument's slots and closes the slots
   per instance. The cloner keeps a `def` whose body shuffles, slices, joins,
-  or hashes a lane value, queries a float format over its binder, binds a
-  local `comptime`, or holds a nested `def`, and every overloaded one
-  (R257–R261); a method's own lane binder is served since P3e's first
-  step.
+  or hashes a lane value, queries a float format over its binder, or holds
+  a nested `def`, and every overloaded one (R257–R260); a method's own lane
+  binder is served since P3e's first step, and a local `comptime` binding
+  of a lane binder (`comptime lane = dt`) is served as an alias of the
+  binder since R261.
 - **P3d. Struct generators.** Value-keyed and variadic structs, `Tuple` and
   `TString` included, are declared once and instantiated by the elaborator.
   The first step landed 2026-10-05 for a struct keyed on a `DType` or on a
