@@ -660,6 +660,8 @@ pub struct Reg(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirParamArg {
     pub name: Option<String>,
+    /// The argument's run-time register; absent for an erased origin
+    /// argument and for a closed value the call's `instantiated_args` carry.
     pub value: Option<Reg>,
     /// The enclosing declaration's type binder this argument forwards
     /// (`hash[Self.H](key)`), whose spelling `value` reifies.

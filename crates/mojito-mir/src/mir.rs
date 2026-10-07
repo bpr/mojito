@@ -2873,14 +2873,18 @@ impl Flatten<'_> {
         Some(dest)
     }
 
+    /// Whether a bracket argument occupies its slot with no run-time form.
+    ///
     /// Semantic Origin/OriginSet arguments are retained in source long enough
     /// for the checker to solve reference and capture contracts, but they have
     /// no slot in `ParamDecl`.  Drop those arguments from the runtime parameter
     /// vector instead of emitting an ambiguous `None` that would shift every
     /// following callable/scalar value parameter. A type-shaped origin
     /// argument (`V[Self.o]`) has no span for the checker's
-    /// `EraseCompileTimeArgument` adjustment, so it is erased by name.
-    fn param_arg_is_erased(&self, argument: &ParamArg) -> bool {
+    /// `EraseCompileTimeArgument` adjustment, so it is erased by name. A closed
+    /// value the call carries in its instantiated arguments (`folded`) is
+    /// compile-time data on the call, as at Mojo's.
+    fn param_arg_has_no_runtime_form(&self, argument: &ParamArg, folded: &[SourceSpan]) -> bool {
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => match &**value {
@@ -2890,14 +2894,16 @@ impl Flatten<'_> {
             },
             ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
         };
-        self.checked_adjustments(expression)
-            .iter()
-            .any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                )
-            })
+        folded.contains(&span(expression))
+            || self
+                .checked_adjustments(expression)
+                .iter()
+                .any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
+                    )
+                })
     }
 
     /// Whether a type-shaped bracket argument names one of the enclosing
@@ -3262,17 +3268,28 @@ impl Flatten<'_> {
     /// An erased argument keeps its (empty) slot: every backend aligns the
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
-    fn param_arg_regs(&mut self, arguments: &[ParamArg], site: &SourceSpan) -> Vec<MirParamArg> {
+    fn param_arg_regs(&mut self, call: &Expr, arguments: &[ParamArg]) -> Vec<MirParamArg> {
+        let site = span(call);
+        let folded = self
+            .checked_adjustments(call)
+            .into_iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments(spans) => {
+                    Some(spans)
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
         let mut registers = Vec::new();
         for argument in arguments {
             let name = match argument {
                 ParamArg::Named { name, .. } => Some(name.clone()),
                 ParamArg::Type(_) | ParamArg::Value(_) => None,
             };
-            let value = if self.param_arg_is_erased(argument) {
+            let value = if self.param_arg_has_no_runtime_form(argument, &folded) {
                 None
             } else {
-                self.param_arg_reg(argument, site)
+                self.param_arg_reg(argument, &site)
             };
             let binder = value.and_then(|_| self.forwarded_binder(argument));
             let expr = value.and_then(|_| self.forwarded_value(argument));

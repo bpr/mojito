@@ -254,7 +254,7 @@ impl Flatten<'_> {
                 .and_then(|variable| self.var_types.get(&(variable as VarId)))
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_arg_regs = self.param_arg_regs(param_args, &span(e));
+            let param_arg_regs = self.param_arg_regs(e, param_args);
             let param_decls = callable_ty
                 .as_ref()
                 .map(generic_callable_param_decls)
@@ -494,7 +494,7 @@ impl Flatten<'_> {
             let place = MirPlace::root(slot, callable_ty.clone());
             callee_place = place.is_typed().then_some(place);
         }
-        let param_arg_regs = self.param_arg_regs(param_args, &span(e));
+        let param_arg_regs = self.param_arg_regs(e, param_args);
         let resolved = self.resolved_callable(e);
         let raises = self.checked_raises(e);
         self.emit_indirect_invocation(
@@ -525,7 +525,7 @@ impl Flatten<'_> {
         // evaluated before ordinary call arguments: a
         // **value** parameter is a comptime `Int` expression flattened to a
         // register; a **type** parameter is erased (`None`).
-        let mut param_arg_regs = self.param_arg_regs(param_args, &span(e));
+        let mut param_arg_regs = self.param_arg_regs(e, param_args);
         param_arg_regs.extend(self.inferred_param_arg_regs(e));
         // Retain only checker-selected `mut`/`ref` caller places. A
         // syntactically simple copied argument remains eligible for
@@ -782,7 +782,7 @@ impl Flatten<'_> {
             let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
                 (Vec::new(), Vec::new())
             } else {
-                let mut param_arg_regs = self.param_arg_regs(param_args, &span(e));
+                let mut param_arg_regs = self.param_arg_regs(e, param_args);
                 param_arg_regs.extend(self.inferred_param_arg_regs(e));
                 (param_arg_regs, self.instantiated_args(e))
             };
@@ -834,7 +834,7 @@ impl Flatten<'_> {
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            let mut param_arg_regs = self.param_arg_regs(param_args, &span(e));
+            let mut param_arg_regs = self.param_arg_regs(e, param_args);
             param_arg_regs.extend(self.inferred_param_arg_regs(e));
             (param_arg_regs, self.instantiated_args(e))
         };
@@ -896,7 +896,7 @@ impl Flatten<'_> {
         // The elaborator selects the element by the index's expression,
         // a literal one included, which a forwarded argument leaves out.
         let element = self
-            .param_arg_regs(param_args, &span(e))
+            .param_arg_regs(e, param_args)
             .into_iter()
             .next()
             .map(|mut element| {

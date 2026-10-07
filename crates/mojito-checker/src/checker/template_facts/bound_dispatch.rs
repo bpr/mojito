@@ -595,6 +595,7 @@ impl Checker {
                     .map(TyArg::Ty)
                     .collect(),
                 inferred_values: Vec::new(),
+                folded_arguments: Vec::new(),
             })
         });
         // A binder the instance bakes selects the per-call clone once the

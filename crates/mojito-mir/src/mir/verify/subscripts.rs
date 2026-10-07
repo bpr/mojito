@@ -479,6 +479,7 @@ pub(super) fn verify_subscript_call(
         function,
         &call.param_decls,
         &call.param_arg_regs,
+        &[],
         errors,
     );
     match declared(declarations, &call.target) {
@@ -681,11 +682,15 @@ pub(super) fn verify_subscript_call(
 /// entries skip infer-only declarations. A type argument occupies a slot but
 /// has no register, while every supplied value argument must carry a register
 /// compatible with its declared checked type.
+/// A value slot's register is absent only where the call's `instantiated`
+/// arguments carry the closed value it was folded to: the call carries
+/// that value as compile-time data, as Mojo's carries a parameter attribute.
 pub(super) fn verify_param_arguments(
     prefix: &str,
     function: &MirFunction,
     declarations: &[mojito_types::types::ParamDecl],
     arguments: &[crate::mir::MirParamArg],
+    instantiated: &[mojito_types::types::TyArg],
     errors: &mut Vec<String>,
 ) {
     if declarations.is_empty() {
@@ -771,9 +776,16 @@ pub(super) fn verify_param_arguments(
                     ));
                 }
             }
-            (mojito_types::types::ParamDecl::Value { name, .. }, None) => errors.push(format!(
-                "{prefix}: value parameter '{name}' has no runtime register"
-            )),
+            (mojito_types::types::ParamDecl::Value { name, .. }, None) => {
+                if !matches!(
+                    instantiated.get(index),
+                    Some(mojito_types::types::TyArg::Val(value)) if value.is_folded_parameter_argument()
+                ) {
+                    errors.push(format!(
+                        "{prefix}: value parameter '{name}' has no runtime register"
+                    ));
+                }
+            }
             (mojito_types::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
                 // A value pack spread whole binds the pack of its element.
                 let spread = pack(index)

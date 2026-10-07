@@ -2082,6 +2082,77 @@ impl VmBackend {
         ))
     }
 
+    /// A compile-time value as a run-time value of the declared type `ty`,
+    /// [`Self::freeze`]'s inverse: a string becomes a nominal `String` (a
+    /// `StringLiteral` keeps its text), a tuple at a nominal `Tuple` type the
+    /// struct holding its thawed elements in `storage`, a struct its fields
+    /// thawed at their declared types, and anything else crosses as
+    /// [`crate::crossing::ct_to_vm`] admits it.
+    fn thaw(&mut self, prog: &Prog, value: &CtValue, ty: &Ty) -> Result<Value, RuntimeError> {
+        match (value, ty) {
+            (CtValue::Str(text), ty) if *ty != Ty::StringLiteral => {
+                self.nominal_string_value(prog, text)
+            }
+            (CtValue::Tuple(elements), Ty::Struct(name, _)) if is_nominal_tuple(name) => {
+                let element_types = mojito_types::types::tuple_elements(ty).unwrap_or_default();
+                if element_types.len() != elements.len() {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "vm: a compile-time tuple does not match its declared type {ty}"
+                    )));
+                }
+                let thawed = elements
+                    .iter()
+                    .zip(&element_types)
+                    .map(|(element, element_ty)| self.thaw(prog, element, element_ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let spellings = element_types
+                    .iter()
+                    .map(|element| {
+                        Value::Str(
+                            reified_type_spelling(element).unwrap_or_else(|| element.to_string()),
+                        )
+                    })
+                    .collect();
+                Ok(Value::Struct {
+                    name: name.clone(),
+                    fields: vec![("storage".to_string(), Value::Tuple(thawed))],
+                    value_params: vec![("*Ts".to_string(), Value::Tuple(spellings))],
+                })
+            }
+            (CtValue::Struct { name, fields }, ty) => {
+                let declared = prog
+                    .structs
+                    .get(name)
+                    .map(|definition| definition.fields.clone())
+                    .unwrap_or_default();
+                let fields = fields
+                    .iter()
+                    .map(|(field, value)| {
+                        let (_, field_ty) = declared
+                            .iter()
+                            .find(|(candidate, _)| candidate == field)
+                            .ok_or_else(|| {
+                                RuntimeError::Unsupported(format!(
+                                    "vm: compile-time struct '{name}' has no field '{field}'"
+                                ))
+                            })?;
+                        Ok((field.clone(), self.thaw(prog, value, field_ty)?))
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                let value_params = match reified_type_value(prog, ty) {
+                    Some(Value::Struct { value_params, .. }) => value_params,
+                    _ => Vec::new(),
+                };
+                Ok(Value::Struct {
+                    name: name.clone(),
+                    fields,
+                    value_params,
+                })
+            }
+            (value, _) => crate::crossing::ct_to_vm(value),
+        }
+    }
+
     /// The supplied compile-time arguments of a call, aligned to the callee's
     /// declarations. A reified type argument spelled as the caller's own binder
     /// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
@@ -2100,7 +2171,7 @@ impl VmBackend {
     /// parameter the brackets spelled no struct name for
     /// (`make[Tuple[Int, Bool]]()`) reifies as the solved struct's name.
     fn supplied_parameter_arguments(
-        &self,
+        &mut self,
         prog: &Prog,
         caller: CallerBindings<'_>,
         declarations: &[ParamDecl],
@@ -2136,6 +2207,20 @@ impl VmBackend {
                 }
                 // A type pack's solution is its element list, which the
                 // erased frame keeps for the pack's length.
+                // A closed value the call carries as compile-time data
+                // (`tup[(1, Tag(8, "x"))]()`, `s[3]()`) has no register; the
+                // erased frame holds it thawed at its declared type.
+                TyArg::Val(value)
+                    if slot.is_none()
+                        && value.is_folded_parameter_argument()
+                        && let ParamDecl::Value {
+                            ty,
+                            variadic: false,
+                            ..
+                        } = declaration =>
+                {
+                    *slot = self.thaw(prog, value, ty).ok();
+                }
                 TyArg::Val(CtValue::Tuple(elements))
                     if matches!(declaration, ParamDecl::Type { variadic: true, .. }) =>
                 {

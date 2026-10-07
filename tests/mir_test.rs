@@ -3764,3 +3764,57 @@ fn stored_span_iterator_lends_the_span_place() {
         "and still the List the Span borrows: {loans:#?}"
     );
 }
+
+#[test]
+fn closed_aggregate_parameter_argument_has_no_runtime_form() {
+    // `tup[(1, Q(8))]()`: the call carries the closed tuple in its
+    // instantiated arguments, as Mojo's carries a parameter attribute, so the
+    // caller builds no `Q` or `Tuple`; the verifier accepts the empty slot only
+    // while the call carries that value.
+    let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\ndef tup[p: Tuple[Int, Q]]():\n    print(p[1].a)\n\ndef main():\n    tup[(1, Q(8))]()\n";
+    let linked = mojito::link_source(source, Path::new("mir_test.mojo")).expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = mojito::check_program(&program).expect("check");
+    let mut mir = mojito::mir::lower_checked_program(&checked);
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let main = &mut mir
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    assert!(!main.blocks.iter().flat_map(|block| &block.instrs).any(
+        |instruction| matches!(instruction, MirInstr::Call { func, .. } if func.0 == "Tuple" || func.0 == "Q")
+    ));
+    let call = main
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                param_arg_regs,
+                instantiated_args,
+                ..
+            } if func.0 == "tup" => Some((param_arg_regs, instantiated_args)),
+            _ => None,
+        })
+        .expect("tup call");
+    assert!(matches!(call.0.as_slice(), [argument] if argument.value.is_none()));
+    assert!(matches!(
+        call.1.as_slice(),
+        [mojito::TyArg::Val(value)] if value.is_closed_aggregate_value()
+    ));
+    call.1.clear();
+    let errors = mojito::mir::verify::verify(&mir);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("value parameter 'p' has no runtime register")),
+        "{errors:?}"
+    );
+}

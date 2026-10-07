@@ -42,6 +42,7 @@ pub(super) fn verify_call_instruction(
             kwarg_places,
             capture_accesses,
             param_arg_regs,
+            instantiated_args,
             spread,
             ..
         } => {
@@ -71,6 +72,7 @@ pub(super) fn verify_call_instruction(
                     cx.function,
                     &declaration.param_decls,
                     param_arg_regs,
+                    instantiated_args,
                     errors,
                 );
             }
@@ -93,6 +95,7 @@ pub(super) fn verify_call_instruction(
             capture_accesses,
             param_arg_regs,
             param_decls,
+            instantiated_args,
             spread,
             ..
         } => {
@@ -177,6 +180,7 @@ pub(super) fn verify_call_instruction(
                     cx.function,
                     &declaration.param_decls,
                     param_arg_regs,
+                    instantiated_args,
                     errors,
                 );
             }
@@ -849,7 +853,14 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                         "{prefix}: indirect-call compile-time parameter metadata does not match its callable contract"
                     ));
         }
-        verify_param_arguments(prefix, cx.function, checked_decls, param_arg_regs, errors);
+        verify_param_arguments(
+            prefix,
+            cx.function,
+            checked_decls,
+            param_arg_regs,
+            instantiated_args,
+            errors,
+        );
     } else if !param_decls.is_empty() {
         errors.push(format!(
             "{prefix}: nongeneric indirect call carries compile-time parameter metadata"

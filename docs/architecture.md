@@ -1962,7 +1962,17 @@ identity in the instance's type bindings (`Bindings.types`, keyed by
 for the VM and records the expression over those binders beside it
 (`MirParamArg::expr`, built by `Flatten::forwarded_value` through
 `ParamContext`), which the monomorphizer evaluates under the caller
-instance's bindings (`bind_explicit_value_arguments`, `eval_ct`).
+instance's bindings (`bind_explicit_value_arguments`, `eval_ct`). A closed
+bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`)
+has no run-time form: as Mojo's call carries a parameter attribute, the call
+carries the value in its instantiated arguments, the checker names the
+argument's span (`SemanticAdjustment::FoldedParameterArguments`), and MIR
+lowers no code for it and leaves its slot's register absent. The verifier
+accepts the absent register only while the call carries that closed value
+(`verify_param_arguments`), the monomorphizer binds it from the instantiated
+arguments (`bind_instantiated_arguments`), and the erased oracle thaws it at
+the declared type (`VmBackend::thaw`). Only an argument over the caller's
+binders, a string, a callable, or a type keeps a register.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not

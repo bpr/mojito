@@ -980,6 +980,42 @@ fn generic_call_sites_record_their_resolved_instantiations() {
 }
 
 #[test]
+fn closed_bracket_arguments_record_their_folded_spans() {
+    // A bracket argument solved to a closed value (a tuple, a struct, a
+    // scalar) is compile-time data on the call: its instantiation names the
+    // argument's span so MIR lowers no code for it. An argument over the
+    // caller's binder is open and keeps its register.
+    let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\ndef tup[p: Tuple[Int, Q]]():\n    print(p[0])\n\ndef one[q: Q]():\n    print(q.a)\n\ndef s[n: Int]():\n    print(n)\n\ndef f[n: Int]():\n    s[n]()\n\ndef main():\n    tup[(1, Q(8))]()\n    one[Q(8)]()\n    s[1 + 2]()\n    f[2]()\n";
+    let linked =
+        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = check_program(&program).expect("check");
+    let folded = |callee: &str| -> Vec<(bool, usize)> {
+        checked
+            .generic_instantiations()
+            .values()
+            .filter(|instantiation| instantiation.callee == callee)
+            .map(|instantiation| {
+                let closed = instantiation.arguments.iter().all(|argument| {
+                    matches!(argument, mojito::TyArg::Val(value) if value.is_folded_parameter_argument())
+                });
+                (closed, instantiation.folded_arguments.len())
+            })
+            .collect()
+    };
+    assert_eq!(folded("tup"), vec![(true, 1)]);
+    assert_eq!(folded("one"), vec![(true, 1)]);
+    let scalar = folded("s");
+    assert!(scalar.contains(&(true, 1)), "{scalar:?}");
+    assert!(
+        scalar
+            .iter()
+            .all(|(closed, count)| *count == usize::from(*closed)),
+        "{scalar:?}"
+    );
+}
+
+#[test]
 fn abstract_element_copyability_derives_from_member_bounds() {
     // A `C.Element` copy is proven by the bound trait's member declaration,
     // never vacuously: a Movable-only element cannot be returned by copy from

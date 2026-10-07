@@ -304,6 +304,10 @@ pub struct GenericInstantiation {
     /// that stays on the erased declaration passes each as a named
     /// compile-time argument ([`SemanticAdjustment::InferredValueArguments`]).
     pub inferred_values: Vec<(usize, String)>,
+    /// The bracket arguments [`Self::arguments`] carries as closed values, by
+    /// their value expressions' spans
+    /// ([`SemanticAdjustment::FoldedParameterArguments`]).
+    pub folded_arguments: Vec<SourceSpan>,
 }
 
 impl GenericInstantiation {
@@ -343,6 +347,9 @@ pub struct MethodInstantiation {
     /// The value parameters the call's brackets leave to inference, as
     /// [`GenericInstantiation::inferred_values`] records a `def`'s.
     pub inferred_values: Vec<(usize, String)>,
+    /// The bracket arguments carried as closed values, as
+    /// [`GenericInstantiation::folded_arguments`] records a `def`'s.
+    pub folded_arguments: Vec<SourceSpan>,
 }
 
 impl MethodInstantiation {
@@ -770,6 +777,12 @@ pub enum SemanticAdjustment {
     /// MIR carries them so the elaborator binds a type parameter no runtime
     /// parameter or result spells.
     InstantiatedArguments(Vec<mojito_types::types::TyArg>),
+    /// The value expressions, by span, of the call's bracket arguments that
+    /// [`Self::InstantiatedArguments`] carries as closed values
+    /// (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`). As Mojo's call carries a parameter
+    /// attribute, such an argument has no run-time form at the call site:
+    /// MIR lowers no code for it and leaves its slot's register absent.
+    FoldedParameterArguments(Vec<SourceSpan>),
     /// A consuming method receiver is a source place, but the selected type is
     /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
     /// tombstoning the caller's place. This coexists with parameterized-method
@@ -2431,6 +2444,11 @@ fn build_checked_expressions(
                 adjustments.push(SemanticAdjustment::InstantiatedArguments(
                     instantiation.arguments.clone(),
                 ));
+                if !instantiation.folded_arguments.is_empty() {
+                    adjustments.push(SemanticAdjustment::FoldedParameterArguments(
+                        instantiation.folded_arguments.clone(),
+                    ));
+                }
             } else if let Some(instantiation) = self.method_instantiations.get(&span) {
                 if let Some(arguments) = instantiation.inferred_value_arguments() {
                     adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
@@ -2438,6 +2456,11 @@ fn build_checked_expressions(
                 adjustments.push(SemanticAdjustment::InstantiatedArguments(
                     instantiation.arguments.clone(),
                 ));
+                if !instantiation.folded_arguments.is_empty() {
+                    adjustments.push(SemanticAdjustment::FoldedParameterArguments(
+                        instantiation.folded_arguments.clone(),
+                    ));
+                }
             }
             if let Some(elements) = self.tuple_unpack_plans.get(&span) {
                 adjustments.push(SemanticAdjustment::TupleUnpack {

@@ -333,6 +333,21 @@ impl CtValue {
         }
     }
 
+    /// Whether this value is a closed struct or tuple: every leaf a closed
+    /// parameter leaf or a string.
+    pub fn is_closed_aggregate_value(&self) -> bool {
+        matches!(self, Self::Struct { .. } | Self::Tuple(_))
+            && (self.is_closed_parameter_value() || self.is_constructed_parameter_value())
+    }
+
+    /// Whether a bracket argument solved to this value has no run-time form
+    /// at its call, which carries it as compile-time data alone: a closed
+    /// scalar, vector, or aggregate. A string is not one: `external_call`
+    /// reads its callee off the argument's register.
+    pub fn is_folded_parameter_argument(&self) -> bool {
+        self.is_closed_leaf() || self.is_closed_aggregate_value()
+    }
+
     /// Whether this value is a struct or tuple an instance constructs at run
     /// time rather than folds: every leaf is a closed parameter leaf or a
     /// string, and at least one is a string, which owns a buffer no constant

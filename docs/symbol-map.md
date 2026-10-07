@@ -1180,6 +1180,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   clone by its instance (`lifecycle_clone_instance_symbol` in
   `native/mono/specializer.rs`), which is the symbol Pliron's lowering
   composes.
+- A closed bracket argument is compile-time data on its call: the checker's
+  `folded_parameter_arguments` (`checker/call_inference.rs`, over
+  `bracket_argument_slots`, the one bracket-to-declaration binding
+  `unsupplied_value_parameters` also reads) fills
+  `GenericInstantiation::folded_arguments` and
+  `MethodInstantiation::folded_arguments` with the spans of arguments solved
+  to `CtValue::is_folded_parameter_argument` values, carried to MIR as
+  `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
+  (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
+  them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
+  register against the call's `instantiated_args`; and
+  `VmBackend::supplied_parameter_arguments` fills the erased slot through
+  `VmBackend::thaw` (`backend/vm.rs`), `freeze`'s inverse.
 
 ## Change Routing
 

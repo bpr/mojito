@@ -1976,6 +1976,7 @@ impl Checker {
                 variadic: None,
                 arguments: tyargs.to_vec(),
                 inferred_values: Vec::new(),
+                folded_arguments: Vec::new(),
             },
         );
         let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {
@@ -2081,6 +2082,7 @@ impl Checker {
                 overload: overload.clone(),
                 arguments: arguments.clone(),
                 inferred_values: Vec::new(),
+                folded_arguments: Vec::new(),
             },
         );
         // On a generic struct the instance's own values precede the call's in
@@ -2374,6 +2376,7 @@ impl Checker {
                                     &selected.param_decls,
                                     &[],
                                 ),
+                            folded_arguments: Vec::new(),
                         },
                     );
                 }

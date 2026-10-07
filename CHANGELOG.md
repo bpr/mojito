@@ -960,6 +960,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A closed compile-time argument in a generic call's brackets
+  (`tup[(1, Tag(8, "x"))]()`, `one[Q(8)]()`, `s[1 + 2]()`) is now
+  compile-time data on the call, as at the pin, instead of run-time code in
+  the caller: before, the caller built the `String`, the `Tag`, and the
+  `Tuple` and never destroyed them. A method's own tuple or struct value
+  parameter (`h.show[(1, Tag(8, "x"))]()`, `H.st[(2, Tag(9, "y"))]()`),
+  which failed MIR verification with "register has no checked type", now
+  runs. The erased oracle now reads a defaulted value parameter holding a
+  `String` (`def d[p: Tuple[Int, String] = (7, "d")]()`).
 - A field read of a struct value parameter (`q.a`, `q.i.v`, `q.s` in `def
   f[q: Q]()`) now reads the field alone, as at the pin, instead of building
   and destroying a whole `Q` for each read: a number is a constant, and a

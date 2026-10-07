@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::checker::call_inference::{folded_parameter_arguments, unsupplied_value_parameters};
 
 impl Checker {
     /// Type a call whose receiver spells a type rather than a value:
@@ -373,11 +374,15 @@ impl Checker {
                         parameter_names: selected.parameter_names.clone(),
                         overload: overload.clone(),
                         arguments: arguments.clone(),
-                        inferred_values:
-                            crate::checker::call_inference::unsupplied_value_parameters(
-                                &selected.param_decls,
-                                param_args,
-                            ),
+                        inferred_values: unsupplied_value_parameters(
+                            &selected.param_decls,
+                            param_args,
+                        ),
+                        folded_arguments: folded_parameter_arguments(
+                            &selected.param_decls,
+                            param_args,
+                            arguments,
+                        ),
                     },
                 );
                 if let Some(clone) = self

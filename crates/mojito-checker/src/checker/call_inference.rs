@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_symbol::symbol::TypeKey;
 
 /// A call typed against one callable: its result, rank, error type, the
 /// erased-origin bindings, and how many arguments with a lane it binds to a
@@ -1842,13 +1843,10 @@ impl Checker {
                     parameter_names: names.clone(),
                     parameter_types: params
                         .iter()
-                        .map(|ty| {
-                            mojito_symbol::symbol::TypeKey::from_ty(ty)
-                                .as_str()
-                                .to_string()
-                        })
+                        .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
                         .collect(),
                     variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
+                    folded_arguments: folded_parameter_arguments(decls, param_args, &tyargs),
                     arguments: tyargs,
                     inferred_values: unsupplied_value_parameters(decls, param_args),
                 },
@@ -2214,24 +2212,11 @@ pub(super) fn unsupplied_value_parameters(
     param_args: &[mojito_ast::ast::ParamArg],
 ) -> Vec<(usize, String)> {
     let mut supplied = vec![false; decls.len()];
-    let mut next_positional = 0;
-    for argument in param_args {
-        let index = if let mojito_ast::ast::ParamArg::Named { name, .. } = argument {
-            decls
-                .iter()
-                .position(|decl| decl.name().trim_start_matches('*') == name.as_str())
-        } else {
-            while decls.get(next_positional).is_some_and(|decl| match decl {
-                ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
-                    *infer_only
-                }
-            }) {
-                next_positional += 1;
-            }
-            next_positional += 1;
-            Some(next_positional - 1)
-        };
-        if let Some(slot) = index.and_then(|index| supplied.get_mut(index)) {
+    for index in bracket_argument_slots(decls, param_args)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(slot) = supplied.get_mut(index) {
             *slot = true;
         }
     }
@@ -2246,6 +2231,46 @@ pub(super) fn unsupplied_value_parameters(
                 ..
             } => Some((index, name.clone())),
             _ => None,
+        })
+        .collect()
+}
+
+/// The value expressions of the bracket arguments `param_args` supplies to a
+/// non-variadic value parameter of `decls` solved to a closed value
+/// ([`CtValue::is_folded_parameter_argument`]). Mojo's call carries such an
+/// argument as a parameter attribute alone; the call's instantiated arguments
+/// carry it here, so it has no run-time form at the call site
+/// ([`mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments`]).
+pub(super) fn folded_parameter_arguments(
+    decls: &[ParamDecl],
+    param_args: &[mojito_ast::ast::ParamArg],
+    arguments: &[TyArg],
+) -> Vec<SourceSpan> {
+    param_args
+        .iter()
+        .zip(bracket_argument_slots(decls, param_args))
+        .filter_map(|(argument, index)| {
+            let index = index?;
+            let ParamDecl::Value {
+                variadic: false, ..
+            } = decls.get(index)?
+            else {
+                return None;
+            };
+            let Some(TyArg::Val(value)) = arguments.get(index) else {
+                return None;
+            };
+            let expression = match argument {
+                mojito_ast::ast::ParamArg::Value(expression) => expression,
+                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                    mojito_ast::ast::ParamArg::Value(expression) => expression,
+                    _ => return None,
+                },
+                mojito_ast::ast::ParamArg::Type(_) => return None,
+            };
+            value
+                .is_folded_parameter_argument()
+                .then(|| expression.source_span())
         })
         .collect()
 }
@@ -2271,6 +2296,35 @@ struct CalleeOriginArguments<'a> {
     overflow: &'a [usize],
     args: &'a [Expr],
     kwargs: &'a [mojito_ast::ast::KwArg],
+}
+
+/// The declaration each bracket argument binds, one entry per argument, as
+/// the MIR generic ABI binds them: a named argument selects its declaration,
+/// a positional one the next declaration that is not infer-only.
+fn bracket_argument_slots(
+    decls: &[ParamDecl],
+    param_args: &[mojito_ast::ast::ParamArg],
+) -> Vec<Option<usize>> {
+    let mut next_positional = 0;
+    param_args
+        .iter()
+        .map(|argument| {
+            if let mojito_ast::ast::ParamArg::Named { name, .. } = argument {
+                return decls
+                    .iter()
+                    .position(|decl| decl.name().trim_start_matches('*') == name.as_str());
+            }
+            while decls.get(next_positional).is_some_and(|decl| match decl {
+                ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
+                    *infer_only
+                }
+            }) {
+                next_positional += 1;
+            }
+            next_positional += 1;
+            Some(next_positional - 1)
+        })
+        .collect()
 }
 
 /// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's

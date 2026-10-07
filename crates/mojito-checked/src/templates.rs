@@ -419,7 +419,8 @@ pub fn derive_adjustment(
         | SemanticAdjustment::InteriorReference { .. }
         | SemanticAdjustment::InvalidateInteriors { .. }
         | SemanticAdjustment::InferredValueArguments(..)
-        | SemanticAdjustment::InstantiatedArguments(..) => None,
+        | SemanticAdjustment::InstantiatedArguments(..)
+        | SemanticAdjustment::FoldedParameterArguments(..) => None,
     }
 }
 

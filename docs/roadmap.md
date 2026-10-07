@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R474**.
+Next free ID: **R475**.
 
 ## Ordered Work
 
@@ -86,25 +86,6 @@ correctness fix to existing behavior is allowed.
     `CloneClass::PackDef` as a regression counter.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
-
-- [ ] **R468 (P3) A caller still builds a value parameter's `String`-holding
-  argument at run time and never destroys it**
-
-  Problem: `tup[(1, Tag(8, "x"))]()` constructs the `String`, the `Tag`, and
-  the `Tuple` in the concrete caller, where Mojo builds nothing at the call
-  site, and nothing destroys them.
-  - The instance builds its own value at each read (R466), so the caller's
-    construction only fed the erased argument register, which mono clears
-    (`mono/infer.rs`, `specializer.rs`) without deleting what built it.
-  - Visible in `--emit ll` of
-    `assets/ok/value_parameter_materialized_per_use.mojo`: `main` calls
-    the `String`, `Tag`, and `Tuple` initializers before `tup`, and no
-    `del 8` is printed for that value.
-  - Fix: drop the construction with its register, or never lower a
-    parameter argument as a run-time expression.
-  - Found while landing R466 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R365 (P3) A reflected list materialized whole over a type parameter
   has no template form**
@@ -735,18 +716,27 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R470 (P5) The erased oracle cannot read a defaulted value parameter
-  holding a `String`**
+- [ ] **R474 (P5) A closed parameter argument outside a generic call's
+  brackets still lowers as run-time code**
 
-  Problem: `def d[p: Tuple[Int, String] = (7, "d")]()` called as `d()` stops
-  under `--erased` with "vm: checked nominal subscript receiver is
-  Tuple[Int, String]" at `p[0]` or `var t = p`, where concrete MIR prints.
-  - An explicit argument (`d[(6, "k")]()`) runs erased.
-  - The erased frame binds the default as a bare tuple value, not the
-    nominal `Tuple` the template's subscript expects.
-  - `assets/ok/value_parameter_string_aggregate.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
+  Problem: the caller still emits a `const` register for `Counter[4](1)`'s
+  `4`, for the inferred `n = 4` of `size(Counter[4](1))`, and for a string
+  argument such as `f["x"]()` or `external_call`'s callee, where Mojo's call
+  carries each as a parameter attribute and emits nothing.
+  - A generic call's closed bracket argument is compile-time data on the
+    call (`SemanticAdjustment::FoldedParameterArguments`); these shapes have
+    no such record.
+  - A struct instantiation carries no `InstantiatedArguments`, the inferred
+    values lower through `Flatten::inferred_param_arg_regs`, and a string is
+    excluded because `mojito-pliron/src/lower/externs.rs` reads
+    `external_call`'s callee off its register.
+  - The registers are dead after `native::mono`, so no output differs; a
+    struct's tuple value parameter would leak as R468 did, but R463 rejects
+    reading one.
+  - Fix: record the folded spans on the struct instantiation, read inferred
+    values from the call's instantiated arguments, and move the
+    `external_call` read to them.
+  - Found while landing R468 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
