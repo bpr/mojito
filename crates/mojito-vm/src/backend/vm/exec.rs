@@ -157,6 +157,26 @@ impl VmBackend {
                 };
             }
             MirInstr::KeepAlive { .. } => {}
+            MirInstr::Const {
+                dest,
+                k: Const::Param(expr),
+            } if let Some(field) = projected_frame_parameter(
+                expr,
+                &prog.mir.functions[function].1,
+                vars,
+                comptime,
+            ) =>
+            {
+                // A field chain of a parameter the erased frame holds
+                // (`q.s` in `def f[q: Q]()`) is a fresh copy of that field,
+                // as an instance's construction of it is.
+                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                regs[dest.0 as usize] = if self.has_copyinit {
+                    self.clone_typed_value(prog, field, target)?
+                } else {
+                    field.clone()
+                };
+            }
             MirInstr::Const { dest, k } => {
                 let mut value = const_value(k, &prog.mir.functions[function].1, vars, comptime)?;
                 // An aggregate parameter constant holds each tuple as the
@@ -2590,6 +2610,39 @@ impl VmBackend {
 
 /// A SIMD instruction's slots, closed by the erased frame's value binders
 /// ([`erased_closed_ty`]).
+/// The value a field chain of a parameter (`q.i.v`) names in the erased
+/// frame holding the parameter's slot, or a binder's compile-time value;
+/// `None` for any other parameter expression.
+fn projected_frame_parameter<'v>(
+    expr: &mojito_types::param_expr::ParamExpr,
+    function: &MirFunction,
+    vars: &'v [Value],
+    comptime: &'v [(String, Value)],
+) -> Option<&'v Value> {
+    use mojito_types::param_expr::ParamKind;
+    let ParamKind::Field { base, name } = expr.kind() else {
+        return None;
+    };
+    let base = match base.kind() {
+        ParamKind::DeclRef(reference) => function
+            .var_names
+            .iter()
+            .zip(vars)
+            .chain(comptime.iter().map(|(name, value)| (name, value)))
+            .find(|(slot, _)| slot.trim_start_matches('*') == &*reference.name)
+            .map(|(_, value)| value),
+        ParamKind::Field { .. } => projected_frame_parameter(base, function, vars, comptime),
+        _ => None,
+    }?;
+    let Value::Struct { fields, .. } = base else {
+        return None;
+    };
+    fields
+        .iter()
+        .find(|(field, _)| field == name)
+        .map(|(_, value)| value)
+}
+
 fn erased_closed_slots(
     dtype: &mojito_types::types::SimdDtype,
     width: &mojito_types::types::SimdWidth,

@@ -3022,9 +3022,16 @@ impl Checker {
                     copyable: true,
                 });
             }
-            self.copy_place_value_uses
-                .borrow_mut()
-                .insert(expr.source_span());
+            // A field chain off a compile-time binding is a fresh value its
+            // consumer takes, no place a copy is made of.
+            let parameter_field = !matches!(expr.kind, ExprKind::Identifier(_))
+                && self.is_parameter_read(expr)
+                && self.is_materialized_parameter_read(expr);
+            if !parameter_field {
+                self.copy_place_value_uses
+                    .borrow_mut()
+                    .insert(expr.source_span());
+            }
             self.consume_parameter_read(expr);
         }
         Ok(())

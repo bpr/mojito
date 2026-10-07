@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R471**.
+Next free ID: **R474**.
 
 ## Ordered Work
 
@@ -86,24 +86,6 @@ correctness fix to existing behavior is allowed.
     `CloneClass::PackDef` as a regression counter.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
-
-- [ ] **R467 (P3) A field read of a struct value parameter materializes
-  the whole struct**
-
-  Problem: `q.a` and `q.s` in `def f[q: Q]()` build a temporary `Q` and
-  destroy it, where Mojo folds the projection: `q.a` is the constant, and
-  `q.s` materializes only the `String`.
-  - An `Int`-only `Q` with a printing `__deinit__`, read as `print(q.a)`
-    twice: the pin prints `8 / 8 / del 8`, Mojito `8 / del 8 / 8 / del 8`.
-  - With a `String` field, `print(q.a)`, `print(q.s)`, `var r = q`: the pin
-    prints `8 / x / 8 / del 8`, Mojito `8 / del 8 / x / del 8 / 8 / del 8`.
-  - `Checker::materialize_parameter_read` materializes the `Identifier`
-    base of `q.a`; the projected expression should be the parameter read,
-    and mono should fold or construct the projected leaf
-    (`projected_parameter_constant` already folds a closed one).
-  - Found while landing R466 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R468 (P3) A caller still builds a value parameter's `String`-holding
   argument at run time and never destroys it**
@@ -1044,6 +1026,17 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R473 A discard `_ = x` copies its source instead of taking it**
+
+  Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
+  `del 1` twice in Mojito, where the pin destroys one `Q`.
+  - The same holds for `var r = q; _ = r` over a value parameter `q`.
+  - Mojito copies `x` into the discard and destroys both, where the pin
+    moves the last use.
+  - Found while landing R467 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R352 A pointer whose origin was cast reads the origin's place, not
   its pointee**
@@ -2467,6 +2460,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R471 A local `comptime` struct binding in a plain `def` is stored
+  and destroyed**
+
+  Problem: `comptime c = N(8)` then `print(c.a)` twice in `main`, over a
+  `struct N` with a printing `__deinit__`, prints `8 / 8 / del 8` in
+  Mojito, where the pin prints `8 / 8` and never destroys a `N`.
+  - MIR gives `c` a frame slot that holds the frozen value and drops it, as
+    if it were a `var`.
+  - At the pin the binding is a parameter: a field read is a constant, and
+    only a run-time use of the whole value materializes a temporary.
+  - In a generic `def`, a value parameter's field read already folds.
+  - Found while landing R467 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R472 A plain `def`'s `comptime for` element read through a `String`
+  field materializes the whole element**
+
+  Problem: `comptime for e in [Q(1, In(2), 1.5, "x")]:` then `print(e.s)`
+  in `main` builds and destroys a `Q`, printing `del In 2 / del Q 1`, where
+  the pin reads the field alone.
+  - The AST unroller substitutes the element's construction for `e`, and
+    folds a field chain to its leaf only when the leaf's literal has the
+    field's type (`comptime/rewrite.rs::materializes_at_its_type`).
+  - A `String`, float, `UInt`, or tuple leaf would materialize as a literal
+    of another type, so `e.s` keeps reading the whole element.
+  - An `Int`, `Bool`, `DType`, vector, or struct leaf folds (`e.a`,
+    `e.i.v`, `show(e.i)`).
+  - Found while landing R467 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R289 An explicit type argument before an inferred pack binds the
   pack empty**

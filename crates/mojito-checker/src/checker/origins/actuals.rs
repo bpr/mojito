@@ -200,13 +200,14 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
         use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
         // A compile-time value (a value parameter, a `comptime for`
-        // variable) is a parameter constant, not storage: a borrow of it
+        // variable) or a field chain off one is a parameter constant, not
+        // storage: a borrow of it
         // materializes the constant into a temporary, as upstream's
         // `kgen.param.constant` does.
-        if let ExprKind::Identifier(name) = &expr.kind
-            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
+        if self.is_parameter_read(expr)
+            && let referent = self.infer(expr)?
+            && self.is_materialized_parameter_read(expr)
         {
-            let referent = self.infer(expr)?;
             let owner = self.materialize_borrow_owner(expr, false)?;
             return Ok(RefTy {
                 referent: Box::new(referent),
@@ -237,16 +238,20 @@ impl Checker {
     }
 
     /// A run-time read of a compile-time binding (a value parameter, a
-    /// `comptime for` variable) whose value is no constant — a tuple or
-    /// struct holding a `String` — is a temporary the parameter constant
-    /// materializes into, as upstream's `kgen.param.constant` is: the read
-    /// borrows a hidden slot the ownership analysis destroys, never storage
-    /// of the binding's own.
+    /// `comptime for` variable), or of a field chain off one (`q.s`), whose
+    /// value is no constant — a struct, a tuple, a `String` — is a temporary
+    /// the parameter constant materializes into, as upstream's
+    /// `kgen.param.constant` is: the read borrows a hidden slot the
+    /// ownership analysis destroys, never storage of the binding's own.
     pub(in crate::checker) fn materialize_parameter_read(&self, expr: &Expr, ty: &Ty) {
-        if let ExprKind::Identifier(name) = &expr.kind
-            && self.comptime_positions.get() == 0
+        if self.comptime_positions.get() == 0
             && matches!(ty, Ty::Struct(..))
-            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
+            && self.is_parameter_read(expr)
+            && self.is_materialized_parameter_read(expr)
+            && !self
+                .parameter_field_objects
+                .borrow()
+                .contains(&expr.source_span())
             && !self.is_trivial_register_passable(ty)
             && !self
                 .copy_place_value_uses
@@ -261,17 +266,33 @@ impl Checker {
     /// itself, handed to its consumer, and so has no temporary of its own
     /// ([`Self::materialize_parameter_read`]).
     pub(in crate::checker) fn consume_parameter_read(&self, expr: &Expr) {
-        if matches!(&expr.kind, ExprKind::Identifier(name)
-            if self.is_compile_time_binding(name) || self.is_value_parameter(name))
-        {
-            let mut adjustments = self.operation_adjustments.borrow_mut();
-            if matches!(
-                adjustments.get(&expr.source_span()),
-                Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource { .. })
-            ) {
+        if !self.is_parameter_read(expr) {
+            return;
+        }
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        match adjustments.get_mut(&expr.source_span()) {
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+                ..
+            }) => {
                 adjustments.remove(&expr.source_span());
             }
+            Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                materialized, ..
+            }) => *materialized = None,
+            _ => {}
         }
+    }
+
+    /// Whether `expr`, a parameter read ([`Self::is_parameter_read`]), is
+    /// one whose value the elaborator materializes: the binding itself, or
+    /// a field chain the checker compiled to its parameter expression. A
+    /// field chain it could not compile still reads the whole binding.
+    pub(in crate::checker) fn is_materialized_parameter_read(&self, expr: &Expr) -> bool {
+        matches!(expr.kind, ExprKind::Identifier(_))
+            || matches!(
+                self.operation_adjustments.borrow().get(&expr.source_span()),
+                Some(mojito_checked::checked::SemanticAdjustment::ParamValue { .. })
+            )
     }
 
     /// A view-returning call's result type with the origin slots its contract
@@ -478,7 +499,8 @@ impl Checker {
                 | mojito_checked::checked::SemanticAdjustment::ConstructCollection {
                     materialized,
                     ..
-                },
+                }
+                | mojito_checked::checked::SemanticAdjustment::ParamValue { materialized, .. },
             ) => {
                 if let Some(owner) = materialized {
                     Ok(*owner)

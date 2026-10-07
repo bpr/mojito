@@ -873,7 +873,10 @@ impl Checker {
                 if let Some(value) = self.dtype_float_query(callee, param_args, args, kwargs) {
                     self.operation_adjustments.borrow_mut().insert(
                         expr.source_span(),
-                        mojito_checked::checked::SemanticAdjustment::ParamValue { value: value? },
+                        mojito_checked::checked::SemanticAdjustment::ParamValue {
+                            value: value?,
+                            materialized: None,
+                        },
                     );
                     return Ok(Ty::Int);
                 }
@@ -2316,7 +2319,10 @@ impl Checker {
         Some(value.map(|value| {
             self.operation_adjustments.borrow_mut().insert(
                 expr.source_span(),
-                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value,
+                    materialized: None,
+                },
             );
             self.expression_types
                 .borrow_mut()

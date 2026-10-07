@@ -1332,6 +1332,20 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
     }
 }
 
+/// The value a parameter constant `k` read at `ty` owns a string of, which
+/// is then constructed rather than read as a constant: a string at the
+/// nominal `String`, or an aggregate holding one
+/// ([`CtValue::is_constructed_parameter_value`]).
+pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtValue> {
+    match k {
+        Const::Str(text) if matches!(ty, Ty::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name)) => {
+            Some(CtValue::Str(text.clone()))
+        }
+        Const::Value(value) if value.is_constructed_parameter_value() => Some(value.clone()),
+        _ => None,
+    }
+}
+
 /// The constant a chain of field projections selects out of a struct-typed
 /// parameter value, `None` unless every step names a field of a closed
 /// struct value.
@@ -1404,7 +1418,7 @@ fn seed_captured_parameter_slots(
 /// `String` constructor, a tuple the `Tuple` constructor over its elements,
 /// and a struct its fieldwise constructor, as `CtValue::materialize` spells
 /// a frozen struct; any other leaf is its constant.
-fn parameter_value_construction(
+pub(super) fn parameter_value_construction(
     dest: Reg,
     value: &CtValue,
     ty: &Ty,

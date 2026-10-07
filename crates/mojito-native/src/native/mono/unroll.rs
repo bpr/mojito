@@ -301,7 +301,13 @@ impl Specializer<'_> {
             &iteration,
         )?;
         substitute_blocks_metadata(&mut blocks[first..], &iteration)?;
-        self.answer_param_constants(frame.template, &mut blocks[first..], &iteration)?;
+        self.answer_param_constants(
+            frame.template,
+            &mut blocks[first..],
+            &iteration,
+            tables.n_regs,
+            tables.reg_types,
+        )?;
         self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
         Ok(())
     }

@@ -151,12 +151,10 @@ impl Checker {
     /// (a parameter or `self` with no owning convention), as upstream: the
     /// callee does not own the storage, so moving out of it would destroy
     /// the caller's value. A trivial register value transfers as a copy. A
-    /// compile-time binding is a parameter, which holds no storage to move
-    /// out of, whatever its type.
+    /// compile-time binding, or a field chain off one, is a parameter
+    /// expression, which holds no storage to move out of, whatever its type.
     pub(super) fn check_transfer_source(&self, source: &Expr, ty: &Ty) -> Result<(), TypeError> {
-        if let ExprKind::Identifier(name) = &source.kind
-            && (self.is_compile_time_binding(name) || self.is_value_parameter(name))
-        {
+        if self.is_parameter_read(source) {
             return Err(TypeError::ParameterTransfer);
         }
         let Some(root) = field_chain_root(source) else {
@@ -172,6 +170,15 @@ impl Checker {
             return Ok(());
         }
         Err(TypeError::ImmutableTransfer(root.to_string()))
+    }
+
+    /// Whether `expr` reads a compile-time binding (a value parameter, a
+    /// `comptime for` variable): the binding itself (`q`) or a pure field
+    /// chain off it (`q.i.v`), a parameter expression rather than storage.
+    pub(super) fn is_parameter_read(&self, expr: &Expr) -> bool {
+        field_chain_root(expr).is_some_and(|root| {
+            root != "Self" && (self.is_compile_time_binding(root) || self.is_value_parameter(root))
+        })
     }
 
     /// Whether `binder` is one of the enclosing declarations' own type

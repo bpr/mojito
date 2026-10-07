@@ -910,9 +910,15 @@ pub enum SemanticAdjustment {
     /// `len(Ts)`, `Ts.contains[X]()` of a `def`'s own pack, or a `DType`
     /// float-format query (`DType.mantissa_width[dt]()`) — lowered as a
     /// constant of the parameter expression, which the elaborator folds per
-    /// instance.
+    /// instance. A field chain of a compile-time binding (`q.a` in
+    /// `def f[q: Q]()`) is one too: upstream's struct extract on the
+    /// parameter attribute, never a read of the whole struct.
     ParamValue {
         value: mojito_types::param_expr::ParamExpr,
+        /// The same read as a borrowed temporary (`show(q.i)`): it is also a
+        /// materialized borrow source (see `MaterializeBorrowSource`), and
+        /// one span carries one adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// `v.shuffle[*mask]()`, `v.slice[width, offset=o]()`, and `v.join(w)` —
     /// lane gathers by a compile-time mask; the result takes the mask's
@@ -2985,8 +2991,8 @@ fn build_checked_declarations(
 ///
 /// For the adjustments [`materialized_borrow_owner`] accepts: a
 /// `MaterializeBorrowSource` records what its borrow needs; a view
-/// construction lends mutably when any `ref` argument does; a view result
-/// keeps the conservative mutable loan.
+/// construction lends mutably when any `ref` argument does; a parameter
+/// read lends immutably; a view result keeps the conservative mutable loan.
 pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> bool {
     adjustments
         .iter()
@@ -3004,6 +3010,10 @@ pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> boo
                 materialized: Some(_),
                 ..
             } => Some(true),
+            SemanticAdjustment::ParamValue {
+                materialized: Some(_),
+                ..
+            } => Some(false),
             _ => None,
         })
         .unwrap_or(true)
@@ -3028,6 +3038,10 @@ pub fn materialized_borrow_owner(
             ..
         }
         | SemanticAdjustment::ConstructCollection {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::ParamValue {
             materialized: Some(owner),
             ..
         } => Some(*owner),

@@ -1954,9 +1954,37 @@ impl Checker {
             let value = self.param_context.list_length(&list).map_err(param_error)?;
             self.operation_adjustments.borrow_mut().insert(
                 span,
-                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value,
+                    materialized: None,
+                },
             );
             return Ok(Ty::Int);
+        }
+        // A field of a compile-time binding (`q.a` in `def f[q: Q]()`) is
+        // upstream's struct extract on the parameter attribute: a parameter
+        // expression read as a runtime value, never a read of the whole
+        // binding.
+        if self.comptime_positions.get() == 0
+            && self.is_parameter_read(object)
+            && matches!(self.infer(object)?, Ty::Struct(_, arguments) if arguments.is_empty())
+            && let Some(value) = self.struct_value_field(object, field)
+        {
+            let value = value?;
+            if let Some(ty) = value.meta().as_value().cloned() {
+                self.parameter_field_objects
+                    .borrow_mut()
+                    .insert(object.source_span());
+                self.consume_parameter_read(object);
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::ParamValue {
+                        value,
+                        materialized: None,
+                    },
+                );
+                return Ok(ty);
+            }
         }
         let obj_ty = self.infer(object)?;
         // Projecting a field through a reference-returning expression borrows

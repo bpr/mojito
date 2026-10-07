@@ -486,7 +486,10 @@ impl Checker {
         if let Ok(value) = self.param_context.constant(value) {
             self.operation_adjustments.borrow_mut().insert(
                 expr.source_span(),
-                mojito_checked::checked::SemanticAdjustment::ParamValue { value },
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value,
+                    materialized: None,
+                },
             );
         }
     }

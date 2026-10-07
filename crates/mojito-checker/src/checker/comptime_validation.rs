@@ -2111,7 +2111,10 @@ impl Checker {
         })?;
         self.operation_adjustments.borrow_mut().insert(
             span,
-            mojito_checked::checked::SemanticAdjustment::ParamValue { value: element },
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value: element,
+                materialized: None,
+            },
         );
         Ok(ty)
     }
@@ -2129,6 +2132,7 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value: self.param_context.pack_query(pack, query),
+                    materialized: None,
                 },
             );
         }

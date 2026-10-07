@@ -452,11 +452,17 @@ impl<'a> Specializer<'a> {
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_instantiation_failures(&key.template, &function)?;
         self.discharge_rebinds(&key.template, &mut function)?;
-        self.answer_param_constants(&key.template, &mut function.blocks, bindings)
-            .map_err(|mut error| {
-                error.function.get_or_insert_with(|| key.template.clone());
-                error
-            })?;
+        self.answer_param_constants(
+            &key.template,
+            &mut function.blocks,
+            bindings,
+            &mut function.n_regs,
+            &mut function.reg_types,
+        )
+        .map_err(|mut error| {
+            error.function.get_or_insert_with(|| key.template.clone());
+            error
+        })?;
         self.close_lane_masks(&key.template, &mut function)?;
         self.folded_slots = self
             .folded_parameter_values(&key.template, &function, bindings)
@@ -1078,36 +1084,42 @@ impl<'a> Specializer<'a> {
     /// by demanding it. One the bindings leave open stays for
     /// the verifier's concrete mode to name; one the bindings close with no
     /// answer (a reflection query of a field the struct lacks) fails the
-    /// instantiation.
+    /// instantiation. A value owning a string is constructed at the read's
+    /// register type instead ([`parameter_value_construction`]), minting its
+    /// parts' registers in `n_regs` and `reg_types`.
     pub(super) fn answer_param_constants(
         &mut self,
         template: &str,
         blocks: &mut [MirBlock],
         bindings: &Bindings,
+        n_regs: &mut u32,
+        reg_types: &mut HashMap<u32, Ty>,
     ) -> Result<(), MonoError> {
         for block in blocks {
-            for instruction in &mut block.instrs {
+            let mut instrs = Vec::with_capacity(block.instrs.len());
+            for mut instruction in std::mem::take(&mut block.instrs) {
                 if let MirInstr::Try {
                     body,
                     handler,
                     orelse,
                     finalbody,
                     ..
-                } = instruction
+                } = &mut instruction
                 {
                     let regions = std::iter::once(body)
                         .chain(handler.iter_mut().map(|(_, blocks)| blocks))
                         .chain(orelse.iter_mut())
                         .chain(finalbody.iter_mut());
                     for region in regions {
-                        self.answer_param_constants(template, region, bindings)?;
+                        self.answer_param_constants(template, region, bindings, n_regs, reg_types)?;
                     }
+                    instrs.push(instruction);
                     continue;
                 }
                 // A bracket argument read off a local `comptime` binding
                 // (`g[e]()` after `comptime e = L[1]`) is the application
                 // the callee's instance is keyed by.
-                for argument in mojito_mir::mir::instruction_param_args_mut(instruction) {
+                for argument in mojito_mir::mir::instruction_param_args_mut(&mut instruction) {
                     if let Some(expr) = &argument.expr {
                         argument.expr = Some(self.applied(template, expr, bindings)?);
                     }
@@ -1115,15 +1127,37 @@ impl<'a> Specializer<'a> {
                 let MirInstr::Const {
                     dest,
                     k: Const::Param(value),
-                } = instruction
+                } = &instruction
                 else {
+                    instrs.push(instruction);
                     continue;
                 };
+                let dest = *dest;
                 let value = self.applied(template, value, bindings)?;
-                if let Some(k) = self.param_constant(&value, bindings)? {
-                    *instruction = MirInstr::Const { dest: *dest, k };
+                let ty = reg_types.get(&dest.0).cloned();
+                match self.param_constant(&value, bindings, ty.as_ref())? {
+                    // A value owning a string — a field `q.s` of a value
+                    // parameter — is no constant: it is constructed where
+                    // it is read, as upstream's `kgen.param.constant`
+                    // materializes it.
+                    Some(k)
+                        if let Some(ty) = &ty
+                            && let Some(owned) = constructed_parameter_constant(&k, ty) =>
+                    {
+                        instrs.extend(parameter_value_construction(
+                            dest,
+                            &owned,
+                            ty,
+                            n_regs,
+                            reg_types,
+                            &self.structs,
+                        )?);
+                    }
+                    Some(k) => instrs.push(MirInstr::Const { dest, k }),
+                    None => instrs.push(instruction),
                 }
             }
+            block.instrs = instrs;
         }
         Ok(())
     }
@@ -1132,6 +1166,7 @@ impl<'a> Specializer<'a> {
         &self,
         value: &ParamExpr,
         bindings: &Bindings,
+        ty: Option<&Ty>,
     ) -> Result<Option<Const>, MonoError> {
         let proposition = match value.kind() {
             ParamKind::PackQuery {
@@ -1177,7 +1212,7 @@ impl<'a> Specializer<'a> {
                 {
                     Ok(Some(Const::Value(list)))
                 }
-                Ok(value) => Ok(value_parameter_constant(&value, None)),
+                Ok(value) => Ok(value_parameter_constant(&value, ty)),
                 Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
                 Err(_) => Ok(None),
             },

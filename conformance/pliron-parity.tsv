@@ -872,6 +872,7 @@ assets/ok/value_pack_comptime_for_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_template_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_typed_by_type_param.mojo	main	exe-differential	sanitized
 assets/ok/value_param_typed_by_type_param.mojo	main	exe-differential	sanitized
+assets/ok/value_parameter_field_read.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_inferred_from_argument_type.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_materialized_per_use.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_string_aggregate.mojo	main	exe-differential	sanitized

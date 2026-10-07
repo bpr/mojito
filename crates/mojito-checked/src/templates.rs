@@ -292,7 +292,10 @@ pub fn derive_adjustment(
         }
         // A parameter value's binders close under the instance's arguments
         // as a type argument's value does.
-        SemanticAdjustment::ParamValue { value } => {
+        SemanticAdjustment::ParamValue {
+            value,
+            materialized,
+        } => {
             let realized = substitute(&Ty::Struct(
                 String::new(),
                 vec![TyArg::Val(CtValue::Expr(value.clone()))].into(),
@@ -307,7 +310,10 @@ pub fn derive_adjustment(
                 },
                 _ => return None,
             };
-            Some(SemanticAdjustment::ParamValue { value })
+            Some(SemanticAdjustment::ParamValue {
+                value,
+                materialized: *materialized,
+            })
         }
         // A collection display or comprehension builds its target through
         // the target struct's own insert method, named by the struct, which

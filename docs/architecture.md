@@ -510,7 +510,13 @@ numbers and booleans, or into the element's construction where one is a
 materializes a parameter at each use. A tuple or struct value parameter's
 slot follows the same rule: it owns nothing and is no drop root
 (`mir::materialized_parameter_slots`), and each read of it is the value's
-constant or construction, with nothing built at entry. MIR lifts an evaluated display as a
+constant or construction, with nothing built at entry. A field chain off
+either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
+attribute: the checker records it as a `SemanticAdjustment::ParamValue`
+(`Checker::infer_member` over `struct_value_field`), its root never read,
+and `native::mono` answers the `Const::Param` per instance with the
+field's constant, or with the field's own construction where it owns a
+`String` (`answer_param_constants`). MIR lifts an evaluated display as a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes

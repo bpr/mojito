@@ -7599,3 +7599,54 @@ fn initializer_list_without_a_contextual_type_is_rejected() {
         "{error}"
     );
 }
+
+#[test]
+fn value_parameter_field_read_is_a_parameter_value() {
+    let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\n    def __deinit__(deinit self):\n        pass\n\ndef f[q: Q]():\n    print(q.a)\n\ndef main():\n    f[Q(8)]()\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let reads = |predicate: &dyn Fn(&SemanticAdjustment) -> bool| {
+        checked
+            .expressions()
+            .iter()
+            .filter(|expression| expression.adjustments.iter().any(predicate))
+            .map(|expression| expression.syntax.kind.clone())
+            .collect::<Vec<_>>()
+    };
+    let field_reads = reads(&|adjustment| {
+        matches!(
+            adjustment,
+            SemanticAdjustment::ParamValue {
+                materialized: None,
+                ..
+            }
+        )
+    });
+    assert!(
+        field_reads.iter().any(
+            |kind| matches!(kind, mojito::ast::ExprKind::Member { field, .. } if field == "a")
+        ),
+        "{field_reads:#?}"
+    );
+    let materialized = reads(&|adjustment| {
+        matches!(
+            adjustment,
+            SemanticAdjustment::MaterializeBorrowSource { .. }
+        )
+    });
+    assert!(materialized.is_empty(), "{materialized:#?}");
+}
+
+#[test]
+fn value_parameter_field_transfer_is_rejected() {
+    let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n    var s: String\n\ndef f[q: Q]():\n    var t = q.s^\n    print(t)\n\ndef main():\n    f[Q(8, \"x\")]()\n";
+    assert!(matches!(err_std(source), TypeError::ParameterTransfer));
+}
+
+#[test]
+fn value_parameter_field_read_requires_an_implicitly_copyable_field() {
+    let source = "@fieldwise_init\nstruct In(Copyable):\n    var v: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var a: Int\n    var i: In\n\ndef f[q: Q]():\n    var j = q.i\n    print(j.v)\n\ndef main():\n    f[Q(8, In(5))]()\n";
+    assert!(matches!(
+        err_std(source),
+        TypeError::ImplicitCopy { ty, .. } if ty == "In"
+    ));
+}

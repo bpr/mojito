@@ -1511,7 +1511,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `materialize_parameter_read`, both `checker/origins/actuals.rs`), which
   MIR roots any place read at (`Flatten::materialized_parameter_place`,
   `mir/calls.rs`); a consumed read hands the value over instead
-  (`consume_parameter_read`), and a compile-time parameter's slot is no
+  (`consume_parameter_read`). A field chain off a compile-time binding
+  (`Checker::is_parameter_read`, `checker/places.rs`) is a `ParamValue`
+  that `Checker::infer_member` records, its root kept from materializing
+  (`parameter_field_objects`); a borrowed one materializes through
+  `ParamValue.materialized`, as `ConstructCollection.materialized` does,
+  and the AST unroller folds one off a substituted binder
+  (`substituted_field`, `comptime/rewrite.rs`). The erased oracle reads
+  one off the frame slot (`projected_frame_parameter`,
+  `backend/vm/exec.rs`). A compile-time parameter's slot is no
   drop root: a `comptime for` binder's (`comptime_binder_slots`,
   `analysis/scan.rs`) and a value parameter's
   (`materialized_parameter_slots`, `mojito-mir/src/mir.rs`, over the
@@ -1584,7 +1592,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   pack operand is never lowered. `verify/scope.rs` checks its binders and
   `verify/concrete.rs` rejects a survivor.
 - `Specializer::answer_param_constants` and `param_constant`
-  (`mono/specializer.rs`) fold it per instance: a length through `eval_ct`,
+  (`mono/specializer.rs`) fold it per instance, a value owning a `String`
+  constructed instead (`constructed_parameter_constant`,
+  `parameter_value_construction`, `mono/substitute.rs`): a length through `eval_ct`,
   a membership or conformance as a `GenericConstraint` through
   `constraint_holds` (`mono/availability.rs`). `eval_ct`
   (`mono/symbolic.rs`) answers a reflection query through

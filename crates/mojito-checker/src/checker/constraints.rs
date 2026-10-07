@@ -1046,7 +1046,7 @@ impl Checker {
     /// The projection of `field` out of `object` when `object` compiles to a
     /// struct-typed parameter value declaring that field: upstream's struct
     /// extract on a parameter attribute, folded when the value is closed.
-    fn struct_value_field(
+    pub(super) fn struct_value_field(
         &self,
         object: &Expr,
         field: &str,

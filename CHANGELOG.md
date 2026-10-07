@@ -960,6 +960,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field read of a struct value parameter (`q.a`, `q.i.v`, `q.s` in `def
+  f[q: Q]()`) now reads the field alone, as at the pin, instead of building
+  and destroying a whole `Q` for each read: a number is a constant, and a
+  field that owns something is constructed by itself into a temporary,
+  which `var j = q.i` takes with no copy. `q.s^` is now rejected with
+  "cannot transfer from a parameter expression". The same holds for a
+  `comptime for` element's field, except a `String`, float, `UInt`, or
+  tuple field in a non-generic `def`.
 - A tuple or struct value parameter holding a `String` (`def tup[p:
   Tuple[Int, Tag]]()`) is now constructed at each use with no slot of its
   own, as at the pin, so an element type's destructor runs once per use.

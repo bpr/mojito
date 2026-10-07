@@ -14,7 +14,9 @@ impl Flatten<'_> {
         self.checked_adjustments(e)
             .into_iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ParamValue { value } => Some(value),
+                mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. } => {
+                    Some(value)
+                }
                 _ => None,
             })
     }

@@ -916,6 +916,10 @@ pub struct Checker {
     /// boundary. This stays checker-owned because conditional Copyable
     /// conformance can depend on the active generic constraint environment.
     copy_place_value_uses: RefCell<FactSet<SourceSpan>>,
+    /// Compile-time bindings read as the object of a field chain the checker
+    /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
+    /// never the binding, which therefore materializes no temporary.
+    parameter_field_objects: RefCell<FactSet<SourceSpan>>,
     /// Actual arguments whose caller place must remain live through a selected
     /// `mut`/`ref` call. This checker-owned fact keeps MIR lowering from
     /// retaining ordinary copied arguments merely because they are syntactic
@@ -1147,6 +1151,7 @@ impl Checker {
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
             copy_place_value_uses: RefCell::new(FactSet::default()),
+            parameter_field_objects: RefCell::new(FactSet::default()),
             call_place_uses: RefCell::new(FactSet::default()),
             borrowed_read_call_places: RefCell::new(FactSet::default()),
             read_temporary_arguments: RefCell::new(FactSet::default()),

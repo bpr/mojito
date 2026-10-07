@@ -199,6 +199,18 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
     if projection_to_subscript(e, subs) {
         return;
     }
+    // A field chain off a substituted binder (`e.i` of a `comptime for`
+    // element) is upstream's struct extract on the parameter: the leaf
+    // alone materializes, never the whole struct.
+    if matches!(e.kind, ExprKind::Member { .. })
+        && let Some(mut materialized) = substituted_field(e, subs)
+            .filter(materializes_at_its_type)
+            .and_then(|leaf| leaf.materialize(e.span))
+    {
+        materialized.syntax_id = e.syntax_id;
+        *e = materialized;
+        return;
+    }
     match &mut e.kind {
         ExprKind::Identifier(name) => {
             if let Some(value) = subs(name) {
@@ -671,6 +683,37 @@ pub(super) const fn runtime_local_marker() -> CtValue {
 /// The `Subs` marker for a declared struct name (see `materialize_block`).
 const fn type_name_marker() -> CtValue {
     CtValue::Marker(CtMarker::TypeName)
+}
+
+/// The value a field chain off a substituted binder (`e.i.v`) selects,
+/// when each step names a field of a struct value.
+fn substituted_field(e: &Expr, subs: Subs) -> Option<CtValue> {
+    match &e.kind {
+        ExprKind::Identifier(name) if name != "Self" => subs(name),
+        ExprKind::Member { object, field } => match substituted_field(object, subs)? {
+            CtValue::Struct { fields, .. } => fields
+                .into_iter()
+                .find(|(name, _)| name == field)
+                .map(|(_, value)| value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `value`'s materialized expression has the type of the field it
+/// was read from: an `Int`, a `Bool`, a `DType`, a vector, or a struct,
+/// whose construction names its type. A string, a float, a `UInt`, or a
+/// tuple materializes as a literal of a default type instead.
+const fn materializes_at_its_type(value: &CtValue) -> bool {
+    matches!(
+        value,
+        CtValue::Int(_)
+            | CtValue::Bool(_)
+            | CtValue::Dtype(_)
+            | CtValue::Simd { .. }
+            | CtValue::Struct { .. }
+    )
 }
 
 fn is_runtime_local(subs: Subs, name: &str) -> bool {
