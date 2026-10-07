@@ -92,42 +92,13 @@ pub(super) fn verify_instruction(
         MirInstr::Const {
             k: crate::mir::Const::Value(value),
             ..
-        } if !closed_parameter_value(value) => errors.push(format!(
+        } if !value.is_closed_parameter_value() => errors.push(format!(
             "{}: parameter value constant `{value}` is not a closed vector, struct, or tuple",
             cx.prefix
         )),
         _ => {}
     }
     verify_effect_instruction(&cx, instruction, errors);
-}
-
-/// Whether a `Const::Value` payload is one a backend materializes: a vector,
-/// or a struct or tuple whose leaves are scalars, vectors, or such
-/// aggregates.
-fn closed_parameter_value(value: &CtValue) -> bool {
-    match value {
-        CtValue::Simd { .. } => true,
-        CtValue::Struct { fields, .. } => {
-            fields.iter().all(|(_, field)| closed_parameter_leaf(field))
-        }
-        CtValue::Tuple(elements) => elements.iter().all(closed_parameter_leaf),
-        _ => false,
-    }
-}
-
-/// A field or element of a closed aggregate parameter value: a scalar, or
-/// itself a closed aggregate.
-fn closed_parameter_leaf(value: &CtValue) -> bool {
-    matches!(
-        value,
-        CtValue::Int(_)
-            | CtValue::UInt(_)
-            | CtValue::Float(_)
-            | CtValue::IntLiteral(_)
-            | CtValue::FloatLiteral(_)
-            | CtValue::Bool(_)
-            | CtValue::Dtype(_)
-    ) || closed_parameter_value(value)
 }
 
 /// A raising site in a nonraising function must sit under a handler; a `try`

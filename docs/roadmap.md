@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R461**.
+Next free ID: **R464**.
 
 ## Ordered Work
 
@@ -2857,20 +2857,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R455 A tuple value parameter with a `String` element rejects a
-  literal argument**
-
-  Problem: `g[(1, "a")]()` against `def g[p: Tuple[Int, String]]()` fails
-  with "type mismatch for value parameter 'p': expected Tuple[Int, String],
-  found Tuple[Int, StringLiteral]", where the pin prints `1 a`.
-  - The argument's tuple literal keeps its `StringLiteral` element; nothing
-    converts it to the declared element type, as a runtime tuple argument
-    would be.
-  - `g[p: Tuple[Int, Int]]` called as `g[(1, 2)]()` runs.
-  - Found while landing R405 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R456 A compile-time struct with a `String` field is rejected**
 
   Problem: `comptime QS = [Q(1, "x"), Q(2, "y")]` over `@fieldwise_init
@@ -2882,6 +2868,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     it does not read the field's text as `freeze_vm_result` reads a whole
     `String`.
   - Found while landing R405 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R461 A `String(...)` construction in a parameter argument is
+  rejected**
+
+  Problem: `g[String("a")]()` for `def g[s: String]()` and
+  `g[(1, String("a"))]()` for `def g[p: Tuple[Int, String]]()` fail with
+  "not a compile-time Int constant: not an associated comptime expression",
+  where the pin prints `a` and `1 a`.
+  - `Checker::eval_associated_ct` does not evaluate a `String` construction,
+    and the lifted fallback serves `Int` and `Bool` only.
+  - The literal spellings (`g["a"]`, `g[(1, "a")]`) run.
+  - R386 is the same gap over an open parameter (`label[pick(n)]`).
+  - Found while landing R455 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R462 A tuple argument over an enclosing binder is rejected**
+
+  Problem: `g[(n, 2)]()` inside `def f[n: Int]()`, against `def g[p:
+  Tuple[Int, Int]]()`, fails with "type mismatch for value parameter 'p':
+  expected Tuple[Int, Int], found (n, 2)", where the pin prints `5 2` for
+  `f[5]()`.
+  - The argument stays a symbolic `CtValue::Expr`, which `ct_value_ty` has
+    no tuple type for, and contextual typing is tried only for a closed
+    value (`Checker::converts_to_parameter`).
+  - A scalar argument over the binder (`h[n + 1]`) runs.
+  - Found while landing R455 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R463 A struct's tuple-typed value parameter cannot be read in its
+  methods**
+
+  Problem: in `struct T[p: Tuple[Int, Int]]`, `var t = Self.p` fails with
+  "no field 'p'" and `Self.p[1]` with "Undefined variable 'Self'", where
+  the pin prints both elements of `T[(1, 2)]`.
+  - A `Tuple[Int, String]` parameter fails the same way.
+  - A struct's scalar or struct-typed value parameter reads (`Self.n`,
+    `Self.e.rows`).
+  - Found while landing R455 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

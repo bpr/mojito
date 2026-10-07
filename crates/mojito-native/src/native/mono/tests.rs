@@ -1467,3 +1467,46 @@ fn failed_method_instance_is_reported_only_where_reached() {
     assert_eq!(error.kind, MonoErrorKind::Instantiation, "{error}");
     assert!(error.construct.contains("out of range"), "{error}");
 }
+
+#[test]
+fn string_bearing_value_parameter_is_constructed_into_its_slot() {
+    let specialized = specialized_main(
+        "\
+def g[p: Tuple[Int, String]]():
+    print(p[1])
+
+def main():
+    g[(1, \"a\")]()
+",
+    );
+    let (_, instance) = specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("g$mono"))
+        .expect("`g` was specialized");
+    let instrs = instructions(&instance.blocks);
+    assert!(
+        instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Call { func, .. } if func.0.contains("__init__$ov$StringLiteral")
+        )),
+        "the instance builds its `String` element: {instrs:?}"
+    );
+    assert!(
+        instrs
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::DefVar { .. })),
+        "the instance stores the value into the parameter's slot"
+    );
+    assert!(
+        !instrs.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Const {
+                k: Const::Value(_),
+                ..
+            }
+        )),
+        "no string-bearing value is folded to a constant"
+    );
+}

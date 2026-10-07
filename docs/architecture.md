@@ -822,7 +822,12 @@ struct, or tuple binder to a `Const::Value` and a field of a struct-typed one
 (`ParamKind::Field`) to its constant. A `Const::Value` tuple is the nominal
 `Tuple` its register's checked type names, over the private pack storage
 (the VM's `materialize_parameter_value`, Pliron's `store_parameter_value`);
-a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way. The elaborator freezes a computed
+a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way.
+A tuple or struct value whose leaves include a `String`
+(`CtValue::is_constructed_parameter_value`) is never folded: no constant
+holds an owned buffer, so the instance constructs it into the parameter's
+slot at entry and its reads stay slot reads, the template's drop of the
+slot destroying it. The elaborator freezes a computed
 struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
 which the checker reads as the frozen value. Every variadic struct is a
 generator too, `native::mono` binding its pack per instance; the cloner

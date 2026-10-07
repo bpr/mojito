@@ -538,7 +538,7 @@ impl<'a> Specializer<'a> {
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
         let reified = reification_slots(&function, scope);
-        substitute_function(&mut function, bindings, scope).map_err(|mut e| {
+        substitute_function(&mut function, bindings, scope, &self.structs).map_err(|mut e| {
             e.function.get_or_insert_with(|| name.to_string());
             e
         })?;

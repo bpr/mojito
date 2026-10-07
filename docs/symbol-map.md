@@ -1487,9 +1487,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   place read and the field-projection loads folding through the bound value
   (`substitute_value_parameter_reads`'s `LoadPlace` arm and
   `projected_parameter_constant`, and the `LoadPlace` arm of the
-  specializer's rewrite); `closed_parameter_value` (`verify/instr.rs`)
-  admits it; the VM materializes it through `ct_value_as_runtime`
-  (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
+  specializer's rewrite); `CtValue::is_closed_parameter_value`
+  (`mojito-types/src/ct.rs`, called from `verify/instr.rs`) admits it. A
+  value with a `String` leaf (`CtValue::is_constructed_parameter_value`)
+  is not folded: `substitute_function` leaves its slot reads, and
+  `seed_parameter_slots` (`mono/substitute.rs`, which also stores a
+  captured slot's constant) builds it at entry through
+  `parameter_value_construction`. The VM materializes a folded one through
+  `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
   checked type names, `materialize_parameter_value`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
   and `store_parameter_value` (`lower/consts.rs`). A borrow of a

@@ -318,6 +318,39 @@ impl CtValue {
         }
     }
 
+    /// Whether this value is one a backend materializes as a parameter
+    /// constant: a vector, or a struct or tuple whose leaves are scalars,
+    /// vectors, or such aggregates.
+    pub fn is_closed_parameter_value(&self) -> bool {
+        match self {
+            Self::Simd { .. } => true,
+            Self::Struct { fields, .. } => fields.iter().all(|(_, field)| field.is_closed_leaf()),
+            Self::Tuple(elements) => elements.iter().all(Self::is_closed_leaf),
+            _ => false,
+        }
+    }
+
+    /// Whether this value is a struct or tuple an instance constructs at run
+    /// time rather than folds: every leaf is a closed parameter leaf or a
+    /// string, and at least one is a string, which owns a buffer no constant
+    /// can hold.
+    pub fn is_constructed_parameter_value(&self) -> bool {
+        fn leaf(value: &CtValue) -> bool {
+            matches!(value, CtValue::Str(_))
+                || value.is_closed_leaf()
+                || value.is_constructed_parameter_value()
+        }
+        let leaves: Vec<&Self> = match self {
+            Self::Struct { fields, .. } => fields.iter().map(|(_, field)| field).collect(),
+            Self::Tuple(elements) => elements.iter().collect(),
+            _ => return false,
+        };
+        leaves.iter().all(|value| leaf(value))
+            && leaves.iter().any(|value| {
+                matches!(value, Self::Str(_)) || value.is_constructed_parameter_value()
+            })
+    }
+
     /// The spelling of the runtime type an un-annotated binding of this value
     /// has (upstream's wording in the materialization diagnostic: a list is
     /// `Array[T, Int(n)]`), or `None` for a compile-time-only value.
@@ -629,6 +662,21 @@ impl CtValue {
             source: None,
             syntax_id: mojito_common::token::SyntaxId::fresh(),
         })
+    }
+
+    /// A field or element of a closed aggregate parameter value: a scalar,
+    /// or itself a closed aggregate.
+    fn is_closed_leaf(&self) -> bool {
+        matches!(
+            self,
+            Self::Int(_)
+                | Self::UInt(_)
+                | Self::Float(_)
+                | Self::IntLiteral(_)
+                | Self::FloatLiteral(_)
+                | Self::Bool(_)
+                | Self::Dtype(_)
+        ) || self.is_closed_parameter_value()
     }
 }
 

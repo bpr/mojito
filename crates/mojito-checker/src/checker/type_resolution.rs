@@ -1944,7 +1944,7 @@ impl Checker {
                                 found: "a non-materializable compile-time value".to_string(),
                                 context: format!("value parameter '{name}'"),
                             })?;
-                    if !coerces(&actual, ty) {
+                    if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty) {
                         return Err(TypeError::TypeMismatch {
                             expected: ty.to_string(),
                             found: actual.to_string(),
@@ -2534,6 +2534,17 @@ impl Checker {
     /// `def[Ts: AnyType]` binds the bare name to something that is not a
     /// pack, so a `*Ts` inside it does not reach the enclosing pack. Both
     /// compilers reject that spread at the declaration.
+    /// Whether the closed value argument `expr` types at its declared
+    /// parameter type `ty` as a run-time argument does, recording the
+    /// implicit conversions its elements need (a literal element at a
+    /// `String` is `String.__init__(StringLiteral)`).
+    fn converts_to_parameter(&self, expr: &Expr, value: &CtValue, ty: &Ty) -> bool {
+        !matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
+            && self
+                .infer_with_expected(expr, ty, true)
+                .is_ok_and(|converted| coerces(&converted, ty))
+    }
+
     fn pack_is_shadowed(&self, starred: &str) -> bool {
         // `local_type_aliases` is searched ahead of `tparams`, so a binding in
         // any alias scope is nearer than one in any parameter scope.

@@ -67,13 +67,20 @@ pub(super) fn default_construct_parameters(
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the
-/// compile-time parameters in `scope`.
+/// compile-time parameters in `scope`. A value parameter whose value owns a
+/// string ([`CtValue::is_constructed_parameter_value`]) keeps its slot reads:
+/// the instance constructs the value into that slot on entry, with the field
+/// types of the `structs` it names.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
     scope: &[ParamDecl],
+    structs: &HashMap<&str, &MirStructDeclaration>,
 ) -> Result<(), MonoError> {
-    let locals = bound_parameter_locals(scope, bindings);
+    let (constructed, locals): (HashMap<_, _>, HashMap<_, _>) =
+        bound_parameter_locals(scope, bindings)
+            .into_iter()
+            .partition(|(_, value)| value.is_constructed_parameter_value());
     substitute_value_parameter_reads(
         &mut function.blocks,
         &function.var_names,
@@ -82,7 +89,10 @@ pub(super) fn substitute_function(
         &bindings.callables,
     )?;
     for (var, name) in function.var_names.iter().enumerate() {
-        let Some(value) = locals.get(name.as_str()) else {
+        let Some(value) = locals
+            .get(name.as_str())
+            .or_else(|| constructed.get(name.as_str()))
+        else {
             continue;
         };
         // A binder typed by a type binder (`v: T`) holds a value of `T`'s
@@ -97,7 +107,13 @@ pub(super) fn substitute_function(
             function.var_tys.insert(var as u32, ty);
         }
     }
-    initialize_captured_value_parameters(function, &locals, &bindings.callables);
+    seed_parameter_slots(
+        function,
+        &locals,
+        &constructed,
+        &bindings.callables,
+        structs,
+    )?;
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -1249,41 +1265,58 @@ fn projected_parameter_constant(
         .flatten()
 }
 
-/// Every read of a value parameter's slot folds to its bound constant, so
-/// the slot itself is never stored; a closure capturing it would borrow
-/// uninitialized storage. The entry block stores the constant into each
-/// captured slot first.
-fn initialize_captured_value_parameters(
+/// Seed, at the entry block, every value parameter slot the instance still
+/// reads. A folded slot is never stored, so a closure capturing it would
+/// borrow uninitialized storage: a captured one is stored its constant first.
+/// A constructed slot (`locals` leaves it out) is always read, so its value is
+/// built into it ([`parameter_value_construction`]), and the template's own
+/// drop of the slot destroys it, as the caller's argument would have been.
+fn seed_parameter_slots(
     function: &mut MirFunction,
     locals: &HashMap<String, &CtValue>,
+    constructed: &HashMap<String, &CtValue>,
     callables: &HashMap<String, String>,
-) {
+    structs: &HashMap<&str, &MirStructDeclaration>,
+) -> Result<(), MonoError> {
     let mut captured = HashSet::new();
     collect_captured_vars(&function.blocks, &mut captured);
     let mut initializers = Vec::new();
     for (var, name) in function.var_names.iter().enumerate() {
         let var = var as u32;
-        if !captured.contains(&var) {
-            continue;
-        }
         let Some(ty) = function.var_tys.get(&var).cloned() else {
             continue;
         };
-        let constant = callables
-            .get(name)
-            .map(|callable| Const::Function(callable.clone()))
-            .or_else(|| {
-                locals
-                    .get(name.as_str())
-                    .and_then(|value| value_parameter_constant(value, Some(&ty)))
-            });
-        let Some(k) = constant else {
-            continue;
-        };
         let dest = Reg(function.n_regs);
-        function.n_regs += 1;
-        function.reg_types.insert(dest.0, ty.clone());
-        initializers.push(MirInstr::Const { dest, k });
+        if let Some(value) = constructed.get(name.as_str()) {
+            function.n_regs += 1;
+            function.reg_types.insert(dest.0, ty.clone());
+            initializers.extend(parameter_value_construction(
+                dest,
+                value,
+                &ty,
+                &mut function.n_regs,
+                &mut function.reg_types,
+                structs,
+            )?);
+        } else {
+            if !captured.contains(&var) {
+                continue;
+            }
+            let constant = callables
+                .get(name)
+                .map(|callable| Const::Function(callable.clone()))
+                .or_else(|| {
+                    locals
+                        .get(name.as_str())
+                        .and_then(|value| value_parameter_constant(value, Some(&ty)))
+                });
+            let Some(k) = constant else {
+                continue;
+            };
+            function.n_regs += 1;
+            function.reg_types.insert(dest.0, ty.clone());
+            initializers.push(MirInstr::Const { dest, k });
+        }
         initializers.push(MirInstr::DefVar {
             var,
             src: dest,
@@ -1293,6 +1326,91 @@ fn initialize_captured_value_parameters(
     if let Some(entry) = function.blocks.first_mut() {
         entry.instrs.splice(0..0, initializers);
     }
+    Ok(())
+}
+
+/// The run-time construction of the parameter value `value`, of the concrete
+/// type `ty`, into `dest`: a string at the nominal `String` is its literal's
+/// `String` constructor, a tuple the `Tuple` constructor over its elements,
+/// and a struct its fieldwise constructor, as `CtValue::materialize` spells
+/// a frozen struct; any other leaf is its constant.
+fn parameter_value_construction(
+    dest: Reg,
+    value: &CtValue,
+    ty: &Ty,
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+    structs: &HashMap<&str, &MirStructDeclaration>,
+) -> Result<Vec<MirInstr>, MonoError> {
+    let unsupported = || MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct: format!("constructing the parameter value `{value}` at `{ty}`"),
+    };
+    let (func, parts): (String, Vec<(&CtValue, Ty)>) = match (value, ty) {
+        (CtValue::Str(text), Ty::Struct(name, _))
+            if mojito_types::types::is_stdlib_string_struct(name) =>
+        {
+            let literal = Reg(*n_regs);
+            *n_regs += 1;
+            reg_types.insert(literal.0, Ty::StringLiteral);
+            return Ok(vec![
+                MirInstr::Const {
+                    dest: literal,
+                    k: Const::Str(text.clone()),
+                },
+                plain_call(
+                    dest,
+                    &mojito_symbol::symbol::nominal_string_literal_ctor_symbol(),
+                    vec![literal],
+                ),
+            ]);
+        }
+        (CtValue::Tuple(elements), _) if value.is_constructed_parameter_value() => {
+            let types = mojito_types::types::tuple_elements(ty)
+                .filter(|types| types.len() == elements.len())
+                .ok_or_else(unsupported)?;
+            (
+                "Tuple".to_string(),
+                elements.iter().zip(types.into_iter().cloned()).collect(),
+            )
+        }
+        (CtValue::Struct { name, fields }, _) if value.is_constructed_parameter_value() => {
+            let declared = structs
+                .get(name.as_str())
+                .filter(|declaration| declaration.param_decls.is_empty())
+                .ok_or_else(unsupported)?;
+            let parts = fields
+                .iter()
+                .map(|(field, value)| {
+                    declared
+                        .fields
+                        .iter()
+                        .find(|(declared, _)| declared == field)
+                        .map(|(_, ty)| (value, ty.clone()))
+                        .ok_or_else(unsupported)
+                })
+                .collect::<Result<_, _>>()?;
+            (name.clone(), parts)
+        }
+        _ => {
+            let k = value_parameter_constant(value, Some(ty)).ok_or_else(unsupported)?;
+            return Ok(vec![MirInstr::Const { dest, k }]);
+        }
+    };
+    let mut instrs = Vec::new();
+    let mut args = Vec::new();
+    for (part, part_ty) in parts {
+        let arg = Reg(*n_regs);
+        *n_regs += 1;
+        reg_types.insert(arg.0, part_ty.clone());
+        instrs.extend(parameter_value_construction(
+            arg, part, &part_ty, n_regs, reg_types, structs,
+        )?);
+        args.push(arg);
+    }
+    instrs.push(plain_call(dest, &func, args));
+    Ok(instrs)
 }
 
 fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
@@ -1528,25 +1646,31 @@ fn default_construction(
                 },
             ])
         }
-        Ty::Struct(struct_name, _) => Ok(vec![MirInstr::Call {
-            dest,
-            func: mojito_mir::mir::FuncRef::named(struct_name),
-            raises: None,
-            args: Vec::new(),
-            kwargs: Vec::new(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        }]),
+        Ty::Struct(struct_name, _) => Ok(vec![plain_call(dest, struct_name, Vec::new())]),
         _ => Err(MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
             construct: format!("default-constructing `{ty}`, which is no struct"),
         }),
+    }
+}
+
+/// A call of `func` over the positional `args`, with nothing else bound,
+/// which the call rewriting then resolves and instantiates.
+fn plain_call(dest: Reg, func: &str, args: Vec<Reg>) -> MirInstr {
+    MirInstr::Call {
+        dest,
+        func: mojito_mir::mir::FuncRef::named(func),
+        raises: None,
+        arg_places: vec![None; args.len()],
+        args,
+        kwargs: Vec::new(),
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread: None,
     }
 }
 

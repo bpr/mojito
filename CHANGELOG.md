@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A tuple or struct value parameter with a `String` element or field now
+  works as at the pin: `g[(1, "a")]()` against `def g[p: Tuple[Int,
+  String]]()`, a default `(7, "d")`, a named `g[p=(1, "k")]()`, a nested
+  `Tuple[String, Tuple[Int, String]]`, and `g[Q(1, "x")]()` over a struct
+  with a `String` field, read whole, by element or field, and copied and
+  mutated, on the VM and natively. The literal argument was rejected as
+  `Tuple[Int, StringLiteral]`, and a struct or default value failed MIR
+  verification. The checker now types the argument against its declared
+  type as a run-time argument, and each instance constructs the value
+  into the parameter's slot instead of folding it to a constant.
+
 - A `comptime for` over tuple or struct elements in a generic body now keeps
   one loop in the template, as at the pin: `[(1, 2), (3, n)]`, a module
   `PAIRS` or `PS = [P(1, 2), P(3, 4)]`, `[P(1, n), mk(n)]`, a local
