@@ -20,6 +20,7 @@ mod statics;
 mod type_receivers;
 
 use call_contract::SelectedMethodCall;
+pub use intrinsic_receivers::INTRINSIC_COLLECTOR_METHODS;
 
 /// One value-receiver method call as the receiver families see it: the call
 /// expression's span, the receiver and its inferred type, and the arguments.

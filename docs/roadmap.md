@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R413**.
+Next free ID: **R418**.
 
 ## Ordered Work
 
@@ -60,23 +60,23 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R256 (P3b) A pack spread into a pack-keyed method keys a clone**
+- [ ] **R414 (P3b) A pack spread into `Writer.write` keys a clone**
 
-  Problem: a `def` that spreads its collector into a method's collector
-  (`Sink().take(*a)`) stays on the cloner, since `pack_spread_callees`
-  (`comptime.rs`) admits only `print` and a served `def` as the callee.
-  - The callee is a method with a type pack of its own, which no template
-    serves until R307, so admitting it now would admit nothing.
-  - MIR, the elaborator, and the erased oracle already handle the spread
-    (`MirInstr::MethodCall::spread`); with R307's exclusion lifted and the
-    gate opened, `Sink().tagged(7, *a)` and `Sink().drain(*a^)` ran on the
-    VM, erased, and natively with no `def_pack` clone.
-  - Admit the callee by method name, judged over every struct method of
-    that name: `served_pack_defs` runs before checking, when the receiver's
-    type is unknown. A name no struct declares keeps the clone.
-  - A spread into a variadic struct's method (`*b: *Self.Ts`) also needs R4.
-  - Depends on R307 and R4.
-  - Model: Fable, Planned.
+  Problem: a pack-keyed `def` that spreads its collector into `write` on a
+  `Writer` (`s.write(*a)`, `w.write(*a)` over `W: Writer`) stays on the
+  cloner, where the pin serves it from one template.
+  - The checker answers `write` intrinsically (`infer_writer_write`), so the
+    MIR call has no resolved callee and the verifier rejects a served body
+    that spreads into it.
+  - The spread gate therefore leaves out every name in the checker's
+    `INTRINSIC_COLLECTOR_METHODS` (`write`, `format`).
+  - The Mojo shape is an ordinary `Writer.write[*Ts]` requirement the call
+    resolves to, which needs R413.
+  - Pinned by `pack_spread_into_writer_write_keeps_the_clone`
+    (`tests/compiler_test.rs`), which turns red when this lands.
+  - Found while landing R256 (2026-10-06).
+  - Depends on R413.
+  - Model: Fable, Not Planned.
 
 - [ ] **R316 (P3b) A pack spread into a constructor keys a clone**
 
@@ -2436,6 +2436,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R413 A trait requirement cannot declare a `*args` collector**
+
+  Problem: a trait method with a collector (`def take[*Ts: Writable](self,
+  *a: *Ts)`) fails with "unsupported feature: variadic '*args'
+  parameters", where the pin accepts it and dispatches a spread through a
+  bound receiver (`s.take(*a)` over `S: Taker`).
+  - The rejection is in `checker/traits.rs`.
+  - `Writer.write` is the stdlib's own case, which the checker answers
+    intrinsically instead (R414).
+  - Found while landing R256 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R416 A pack forwarded into a plain struct's own-pack `__init__` is
+  rejected**
+
+  Problem: `Sink(*a)` in a pack-keyed `def`, against `def __init__[*Ts:
+  Writable](out self, *a: *Ts)`, fails with "no constructor overload
+  matches the supplied arguments", where the pin runs it.
+  - A direct `Sink(1, "x")` runs, so the constructor's selection does not
+    bind a forwarded pack as a method call's does.
+  - A constructor spread is a call, not a method call, so serving the
+    spreading `def` once it checks is R316's.
+  - Found while landing R256 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -3551,6 +3578,32 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Holder[*Self.Ts.reverse()]()`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R415 A static call spreading a variadic struct's collector in its
+  own method is rejected**
+
+  Problem: inside `struct V[*Ts: Writable]`, a method that forwards its
+  `*b: *Self.Ts` collector to a static method (`Self.count(*b)`,
+  `V[*Self.Ts].count(*b)`) fails with "no symbolic rule for an unbound
+  pack", where the pin runs it.
+  - The instance-method form (`self.each(*b)`) runs.
+  - A bare `Self.` static on a parametric struct infers the struct's
+    parameters from the arguments (`infer_struct_static_method`) instead of
+    binding the enclosing `Self`, and a forwarded pack infers nothing.
+  - Found while landing R256 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R417 A bracket spread of a value pack is rejected**
+
+  Problem: `vals[*vs]()` in `def fwd[*vs: Int]()` fails with "expected a
+  value, found a type", and the method form (`B().vals[*vs]()`) with "no
+  overload matches", where the pin runs both.
+  - A literal application (`B().vals[1, 2, 3]()`) runs.
+  - The bracket argument's spread is resolved as a type pack.
+  - Found while landing R256 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 

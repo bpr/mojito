@@ -320,6 +320,60 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
 }
 
 #[test]
+fn pack_spread_into_own_pack_method_is_template_served() {
+    // A pack-keyed `def` spreading its collector into a method's own-pack
+    // collector, on an instance or through the type, is served by its
+    // template: the spread closes per call below MIR.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct Sink:\n    def __init__(out self):\n        pass\n\n    def take[*Ts: Writable](self, *a: *Ts):\n        print(\"take\", a.__len__())\n\n    def drain[*Ts: Copyable & Writable](self, var *a: *Ts):\n        print(\"drain\", a.__len__())\n\ndef fwd[*Ts: Writable](*a: *Ts):\n    var s = Sink()\n    s.take(*a)\n    Sink.take(s, *a)\n\ndef owned[*Ts: Copyable & Writable](var *a: *Ts):\n    Sink().drain(*a^)\n\ndef main():\n    fwd(1, \"x\")\n    owned(1, 2.5, True)\n",
+            std::path::Path::new("/tmp/mojito_pack_spread_into_method.mojo"),
+        )
+        .expect("a pack spread into an own-pack method");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    let output = compiler.execute(&program).expect("run the served spreads");
+    assert_eq!(output.output, "take 2\ntake 2\ndrain 3\n");
+}
+
+#[test]
+fn pack_spread_into_writer_write_keeps_the_clone() {
+    // `write` on a `Writer` is the checker's intrinsic dispatch, with no
+    // declared callee for MIR to name, so a spread into it keeps the
+    // spreading `def` on the cloner.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "def render[*Ts: Writable](*a: *Ts) -> String:\n    var s = String()\n    s.write(*a)\n    return s\n\ndef into[W: Writer, *Ts: Writable](mut w: W, *a: *Ts):\n    w.write(*a)\n\ndef main():\n    print(render(1, \"x\", 2.5))\n    var s = String()\n    into(s, 1, \"x\", 2.5)\n    print(s)\n",
+            std::path::Path::new("/tmp/mojito_pack_spread_into_write.mojo"),
+        )
+        .expect("a pack spread into Writer.write");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 2);
+    let output = compiler.execute(&program).expect("run the cloned spreads");
+    assert_eq!(output.output, "1x2.5\n1x2.5\n");
+}
+
+#[test]
+fn pack_spread_into_struct_pack_method_is_template_served() {
+    // A variadic struct's method collecting the struct's own pack
+    // (`*b: *Self.Ts`) takes a spread of a forwarding `def`'s collector over
+    // `V[*Ts]`, served by the template.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "struct V[*Ts: Writable & Movable]:\n    def __init__(out self):\n        pass\n\n    def put(self, *b: *Self.Ts):\n        comptime for i in range(b.__len__()):\n            print(i, b[i])\n\n    def own(self, var *b: *Self.Ts):\n        print(\"own\", b.__len__())\n\ndef fwd[*Ts: Writable & Movable](*a: *Ts):\n    V[*Ts]().put(*a)\n\ndef fwd_own[*Ts: Writable & Movable](var *a: *Ts):\n    V[*Ts]().own(*a^)\n\ndef main():\n    fwd(1, \"x\")\n    fwd_own(2.5)\n    V[Int, String]().put(3, \"z\")\n",
+            std::path::Path::new("/tmp/mojito_pack_spread_into_struct_pack.mojo"),
+        )
+        .expect("a pack spread into a struct-pack collector");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
+    let output = compiler.execute(&program).expect("run the served spreads");
+    assert_eq!(output.output, "0 1\n1 x\nown 1\n0 3\n1 z\n");
+}
+
+#[test]
 fn inferred_comptime_keyed_def_call_in_an_abstract_body_is_accepted() {
     // `show(x)` in `forward`'s own body infers `T := T`, which no discovery
     // round can serve. The call stays on `show`'s stub, but `forward`'s

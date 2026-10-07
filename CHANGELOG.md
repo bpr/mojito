@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic `def` that spreads its pack into a method's collector
+  (`Sink().take(*a)`, `Sink().drain(*a^)`, `V[*Ts]().put(*a)`) is now served
+  by its template, as at the pin, where it was cloned per call. A variadic
+  struct's method may now collect the struct's own pack (`def put(self, *b:
+  *Self.Ts)`), where every call was rejected with "no overload matches", and
+  a `comptime for` over `b.__len__()` there now runs, where it stopped with
+  "unspecialized type-keyed method". A forwarded pack whose bounds differ
+  from the struct pack's is rejected, as at the pin.
 - A generic `def` that returns a variadic struct over its own pack
   (`def first[*Ts]() -> Variant[*Ts]`), or calls an overloaded generic
   method or constructor (`Box[T](x^, "t")`), is now served by its template

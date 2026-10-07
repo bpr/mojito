@@ -626,9 +626,12 @@ analysis sees the whole collector lent or moved, and the elaborator
 per element of the bound pack before it binds the callee, so concrete MIR
 carries no spread. A method call carries the same position
 (`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator and the
-erased oracle expand alike; the gate (`pack_spread_callees`) still keeps a
-`def` spreading into a method on the cloner until an own-pack method is
-served by its template. A clone that spreads its bound pack into a served
+erased oracle expand alike. The gate (`pack_spread_callees`) judges such a
+callee by name, before the check types its receiver: the name must be one
+some struct declares with a type-pack collector, the method's own
+(`*a: *Ts`) or the struct's (`*b: *Self.Ts`), and not one the checker
+answers without a declared callee (`INTRINSIC_COLLECTOR_METHODS`: `write`
+on a `Writer`, `format` on a string), whose call MIR cannot name. A clone that spreads its bound pack into a served
 `def` spells the elements itself (`PackRewriter::served_callees`). A pack query
 read as a runtime value — `Ts.length`, `len(Ts)`, `Ts.contains[X]()`,
 `Ts.all_conforms_to[T]()` of a `def`'s or method's own pack — is upstream's
@@ -1234,7 +1237,9 @@ on the call as its spelled receiver type (`MirInstr::Call::receiver`,
 A `comptime if` or a `comptime for` over the struct's parameters stays in
 the template, as a generic `def`'s does: the elaborator's struct walk opens
 the struct's parameters as binders of each method's body (`Elab::def_body`),
-as `Self.`-qualified names only, so `native::mono` decides the branch and
+as `Self.`-qualified names only, with a collector of the struct's pack
+(`*b: *Self.Ts`) a binder as a method's own collector is, so
+`native::mono` decides the branch and
 unrolls the loop per instance; a `rebind` stays too. The methods that still
 clone are the ones MIR cannot express yet (`keyed_methods`,
 `comptime/specialize.rs`): a body the template stubs (a local `comptime`

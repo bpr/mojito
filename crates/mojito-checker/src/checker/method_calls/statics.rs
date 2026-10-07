@@ -272,7 +272,7 @@ impl Checker {
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| substitute_at(ty, info, &tyargs));
+                .map(|ty| substitute_variadic_at(ty, info, &tyargs));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()

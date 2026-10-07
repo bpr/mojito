@@ -169,6 +169,46 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
     )
 }
 
+/// A member's `*args` collector element at a receiver's type arguments:
+/// a bare struct pack (`*b: *Self.Ts`) closed by the receiver is the runtime
+/// pack of its elements, as a method-level pack solved from the call is. A
+/// caller's pack bound whole (`V[*Ts]`) is the struct's pack there, so it
+/// carries the struct pack's declared bounds, which a spread of the caller's
+/// collector must match exactly.
+pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
+    let Ty::Param { binder, .. } = ty else {
+        return substitute_at(ty, info, targs);
+    };
+    let Some(declared) = info.decls.iter().find_map(|decl| match decl {
+        ParamDecl::Type {
+            id,
+            bounds,
+            variadic: true,
+            ..
+        } if *id == binder.id => Some(bounds),
+        _ => None,
+    }) else {
+        return substitute_at(ty, info, targs);
+    };
+    let retyped = |element: &mut Ty| {
+        if let Ty::Param { binder, bounds, .. } = element
+            && binder.name.starts_with('*')
+        {
+            bounds.clone_from(declared);
+        }
+    };
+    if let Some((_, mut elements)) = bound_pack_elements(&info.decls, targs) {
+        if let [element] = elements.as_mut_slice() {
+            retyped(element);
+        }
+        Ty::RuntimePack(elements)
+    } else {
+        let mut element = substitute_at(ty, info, targs);
+        retyped(&mut element);
+        element
+    }
+}
+
 /// Expand every spread of a variadic struct's pack in a member template type
 /// (`Tuple[*Self.Ts]`, `other: Self`) to the elements a closed application
 /// binds it to, whether the application spells the pack element by element

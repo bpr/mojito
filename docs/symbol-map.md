@@ -164,7 +164,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   inference. `mc_infer.rs` keeps `infer_method_call` as a sequence of stages
   over one `MethodCallSite`: `type_receivers.rs` types a receiver that
   spells a type, `intrinsic_receivers.rs` and `simd_receivers.rs` the
-  receivers that answer without a declared signature, `resolution.rs`
+  receivers that answer without a declared signature (the collector
+  methods among them are `INTRINSIC_COLLECTOR_METHODS`, which the pack
+  spread gate reads), `resolution.rs`
   selects a signature per receiver family (struct, bound, builtin) and
   retargets to a minted clone, `receiver_effects.rs` checks the receiver
   and argument conventions and builds the reference result, and
@@ -769,7 +771,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/generics.rs` owns unification, substitution, and callable/method
   specialization; `solve_value_args` solves value binders from argument
   types, a vector's width slot solving only a binder declared `SIMDLength`
-  (`Checker::simd_length_binders`, recorded by `classify_params`).
+  (`Checker::simd_length_binders`, recorded by `classify_params`);
+  `substitute_variadic_at` types a member's struct-pack collector
+  (`*b: *Self.Ts`) at a receiver as the runtime pack of its elements, a
+  forwarded caller pack retyped with the struct pack's bounds.
 - `checker/declarations.rs` owns parameter classification and method/function
   signature and body checking.
 - `checker/annotations.rs` converts AST annotations into checked `Ty` values.
@@ -1388,7 +1393,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
 - A type pack the template serves: `served_pack_defs` (a fixpoint over
-  `pack_def_shape_served`, `pack_spread_callees`, `def_pack_names`, and
+  `pack_def_shape_served`, `pack_spread_callees` with its `SpreadCallee`,
+  `pack_collector_methods`, `def_pack_names`, and
   `def_body_keys_specialization`, `comptime.rs`) names the served `def`s and
   `pack_def_template_served` reads it; `PackRewriter::served_callees`
   (`comptime/rewrite.rs`) spells a clone's spread into a served callee

@@ -398,6 +398,7 @@ assets/ok/pack_struct_element_alias_condition.mojo	-	ineligible	no-scalar-entry-
 assets/ok/pack_struct_explicit_in_generic_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_getitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_inferred_args.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_struct_method_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_pair.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_static_method_through_instance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape

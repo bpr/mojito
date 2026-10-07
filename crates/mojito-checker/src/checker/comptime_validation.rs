@@ -2188,9 +2188,16 @@ impl Checker {
                 copyable: false,
             });
         }
-        if expected
-            .iter()
-            .any(|bound| !self.conforms_to(&forwarded.pack, bound))
+        // The collector is the forwarded pack itself retyped by a struct's
+        // pack (`*b: *Self.Ts` on `V[*Ts]`): pack types are invariant in
+        // their bounds.
+        let retyped = matches!((collector, &forwarded.pack),
+            (Ty::Param { binder, bounds, .. }, Ty::Param { binder: own, bounds: own_bounds, .. })
+                if binder.id == own.id && !same_bounds(bounds, own_bounds));
+        if retyped
+            || expected
+                .iter()
+                .any(|bound| !self.conforms_to(&forwarded.pack, bound))
         {
             let declared = match &forwarded.pack {
                 Ty::Param { bounds, .. } if !bounds.is_empty() => bounds.join(" & "),
@@ -3190,4 +3197,9 @@ fn names_read(expr: &Expr) -> Vec<String> {
     let mut names = Names(Vec::new());
     mojito_ast::visit::walk_expr(&mut names, expr);
     names.0
+}
+
+/// Whether two bound lists name the same traits, in any order.
+fn same_bounds(left: &[String], right: &[String]) -> bool {
+    left.len() == right.len() && left.iter().all(|bound| right.contains(bound))
 }

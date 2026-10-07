@@ -42,6 +42,7 @@ pub use mojito_symbol::symbol::{mangle, tuple_specialization_values};
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
+use mojito_checker::checker::INTRINSIC_COLLECTOR_METHODS;
 use mojito_common::token::{SourceSpan, Span};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
@@ -2260,15 +2261,16 @@ fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) ->
 
 /// The names of the pack-keyed top-level `def`s the template serves. Every
 /// declaration of the name passes the shape test ([`pack_def_shape_served`]),
-/// and every callee a body spreads its pack into is `print` or a served name
-/// too, by fixpoint: a served body's spread is a call of the callee's
-/// template, which the elaborator expands into the bound pack's elements, so
-/// a spread into a cloned callee (a constructor, a method, a `def` the
-/// template does not serve) keeps the spreading `def` on the cloner. An
-/// overloaded name is served or cloned whole, since a forward (`tally(*rest)`)
-/// may bind any of its declarations.
+/// and every callee a body spreads its pack into is `print`, a served name,
+/// or a method with a type-pack collector ([`pack_collector_methods`]), by
+/// fixpoint: a served body's spread is a call of the callee's template, which
+/// the elaborator expands into the bound pack's elements, so a spread into a
+/// cloned callee (a constructor, a `def` the template does not serve) keeps
+/// the spreading `def` on the cloner. An overloaded name is served or cloned
+/// whole, since a forward (`tally(*rest)`) may bind any of its declarations.
 fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
-    let mut spreads: HashMap<String, Vec<String>> = HashMap::new();
+    let methods = pack_collector_methods(program);
+    let mut spreads: HashMap<String, Vec<SpreadCallee>> = HashMap::new();
     let mut cloned: HashSet<String> = HashSet::new();
     let scalars = ScalarReads::of(program);
     for statement in program {
@@ -2295,9 +2297,10 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
         let kept: HashSet<String> = served
             .iter()
             .filter(|name| {
-                spreads[*name]
-                    .iter()
-                    .all(|callee| callee == "print" || served.contains(callee))
+                spreads[*name].iter().all(|callee| match callee {
+                    SpreadCallee::Def(callee) => callee == "print" || served.contains(callee),
+                    SpreadCallee::Method(method) => methods.contains(method),
+                })
             })
             .cloned()
             .collect();
@@ -2389,7 +2392,7 @@ fn lane_def_shape_served(statement: &Stmt) -> bool {
 /// such a body once, with the collector a pack of the symbolic `Ts` and each
 /// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
 /// pack from the call.
-fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<String>> {
+fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<SpreadCallee>> {
     let StmtKind::Def {
         name,
         type_params,
@@ -2479,14 +2482,14 @@ fn value_packs_read_as_parameters(type_params: &[TypeParam], owner: &str, body: 
     reads.uses == reads.served
 }
 
-/// The callees a block spreads one of `packs` into as a call argument
-/// (`other(*args)`, `other(*args^)`), a nested `def` included; `None` when a
-/// spread of one of `packs` stands anywhere else (a method call, a
-/// parameterized call), which only a clone expands.
-fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<String>> {
+/// The callees a block spreads one of `packs` into as a call or method-call
+/// argument (`other(*args)`, `other(*args^)`, `sink.take(*args)`), a nested
+/// `def` included; `None` when a spread of one of `packs` stands anywhere
+/// else (a parameterized call), which only a clone expands.
+fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<SpreadCallee>> {
     struct Finder<'a> {
         packs: &'a HashSet<String>,
-        callees: Vec<String>,
+        callees: Vec<SpreadCallee>,
         spreads: usize,
     }
 
@@ -2509,7 +2512,14 @@ fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<St
                     self.callees.extend(
                         args.iter()
                             .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
-                            .map(|_| name.clone()),
+                            .map(|_| SpreadCallee::Def(name.clone())),
+                    );
+                }
+                ExprKind::MethodCall { method, args, .. } => {
+                    self.callees.extend(
+                        args.iter()
+                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
+                            .map(|_| SpreadCallee::Method(method.clone())),
                     );
                 }
                 _ => {}
@@ -2524,6 +2534,66 @@ fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<St
     };
     mojito_ast::visit::walk_block(&mut finder, stmts);
     (finder.callees.len() == finder.spreads).then_some(finder.callees)
+}
+
+/// A callee a pack-keyed `def`'s body spreads its pack into: a `def` (or
+/// `print`) by name, or a method by name, whose receiver the pre-check
+/// judgment cannot type.
+enum SpreadCallee {
+    Def(String),
+    Method(String),
+}
+
+/// The method names a served pack-keyed body may spread its pack into: a
+/// struct in the program declares a method of the name whose collector is a
+/// type pack, the method's own (`*a: *Ts`) or the struct's (`*b: *Self.Ts`),
+/// which its template serves with the spread expanded per call. A name the
+/// checker answers intrinsically on some receiver
+/// ([`INTRINSIC_COLLECTOR_METHODS`]) is left out: that call has no declared
+/// callee for MIR to name.
+fn pack_collector_methods(program: &[Stmt]) -> HashSet<String> {
+    let binders = |type_params: &[TypeParam]| -> HashSet<String> {
+        type_params
+            .iter()
+            .filter_map(|parameter| parameter.name.strip_prefix('*'))
+            .map(str::to_string)
+            .collect()
+    };
+    program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct {
+                type_params,
+                methods,
+                ..
+            } => Some((binders(type_params), methods)),
+            _ => None,
+        })
+        .flat_map(|(struct_packs, methods)| {
+            methods.iter().filter_map(move |method| {
+                let own_packs = binders(&method.type_params);
+                method
+                    .params
+                    .iter()
+                    .any(|parameter| {
+                        parameter.kind == ParamKind::Variadic
+                            && match &parameter.ty {
+                                Type::Named(spread, arguments) if arguments.is_empty() => {
+                                    spread.strip_prefix('*').is_some_and(|pack| {
+                                        own_packs.contains(pack) || struct_packs.contains(pack)
+                                    })
+                                }
+                                Type::SelfParam(spread) => spread
+                                    .strip_prefix('*')
+                                    .is_some_and(|pack| struct_packs.contains(pack)),
+                                _ => false,
+                            }
+                    })
+                    .then(|| method.name.clone())
+            })
+        })
+        .filter(|name| !INTRINSIC_COLLECTOR_METHODS.contains(&name.as_str()))
+        .collect()
 }
 
 /// Substitute one now-concrete method type binder in source annotations. This

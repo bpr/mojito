@@ -1034,6 +1034,7 @@ impl Elab<'_> {
             })
             .collect();
         binders.extend(def_pack_names(type_params, params));
+        binders.extend(struct_pack_collectors(struct_params, params));
         binders.extend(
             struct_params
                 .iter()
@@ -1460,6 +1461,25 @@ fn names_method_parameter(error: &ComptimeError, method: &mojito_ast::ast::Metho
                 if name.starts_with('*') && arguments.is_empty())
             && text.contains(&format!("'{}'", parameter.name))
     })
+}
+
+/// The collectors a method types by its struct's type pack
+/// (`*b: *Self.Ts`, or `*b: *Ts` as the template spells it), which stand for the pack in a bound as a `def`'s own
+/// collector does ([`def_pack_names`]).
+fn struct_pack_collectors<'a>(
+    struct_params: &'a [TypeParam],
+    params: &'a [FnParam],
+) -> impl Iterator<Item = String> + 'a {
+    params
+        .iter()
+        .filter(move |parameter| {
+            parameter.kind == ParamKind::Variadic
+                && matches!(&parameter.ty,
+                    Type::SelfParam(spread) | Type::Named(spread, _)
+                        if spread.starts_with('*')
+                            && struct_params.iter().any(|binder| binder.name == *spread))
+        })
+        .map(|parameter| parameter.name.clone())
 }
 
 /// The source methods of a struct statement (empty for any other statement).

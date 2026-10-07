@@ -3353,6 +3353,42 @@ fn checks_each_heterogeneous_pack_element_against_its_bound() {
 }
 
 #[test]
+fn struct_pack_collector_checks_each_argument_against_its_element() {
+    // `*b: *Self.Ts` on `V[Int, String]` takes exactly an `Int` and a
+    // `String`: one short of the pack, or the two swapped, matches nothing.
+    let declaration = "struct V[*Ts: Writable]:\n    def __init__(out self):\n        pass\n\n    def put(self, *b: *Self.Ts):\n        print(b.__len__())\n\n";
+    ok_std(&format!(
+        "{declaration}def main():\n    V[Int, String]().put(1, \"x\")\n"
+    ));
+    for call in ["put(1)", "put(\"a\", 1)"] {
+        let error = err_std(&format!(
+            "{declaration}def main():\n    V[Int, String]().{call}\n"
+        ));
+        assert!(
+            matches!(&error, TypeError::BadCall { func, .. } if func == "put"),
+            "{call}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn struct_pack_collector_rejects_a_pack_of_other_bounds() {
+    // The pin's packs are invariant in their bounds: a `Writable & Movable`
+    // pack spread into `V[*Ts]`'s `Writable` collector is rejected, while a
+    // `def`'s own pack is inferred from the spread.
+    let error = err_std(
+        "struct V[*Ts: Writable]:\n    def __init__(out self):\n        pass\n\n    def put(self, *b: *Self.Ts):\n        print(b.__len__())\n\ndef fwd[*Ts: Writable & Movable](*a: *Ts):\n    V[*Ts]().put(*a)\n\ndef main():\n    fwd(1, \"x\")\n",
+    );
+    assert!(
+        matches!(&error, TypeError::BadCall { func, .. } if func == "put"),
+        "{error:?}"
+    );
+    ok_std(
+        "def g[*Us: Writable](*b: *Us):\n    print(b.__len__())\n\ndef fwd[*Ts: Writable & Movable](*a: *Ts):\n    g(*a)\n\ndef main():\n    fwd(1, \"x\")\n",
+    );
+}
+
+#[test]
 fn nightly_pack_conformance_checks_every_type_value() {
     ok(
         "def count[*Ts: AnyType](*args: *Ts) -> Int where conforms_to(Ts.values, Writable):\n    return len(args)\n\ndef main():\n    var n = count(1, \"two\", True)\n",

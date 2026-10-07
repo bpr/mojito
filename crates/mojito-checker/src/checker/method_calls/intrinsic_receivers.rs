@@ -3,6 +3,13 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// The collector methods the checker answers without a declared signature.
+///
+/// They are `write` on a `Writer` and `format` on a string. Such a call
+/// lowers with no resolved callee, so a template cannot serve a pack spread
+/// into it.
+pub const INTRINSIC_COLLECTOR_METHODS: &[&str] = &[WRITER_WRITE, STRING_FORMAT];
+
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
     /// the compiler-known collections, `SIMD` and `DType`, slice descriptors,
@@ -98,7 +105,7 @@ impl Checker {
         {
             return self.infer_inverted_write(site).map(Some);
         }
-        if self.conforms_to(obj_ty, "Writer") && method == "write" {
+        if self.conforms_to(obj_ty, "Writer") && method == WRITER_WRITE {
             return self.infer_writer_write(site).map(Some);
         }
         if matches!(obj_ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
@@ -106,7 +113,7 @@ impl Checker {
         {
             return Ok(Some(ty));
         }
-        if method == "format"
+        if method == STRING_FORMAT
             && (*obj_ty == Ty::StringLiteral
                 || matches!(obj_ty, Ty::Struct(name, args)
                     if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)))
@@ -476,3 +483,6 @@ fn string_literal_primitive(method: &str) -> Option<Ty> {
         _ => None,
     }
 }
+
+const WRITER_WRITE: &str = "write";
+const STRING_FORMAT: &str = "format";
