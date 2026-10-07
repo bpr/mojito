@@ -42,7 +42,7 @@ pub use mojito_symbol::symbol::{mangle, tuple_specialization_values};
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
-use mojito_common::token::{SourceSpan, Span};
+use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
@@ -498,8 +498,17 @@ impl std::fmt::Display for ComptimeError {
 /// arms and unrolls loops — the same contract the compiler driver enforces.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let prepared = prepare(program)?;
-    mojito_checker::checker::validate_comptime_templates(&prepared).map_err(ComptimeError::Type)?;
-    elaborate_prepared(&prepared, ElaborationInputs::default()).map(|elaborated| elaborated.program)
+    let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
+    mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .map_err(ComptimeError::Type)?;
+    elaborate_prepared(
+        &prepared,
+        ElaborationInputs {
+            templates: Some(&catalog),
+            ..ElaborationInputs::default()
+        },
+    )
+    .map(|elaborated| elaborated.program)
 }
 
 /// Prepare a linked program for source validation and elaboration.
@@ -777,11 +786,17 @@ pub fn variadic_struct_template_names(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-/// The top-level bound-generic template names of a linked program, as the
-/// elaborator will classify them. The compiler's discovery loop filters
-/// checker-recorded instantiations to these callees.
-pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
-    collect_bound_generic_templates(program)
+/// The top-level bound-generic template names of a linked program.
+///
+/// They are the names the elaborator will classify so under `templates`, the
+/// catalog source validation filled (`TemplateCatalog::scalar_calls`). The
+/// compiler's discovery loop filters checker-recorded instantiations to these
+/// callees.
+pub fn bound_generic_template_names(
+    program: &[Stmt],
+    templates: &mojito_checked::templates::TemplateCatalog,
+) -> HashSet<String> {
+    collect_bound_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
 }
 
 /// The top-level type-pack template names (`def show[*Ts: Writable](*args:
@@ -791,8 +806,11 @@ pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 /// local, a generic construction, an origin-bearing temporary) is minted from
 /// the checker-recorded instantiation on the next discovery round, as inferred
 /// bound-generic calls are.
-pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
-    collect_pack_generic_templates(program)
+pub fn pack_generic_template_names(
+    program: &[Stmt],
+    templates: &mojito_checked::templates::TemplateCatalog,
+) -> HashSet<String> {
+    collect_pack_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
 }
 
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
@@ -804,8 +822,11 @@ pub fn pack_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 /// own parameters stays on that stub; any other reference that can reach it
 /// at the fixpoint is rejected ([`Elaborated::unserved_template_uses`],
 /// [`unserved_template_parameter`]).
-pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
-    collect_comptime_generic_templates(program)
+pub fn comptime_generic_template_names(
+    program: &[Stmt],
+    templates: &mojito_checked::templates::TemplateCatalog,
+) -> HashSet<String> {
+    collect_comptime_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
 }
 
 /// The top-level `DType`-keyed template names (`def only_dt[dt: DType](a:
@@ -814,8 +835,11 @@ pub fn comptime_generic_template_names(program: &[Stmt]) -> HashSet<String> {
 /// A call that omits the lane leaves it to the checker, which reads it off the
 /// argument's own SIMD slot and records the instantiation the next discovery
 /// round mints; until then the template stands in as a signature-only stub.
-pub fn dtype_generic_template_names(program: &[Stmt]) -> HashSet<String> {
-    collect_dtype_generic_templates(program)
+pub fn dtype_generic_template_names(
+    program: &[Stmt],
+    templates: &mojito_checked::templates::TemplateCatalog,
+) -> HashSet<String> {
+    collect_dtype_generic_templates(program, &ScalarReads::of(program, templates.scalar_calls()))
 }
 
 /// The parameter an inferred application of `template` failed to close.
@@ -928,8 +952,12 @@ pub fn elaborate_prepared(
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let bound_generics = collect_bound_generic_templates(program);
-    let pack_generics = collect_pack_generic_templates(program);
+    let scalar_reads = ScalarReads::of(
+        program,
+        templates.and_then(mojito_checked::templates::TemplateCatalog::scalar_calls),
+    );
+    let bound_generics = collect_bound_generic_templates(program, &scalar_reads);
+    let pack_generics = collect_pack_generic_templates(program, &scalar_reads);
     let elab = Elab {
         program,
         fns: collect_fns(program),
@@ -941,15 +969,15 @@ pub fn elaborate_prepared(
                 _ => None,
             })
             .collect(),
-        specializable: collect_specializable(program, &bound_generics),
+        specializable: collect_specializable(program, &bound_generics, &scalar_reads),
         bound_generics,
         pack_generics,
-        served_packs: served_pack_defs(program),
+        served_packs: served_pack_defs(program, &scalar_reads),
         served_lanes: served_lane_defs(program),
-        scalar_reads: ScalarReads::of(program),
-        comptime_generics: collect_comptime_generic_templates(program),
-        dtype_generics: collect_dtype_generic_templates(program),
-        overload_families: collect_overload_families(program),
+        comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
+        dtype_generics: collect_dtype_generic_templates(program, &scalar_reads),
+        overload_families: collect_overload_families(program, &scalar_reads),
+        scalar_reads,
         method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::scan(
             program,
             &mojito_symbol::symbol::OverloadSets::scan(program),
@@ -1262,22 +1290,34 @@ pub(super) struct TemplateLoopNames {
     pub(super) displays: HashSet<String>,
 }
 
-/// The module declarations a compile-time display's element reads a scalar
-/// through ([`scalar_shaped`]): a `def` every declaration of which returns
-/// an `Int`, `Bool`, `String`, or `Float64` and does not raise, and a module
-/// `comptime` list display of literals of one kind. A call of the first and
-/// a subscript of the second show the type a loop binder takes, as a scalar
-/// construction (`Float64(n)`) does unless the module declares its name.
+/// What shows a compile-time display's element is a scalar a loop binder
+/// takes (`Int`, `Bool`, `String`, `Float64`) ([`scalar_shaped`]).
+///
+/// A call or method call shows it when source validation typed it so, with
+/// the binders symbolic (`TemplateCatalog::scalar_calls`): the check, not the
+/// callee's spelling, decides `twice(n)`, `P(n).get()`, or `S[n].g(n)`. A
+/// subscript shows it when it reads a module `comptime` list display of
+/// literals of one kind.
+///
+/// Without a validation verdict (an elaboration no validation run preceded,
+/// or one that ended without a verdict) a call shows it when it calls a
+/// `def` every declaration of which returns such a scalar and does not
+/// raise, or constructs one (`Float64(n)`) whose name the module does not
+/// declare.
 #[derive(Default, Clone)]
 pub(super) struct ScalarReads {
     functions: HashSet<String>,
     lists: HashSet<String>,
     declared: HashSet<String>,
+    checked: Option<HashSet<SyntaxId>>,
 }
 
 impl ScalarReads {
-    pub(super) fn of(program: &[Stmt]) -> Self {
-        let mut reads = Self::default();
+    pub(super) fn of(program: &[Stmt], checked: Option<&HashSet<SyntaxId>>) -> Self {
+        let mut reads = Self {
+            checked: checked.cloned(),
+            ..Self::default()
+        };
         let mut other = HashSet::new();
         for statement in program {
             match &statement.kind {
@@ -1309,11 +1349,19 @@ impl ScalarReads {
         reads
     }
 
-    /// Whether a call of `name` returns a scalar a loop binder takes.
-    fn call(&self, name: &str) -> bool {
-        self.functions.contains(name)
-            || mojito_symbol::symbol::is_stdlib_string_struct(name)
-            || (!self.declared.contains(name) && matches!(name, "Int" | "Bool" | "Float64"))
+    /// Whether the call or method call `expression` returns a scalar a loop
+    /// binder takes.
+    fn call(&self, expression: &Expr) -> bool {
+        match (&self.checked, &expression.kind) {
+            (Some(checked), _) => checked.contains(&expression.syntax_id),
+            (None, ExprKind::Call { name, .. }) => {
+                self.functions.contains(name)
+                    || mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    || (!self.declared.contains(name)
+                        && matches!(name.as_str(), "Int" | "Bool" | "Float64"))
+            }
+            (None, _) => false,
+        }
     }
 }
 
@@ -1632,12 +1680,15 @@ fn scalar_shaped(
             param_args,
             args,
             kwargs,
-        } if scalars.call(name) => {
+        } if scalars.call(expression) => {
             param_args
                 .iter()
                 .all(|argument| scalar_parameter_argument(argument, &shaped))
                 && args.iter().all(shaped)
                 && kwargs.iter().all(|argument| shaped(&argument.value))
+        }
+        ExprKind::MethodCall { args, kwargs, .. } if scalars.call(expression) => {
+            args.iter().all(shaped) && kwargs.iter().all(|argument| shaped(&argument.value))
         }
         ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
         ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Not, inner) => shaped(inner),
@@ -2162,12 +2213,11 @@ fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) ->
 /// cloned callee (a `def` the template does not serve) keeps the spreading
 /// `def` on the cloner. An overloaded name is served or cloned
 /// whole, since a forward (`tally(*rest)`) may bind any of its declarations.
-fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
+fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let methods = pack_collector_methods(program);
     let constructors = pack_collector_constructors(program);
     let mut spreads: HashMap<String, Vec<SpreadCallee>> = HashMap::new();
     let mut cloned: HashSet<String> = HashSet::new();
-    let scalars = ScalarReads::of(program);
     for statement in program {
         let StmtKind::Def { name, .. } = &statement.kind else {
             continue;
@@ -2175,7 +2225,7 @@ fn served_pack_defs(program: &[Stmt]) -> HashSet<String> {
         if !variadic_keyed_declaration(statement) {
             continue;
         }
-        match pack_def_shape_served(statement, &scalars) {
+        match pack_def_shape_served(statement, scalars) {
             Some(callees) => spreads.entry(name.clone()).or_default().extend(callees),
             None => {
                 cloned.insert(name.clone());
@@ -3630,14 +3680,14 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
 fn collect_specializable<'a>(
     program: &'a [Stmt],
     bound_generics: &HashSet<String>,
+    scalars: &ScalarReads,
 ) -> HashMap<String, &'a Stmt> {
-    let served_packs = served_pack_defs(program);
+    let served_packs = served_pack_defs(program, scalars);
     let served_lanes = served_lane_defs(program);
-    let scalars = ScalarReads::of(program);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s, &served_packs, &served_lanes, &scalars)
+            && (is_specializable_declaration(s, &served_packs, &served_lanes, scalars)
                 || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
@@ -3664,19 +3714,21 @@ fn collect_specializable<'a>(
 /// one — because the class is a property of a declaration, not of the name:
 /// the request's selected declaration index is what tells a call which class
 /// serves it.
-fn collect_overload_families(program: &[Stmt]) -> HashMap<String, Vec<&Stmt>> {
+fn collect_overload_families<'a>(
+    program: &'a [Stmt],
+    scalars: &ScalarReads,
+) -> HashMap<String, Vec<&'a Stmt>> {
     let mut families: HashMap<String, Vec<&Stmt>> = HashMap::new();
     for statement in program {
         if let StmtKind::Def { name, .. } = &statement.kind {
             families.entry(name.clone()).or_default().push(statement);
         }
     }
-    let served_packs = served_pack_defs(program);
-    let scalars = ScalarReads::of(program);
+    let served_packs = served_pack_defs(program, scalars);
     families.retain(|_, declarations| {
         declarations.len() > 1
             && declarations.iter().any(|s| {
-                comptime_keyed_declaration(s, &scalars)
+                comptime_keyed_declaration(s, scalars)
                     || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
                     || dtype_keyed_declaration(s)
             })
@@ -3916,8 +3968,8 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
 /// specialization path. An overloaded name is a template family
 /// ([`collect_overload_families`]), whose request path tells its declarations
 /// apart, since overload selection is the checker's.
-fn collect_pack_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let served_packs = served_pack_defs(program);
+fn collect_pack_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
+    let served_packs = served_pack_defs(program, scalars);
     program
         .iter()
         .filter(|statement| {
@@ -3960,8 +4012,8 @@ fn variadic_keyed_declaration(statement: &Stmt) -> bool {
 /// assertion over its own parameters. Packs, `DType`
 /// parameters, and SIMD-width parameters stay on their own paths: their
 /// signatures cannot stand in as a checkable stub.
-fn collect_dtype_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let families = collect_overload_families(program);
+fn collect_dtype_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
+    let families = collect_overload_families(program, scalars);
     let def_counts = def_name_counts(program);
     let served_lanes = served_lane_defs(program);
     program
@@ -3978,10 +4030,9 @@ fn collect_dtype_generic_templates(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let families = collect_overload_families(program);
+fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
+    let families = collect_overload_families(program, scalars);
     let def_counts = def_name_counts(program);
-    let scalars = ScalarReads::of(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -3991,7 +4042,7 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
             // A unique name joins on its own declaration; an overloaded name
             // joins as a family, whose members the request path tells apart.
             let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
-                && comptime_keyed_declaration(statement, &scalars);
+                && comptime_keyed_declaration(statement, scalars);
             admitted.then(|| name.clone())
         })
         .collect()
@@ -4005,11 +4056,10 @@ fn collect_comptime_generic_templates(program: &[Stmt]) -> HashSet<String> {
 /// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
 /// entirely on the abstract path: the registry is name-keyed and overload
 /// selection is the checker's.
-fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
+fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let def_counts = def_name_counts(program);
-    let served_packs = served_pack_defs(program);
+    let served_packs = served_pack_defs(program, scalars);
     let served_lanes = served_lane_defs(program);
-    let scalars = ScalarReads::of(program);
     program
         .iter()
         .filter_map(|statement| {
@@ -4022,7 +4072,7 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
             let StmtKind::Def { params, .. } = &statement.kind else {
                 return None;
             };
-            if is_specializable_declaration(statement, &served_packs, &served_lanes, &scalars)
+            if is_specializable_declaration(statement, &served_packs, &served_lanes, scalars)
                 || def_counts[name.as_str()] != 1
             {
                 return None;
@@ -4588,14 +4638,14 @@ mod def_request_tests {
                       def one() -> Int:\n        return 1\n    return Box(*args^).n + one()\n";
         let parsed = parse(source).expect("parse");
 
-        let served = super::served_pack_defs(&parsed);
+        let served = super::served_pack_defs(&parsed, &super::ScalarReads::default());
 
         assert!(served.contains("bag"), "{served:?}");
         assert!(served.contains("box"), "{served:?}");
-        // A homogeneous collector takes no pack, and a nested `def` is
-        // cloned per instance by the driver.
+        // A homogeneous collector takes no pack; a nested `def` is a
+        // generator over the pack's binders.
         assert!(!served.contains("ints"), "{served:?}");
-        assert!(!served.contains("nested"), "{served:?}");
+        assert!(served.contains("nested"), "{served:?}");
     }
 
     #[test]
@@ -4622,7 +4672,7 @@ mod def_request_tests {
                       var all = materialize[names]()\n    print(len(all))\n";
         let parsed = parse(source).expect("parse");
 
-        let served = super::served_pack_defs(&parsed);
+        let served = super::served_pack_defs(&parsed, &super::ScalarReads::default());
 
         // A scalar value binder beside the pack is bound from the brackets.
         assert!(served.contains("scaled"), "{served:?}");
@@ -4636,8 +4686,37 @@ mod def_request_tests {
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.
         assert!(!served.contains("tuples"), "R405: {served:?}");
-        assert!(!served.contains("raising"), "R401: {served:?}");
+        assert!(!served.contains("raising"), "R404: {served:?}");
         assert!(!served.contains("names"), "R365: {served:?}");
+    }
+
+    #[test]
+    fn a_display_element_validation_types_as_a_scalar_is_template_served() {
+        let source = "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    \
+                      def get(self) -> Int:\n        return self.v\n\n    \
+                      def twin(self) -> P:\n        return P(self.v)\n\n\
+                      def method[*Ts: Writable](*args: *Ts):\n    \
+                      comptime for p in [P(1).get(), 2]:\n        print(p)\n\n\
+                      def structural[*Ts: Writable](*args: *Ts):\n    \
+                      comptime for p in [P(1).twin().v, 2]:\n        print(p)\n";
+        let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
+        let prepared = super::prepare(linked).expect("prepare");
+        let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
+        mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+            .expect("validate");
+
+        let syntactic =
+            super::served_pack_defs(&prepared, &super::ScalarReads::of(&prepared, None));
+        let checked = super::served_pack_defs(
+            &prepared,
+            &super::ScalarReads::of(&prepared, catalog.scalar_calls()),
+        );
+
+        // The method's name says nothing about its result; the check does.
+        assert!(!syntactic.contains("method"), "{syntactic:?}");
+        assert!(checked.contains("method"), "{checked:?}");
+        // A field read off a method's result is not a call the check types.
+        assert!(!checked.contains("structural"), "{checked:?}");
     }
 
     #[test]

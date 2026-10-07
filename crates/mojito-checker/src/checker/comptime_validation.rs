@@ -185,6 +185,61 @@ pub(super) fn applicable_functions(
 }
 
 impl Checker {
+    /// The calls and method calls of `program` this validation typed as a
+    /// scalar a `comptime for` binder takes (`Int`, `Bool`, `Float64`, a
+    /// string) without raising, by the syntax identity the elaborated
+    /// program keeps. A node copied more than once (a trait default per
+    /// conformer) qualifies only when every copy did.
+    pub(super) fn scalar_calls(&self, program: &[Stmt]) -> HashSet<mojito_common::token::SyntaxId> {
+        struct Calls<'a> {
+            checker: &'a Checker,
+            verdicts: HashMap<mojito_common::token::SyntaxId, bool>,
+        }
+        impl mojito_ast::visit::Visitor for Calls<'_> {
+            fn visit_expr(&mut self, expression: &Expr) {
+                if !matches!(
+                    expression.kind,
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                ) {
+                    return;
+                }
+                let span = expression.source_span();
+                let scalar = self
+                    .checker
+                    .expression_types
+                    .borrow()
+                    .get(&span)
+                    .is_some_and(|ty| match ty {
+                        Ty::Int | Ty::Bool | Ty::Float64 | Ty::StringLiteral => true,
+                        Ty::Struct(name, args) => {
+                            args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
+                        }
+                        _ => false,
+                    });
+                let raises = self
+                    .checker
+                    .expression_effects
+                    .borrow()
+                    .get(&span)
+                    .is_some_and(|effects| effects.raises.is_some());
+                *self
+                    .verdicts
+                    .entry(self.checker.syntax_origins.origin(expression.syntax_id))
+                    .or_insert(true) &= scalar && !raises;
+            }
+        }
+        let mut calls = Calls {
+            checker: self,
+            verdicts: HashMap::new(),
+        };
+        mojito_ast::visit::walk_block(&mut calls, program);
+        calls
+            .verdicts
+            .into_iter()
+            .filter_map(|(call, scalar)| scalar.then_some(call))
+            .collect()
+    }
+
     /// Check the method bodies of a struct that hold compile-time control
     /// flow, each with `self` bound at the struct's own parameters, and every
     /// body constructing a vector at a lane its method's own binders spell

@@ -149,6 +149,11 @@ pub fn validate_comptime_templates_into(
         .template_catalog
         .borrow_mut()
         .set_applied_constants(checker.comptime_applied.clone());
+    let scalar_calls = checker.scalar_calls(&expanded);
+    checker
+        .template_catalog
+        .borrow_mut()
+        .set_scalar_calls(scalar_calls);
     *catalog = checker.template_catalog.take();
     let checked = body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());

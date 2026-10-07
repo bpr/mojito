@@ -377,13 +377,6 @@ impl Compiler {
         // after the first pass with no re-elaboration; ownership and MIR
         // verification run exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
-        let templates = {
-            let mut templates = bound_generic_template_names(linked);
-            templates.extend(pack_generic_template_names(linked));
-            templates.extend(comptime_generic_template_names(linked));
-            templates.extend(dtype_generic_template_names(linked));
-            templates
-        };
         let range_templates = scalar_range_template_names(linked);
         let variadic_templates = variadic_struct_template_names(linked);
         let user_structs = user_struct_names(linked);
@@ -422,6 +415,14 @@ impl Compiler {
         }));
         crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
             .map_err(CompilerError::Type)?;
+        // Which `def`s are templates reads the scalar calls validation typed.
+        let templates = {
+            let mut templates = bound_generic_template_names(linked, &templates_catalog);
+            templates.extend(pack_generic_template_names(linked, &templates_catalog));
+            templates.extend(comptime_generic_template_names(linked, &templates_catalog));
+            templates.extend(dtype_generic_template_names(linked, &templates_catalog));
+            templates
+        };
         // The abstract references of the elaboration `checked` was checked
         // from, and the generic structs whose erased method bodies can reach
         // a compile-time-keyed stub.

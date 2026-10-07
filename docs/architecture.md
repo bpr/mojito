@@ -705,7 +705,13 @@ again as a retained bound generic by the executable pass when its template
 serves it. Bodies
 without such constructs are declared but left to the
 executable check; a struct keyed on a struct-typed value parameter registers
-as a template shell and keeps its per-instantiation check. Validation then runs the
+as a template shell and keeps its per-instantiation check. Validation
+records, beside the applied module constants, the calls and method calls it
+typed as a scalar a `comptime for` binder takes without raising
+(`Checker::scalar_calls` into `TemplateCatalog::scalar_calls`, keyed by
+syntax identity): the elaborator's template-served decision for a display
+element (`ScalarReads`, `comptime.rs`) and the driver's template-name sets
+read that verdict, so they are computed after validation. Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
 compile-time-keyed template is a trapping stub by the time the executable

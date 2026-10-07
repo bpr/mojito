@@ -72,6 +72,7 @@ assets/ok/comptime_for_body_scope.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_collection_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_display_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_display_element_reads.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_for_display_method_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_display_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_index_typed_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_for_iteration_scope.mojo	-	ineligible	no-scalar-entry-shape

@@ -2428,6 +2428,12 @@ pub struct TemplateCatalog {
     /// The executable check, which sees the elaborator's folded literal,
     /// keeps each constant's identity from here.
     applied_constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
+    /// The calls and method calls source validation typed as a scalar a
+    /// `comptime for` binder takes (`Int`, `Bool`, `Float64`, a string), with
+    /// no raise, by the syntax identity every copy keeps: the elaborator's
+    /// template-served decision reads a display element's type from here.
+    /// Absent until a validation run reaches its verdict.
+    scalar_calls: Option<std::collections::HashSet<SyntaxId>>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2544,6 +2550,7 @@ impl TemplateCatalog {
             verify: self.verify,
             body_fact_reuse: false,
             param_context: self.param_context.clone(),
+            scalar_calls: self.scalar_calls.clone(),
             ..Self::default()
         };
         catalog.set_traces(traces);
@@ -2593,6 +2600,17 @@ impl TemplateCatalog {
         &self.applied_constants
     }
 
+    /// The calls source validation typed as a `comptime for` binder's
+    /// scalar, or `None` when no validation run reached a verdict.
+    pub const fn scalar_calls(&self) -> Option<&std::collections::HashSet<SyntaxId>> {
+        self.scalar_calls.as_ref()
+    }
+
+    /// Keep the scalar-typed calls source validation found.
+    pub fn set_scalar_calls(&mut self, calls: std::collections::HashSet<SyntaxId>) {
+        self.scalar_calls = Some(calls);
+    }
+
     /// Keep the applied module constants source validation found.
     pub fn set_applied_constants(
         &mut self,
@@ -2621,6 +2639,7 @@ impl TemplateCatalog {
     /// nothing about the bodies it did reach.
     pub fn abort_validation(&mut self) {
         self.validation_aborted = true;
+        self.scalar_calls = None;
         for template in self.templates.values_mut() {
             if template.producer == TemplateProducer::SourceValidation {
                 template.coverage =

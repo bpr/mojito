@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime for` display element that calls a method now runs from the
+  generic body's template, as at the pin: `[P(n).get(), n]`, `[S.g(n), n]`,
+  `[S[n].g(n), n]`, `[String(n).upper(), "x"]`, a method on a local
+  `comptime` receiver, and a struct method's `[Self.g(Self.n), Self.n]`,
+  where each was cloned per instance or failed ("compile-time method 'g'
+  needs a value receiver", "a compile-time 'String' result cannot cross
+  back from VM CTFE", "unspecialized type-keyed method"). Source validation
+  now decides which display calls return a scalar, from their checked
+  types, instead of the callee's declaration.
 - A value parameter typed by an earlier type parameter now works as at the
   pin: `struct S[T: ImplicitlyCopyable & Writable, //, v: T]` with
   `S[3]().get()`, `def f[T: …, //, v: T]() -> T` with `f[True]()` and

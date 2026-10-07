@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R453**.
+Next free ID: **R454**.
 
 ## Ordered Work
 
@@ -123,23 +123,23 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R401 (P3b) A `comptime for` display element of a struct type, or one
-  that calls a raising `def` or a method, keys a clone**
+- [ ] **R453 (P3b) A display element's call is judged by its callee's
+  declaration when source validation reaches no verdict**
 
-  Problem: `comptime for p in [mk(n), P(1)]:` in `def f[n: Int]()` is
-  unrolled in the AST on a clone, where `[twice(n), n]` is served by the
-  template.
-  - The cloner decides before the check, from the module's declarations
-    (`ScalarReads`, `comptime.rs`): a callee must be a module `def` every
-    declaration of which returns an `Int`, `Bool`, `String`, or `Float64`
-    and does not raise.
-  - A loop variable is a binder MIR carries, so a struct element waits on
-    R367; a raising callee, a method (`x.f()`), and a callee reached
-    through a module name (`m.f(n)`) only need the predicate to see them.
-  - Each clone runs a CTFE call through a whole-program check, about 35
-    seconds for a two-element display in a debug build (R198).
-  - Found while landing R363 (2026-10-06).
-  - Depends on R367.
+  Problem: a program whose validation run stops without a verdict keys a
+  clone for `comptime for p in [P(n).get(), n]:`, which the template serves
+  in every other program.
+  - `ScalarReads` (`comptime.rs`) reads the scalar calls source validation
+    typed (`TemplateCatalog::scalar_calls`).
+  - A run that reaches a template-shell member aborts
+    (`validate_comptime_templates_into`) and withdraws that set, so the
+    elaborator falls back to the callee's declaration: a module `def`
+    returning a scalar without raising, or a scalar construction.
+  - A method call has no such declaration, so it keys a clone there.
+  - An elaboration no validation precedes (the `elaborate_with_requests`
+    test seam) takes the same fallback.
+  - Found while landing R401 (2026-10-07).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R365 (P3) A reflected list materialized whole over a type parameter

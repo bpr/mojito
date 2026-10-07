@@ -1391,7 +1391,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,
   `scalar_shaped`, `display_read_shaped`, `reflection_count`, and
-  `reflected_names` are the admitted spellings), on a reflected list materialized whole
+  `reflected_names` are the admitted spellings, a call or method call
+  admitted by `ScalarReads::call` from the verdict source validation
+  recorded, `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
+  `TemplateCatalog::scalar_calls`), on a reflected list materialized whole
   (`ReflectedLists::materialized_in`), or a nested `def` holding a
   `rebind`. The crossing pass spells a named collection as its display in
   a kept header (`cross_stmt`, `comptime/crossing.rs`), and leaves a
