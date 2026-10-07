@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R467**.
+Next free ID: **R471**.
 
 ## Ordered Work
 
@@ -87,18 +87,40 @@ correctness fix to existing behavior is allowed.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
 
-- [ ] **R466 (P3) A value parameter holding a `String` is built into a slot
-  at entry, not materialized at each use**
+- [ ] **R467 (P3) A field read of a struct value parameter materializes
+  the whole struct**
 
-  Problem: `def g[p: Tuple[Int, String]]()` constructs `p` into its slot on
-  entry and destroys it at exit, where Mojo materializes the parameter at
-  each use, as a `comptime for` element holding a `String` now is.
-  - Every borrow of such a parameter already reads a temporary
-    (`materialize_parameter_read`), so the slot is read only by copies.
-  - Constructing at each copy, as `construct_binder_reads` does for a loop
-    binder, would delete `seed_parameter_slots`'s constructed arm.
-  - No visible difference: output already matches the pin.
-  - Found while landing R454 (2026-10-07).
+  Problem: `q.a` and `q.s` in `def f[q: Q]()` build a temporary `Q` and
+  destroy it, where Mojo folds the projection: `q.a` is the constant, and
+  `q.s` materializes only the `String`.
+  - An `Int`-only `Q` with a printing `__deinit__`, read as `print(q.a)`
+    twice: the pin prints `8 / 8 / del 8`, Mojito `8 / del 8 / 8 / del 8`.
+  - With a `String` field, `print(q.a)`, `print(q.s)`, `var r = q`: the pin
+    prints `8 / x / 8 / del 8`, Mojito `8 / del 8 / x / del 8 / 8 / del 8`.
+  - `Checker::materialize_parameter_read` materializes the `Identifier`
+    base of `q.a`; the projected expression should be the parameter read,
+    and mono should fold or construct the projected leaf
+    (`projected_parameter_constant` already folds a closed one).
+  - Found while landing R466 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R468 (P3) A caller still builds a value parameter's `String`-holding
+  argument at run time and never destroys it**
+
+  Problem: `tup[(1, Tag(8, "x"))]()` constructs the `String`, the `Tag`, and
+  the `Tuple` in the concrete caller, where Mojo builds nothing at the call
+  site, and nothing destroys them.
+  - The instance builds its own value at each read (R466), so the caller's
+    construction only fed the erased argument register, which mono clears
+    (`mono/infer.rs`, `specializer.rs`) without deleting what built it.
+  - Visible in `--emit ll` of
+    `assets/ok/value_parameter_materialized_per_use.mojo`: `main` calls
+    the `String`, `Tag`, and `Tuple` initializers before `tup`, and no
+    `del 8` is printed for that value.
+  - Fix: drop the construction with its register, or never lower a
+    parameter argument as a run-time expression.
+  - Found while landing R466 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -731,6 +753,21 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R470 (P5) The erased oracle cannot read a defaulted value parameter
+  holding a `String`**
+
+  Problem: `def d[p: Tuple[Int, String] = (7, "d")]()` called as `d()` stops
+  under `--erased` with "vm: checked nominal subscript receiver is
+  Tuple[Int, String]" at `p[0]` or `var t = p`, where concrete MIR prints.
+  - An explicit argument (`d[(6, "k")]()`) runs erased.
+  - The erased frame binds the default as a bare tuple value, not the
+    nominal `Tuple` the template's subscript expects.
+  - `assets/ok/value_parameter_string_aggregate.mojo` is the
+    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R407 (P5) The erased oracle cannot run `Variant`**
 
   Problem: a program that uses `Variant` runs on concrete MIR but stops
@@ -880,6 +917,20 @@ change that needs a new `MJRT_ABI_VERSION`.
     `other.storage` destroyed, so the suspect is the presence flag of a
     `deinit` parameter that is not the receiver.
   - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R469 Native `Tuple` construction copies a fresh struct element in
+  and leaks the original**
+
+  Problem: `var t = (1, Q(8, "x"))` runs `Q`'s copy initializer natively and
+  never destroys the temporary, where the pin and the VM move it in and
+  print `1 / del 8 / end`.
+  - Native prints `copy 8 / 1 / del 8 / end`.
+  - Every read of a value parameter holding such a struct constructs one
+    (R466), so the copy shows once per read there.
+  - Pinned by `conformance/probes/native_tuple_struct_element_copied.mojo`.
+  - Found while landing R466 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

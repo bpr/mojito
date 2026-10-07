@@ -1490,16 +1490,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   specializer's rewrite); `CtValue::is_closed_parameter_value`
   (`mojito-types/src/ct.rs`, called from `verify/instr.rs`) admits it. A
   value with a `String` leaf (`CtValue::is_constructed_parameter_value`)
-  is not folded: `substitute_function` leaves its slot reads, and
-  `seed_parameter_slots` (`mono/substitute.rs`, which also stores a
-  captured slot's constant) builds it at entry through
-  `parameter_value_construction`. The VM materializes a folded one through
+  is not folded: `substitute_function` constructs it at each read of its
+  slot (`construct_parameter_reads`, `mono/substitute.rs`, through
+  `parameter_value_construction`), the slot holding nothing, and
+  `seed_captured_parameter_slots` stores a captured folded slot's constant
+  at entry. The VM materializes a folded one through
   `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
   checked type names, `materialize_parameter_value`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
   and `store_parameter_value` (`lower/consts.rs`). A `comptime for`
   element with a `String` leaf is constructed at each read of its binder
-  instead (`construct_binder_reads`, `mono/substitute.rs`, from
+  the same way (`construct_parameter_reads`, from
   `Specializer::copy_body`, `mono/unroll.rs`), and the erased VM
   materializes the element it binds at the slot's type
   (`VmBackend::materialize_comptime_binder`, `backend/vm/adapters.rs`). A
@@ -1510,9 +1511,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `materialize_parameter_read`, both `checker/origins/actuals.rs`), which
   MIR roots any place read at (`Flatten::materialized_parameter_place`,
   `mir/calls.rs`); a consumed read hands the value over instead
-  (`consume_parameter_read`), and a `comptime for` binder slot is no drop
-  root (`comptime_binder_slots`, `analysis/scan.rs`, read by
-  `elaborate_drops` and `RegionDropCtx::droppable`).
+  (`consume_parameter_read`), and a compile-time parameter's slot is no
+  drop root: a `comptime for` binder's (`comptime_binder_slots`,
+  `analysis/scan.rs`) and a value parameter's
+  (`materialized_parameter_slots`, `mojito-mir/src/mir.rs`, over the
+  declarations `binder_scope` walks, which `Specializer::binder_scope`
+  shares), both excluded by `elaborate_drops` and
+  `RegionDropCtx::droppable`.
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

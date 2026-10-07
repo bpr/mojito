@@ -406,6 +406,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "type_names_applied_elements",
     "variadic_method_type_params",
     "variadic_pack_upstream_spellings",
+    // R470, the erased oracle: a defaulted value parameter holding a
+    // `String` binds a bare tuple, not the nominal `Tuple`.
+    "value_parameter_string_aggregate",
     // R407, the erased oracle: a pack reifies its length, not its element
     // types, so `Variant`'s template cannot select an alternative and a
     // static method cannot answer `Self.Ts.contains[T]()`.

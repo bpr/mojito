@@ -14,7 +14,7 @@ use super::*;
 /// through [`elaborate_try_interior`], leaving the region cleanup lists as
 /// raise-edge/scope-exit backstops.
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
+pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>) -> MirFunction {
     let nb = f.blocks.len();
     // Function-wide `DefVar` counts (deep through `try` regions): the reference
     // that region-locality — and therefore every `try` cleanup — is judged
@@ -77,11 +77,12 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
         .zip(&generation_entries)
         .map(|(live, generations)| effective_drop_liveness(live.clone(), generations, &loan_roots))
         .collect();
-    let binders = comptime_binder_slots(&f.blocks);
-    let droppable = |v: VarId| is_droppable_root(f, v) && !binders.contains(&v);
+    let mut parameter_slots = comptime_binder_slots(&f.blocks);
+    parameter_slots.extend(value_parameters);
+    let droppable = |v: VarId| is_droppable_root(f, v) && !parameter_slots.contains(&v);
     let region_ctx = RegionDropCtx {
         f,
-        binders: &binders,
+        parameter_slots: &parameter_slots,
         loan_roots: &loan_roots,
         generation_dests: &generation_dests,
         effective_live_in: &effective_live_in,
@@ -415,8 +416,10 @@ pub(super) fn elaborate_drops(f: &MirFunction) -> MirFunction {
 /// Shared analysis inputs for elaborating drops inside `try` region mini-CFGs.
 pub(super) struct RegionDropCtx<'a> {
     f: &'a MirFunction,
-    /// The function's `comptime for` binder slots ([`comptime_binder_slots`]).
-    binders: &'a HashSet<VarId>,
+    /// The function's compile-time parameter slots: its `comptime for`
+    /// binders ([`comptime_binder_slots`]) and its materialized value
+    /// parameters (`materialized_parameter_slots`).
+    parameter_slots: &'a HashSet<VarId>,
     /// Owner roots per loan generation, collected deep through regions.
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     /// Destination domain per generation marker, collected deep.
@@ -427,9 +430,10 @@ pub(super) struct RegionDropCtx<'a> {
 
 impl RegionDropCtx<'_> {
     /// Whether the region's function drops the value in `v`
-    /// ([`is_droppable_root`]), a `comptime for` binder never.
+    /// ([`is_droppable_root`]); a compile-time parameter's slot — a `comptime
+    /// for` binder or a value parameter — never.
     fn droppable(&self, v: VarId) -> bool {
-        is_droppable_root(self.f, v) && !self.binders.contains(&v)
+        is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v)
     }
 }
 

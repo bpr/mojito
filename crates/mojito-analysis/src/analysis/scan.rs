@@ -427,7 +427,9 @@ pub(super) fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
 /// The slots `comptime for` headers bind, deep through `try` regions. A
 /// binder holds a compile-time parameter, not storage: every run-time read
 /// materializes the parameter into a temporary of its own, so the binder
-/// owns nothing and is no drop root.
+/// owns nothing and is no drop root. Drop elaboration excludes these with a
+/// value parameter's slots (`materialized_parameter_slots`), which hold
+/// nothing for the same reason.
 pub(super) fn comptime_binder_slots(blocks: &[MirBlock]) -> HashSet<VarId> {
     let mut slots = HashSet::new();
     for block in blocks {

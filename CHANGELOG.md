@@ -960,6 +960,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A tuple or struct value parameter holding a `String` (`def tup[p:
+  Tuple[Int, Tag]]()`) is now constructed at each use with no slot of its
+  own, as at the pin, so an element type's destructor runs once per use.
+  Before, the value was built into a slot at entry, each use copied out of
+  it, and the slot was destroyed once more, which a copy initializer or
+  destructor that prints made visible.
 - A transfer out of a compile-time parameter (`take(p^)` in `def g[p:
   Int]()`, or over a `comptime for` variable) is now rejected with "cannot
   transfer from a parameter expression", as at the pin, where an `Int`

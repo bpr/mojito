@@ -245,6 +245,76 @@ impl MirFunctionDeclaration {
     }
 }
 
+/// The compile-time parameters in scope of the body `name`: those of each
+/// declaration enclosing it, outermost first, then its own. A nested body is
+/// a generator over its enclosing declarations' binders.
+pub fn binder_scope<'a>(
+    name: &str,
+    lookup: impl Fn(&str) -> Option<&'a MirFunctionDeclaration>,
+) -> Vec<&'a ParamDecl> {
+    let mut chain = Vec::new();
+    let mut link = lookup(name);
+    while let Some(declaration) = link {
+        chain.push(&declaration.param_decls);
+        link = declaration.enclosing.as_deref().and_then(&lookup);
+    }
+    chain.into_iter().rev().flatten().collect()
+}
+
+/// The declared type of the materialized value parameter `name` in `scope`.
+///
+/// Such a parameter is non-variadic and declared at a type binder (`v: T`)
+/// or an aggregate (`p: Tuple[Int, String]`).
+pub fn materialized_parameter_ty<'a>(
+    name: &str,
+    scope: impl IntoIterator<Item = &'a ParamDecl>,
+) -> Option<&'a Ty> {
+    scope.into_iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            name: declared,
+            ty,
+            variadic: false,
+            ..
+        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. } | Ty::Struct(..)) => {
+            Some(ty.as_ref())
+        }
+        _ => None,
+    })
+}
+
+/// The slots of `function` that hold a value parameter of `scope` rather than
+/// storage.
+///
+/// Such a parameter ([`materialized_parameter_ty`]), like a `comptime for`
+/// binder, is materialized at each run-time read, whose consumer owns the
+/// result, so its slot owns nothing and is no drop root. A callable-bound
+/// parameter is left out: the elaborator may promote it to a run-time
+/// parameter.
+#[must_use]
+pub fn materialized_parameter_slots(
+    function: &MirFunction,
+    scope: &[&ParamDecl],
+) -> HashSet<VarId> {
+    function
+        .var_names
+        .iter()
+        .enumerate()
+        .skip(function.n_params)
+        .filter(|(_, name)| {
+            materialized_parameter_ty(name, scope.iter().copied()).is_some_and(|ty| {
+                !matches!(
+                    ty,
+                    Ty::Param {
+                        callable_bound: Some(_),
+                        ..
+                    }
+                )
+            })
+        })
+        .filter_map(|(var, _)| VarId::try_from(var).ok())
+        .collect()
+}
+
 /// # Panics
 ///
 /// Panics if a checked declaration names a parameter absent from its own

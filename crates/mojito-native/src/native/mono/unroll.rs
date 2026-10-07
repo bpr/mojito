@@ -255,8 +255,8 @@ impl Specializer<'_> {
         // else of the copy may be substituted without.
         self.unroll_in(blocks, first, frame, &iteration, tables)?;
         // An element holding a string is constructed at each read; any other
-        // folds there. An enclosing value the instance constructs into its
-        // slot keeps its slot reads (`substitute_function`).
+        // folds there. An enclosing value parameter holding a string keeps
+        // its slot reads, which `substitute_function` constructs.
         let mut locals = bound_parameter_locals(frame.scope, bindings);
         locals.retain(|_, value| !value.is_constructed_parameter_value());
         if bound.is_constructed_parameter_value() {
@@ -271,7 +271,7 @@ impl Specializer<'_> {
                         format!("comptime for element `{bound}` has no binder type"),
                     )
                 })?;
-            construct_binder_reads(
+            construct_parameter_reads(
                 &mut blocks[first..],
                 slot,
                 &bound,

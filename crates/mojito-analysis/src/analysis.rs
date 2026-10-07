@@ -26,8 +26,9 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirFunction, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript,
-    MirPlace, MirProgram, MirTerm, Proj, Reg, SpanTable, UseMode,
+    MirBlock, MirCaptureMode, MirFunction, MirFunctionDeclaration, MirInstr, MirInteriorOrigin,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, SpanTable, UseMode,
+    binder_scope, materialized_parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -148,26 +149,34 @@ impl CalleeRefParams<'_> {
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
+    let declarations: HashMap<&str, &MirFunctionDeclaration> = prog
+        .declarations
+        .functions
+        .iter()
+        .map(|declaration| (declaration.lowered_name.as_str(), declaration))
+        .collect();
+    let functions = prog
+        .functions
+        .into_iter()
+        .map(|(name, mut f)| {
+            elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
+            // Module-scope (`__toplevel__`) variables live until program end, so
+            // they are not ASAP-dropped — that also keeps their final values
+            // intact for the CLI/`bindings()` global dump (a `DropVar` would
+            // clear the slot).
+            let elaborated = if name == "__toplevel__" {
+                f
+            } else {
+                let scope = binder_scope(&name, |name| declarations.get(name).copied());
+                let mut elaborated = elaborate_drops(&f, &materialized_parameter_slots(&f, &scope));
+                refine_deinit_fields(&mut elaborated, &prog.declarations.structs);
+                elaborated
+            };
+            (name, elaborated)
+        })
+        .collect();
     MirProgram {
-        functions: prog
-            .functions
-            .into_iter()
-            .map(|(name, mut f)| {
-                elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
-                // Module-scope (`__toplevel__`) variables live until program end, so
-                // they are not ASAP-dropped — that also keeps their final values
-                // intact for the CLI/`bindings()` global dump (a `DropVar` would
-                // clear the slot).
-                let elaborated = if name == "__toplevel__" {
-                    f
-                } else {
-                    let mut elaborated = elaborate_drops(&f);
-                    refine_deinit_fields(&mut elaborated, &prog.declarations.structs);
-                    elaborated
-                };
-                (name, elaborated)
-            })
-            .collect(),
+        functions,
         declarations: prog.declarations,
         invariant_errors: prog.invariant_errors,
     }

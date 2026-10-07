@@ -68,9 +68,9 @@ pub(super) fn default_construct_parameters(
 
 /// Substitute `bindings` through `function`, whose declaration declares the
 /// compile-time parameters in `scope`. A value parameter whose value owns a
-/// string ([`CtValue::is_constructed_parameter_value`]) keeps its slot reads:
-/// the instance constructs the value into that slot on entry, with the field
-/// types of the `structs` it names.
+/// string ([`CtValue::is_constructed_parameter_value`]) is constructed at each
+/// read ([`construct_parameter_reads`]), with the field types of the
+/// `structs` it names; its slot holds nothing.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
@@ -99,7 +99,7 @@ pub(super) fn substitute_function(
         // binding.
         let ty = match scalar_parameter_ty(value, name, scope) {
             Some(ty) => Some(ty),
-            None => declared_parameter_ty(name, scope)
+            None => mojito_mir::mir::materialized_parameter_ty(name, scope)
                 .map(|ty| substitute_ty(ty, bindings))
                 .transpose()?,
         };
@@ -107,13 +107,7 @@ pub(super) fn substitute_function(
             function.var_tys.insert(var as u32, ty);
         }
     }
-    seed_parameter_slots(
-        function,
-        &locals,
-        &constructed,
-        &bindings.callables,
-        structs,
-    )?;
+    seed_captured_parameter_slots(function, &locals, &bindings.callables);
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -128,6 +122,30 @@ pub(super) fn substitute_function(
     }
     if let Some(ty) = &mut function.error_ty {
         *ty = substitute_ty(ty, bindings)?;
+    }
+    for (var, name) in function.var_names.iter().enumerate() {
+        let Some(value) = constructed.get(name.as_str()) else {
+            continue;
+        };
+        let var = var as u32;
+        let ty = function
+            .var_tys
+            .get(&var)
+            .cloned()
+            .ok_or_else(|| MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!("value parameter `{value}` has no declared type"),
+            })?;
+        construct_parameter_reads(
+            &mut function.blocks,
+            var,
+            value,
+            &ty,
+            &mut function.n_regs,
+            &mut function.reg_types,
+            structs,
+        )?;
     }
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
@@ -346,17 +364,17 @@ pub(super) fn substitute_value_parameter_reads(
     Ok(())
 }
 
-/// Construct the iteration's value `value` wherever a copy of a `comptime
-/// for` body reads the binder `slot`, at the read's type (`ty`, the binder's,
-/// where the read has none — a binder over a literal display keeps the
-/// literal element type the read defaults): a value
-/// holding a string is no constant, so each read is the construction
+/// Construct the compile-time parameter value `value` wherever `blocks` read
+/// its slot `slot` — a `comptime for` binder's or a value parameter's — at
+/// the read's type (`ty`, the slot's, where the read has none — a binder
+/// over a literal display keeps the literal element type the read defaults):
+/// a value holding a string is no constant, so each read is the construction
 /// upstream's `kgen.param.constant` materializes
 /// ([`parameter_value_construction`]), whose result the read's consumer — a
-/// materialized temporary or a copy — owns. A place rooted at the binder
-/// remains only where the check left a read unmaterialized, and is an
-/// error, since the binder holds no storage.
-pub(super) fn construct_binder_reads(
+/// materialized temporary or a copy — owns. A place rooted at the slot, or a
+/// drop of it, remains only where the check or drop elaboration treated the
+/// parameter as storage, and is an error, since the slot holds nothing.
+pub(super) fn construct_parameter_reads(
     blocks: &mut [MirBlock],
     slot: u32,
     value: &CtValue,
@@ -393,9 +411,12 @@ pub(super) fn construct_binder_reads(
                     .chain(orelse.iter_mut())
                     .chain(finalbody.iter_mut())
                 {
-                    construct_binder_reads(region, slot, value, ty, n_regs, reg_types, structs)?;
+                    construct_parameter_reads(region, slot, value, ty, n_regs, reg_types, structs)?;
                 }
-            } else if mojito_mir::mir::verify::instruction_places(&instruction)
+            } else if matches!(
+                instruction,
+                MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } if var == slot
+            ) || mojito_mir::mir::verify::instruction_places(&instruction)
                 .iter()
                 .any(|place| place.root == slot || place.through == Some(slot))
             {
@@ -403,7 +424,7 @@ pub(super) fn construct_binder_reads(
                     kind: MonoErrorKind::Unsupported,
                     function: None,
                     construct: format!(
-                        "a place read of the comptime for element `{value}`, which holds no storage"
+                        "a place read of the compile-time parameter `{value}`, which holds no storage"
                     ),
                 });
             }
@@ -1333,58 +1354,40 @@ fn projected_parameter_constant(
         .flatten()
 }
 
-/// Seed, at the entry block, every value parameter slot the instance still
-/// reads. A folded slot is never stored, so a closure capturing it would
-/// borrow uninitialized storage: a captured one is stored its constant first.
-/// A constructed slot (`locals` leaves it out) is always read, so its value is
-/// built into it ([`parameter_value_construction`]), and the template's own
-/// drop of the slot destroys it, as the caller's argument would have been.
-fn seed_parameter_slots(
+/// Seed, at the entry block, every folded value parameter slot a closure
+/// captures. A folded slot is never stored, so the capture would borrow
+/// uninitialized storage: it is stored its constant first.
+fn seed_captured_parameter_slots(
     function: &mut MirFunction,
     locals: &HashMap<String, &CtValue>,
-    constructed: &HashMap<String, &CtValue>,
     callables: &HashMap<String, String>,
-    structs: &HashMap<&str, &MirStructDeclaration>,
-) -> Result<(), MonoError> {
+) {
     let mut captured = HashSet::new();
     collect_captured_vars(&function.blocks, &mut captured);
     let mut initializers = Vec::new();
     for (var, name) in function.var_names.iter().enumerate() {
         let var = var as u32;
+        if !captured.contains(&var) {
+            continue;
+        }
         let Some(ty) = function.var_tys.get(&var).cloned() else {
             continue;
         };
+        let constant = callables
+            .get(name)
+            .map(|callable| Const::Function(callable.clone()))
+            .or_else(|| {
+                locals
+                    .get(name.as_str())
+                    .and_then(|value| value_parameter_constant(value, Some(&ty)))
+            });
+        let Some(k) = constant else {
+            continue;
+        };
         let dest = Reg(function.n_regs);
-        if let Some(value) = constructed.get(name.as_str()) {
-            function.n_regs += 1;
-            function.reg_types.insert(dest.0, ty.clone());
-            initializers.extend(parameter_value_construction(
-                dest,
-                value,
-                &ty,
-                &mut function.n_regs,
-                &mut function.reg_types,
-                structs,
-            )?);
-        } else {
-            if !captured.contains(&var) {
-                continue;
-            }
-            let constant = callables
-                .get(name)
-                .map(|callable| Const::Function(callable.clone()))
-                .or_else(|| {
-                    locals
-                        .get(name.as_str())
-                        .and_then(|value| value_parameter_constant(value, Some(&ty)))
-                });
-            let Some(k) = constant else {
-                continue;
-            };
-            function.n_regs += 1;
-            function.reg_types.insert(dest.0, ty.clone());
-            initializers.push(MirInstr::Const { dest, k });
-        }
+        function.n_regs += 1;
+        function.reg_types.insert(dest.0, ty.clone());
+        initializers.push(MirInstr::Const { dest, k });
         initializers.push(MirInstr::DefVar {
             var,
             src: dest,
@@ -1394,7 +1397,6 @@ fn seed_parameter_slots(
     if let Some(entry) = function.blocks.first_mut() {
         entry.instrs.splice(0..0, initializers);
     }
-    Ok(())
 }
 
 /// The run-time construction of the parameter value `value`, of the concrete
@@ -1529,22 +1531,6 @@ pub(super) fn bound_parameter_locals<'a>(
             Some((binder.name.trim_start_matches('*').to_string(), value))
         })
         .collect()
-}
-
-/// The declared type of the non-variadic value parameter `name`: a type
-/// binder of the declaration (`v: T`) or an aggregate (`p: Tuple[Int, Int]`).
-fn declared_parameter_ty<'a>(name: &str, scope: &'a [ParamDecl]) -> Option<&'a Ty> {
-    scope.iter().find_map(|decl| match decl {
-        ParamDecl::Value {
-            name: declared,
-            ty,
-            variadic: false,
-            ..
-        } if declared == name && matches!(ty.as_ref(), Ty::Param { .. } | Ty::Struct(..)) => {
-            Some(ty.as_ref())
-        }
-        _ => None,
-    })
 }
 
 /// The type of the local a scalar value parameter's read binds: the

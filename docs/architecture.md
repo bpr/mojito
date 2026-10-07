@@ -506,8 +506,11 @@ binder's own slot owning nothing and so no drop root
 (`analysis::scan::comptime_binder_slots`), and `native::mono` turns every
 read of it, per unrolled copy, into a `Const::Value` where its leaves are
 numbers and booleans, or into the element's construction where one is a
-`String` (`construct_binder_reads`), as upstream's `kgen.param.constant`
-materializes a parameter at each use. MIR lifts an evaluated display as a
+`String` (`construct_parameter_reads`), as upstream's `kgen.param.constant`
+materializes a parameter at each use. A tuple or struct value parameter's
+slot follows the same rule: it owns nothing and is no drop root
+(`mir::materialized_parameter_slots`), and each read of it is the value's
+constant or construction, with nothing built at entry. MIR lifts an evaluated display as a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes

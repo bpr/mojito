@@ -1325,13 +1325,10 @@ impl<'a> Specializer<'a> {
     /// The binders a body of `template` may name: those of each declaration
     /// it is nested in, outermost first, then its own.
     pub(super) fn binder_scope(&self, template: &str) -> Vec<ParamDecl> {
-        let mut chain = Vec::new();
-        let mut link = Some(template);
-        while let Some(declaration) = link.and_then(|name| self.declarations.get(name).copied()) {
-            chain.push(&declaration.param_decls);
-            link = declaration.enclosing.as_deref();
-        }
-        chain.into_iter().rev().flatten().cloned().collect()
+        mojito_mir::mir::binder_scope(template, |name| self.declarations.get(name).copied())
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Point each closure and function value naming a body nested in
