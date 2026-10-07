@@ -7099,41 +7099,34 @@ fn collector_position_distinguishes_overloads() {
 }
 
 #[test]
-fn template_catalog_does_not_certify_aborted_validation() {
-    // A struct-value-keyed struct registers as a template shell, whose
-    // members exist only per specialization: a member the shell does not
-    // answer for stops validation without a verdict, before it reaches
-    // `second`. Neither the partial traversal nor the `Ok(())` it returns
-    // may certify a body.
+fn validation_rejects_a_missing_member_of_a_value_keyed_struct() {
+    // A struct-value-keyed struct is a generator whose members validation
+    // types with the key symbolic: a member it does not declare is rejected
+    // in the arm the instance takes, as at the pin.
     let source = "@fieldwise_init\nstruct Extent(ImplicitlyCopyable, Movable):\n    var rows: Int\n\nstruct Tagged[e: Extent](ImplicitlyCopyable, Movable):\n    var scale: Int\n\n    def __init__(out self, scale: Int):\n        self.scale = scale\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var t = Tagged[Extent(2)](1)\n        return t.rows()\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
-    let linked = mojito::link_source(source, std::path::Path::new("aborted_validation.mojo"))
+    let linked = mojito::link_source(source, std::path::Path::new("missing_member.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
     let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-        .expect("an aborted validation still returns Ok");
+    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .expect_err("`Tagged` declares no `rows`");
     assert!(
-        catalog.validation_aborted(),
-        "the shell-member error must be recorded as an abort"
-    );
-    assert!(
-        catalog.templates().all(|template| !matches!(
-            template.coverage,
-            mojito::templates::TemplateCoverage::Certified(_)
-        )),
-        "an aborted run certifies nothing: {:?}",
-        catalog.templates().collect::<Vec<_>>()
+        matches!(
+            &error,
+            TypeError::NoSuchMethod { object_type, method }
+                if object_type == "Tagged[Extent(2)]" && method == "rows"
+        ),
+        "{error:?}"
     );
 
-    // A variadic struct is no shell: `Tuple(1, "one")` types, the run reaches
-    // a verdict, and the invalid untaken arm beside it is reported.
+    // `Tuple(1, "one")` types, the run reaches a verdict, and the invalid
+    // untaken arm beside it is reported.
     let complete = "def first[flag: Bool]() -> Int:\n    comptime if flag:\n        var pair = Tuple(1, \"one\")\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
     let linked = mojito::link_source(complete, std::path::Path::new("complete_validation.mojo"))
         .expect("link error");
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
     let mut catalog = mojito::templates::TemplateCatalog::default();
     mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
-    assert!(!catalog.validation_aborted());
     assert!(catalog.stats().no_verdict.is_empty());
 
     let invalid = complete.replace(
@@ -7166,7 +7159,6 @@ fn dtype_keyed_struct_validates_beside_an_invalid_arm() {
     let prepared = mojito::comptime::prepare(linked).expect("prepare");
     let mut catalog = mojito::templates::TemplateCatalog::default();
     mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
-    assert!(!catalog.validation_aborted());
     assert!(catalog.stats().no_verdict.is_empty());
 
     let invalid = source.replace(
@@ -7266,7 +7258,6 @@ fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
             .contains("expected Int, found StringLiteral"),
         "{error}"
     );
-    assert!(!catalog.validation_aborted());
     assert_eq!(
         catalog
             .stats()

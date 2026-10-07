@@ -387,7 +387,6 @@ impl Checker {
                 fieldwise_init: declaration.fieldwise_init,
                 explicit_destroy_message,
                 explicit_destructors,
-                template_shell: declaration.template_shell,
             },
         );
         Ok(())
@@ -446,44 +445,6 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let name = declaration.name;
-        // A template shell exists to type symbolic applications. A variadic
-        // template's members resolve over its pack, so its shell installs
-        // them when they all resolve — the discovery check then types a
-        // construction of the shell and the members of the instance it
-        // produces — and stays member-less otherwise. Any other shell has no
-        // symbolic member form. (Under source validation the shell still
-        // carries its source where clauses, which check only per
-        // specialization too.)
-        if declaration.template_shell {
-            let variadic = self.structs.get(name).is_some_and(|info| {
-                info.decls
-                    .iter()
-                    .any(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }))
-            });
-            if !variadic {
-                return Ok(());
-            }
-            let (_, saved) = self.enter_struct_scope(declaration)?;
-            let resolved = self.resolve_struct_member_types(declaration);
-            self.exit_struct_scope(saved);
-            if let Ok((
-                fields,
-                field_origin_arguments,
-                associated,
-                associated_constraints,
-                parameterized_associated,
-                _,
-            )) = resolved
-                && let Some(info) = self.structs.get_mut(name)
-            {
-                info.fields = fields;
-                info.field_origin_arguments = field_origin_arguments;
-                info.associated = associated;
-                info.associated_constraints = associated_constraints;
-                info.parameterized_associated = parameterized_associated;
-            }
-            return Ok(());
-        }
         if !declaration.where_clauses.is_empty() {
             let has_constraint_binder = self
                 .structs
@@ -702,15 +663,8 @@ impl Checker {
         self.generated_declaration.set(name.contains('$'));
         for (method_index, m) in declaration.methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m);
-            // A template shell registers the signatures that resolve
-            // symbolically and skips the rest (pack-dependent shapes): the
-            // concrete specialization checks every method.
             let method_decls =
-                match self.classify_params(&self.method_binder_owner(name, m), &m.type_params) {
-                    Ok(decls) => decls,
-                    Err(_) if declaration.template_shell => continue,
-                    Err(error) => return Err(error),
-                };
+                self.classify_params(&self.method_binder_owner(name, m), &m.type_params)?;
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Method {
                     module: declaration.module.clone(),
@@ -772,11 +726,7 @@ impl Checker {
             self.enclosing_type_params = saved_method_type_params;
             self.enclosing_struct_type_params.set(saved_struct_count);
             self.tparams.pop();
-            let (all_types, mut sig) = match signature {
-                Ok(signature) => signature,
-                Err(_) if declaration.template_shell => continue,
-                Err(error) => return Err(error),
-            };
+            let (all_types, mut sig) = signature?;
             if let Some(info) = self.structs.get(name) {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
@@ -832,9 +782,6 @@ impl Checker {
                     && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
                         || existing.self_convention == sig.self_convention)
             }) {
-                if declaration.template_shell {
-                    continue;
-                }
                 return Err(TypeError::Redeclaration(method_name.to_string()));
             }
             if method_name == "__setitem__"
@@ -897,11 +844,6 @@ impl Checker {
     ) -> Result<(), TypeError> {
         for tr in declaration.conforms {
             self.check_trait_name(tr)?;
-        }
-        // A template shell has no bodies and verifies no conformance: the
-        // concrete specialization does both.
-        if declaration.template_shell {
-            return Ok(());
         }
         // Source validation checks only the method bodies holding
         // compile-time control flow; conformance and the other bodies are

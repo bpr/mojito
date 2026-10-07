@@ -1684,7 +1684,6 @@ impl Checker {
                 associated,
                 methods,
                 fieldwise_init,
-                template_shell,
                 decorators,
             } => {
                 if self.lookup(name).is_some() {
@@ -1702,7 +1701,6 @@ impl Checker {
                     associated,
                     methods,
                     fieldwise_init: *fieldwise_init,
-                    template_shell: *template_shell,
                     decorators,
                 };
                 if self.predeclared_structs.remove(name) {

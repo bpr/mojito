@@ -115,16 +115,13 @@ impl Elab<'_> {
     /// validation classified them: each keeps its name in a type argument
     /// of the elaborated program and folds everywhere else.
     pub(super) fn applied_constants(&self) -> HashSet<String> {
-        self.templates
-            .map(|catalog| catalog.applied_constants().keys().cloned().collect())
-            .unwrap_or_default()
+        self.templates.applied_constants().keys().cloned().collect()
     }
 
     /// The type a module constant's recorded initializer asks the layout of
     /// (`comptime S = size_of[Pair]()`), which only the elaborator answers.
     fn applied_layout(&self, name: &str) -> Option<Ty> {
-        let catalog = self.templates?;
-        let applied = catalog.applied_constants().get(name)?;
+        let applied = self.templates.applied_constants().get(name)?;
         let mojito_types::param_expr::ParamKind::Apply { function, args, .. } = applied.kind()
         else {
             return None;
@@ -400,7 +397,6 @@ impl Elab<'_> {
                 associated,
                 methods,
                 fieldwise_init,
-                template_shell,
             } => {
                 // A variadic struct template's members reference the unbound pack;
                 // keep it verbatim for monomorphization (mirrors def templates).
@@ -463,7 +459,6 @@ impl Elab<'_> {
                         associated: associated.clone(),
                         methods,
                         fieldwise_init: *fieldwise_init,
-                        template_shell: *template_shell,
                     },
                 ));
             }

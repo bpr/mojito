@@ -372,8 +372,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   elaborator) the same way,
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
-  guards with them, and `is_template_shell_member_error` names the errors
-  that end validation without a verdict. A `DType`- or width-keyed body is
+  guards with them. A `DType`- or width-keyed body is
   validated with its lane symbolic: `annotations::dtype_from_arg` and
   `type_resolution::simd_width` resolve a binder in scope (bare, or `Self.x`
   through `constraints::self_param_value`) to a `SimdDtype::Expr`/
@@ -960,7 +959,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declarations without selecting or cloning — among them each conformer's
   inherited trait defaults, through `checker::expand_trait_defaults`, `elaborate_prepared` is the
   already-validated request-driven route the driver re-elaborates each
-  discovery round, `elaborate` composes prepare → validate → elaborate for
+  discovery round, its `ElaborationInputs::new` requiring the catalog that
+  holds validation's verdict, `elaborate` composes prepare → validate → elaborate for
   the stage seam), the `Elab` elaboration driver (`block`/`stmt`; its
   `keep_template_comptime_if` keeps a `comptime if` over a generic `def`'s
   own binders (`Elab::template_binders`) for the check, where every other
@@ -1401,7 +1401,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `scalar_shaped`, `display_read_shaped`, `reflection_count`, and
   `reflected_names` are the admitted spellings, a call or method call
   admitted by `ScalarReads::call` from the verdict source validation
-  recorded, `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
+  recorded alone (no declaration fallback), `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
   `TemplateCatalog::scalar_calls`; a closed-aggregate display element by
   `literal_tuple` or by `aggregate_shaped` over `ScalarReads::aggregate`,
   from `Checker::aggregate_elements` into

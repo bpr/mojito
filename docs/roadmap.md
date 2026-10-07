@@ -87,25 +87,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
 
-- [ ] **R453 (P3b) A display element's call is judged by its callee's
-  declaration when source validation reaches no verdict**
-
-  Problem: a program whose validation run stops without a verdict keys a
-  clone for `comptime for p in [P(n).get(), n]:`, which the template serves
-  in every other program.
-  - `ScalarReads` (`comptime.rs`) reads the scalar calls source validation
-    typed (`TemplateCatalog::scalar_calls`).
-  - A run that reaches a template-shell member aborts
-    (`validate_comptime_templates_into`) and withdraws that set, so the
-    elaborator falls back to the callee's declaration: a module `def`
-    returning a scalar without raising, or a scalar construction.
-  - A method call has no such declaration, so it keys a clone there.
-  - An elaboration no validation precedes (the `elaborate_with_requests`
-    test seam) takes the same fallback.
-  - Found while landing R401 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R466 (P3) A value parameter holding a `String` is built into a slot
   at entry, not materialized at each use**
 

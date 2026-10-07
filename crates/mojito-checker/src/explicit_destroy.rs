@@ -94,11 +94,6 @@ pub fn check(
                 &root,
             )?,
             StmtKind::Def { .. } => {}
-            // A template shell carries signatures only.
-            StmtKind::Struct {
-                template_shell: true,
-                ..
-            } => {}
             StmtKind::Struct {
                 name,
                 type_params,

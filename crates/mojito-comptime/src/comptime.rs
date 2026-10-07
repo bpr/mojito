@@ -501,14 +501,8 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
     mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
         .map_err(ComptimeError::Type)?;
-    elaborate_prepared(
-        &prepared,
-        ElaborationInputs {
-            templates: Some(&catalog),
-            ..ElaborationInputs::default()
-        },
-    )
-    .map(|elaborated| elaborated.program)
+    elaborate_prepared(&prepared, ElaborationInputs::new(&catalog))
+        .map(|elaborated| elaborated.program)
 }
 
 /// Prepare a linked program for source validation and elaboration.
@@ -575,9 +569,9 @@ pub struct Elaborated {
 ///
 /// The requests are the ones the previous round's check discovered; the
 /// templates are the compilation's checked templates, which VM CTFE's
-/// subprogram checks derive their traced clones from. The default is a
-/// first elaboration outside the driver.
-#[derive(Clone, Copy, Default)]
+/// subprogram checks derive their traced clones from, holding the verdict
+/// of the source validation run every elaboration follows.
+#[derive(Clone, Copy)]
 pub struct ElaborationInputs<'a> {
     pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
@@ -587,7 +581,21 @@ pub struct ElaborationInputs<'a> {
     /// whose checked bodies hold a type only an instance can lower: each
     /// keeps its per-instantiation clone.
     pub keyed_methods: &'a [(String, String)],
-    pub templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
+    pub templates: &'a mojito_checked::templates::TemplateCatalog,
+}
+
+impl<'a> ElaborationInputs<'a> {
+    /// A first elaboration under `templates`, with no discovered requests.
+    pub const fn new(templates: &'a mojito_checked::templates::TemplateCatalog) -> Self {
+        Self {
+            tstring_requests: &[],
+            def_requests: &[],
+            method_requests: &[],
+            struct_requests: &[],
+            keyed_methods: &[],
+            templates,
+        }
+    }
 }
 
 /// The declarations an elaboration generated.
@@ -796,7 +804,7 @@ pub fn bound_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_bound_generic_templates(program, &ScalarReads::of(program, Some(templates)))
+    collect_bound_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
 /// The top-level type-pack template names (`def show[*Ts: Writable](*args:
@@ -810,7 +818,7 @@ pub fn pack_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_pack_generic_templates(program, &ScalarReads::of(program, Some(templates)))
+    collect_pack_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
@@ -826,7 +834,7 @@ pub fn comptime_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_comptime_generic_templates(program, &ScalarReads::of(program, Some(templates)))
+    collect_comptime_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
 /// The top-level `DType`-keyed template names (`def only_dt[dt: DType](a:
@@ -839,7 +847,7 @@ pub fn dtype_generic_template_names(
     program: &[Stmt],
     templates: &mojito_checked::templates::TemplateCatalog,
 ) -> HashSet<String> {
-    collect_dtype_generic_templates(program, &ScalarReads::of(program, Some(templates)))
+    collect_dtype_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
 /// The parameter an inferred application of `template` failed to close.
@@ -1296,69 +1304,38 @@ pub(super) struct TemplateLoopNames {
 /// subscript shows it when it reads a module `comptime` list display of
 /// literals of one kind.
 ///
-/// Without a validation verdict (an elaboration no validation run preceded,
-/// or one that ended without a verdict) a call shows it when it calls a
-/// `def` every declaration of which returns such a scalar and does not
-/// raise, or constructs one (`Float64(n)`) whose name the module does not
-/// declare.
-///
 /// A tuple display, call, or method call shows a display element is a
 /// closed aggregate a loop binder takes (a tuple or fieldwise struct of
 /// numbers and booleans) only by source validation's verdict
 /// (`TemplateCatalog::aggregate_elements`).
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(super) struct ScalarReads {
-    functions: HashSet<String>,
     lists: HashSet<String>,
-    declared: HashSet<String>,
-    checked: Option<HashSet<SyntaxId>>,
+    checked: HashSet<SyntaxId>,
     aggregates: HashSet<SyntaxId>,
 }
 
 impl ScalarReads {
     pub(super) fn of(
         program: &[Stmt],
-        templates: Option<&mojito_checked::templates::TemplateCatalog>,
+        templates: &mojito_checked::templates::TemplateCatalog,
     ) -> Self {
-        let mut reads = Self {
-            checked: templates
-                .and_then(mojito_checked::templates::TemplateCatalog::scalar_calls)
-                .cloned(),
-            aggregates: templates
-                .and_then(mojito_checked::templates::TemplateCatalog::aggregate_elements)
-                .cloned()
-                .unwrap_or_default(),
-            ..Self::default()
-        };
-        let mut other = HashSet::new();
-        for statement in program {
-            match &statement.kind {
-                StmtKind::Def {
-                    name, raises, ret, ..
-                } => {
-                    reads.declared.insert(name.clone());
-                    if !raises && ret.as_ref().is_some_and(scalar_type) {
-                        reads.functions.insert(name.clone());
-                    } else {
-                        other.insert(name.clone());
-                    }
-                }
-                StmtKind::Struct { name, .. } => {
-                    reads.declared.insert(name.clone());
-                }
-                StmtKind::Comptime {
-                    name,
-                    type_params,
-                    value,
-                    ..
-                } if type_params.is_empty() && literal_list(value) => {
-                    reads.lists.insert(name.clone());
-                }
-                _ => {}
-            }
+        Self {
+            lists: program
+                .iter()
+                .filter_map(|statement| match &statement.kind {
+                    StmtKind::Comptime {
+                        name,
+                        type_params,
+                        value,
+                        ..
+                    } if type_params.is_empty() && literal_list(value) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect(),
+            checked: templates.scalar_calls().clone(),
+            aggregates: templates.aggregate_elements().clone(),
         }
-        reads.functions.retain(|name| !other.contains(name));
-        reads
     }
 
     /// Whether the tuple display, call, or method call `expression` is a
@@ -1370,16 +1347,7 @@ impl ScalarReads {
     /// Whether the call or method call `expression` returns a scalar a loop
     /// binder takes.
     fn call(&self, expression: &Expr) -> bool {
-        match (&self.checked, &expression.kind) {
-            (Some(checked), _) => checked.contains(&expression.syntax_id),
-            (None, ExprKind::Call { name, .. }) => {
-                self.functions.contains(name)
-                    || mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    || (!self.declared.contains(name)
-                        && matches!(name.as_str(), "Int" | "Bool" | "Float64"))
-            }
-            (None, _) => false,
-        }
+        self.checked.contains(&expression.syntax_id)
     }
 }
 
@@ -1844,17 +1812,6 @@ fn scalar_parameter_argument(argument: &ParamArg, shaped: &dyn Fn(&Expr) -> bool
         ParamArg::Type(_) => true,
         ParamArg::Value(value) => shaped(value),
         ParamArg::Named { value, .. } => scalar_parameter_argument(value, shaped),
-    }
-}
-
-/// Whether a declared type is a scalar a loop binder takes.
-fn scalar_type(ty: &Type) -> bool {
-    match ty {
-        Type::Int | Type::Bool | Type::Float64 => true,
-        Type::Named(name, args) => {
-            args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
-        }
-        _ => false,
     }
 }
 
@@ -3238,8 +3195,8 @@ struct Elab<'a> {
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
     /// The compilation's checked templates, which the checks of a VM-CTFE
-    /// subprogram derive its traced clones from; absent outside the driver.
-    templates: Option<&'a mojito_checked::templates::TemplateCatalog>,
+    /// subprogram derive its traced clones from.
+    templates: &'a mojito_checked::templates::TemplateCatalog,
     /// What those checks derived and inferred.
     ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
     /// Per-call method clones minted on a non-generic struct, as (owner,
@@ -4563,7 +4520,7 @@ mod vm_bridge_tests {
 }
 
 /// The request-driven elaboration of an unprepared program, for the unit
-/// tests below: prepare, then elaborate.
+/// tests below: prepare, validate, then elaborate, as [`elaborate`] does.
 #[cfg(test)]
 fn elaborate_with_requests(
     program: Vec<Stmt>,
@@ -4572,14 +4529,18 @@ fn elaborate_with_requests(
     method_requests: &[MethodSpecializationRequest],
     struct_requests: &[StructInstanceRequest],
 ) -> Result<Elaborated, ComptimeError> {
+    let prepared = prepare(program)?;
+    let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
+    mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+        .map_err(ComptimeError::Type)?;
     elaborate_prepared(
-        &prepare(program)?,
+        &prepared,
         ElaborationInputs {
             tstring_requests,
             def_requests,
             method_requests,
             struct_requests,
-            ..ElaborationInputs::default()
+            ..ElaborationInputs::new(&catalog)
         },
     )
 }
@@ -4709,7 +4670,13 @@ mod def_request_tests {
                       def one() -> Int:\n        return 1\n    return Box(*args^).n + one()\n";
         let parsed = parse(source).expect("parse");
 
-        let served = super::served_pack_defs(&parsed, &super::ScalarReads::default());
+        let served = super::served_pack_defs(
+            &parsed,
+            &super::ScalarReads::of(
+                &parsed,
+                &mojito_checked::templates::TemplateCatalog::new(false),
+            ),
+        );
 
         assert!(served.contains("bag"), "{served:?}");
         assert!(served.contains("box"), "{served:?}");
@@ -4745,7 +4712,13 @@ mod def_request_tests {
                       var all = materialize[names]()\n    print(len(all))\n";
         let parsed = parse(source).expect("parse");
 
-        let served = super::served_pack_defs(&parsed, &super::ScalarReads::default());
+        let served = super::served_pack_defs(
+            &parsed,
+            &super::ScalarReads::of(
+                &parsed,
+                &mojito_checked::templates::TemplateCatalog::new(false),
+            ),
+        );
 
         // A scalar value binder beside the pack is bound from the brackets.
         assert!(served.contains("scaled"), "{served:?}");
@@ -4781,15 +4754,10 @@ mod def_request_tests {
         mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
             .expect("validate");
 
-        let syntactic =
-            super::served_pack_defs(&prepared, &super::ScalarReads::of(&prepared, None));
-        let checked = super::served_pack_defs(
-            &prepared,
-            &super::ScalarReads::of(&prepared, Some(&catalog)),
-        );
+        let checked =
+            super::served_pack_defs(&prepared, &super::ScalarReads::of(&prepared, &catalog));
 
         // The method's name says nothing about its result; the check does.
-        assert!(!syntactic.contains("method"), "{syntactic:?}");
         assert!(checked.contains("method"), "{checked:?}");
         // A field read off a method's result is not a call the check types.
         assert!(!checked.contains("structural"), "{checked:?}");
@@ -4888,6 +4856,29 @@ mod def_request_tests {
         assert!(defs.contains(&"ident"), "{defs:?}");
         assert!(
             !defs.iter().any(|name| name.starts_with("ident$")),
+            "{defs:?}"
+        );
+    }
+
+    #[test]
+    fn a_method_display_element_is_template_served_through_the_request_seam() {
+        let source = "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    \
+                      def get(self) -> Int:\n        return self.v\n\n\
+                      def show[n: Int]():\n    \
+                      comptime for p in [P(n).get(), n]:\n        print(p)\n\n\
+                      def main():\n    show[3]()\n";
+        let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
+
+        let elaborated = elaborate_with_requests(linked, &[], &[], &[], &[])
+            .expect("elaborate")
+            .program;
+
+        // Validation types the method call, so the template serves the loop
+        // and the application keys no clone.
+        let defs = def_names(&elaborated);
+        assert!(defs.contains(&"show"), "{defs:?}");
+        assert!(
+            !defs.iter().any(|name| name.starts_with("show$")),
             "{defs:?}"
         );
     }

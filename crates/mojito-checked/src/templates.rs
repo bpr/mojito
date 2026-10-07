@@ -718,9 +718,6 @@ pub enum IncompleteReason {
     /// A retained fact's type still mentions a parameter, in a class whose
     /// certificate requires closed facts.
     SymbolicFact,
-    /// The source validation run that checked this body ended without a
-    /// verdict, so nothing it recorded is certified.
-    ValidationAborted,
     /// A loop's iterator protocol is not one an instance selects again from
     /// its iterable's type alone.
     IterationRecipe,
@@ -743,7 +740,6 @@ impl IncompleteReason {
             Self::ExternalBinding => "template_capture_incomplete.external_binding",
             Self::AmbiguousOccurrence => "template_capture_incomplete.ambiguous_occurrence",
             Self::SymbolicFact => "template_capture_incomplete.symbolic_fact",
-            Self::ValidationAborted => "template_capture_incomplete.validation_aborted",
             Self::IterationRecipe => "template_capture_incomplete.iteration_recipe",
             Self::TupleUnpackRecipe => "template_capture_incomplete.tuple_unpack_recipe",
             Self::ComprehensionRecipe => "template_capture_incomplete.comprehension_recipe",
@@ -763,7 +759,6 @@ impl std::fmt::Display for IncompleteReason {
             Self::ExternalBinding => f.write_str("a fact names a binding outside the body"),
             Self::AmbiguousOccurrence => f.write_str("two occurrences share one identity"),
             Self::SymbolicFact => f.write_str("a fact's type mentions a parameter"),
-            Self::ValidationAborted => f.write_str("source validation ended without a verdict"),
             Self::IterationRecipe => {
                 f.write_str("a loop's iterator protocol has no re-selection recipe")
             }
@@ -2403,9 +2398,6 @@ pub struct TemplateCatalog {
     templates: std::collections::HashMap<TemplateId, CheckedTemplate>,
     traces: std::collections::HashMap<InstanceName, InstanceTrace>,
     generated: GeneratedNames,
-    /// Set when a source validation run ended without a verdict: nothing
-    /// that run recorded may be certified.
-    validation_aborted: bool,
     /// Compare each derived bundle with the clone check's own facts.
     verify: bool,
     /// Carry an unchanged body's raw facts from one checker pass to the
@@ -2432,13 +2424,12 @@ pub struct TemplateCatalog {
     /// `comptime for` binder takes (`Int`, `Bool`, `Float64`, a string), with
     /// no raise, by the syntax identity every copy keeps: the elaborator's
     /// template-served decision reads a display element's type from here.
-    /// Absent until a validation run reaches its verdict.
-    scalar_calls: Option<std::collections::HashSet<SyntaxId>>,
+    scalar_calls: std::collections::HashSet<SyntaxId>,
     /// The tuple displays, calls, and method calls source validation typed
     /// as a closed aggregate a `comptime for` binder takes (a tuple or
     /// fieldwise struct of numbers and booleans), with no raise, by the same
-    /// syntax identity. Absent until a validation run reaches its verdict.
-    aggregate_elements: Option<std::collections::HashSet<SyntaxId>>,
+    /// syntax identity.
+    aggregate_elements: std::collections::HashSet<SyntaxId>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2551,7 +2542,6 @@ impl TemplateCatalog {
             .collect();
         let mut catalog = Self {
             templates,
-            validation_aborted: self.validation_aborted,
             verify: self.verify,
             body_fact_reuse: false,
             param_context: self.param_context.clone(),
@@ -2590,10 +2580,6 @@ impl TemplateCatalog {
         &mut self.stats
     }
 
-    pub const fn validation_aborted(&self) -> bool {
-        self.validation_aborted
-    }
-
     pub const fn bound_default_arguments(
         &self,
     ) -> &std::collections::HashMap<SyntaxId, BoundDefaultArguments> {
@@ -2607,26 +2593,25 @@ impl TemplateCatalog {
     }
 
     /// The calls source validation typed as a `comptime for` binder's
-    /// scalar, or `None` when no validation run reached a verdict.
-    pub const fn scalar_calls(&self) -> Option<&std::collections::HashSet<SyntaxId>> {
-        self.scalar_calls.as_ref()
+    /// scalar.
+    pub const fn scalar_calls(&self) -> &std::collections::HashSet<SyntaxId> {
+        &self.scalar_calls
     }
 
     /// Keep the scalar-typed calls source validation found.
     pub fn set_scalar_calls(&mut self, calls: std::collections::HashSet<SyntaxId>) {
-        self.scalar_calls = Some(calls);
+        self.scalar_calls = calls;
     }
 
     /// The display elements source validation typed as a `comptime for`
-    /// binder's closed aggregate, or `None` when no validation run reached
-    /// a verdict.
-    pub const fn aggregate_elements(&self) -> Option<&std::collections::HashSet<SyntaxId>> {
-        self.aggregate_elements.as_ref()
+    /// binder's closed aggregate.
+    pub const fn aggregate_elements(&self) -> &std::collections::HashSet<SyntaxId> {
+        &self.aggregate_elements
     }
 
     /// Keep the aggregate-typed display elements source validation found.
     pub fn set_aggregate_elements(&mut self, elements: std::collections::HashSet<SyntaxId>) {
-        self.aggregate_elements = Some(elements);
+        self.aggregate_elements = elements;
     }
 
     /// Keep the applied module constants source validation found.
@@ -2650,21 +2635,6 @@ impl TemplateCatalog {
                 .or_insert(arguments);
         }
         self.bound_default_arguments.len() != before
-    }
-
-    /// Record that a validation run ended without a verdict, and withdraw
-    /// every certificate that run produced: a partial traversal proves
-    /// nothing about the bodies it did reach.
-    pub fn abort_validation(&mut self) {
-        self.validation_aborted = true;
-        self.scalar_calls = None;
-        self.aggregate_elements = None;
-        for template in self.templates.values_mut() {
-            if template.producer == TemplateProducer::SourceValidation {
-                template.coverage =
-                    TemplateCoverage::Incomplete(IncompleteReason::ValidationAborted);
-            }
-        }
     }
 
     /// Whether source validation produced the record of `id`: the

@@ -105,10 +105,7 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 ///
 /// Validation produces no other checked facts: the checker it runs is
 /// discarded, so nothing recorded for an untaken arm can reach lowering. A body
-/// reading a reflection handle keeps its per-instantiation check. A
-/// member of a template-shell struct (a `DType`-keyed `Vec[DType.float64](…)`)
-/// has no symbolic signature here, so reaching one ends validation without a
-/// verdict and leaves the program to the executable check.
+/// reading a reflection handle keeps its per-instantiation check.
 ///
 /// A body keyed on a variadic pack, or reading `reflect[T]` over a
 /// parameter, is validated with the element at a symbolic index opaque
@@ -122,11 +119,8 @@ pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
     )
 }
 
-/// [`validate_comptime_templates`] over a compilation's template catalog.
-///
-/// `catalog` is told when the run ended without a verdict: a template-shell
-/// member error stops the traversal, so `Ok(())` alone never certifies the
-/// bodies the run reached.
+/// [`validate_comptime_templates`] over a compilation's template catalog,
+/// which keeps the run's verdict for the elaborator.
 pub fn validate_comptime_templates_into(
     stmts: &[Stmt],
     catalog: &mut mojito_checked::templates::TemplateCatalog,
@@ -157,7 +151,7 @@ pub fn validate_comptime_templates_into(
         catalog.set_aggregate_elements(aggregate_elements);
     }
     *catalog = checker.template_catalog.take();
-    let checked = body_check.and_then(|()| {
+    body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
         run_explicit_destroy(
             &checker,
@@ -168,15 +162,7 @@ pub fn validate_comptime_templates_into(
                 no_verdict: &checker.no_verdict_bodies,
             },
         )
-    });
-    match checked {
-        Err(error) if checker.is_template_shell_member_error(&error) => {
-            timing::count("templates.validation_aborted", 1);
-            catalog.abort_validation();
-            Ok(())
-        }
-        result => result,
-    }
+    })
 }
 
 /// Check compiler-generated Tuple declarations with the exact callable types
@@ -2415,9 +2401,6 @@ struct StructInfo {
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
     explicit_destructors: HashMap<String, bool>,
-    /// Registered from a template shell (see `StmtKind::Struct::template_shell`):
-    /// no member types, and only the symbolically resolvable signatures.
-    template_shell: bool,
 }
 
 impl StructInfo {
@@ -3052,8 +3035,6 @@ struct StructDeclaration<'a> {
     associated: &'a [StructComptime],
     methods: &'a [Method],
     fieldwise_init: bool,
-    /// See `StmtKind::Struct::template_shell`.
-    template_shell: bool,
     decorators: &'a [mojito_ast::ast::Decorator],
 }
 

@@ -580,7 +580,7 @@ and `docs/notes/instantiation-from-template.md` is the design record.
 
 The counters are `body_inference.{plain,template,clone}`,
 `body_sites.instance_clone`,
-`templates.{surviving_trait_bound,validated_keyed,concrete_only,validation_aborted}`,
+`templates.{surviving_trait_bound,validated_keyed,concrete_only}`,
 `template_facts_recorded`, `template_capture_incomplete.*`,
 `template_derivations.{installed,ineligible,verified,overload_rebinding}`,
 `template_bodies.reused`, `template_census.*`, and `arena_builds`.

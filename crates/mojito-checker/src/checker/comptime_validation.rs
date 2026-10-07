@@ -146,7 +146,6 @@ pub(super) fn applicable_functions(
                 name,
                 type_params,
                 methods,
-                template_shell: false,
                 ..
             } => {
                 for method in methods {
@@ -2624,37 +2623,11 @@ impl Checker {
         substitute(&ty, &elements)
     }
 
-    /// Whether a validation error marks the validator's own blind spot
-    /// rather than a verdict: a constructor, method, or operator of a struct
-    /// registered only as a template shell (a struct-value-keyed struct),
-    /// whose members exist only per specialization. The executable check
-    /// still covers the arm elaboration selects.
-    pub(super) fn is_template_shell_member_error(&self, error: &TypeError) -> bool {
-        let names_shell = |spelling: &str| {
-            let head = spelling.split('[').next().unwrap_or(spelling).trim();
-            self.structs
-                .get(head)
-                .is_some_and(|info| info.template_shell)
-        };
-        match error {
-            TypeError::NoConstructor(name) | TypeError::BadCall { func: name, .. } => {
-                names_shell(name)
-            }
-            TypeError::NoSuchMethod { object_type, .. } => names_shell(object_type),
-            TypeError::BadOperator { operands, .. } => operands.split(" and ").any(names_shell),
-            _ => false,
-        }
-    }
-
     /// Whether a nominal type has no checkable declaration here: unregistered
-    /// (a discovery-round abstract scalar range) or registered only as a
-    /// template shell (a struct-value-keyed struct under source validation).
-    /// Its iteration and subscript contracts come from the family, not from
-    /// method lookup.
+    /// (a discovery-round abstract scalar range). Its iteration and subscript
+    /// contracts come from the family, not from method lookup.
     pub(super) fn is_abstract_struct(&self, name: &str) -> bool {
-        self.structs
-            .get(name)
-            .is_none_or(|info| info.template_shell)
+        !self.structs.contains_key(name)
     }
 
     /// Every `Param` operand of a compiled condition must name a parameter,

@@ -444,7 +444,7 @@ impl Compiler {
                 clones: minted_clones,
             } = {
                 let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_prepared(&prepared, elaboration_inputs(&templates_catalog))
+                elaborate_prepared(&prepared, ElaborationInputs::new(&templates_catalog))
                     .map_err(CompilerError::Comptime)?
             };
             struct_requests.extend(minted);
@@ -598,7 +598,7 @@ impl Compiler {
                         method_requests: &method_requests,
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
-                        ..elaboration_inputs(&templates_catalog)
+                        ..ElaborationInputs::new(&templates_catalog)
                     },
                 )
                 .map_err(CompilerError::Comptime)?
@@ -736,15 +736,6 @@ impl Compiler {
     pub fn run_path(&self, entry: &Path) -> Result<Execution, CompilerError> {
         let program = self.compile_path(entry)?;
         self.execute(&program)
-    }
-}
-
-/// A compilation's elaboration inputs apart from the discovery requests:
-/// the template catalog.
-fn elaboration_inputs(templates: &crate::templates::TemplateCatalog) -> ElaborationInputs<'_> {
-    ElaborationInputs {
-        templates: Some(templates),
-        ..ElaborationInputs::default()
     }
 }
 

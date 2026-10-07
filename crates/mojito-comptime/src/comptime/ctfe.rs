@@ -1505,14 +1505,9 @@ impl Elab<'_> {
         // The clones minted here are the subprogram's, never the
         // elaboration's: the driver's program mints its own.
         let traces = self.method_traces.borrow_mut().split_off(first_trace);
-        let templates = self.templates.map_or_else(
-            || mojito_checked::templates::TemplateCatalog::new(false),
-            |catalog| {
-                catalog.for_subprogram(
-                    instance_traces(Vec::new(), traces),
-                    generated_names(generated),
-                )
-            },
+        let templates = self.templates.for_subprogram(
+            instance_traces(Vec::new(), traces),
+            generated_names(generated),
         );
         (program, templates)
     }

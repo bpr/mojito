@@ -242,7 +242,6 @@ fn parses_struct_with_field_and_method() {
                 provenance: mojito::ast::MethodProvenance::Source,
             }],
             fieldwise_init: true,
-            template_shell: false,
         })
     );
 }
@@ -612,7 +611,6 @@ fn parses_generic_struct_header_and_self_param_field() {
             associated: vec![],
             methods: vec![],
             fieldwise_init: true,
-            template_shell: false,
         })
     );
 }

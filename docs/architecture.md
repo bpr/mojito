@@ -719,8 +719,7 @@ type gets no verdict, and its specializations keep their own check. A
 again as a retained bound generic by the executable pass when its template
 serves it. Bodies
 without such constructs are declared but left to the
-executable check; a struct keyed on a struct-typed value parameter registers
-as a template shell and keeps its per-instantiation check. Validation
+executable check. Validation
 records, beside the applied module constants, the calls and method calls it
 typed as a scalar a `comptime for` binder takes without raising
 (`Checker::scalar_calls` into `TemplateCatalog::scalar_calls`, keyed by
@@ -729,7 +728,9 @@ as a parameter aggregate such a binder takes (`Checker::aggregate_elements`
 into `TemplateCatalog::aggregate_elements`): the elaborator's
 template-served decision for a display element (`ScalarReads`,
 `comptime.rs`) and the driver's template-name sets
-read that verdict, so they are computed after validation. Validation then runs the
+read that verdict alone, with no fallback on the callee's declaration, so
+they are computed after validation, and every elaboration — the driver's
+and `comptime::elaborate` alike — follows a validation run. Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
 compile-time-keyed template is a trapping stub by the time the executable
@@ -889,9 +890,7 @@ is retained there as a `CheckedTemplate`: its facts keyed by its own syntax
 occurrences, with a coverage certificate. The elaborator stubs such a
 template, so validation is the only check it gets, and its instances inherit
 the facts of the arms the elaborator selects instead of being inferred
-(Stage 3, *Checked Templates*). A run that ends without a verdict — it
-reached a member of a struct-value-keyed template shell — withdraws every
-certificate it produced. A pack-keyed body's certificate is always
+(Stage 3, *Checked Templates*). A pack-keyed body's certificate is always
 incomplete, and so are a reflection-reading body's and a lane-keyed struct
 member's, so their instances keep the clone check. The verdict-only
 `validate_comptime_templates` remains for clients without a catalog, and

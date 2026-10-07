@@ -1000,7 +1000,7 @@ text. A violated `where` clause is reported by the elaborator or the requesting
 call, as before.
 
 `--timings` reports `body_inference.{plain,template,clone}`,
-`templates.{surviving_trait_bound,validated_keyed,concrete_only,validation_aborted}`,
+`templates.{surviving_trait_bound,validated_keyed,concrete_only}`,
 `template_facts_recorded`, `template_fact_entries`,
 `template_capture_incomplete.*`, `template_derivations.{installed,ineligible,verified,overload_rebinding}`,
 `template_bodies.reused`, `body_sites.instance_clone`, `template_census.*`, and
@@ -1531,8 +1531,7 @@ Each of these keeps the clone check. The roadmap carries one entry per item.
   check folds to a literal the template's type does not record.
 - A local declared inside a `comptime for`.
 - A pack forwarded whole (`print(*a)`), a `rebind`-keyed method,
-  `DType` and vector parameters, reflection, struct-valued parameters, and
-  anything a validation run that ended without a verdict reached.
+  `DType` and vector parameters, reflection, and struct-valued parameters.
 
 The persistent elaboration session and the expansion worklist (plan slices 8a
 and 8b) did not land. Measurement says why: the elaborator's per-round

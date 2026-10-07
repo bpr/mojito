@@ -1611,6 +1611,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every elaboration now follows a source validation run and reads its
+  verdict: a `comptime for` display element's call or method call
+  (`[P(n).get(), n]`) is judged by the type validation gave it, as at the
+  pin, never guessed from the callee's declaration. The validation-abort
+  path and the template-shell struct form, which nothing produced any
+  longer, are deleted, and the composed-stage request seam validates
+  before elaborating.
+
 - A generic `def` passed where a non-generic `def(...)` value is expected
   is rejected at the argument, as the pin rejects it: only an explicit
   specialization (`f[...]`) is a non-generic function value. It used to
