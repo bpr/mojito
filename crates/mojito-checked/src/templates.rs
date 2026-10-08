@@ -244,10 +244,9 @@ pub fn derive_adjustment(
         // The marked place is the template's own, under every instance.
         SemanticAdjustment::MarkInitialized => Some(SemanticAdjustment::MarkInitialized),
         SemanticAdjustment::MarkDestroyed => Some(SemanticAdjustment::MarkDestroyed),
-        // An initializer list's construction is spelled in the template's
-        // own terms; the facts it recorded close under their own identity.
-        SemanticAdjustment::InitializerList { construction } => {
-            Some(SemanticAdjustment::InitializerList {
+        // A sugar's construction is spelled in the template's own terms; the facts it recorded close under their own identity.
+        SemanticAdjustment::SpelledConstruction { construction } => {
+            Some(SemanticAdjustment::SpelledConstruction {
                 construction: construction.clone(),
             })
         }

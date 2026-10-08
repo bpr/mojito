@@ -1017,14 +1017,17 @@ pub enum SemanticAdjustment {
     /// (`Tuple.consume_elements`). MIR carries it as `MarkDestroyed` over
     /// the place.
     MarkDestroyed,
-    /// An initializer list `{}` / `{a, b}` at the type its context expects:
-    /// upstream's set-initializer literal emitted as the construction
-    /// `T(a, b)` of that type. The checker spells and checks the
-    /// construction under an identity derived from the brace's, so the brace
-    /// keeps the type its context sees and the construction its own facts;
-    /// the checked arena hands HIR the construction in the brace's place.
-    InitializerList {
-        construction: InitializerListConstruction,
+    /// A sugar written as the construction it stands for: an initializer
+    /// list `{}` / `{a, b}` at the type its context expects (upstream's
+    /// set-initializer literal, emitted as the construction `T(a, b)` of that
+    /// type), or a template string `t"…"` (emitted as the call of the bundled
+    /// `__make_tstring` over its segments and interpolations). The checker
+    /// spells and checks the construction under an identity derived from
+    /// the sugar's, so the sugar keeps the type its context sees and the
+    /// construction its own facts; the checked arena hands HIR the
+    /// construction in the sugar's place.
+    SpelledConstruction {
+        construction: SpelledConstruction,
     },
     /// Construct an origin-bearing pointer to existing checked storage
     /// (`UnsafePointer(to=place)`). The checked pointer type retains the
@@ -1122,15 +1125,15 @@ pub enum SemanticAdjustment {
     },
 }
 
-/// The construction an initializer list checked as.
+/// The construction a sugar checked as.
 ///
-/// See [`SemanticAdjustment::InitializerList`]. Equality is the expression's
+/// See [`SemanticAdjustment::SpelledConstruction`]. Equality is the expression's
 /// structural equality, an equivalence on parsed syntax (a literal is never
 /// NaN).
 #[derive(Debug, Clone, PartialEq)]
-pub struct InitializerListConstruction(pub Box<Expr>);
+pub struct SpelledConstruction(pub Box<Expr>);
 
-impl Eq for InitializerListConstruction {}
+impl Eq for SpelledConstruction {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedTupleUnpackElement {
@@ -2194,11 +2197,11 @@ fn build_checked_expressions(
                         add(self, value);
                     }
                 }
-                // An initializer list is its construction: the node built
-                // for the construction answers at the brace's location too,
-                // so HIR lowers the construction where the brace was written.
-                BraceLit(_)
-                    if let Some(SemanticAdjustment::InitializerList { construction }) =
+                // A spelled sugar is its construction: the node built for
+                // the construction answers at the sugar's location too, so
+                // HIR lowers the construction where the sugar was written.
+                BraceLit(_) | TString { .. }
+                    if let Some(SemanticAdjustment::SpelledConstruction { construction }) =
                         self.operation_adjustments.get(&expression.source_span()) =>
                 {
                     let node = self.expr(&construction.0);

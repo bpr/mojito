@@ -2466,9 +2466,12 @@ closes per instance. Each consuming member moves its elements out with
 `Pointer(to=self[i]).unsafe_take_pointee()` inside a `comptime for` the
 template keeps and then ends the storage with `MirInstr::MarkDestroyed`,
 since the private storage would otherwise destroy the moved elements again.
-`TString` is a generator the same way; a `t"…"` occurrence becomes a
-`TString(...)` construction of the template from the element types the
-checker records.
+`TString` is a generator the same way. The checker writes a `t"…"`
+occurrence in one pass, as the pin does, as the call of the bundled entry
+point `__make_tstring` (named by its linked module path, never looked up in
+user scope) and records it as `SemanticAdjustment::SpelledConstruction`, the
+adjustment an initializer list's construction shares; the checked arena and
+HIR hand MIR the call in the literal's place, so MIR has no t-string form.
 
 ### If
 

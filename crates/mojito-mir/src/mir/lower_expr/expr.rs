@@ -211,13 +211,20 @@ impl Flatten<'_> {
                 step.as_deref(),
             ),
             ExprKind::MultiIndex { object, args } => self.multi_index_expr(e, object, args),
-            // The production discovery path rewrites every concrete `t"…"`
-            // occurrence into its lazy `TString` specialization's construction
-            // before MIR, so this arm is the output-identical eager fallback:
-            // the stage-composed seam (which skips discovery by design) and
-            // t-strings inside retained abstract bound-generic bodies lower to
-            // `"" + String(part) + …` concatenation here.
-            ExprKind::TString { parts, .. } => self.tstring_concat(e, parts),
+            // HIR lowers the construction the checker spelled for a
+            // t-string in its place, so a checked program never reaches one.
+            ExprKind::TString { .. } => {
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::Unsupported(
+                    "a t-string reached MIR without the construction the checker built for it"
+                        .to_string(),
+                ));
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
+            }
             ExprKind::TypeApply { name, .. }
                 if self.checked_adjustments(e).iter().any(|adjustment| {
                     matches!(
@@ -703,60 +710,6 @@ impl Flatten<'_> {
             spread: None,
         });
         d
-    }
-
-    pub(super) fn tstring_concat(&mut self, e: &Expr, parts: &[TStringPart]) -> Reg {
-        let mut result = self.fresh(span(e), None);
-        self.emit(MirInstr::Const {
-            dest: result,
-            k: Const::Str(String::new()),
-        });
-        for part in parts {
-            let piece = match part {
-                TStringPart::Literal(text) => {
-                    let register = self.fresh(span(e), None);
-                    self.emit(MirInstr::Const {
-                        dest: register,
-                        k: Const::Str(text.clone()),
-                    });
-                    register
-                }
-                TStringPart::Expr(value) => {
-                    let argument = self.expr(value);
-                    // Interpolation's implicit `String(value)` call has
-                    // no source expression of its own.  Give the
-                    // synthetic result its checked intrinsic type here
-                    // instead of asking declaration-based MIR closure to
-                    // rediscover the return type of the builtin.
-                    let register = self.fresh_typed(span(value), None, Ty::StringLiteral);
-                    self.emit(MirInstr::Call {
-                        dest: register,
-                        func: FuncRef::named("String"),
-                        raises: None,
-                        args: vec![argument],
-                        kwargs: Vec::new(),
-                        arg_places: vec![None],
-                        kwarg_places: Vec::new(),
-                        capture_accesses: Vec::new(),
-                        param_arg_regs: Vec::new(),
-                        receiver: None,
-                        instantiated_args: Vec::new(),
-                        spread: None,
-                    });
-                    register
-                }
-            };
-            let joined = self.fresh(span(e), None);
-            self.emit(MirInstr::BinOp {
-                op: InfixOp::Add,
-                dest: joined,
-                a: result,
-                b: piece,
-                resolved: None,
-            });
-            result = joined;
-        }
-        result
     }
 
     pub(super) fn nested_type_apply(&mut self, e: &Expr, name: &str) -> Reg {

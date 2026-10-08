@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R486**.
+Next free ID: **R488**.
 
 ## Ordered Work
 
@@ -106,25 +106,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
 
-- [ ] **R357 (P3d) A `t"…"` literal reaches its `TString` construction
-  through a request the driver derives**
-
-  Problem: the checker types a `t"…"` occurrence, the driver turns its
-  element types into a request, and the next discovery round rewrites the
-  occurrence into `TString(...)`, where the pin desugars the literal in one
-  pass.
-  - `TString` itself is a generator, so the request mints no struct. It only
-    carries which interpolation is a non-`Copyable` place, which the rewrite
-    formats to a `String` at creation.
-  - The checker can spell the construction itself and record it, as it does
-    an initializer list (`checker/initializer_list.rs`,
-    `SemanticAdjustment::InitializerList`).
-  - `TStringSpecializationRequest`, the driver's
-    `tstring_specialization_requests`, `ServedRequests::tstring_elements`,
-    and `Mono::tstring_call_targets` leave with it.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R358 (P3d) Clone machinery for `Tuple` and `TString` is still in the
   tree, though nothing reaches it**
 
@@ -143,7 +124,15 @@ correctness fix to existing behavior is allowed.
   - Comments across `native::mono` and the census still cite `Tuple$tN`.
   - Tests that pin a `Tuple` clone's derivation statistics are stale: four
     in `tests/compiler_test.rs` were rewritten, and the nightly gate names
-    the rest.
+    the rest. `tstring_write_to_derives` and the t-string row before it
+    still expect `TString$…` derived members.
+  - Since a `t"…"` is the checker's own `__make_tstring` call (2026-10-07),
+    its type is that call's, so bridges that reconciled a literal's type
+    with its construction's serve only the dead clone paths: the
+    public-vs-specialized `TString` clause in `coerces`
+    (`mojito-types/src/types.rs`), the Writable "staging seam" clause in
+    `checker/traits.rs`, and the structural `TString` answers in
+    `is_copyable` and `is_implicitly_copyable`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -636,6 +625,9 @@ correctness fix to existing behavior is allowed.
   - The default initializer constructs `Self.Ts[i]()` from a reified type
     name, which stops with "vm backend does not support the built-in or
     callee 'UInt64'" for a scalar or a vector element.
+  - A pack a forwarding `def` passes to a constructor reifies none either,
+    so every t-string, built by `__make_tstring`, writes nothing under
+    `--erased`.
   - A constructed `Tuple` does reify its pack, which sizes its storage
     (`size_pack_storage`, `backend/vm/values.rs`), and a named result's
     storage is sized from the frame (`erased_list_length`, `backend/vm.rs`).
@@ -3669,6 +3661,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R486 A compile-time evaluation cannot write a `Tuple` or a `t"…"`
+  literal**
+
+  Problem: `comptime s = label(3)`, where `label` returns `String(t"n={n}")`
+  or `String((n, 2))`, prints at the pin and stops in Mojito with
+  "TString.write_to: unspecialized type-keyed method" (or `Tuple.write_to`).
+  - The evaluation's subprogram carries a variadic struct's `comptime for`
+    member as its template stub and runs it erased, as R131's does.
+  - A t-string there ran until 2026-10-07 only through MIR's eager
+    concatenation fallback, deleted when the checker began building the
+    `__make_tstring` call.
+  - Entry R7 serves the instance from the worklist and closes this.
+  - Probe: `conformance/probes/ctfe_writes_tuple_and_tstring.mojo`.
+  - Depends on R7.
+  - Model: Opus, Not Planned.
+
 - [ ] **R132 A compile-time evaluation cannot call a value-keyed generic
   `def`**
 
@@ -3981,6 +3989,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   rejects it with "use of unknown declaration 'TString'".
   - The bundled `TString` struct is visible as a prelude name, though the pin
     keeps its t-string type out of the user's namespace.
+  - No t-string needs the name: the checker calls `__make_tstring` by
+    module path, so the prelude export only serves user spellings.
   - Found while landing R316 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4871,8 +4881,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   pin's `TString[origins: ImmOrigin, //, *Ts: Writable]` borrows a
   `VariadicPack` of the interpolations and keeps the literal parts
   NUL-encoded beside it (`__make_tstring`).
-  - A non-`Copyable` interpolated place is formatted to a `String` when the
-    t-string is created, where the pin borrows it.
+  - An interpolated place whose type is not `ImplicitlyCopyable` is
+    formatted to a `String` when the t-string is created, where the pin
+    borrows it.
+  - Mojito's `__make_tstring[*Ts](var *args: *Ts)` takes the literal
+    segments as interleaved `String` arguments, where the pin's takes one
+    `format_string` parameter beside the interpolations.
   - The pin's shape needs an origin-carrying struct over a borrowed pack.
   - Depends on nothing.
   - Model: Fable, Planned.

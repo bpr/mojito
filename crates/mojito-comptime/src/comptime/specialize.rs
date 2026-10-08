@@ -13,14 +13,10 @@ impl Elab<'_> {
     pub(super) fn monomorphize(
         &self,
         program: Vec<Stmt>,
-        tstring_requests: &[TStringSpecializationRequest],
         def_requests: &[DefSpecializationRequest],
         def_selections: &[DefSpecializationRequest],
     ) -> Result<Elaborated, ComptimeError> {
-        if self.specializable.is_empty()
-            && tstring_requests.is_empty()
-            && self.instance_requests.is_empty()
-        {
+        if self.specializable.is_empty() && self.instance_requests.is_empty() {
             return Ok(Elaborated {
                 program,
                 instances: Vec::new(),
@@ -52,15 +48,6 @@ impl Elab<'_> {
                 .collect(),
         );
         mono.value_scopes.push(module_bindings);
-        // Checker-discovered t-string occurrences: each records the element
-        // types `mono_expr` rewrites the `t"…"` node by, into a construction
-        // of the `TString` its template serves.
-        for request in tstring_requests {
-            mono.tstring_call_targets.insert(
-                request.occurrence().clone().without_syntax(),
-                request.elements().to_vec(),
-            );
-        }
         self.seed_def_call_targets(def_requests, &mut mono);
         self.seed_family_selections(def_selections, &mut mono);
         // Rewrite call sites in every non-template statement, seeding the

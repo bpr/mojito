@@ -4022,6 +4022,18 @@ fn contextually_selects_an_overloaded_callable_value() {
 }
 
 #[test]
+fn rejects_a_tstring_without_the_bundled_module() {
+    // A raw parse links no prelude, so the entry point a t-string calls,
+    // found by module path, is absent: the check says so explicitly.
+    let error = err("def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n");
+    assert!(
+        matches!(error, TypeError::Unsupported(ref message)
+            if message.contains("needs the bundled 'std.format.tstring' module")),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn accepts_numeric_bases_and_string_forms_and_tstrings() {
     // Based integers, digit separators, and single/triple-quoted strings are fully
     // supported (they are ordinary Int/String values).

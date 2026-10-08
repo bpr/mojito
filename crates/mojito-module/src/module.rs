@@ -163,6 +163,16 @@ pub fn inject_prelude_with_options(
     Ok(result)
 }
 
+/// The linked name of the top-level item `name` the module `module`
+/// declares (`__module$std$format$tstring$__make_tstring`).
+///
+/// A compiler-spelled reference names a bundled item by it, as upstream's
+/// `getBuiltinFunction` finds one by module path: no lookup in user scope
+/// can reach or shadow it.
+pub fn linked_item_name(module: &str, name: &str) -> String {
+    implicit_public_identity(module, name).map_or_else(|| qualified(module, name), str::to_string)
+}
+
 fn rewrite_expr(
     expr: &mut Expr,
     names: &HashMap<String, String>,
@@ -772,9 +782,7 @@ impl Linker {
                 if name == "main" {
                     continue;
                 }
-                let linked_name = implicit_public_identity(module_name, name)
-                    .map_or_else(|| qualified(module_name, name), str::to_string);
-                local.insert(name.to_string(), linked_name);
+                local.insert(name.to_string(), linked_item_name(module_name, name));
             }
         }
         // Publish local declarations before following imports so a distinct

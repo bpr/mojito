@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `t"…"` literal is now written by the checker in one pass, as at the
+  pin, as a call of the bundled `__make_tstring` entry point, named by
+  module path rather than looked up in user scope. Previously a driver
+  request was rewritten in the next discovery round. A t-string in a
+  template-served generic body or a generic struct's method now runs on
+  the native backend, where it failed with "unsupported runtime
+  StringLiteral operand". Interpolating a `Copyable` place that is not
+  `ImplicitlyCopyable` (`t"l={l}"` over a `List[Int]`) no longer fails
+  with "cannot be implicitly copied (argument 2 to 'TString')". A literal's
+  type is now `TString[String, …]`. A t-string inside a function evaluated
+  at compile time now stops as a `Tuple` there does (R486), where it ran
+  through MIR's eager concatenation fallback, which is gone.
+
 - A generic struct's method or a generic `def` whose `comptime for` body
   binds an annotated `comptime` (`comptime m: Int = i * Self.n`,
   `comptime b: Bool = i > 0`) or an element of a closed list at the index

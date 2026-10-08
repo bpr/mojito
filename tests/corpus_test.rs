@@ -394,8 +394,10 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "dict_insert_linear_capable",
     // R361, the erased oracle: `Tuple` and `TString` are served by their
     // templates, whose bodies an erased frame cannot always run. A tuple an
-    // intrinsic or a named result builds reifies no pack, and a default
-    // initializer constructs an element from a reified type name.
+    // intrinsic or a named result builds reifies no pack, a pack a
+    // forwarding `def` passes on (`__make_tstring`, every t-string) reifies
+    // none either, and a default initializer constructs an element from a
+    // reified type name.
     "pack_element_default_construction",
     "pack_element_rebind",
     "pack_inferred_through_tuple",
@@ -403,6 +405,9 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "slice_descriptor_protocols",
     "template_tuple_default_initializer",
     "tstring_forms",
+    "tstring_generic_interpolation",
+    "tstring_lazy",
+    "tstring_template_served",
     "tuple_nested_type_arguments",
     "tuple_reverse_concat",
     "type_names_applied_elements",

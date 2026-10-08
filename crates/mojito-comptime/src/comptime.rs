@@ -51,35 +51,6 @@ use mojito_vm::runtime::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// One checker-discovered lazy template-string occurrence.
-///
-/// The interleaved element types of a `t"…"` expression (literal segments as
-/// `String`, interpolation snapshots at their checked types) and the source
-/// occurrence whose AST node monomorphization rewrites into a construction of
-/// the concrete `TString` specialization.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TStringSpecializationRequest {
-    elements: Vec<Ty>,
-    occurrence: SourceSpan,
-}
-
-impl TStringSpecializationRequest {
-    pub const fn new(elements: Vec<Ty>, occurrence: SourceSpan) -> Self {
-        Self {
-            elements,
-            occurrence: occurrence.without_syntax(),
-        }
-    }
-
-    pub fn elements(&self) -> &[Ty] {
-        &self.elements
-    }
-
-    pub const fn occurrence(&self) -> &SourceSpan {
-        &self.occurrence
-    }
-}
-
 /// One checker-discovered inferred application of a bound-generic `def`
 /// template.
 ///
@@ -573,7 +544,6 @@ pub struct Elaborated {
 /// of the source validation run every elaboration follows.
 #[derive(Clone, Copy)]
 pub struct ElaborationInputs<'a> {
-    pub tstring_requests: &'a [TStringSpecializationRequest],
     pub def_requests: &'a [DefSpecializationRequest],
     /// The checker's selection at each unclosed call of an overload family:
     /// which declaration the call names, with nothing to bake.
@@ -591,7 +561,6 @@ impl<'a> ElaborationInputs<'a> {
     /// A first elaboration under `templates`, with no discovered requests.
     pub const fn new(templates: &'a mojito_checked::templates::TemplateCatalog) -> Self {
         Self {
-            tstring_requests: &[],
             def_requests: &[],
             def_selections: &[],
             method_requests: &[],
@@ -985,8 +954,7 @@ fn recorded_overloads<'s>(
 }
 
 /// Elaborate a [`prepare`]d, validated program while materializing
-/// checker-discovered public `Tuple` and `TString` specializations and
-/// inferred bound-generic applications.
+/// checker-discovered inferred bound-generic applications.
 ///
 /// This is the already-validated route: ordinary callers use [`elaborate`],
 /// and the compiler's discovery loop — which validates the prepared program
@@ -996,7 +964,6 @@ pub fn elaborate_prepared(
     inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
     let ElaborationInputs {
-        tstring_requests,
         def_requests,
         def_selections,
         method_requests,
@@ -1097,7 +1064,7 @@ pub fn elaborate_prepared(
         generated: _,
         ctfe_template_stats: _,
         clones: _,
-    } = elab.monomorphize(materialized, tstring_requests, def_requests, def_selections)?;
+    } = elab.monomorphize(materialized, def_requests, def_selections)?;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -3405,12 +3372,6 @@ struct Mono {
     /// specialization. `None` is an ordinary binding which shadows a pack of
     /// the same name; scopes mirror `value_scopes` exactly.
     runtime_pack_scopes: Vec<HashMap<String, Option<Vec<Type>>>>,
-    /// Exact `t"…"` occurrences selected by the checker, with the
-    /// interleaved element types of each (an element typed `String` where
-    /// the source part is an interpolation directs the rewrite to wrap that
-    /// argument in a `String(...)` conversion — the snapshot for
-    /// non-Copyable places).
-    tstring_call_targets: HashMap<SourceSpan, Vec<Ty>>,
     /// Bound-generic templates with at least one reference left on the
     /// abstract path (an unresolvable call or a function-value use), and
     /// variadic struct templates applied over such a body's own symbolic
@@ -4391,7 +4352,6 @@ mod vm_bridge_tests {
 #[cfg(test)]
 fn elaborate_with_requests(
     program: Vec<Stmt>,
-    tstring_requests: &[TStringSpecializationRequest],
     def_requests: &[DefSpecializationRequest],
     method_requests: &[MethodSpecializationRequest],
     struct_requests: &[StructInstanceRequest],
@@ -4403,7 +4363,6 @@ fn elaborate_with_requests(
     elaborate_prepared(
         &prepared,
         ElaborationInputs {
-            tstring_requests,
             def_requests,
             method_requests,
             struct_requests,
@@ -4507,7 +4466,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
             .expect("a request on a template-served def must not fail elaboration")
             .program;
 
@@ -4659,7 +4618,7 @@ mod def_request_tests {
             type_params,
         ));
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4686,7 +4645,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -4713,7 +4672,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[], &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4736,7 +4695,7 @@ mod def_request_tests {
                       def main():\n    show[3]()\n";
         let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
 
-        let elaborated = elaborate_with_requests(linked, &[], &[], &[], &[])
+        let elaborated = elaborate_with_requests(linked, &[], &[], &[])
             .expect("elaborate")
             .program;
 

@@ -134,9 +134,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`reads_value_parameter`), and `spell_parameters` replaces them with the
   call's compile-time arguments. A generic call (`ExprKind::Invoke`) binds
   them as a plain method call does.
-- `checker/inference.rs` owns expression inference (`infer`/`infer_impl`),
-  list/tuple/variant construction, and t-string typing (the lazy `TString`
-  element list and its snapshot capture policy). `infer_variant_storage_method`
+- `checker/inference.rs` owns expression inference (`infer`/`infer_impl`)
+  and list/tuple/variant construction. `checker/template_string.rs` owns
+  t-string typing: `infer_template_string` spells a `t"…"` as the call of
+  `template_string_entry()` (`std.format.tstring`'s `__make_tstring`, by
+  linked name from `module::linked_item_name`) under identities derived from
+  the literal's, with the snapshot capture policy (a place that is not
+  `ImplicitlyCopyable` wrapped in `String(...)`), and records
+  `SemanticAdjustment::SpelledConstruction`. `infer_variant_storage_method`
   is the `__VariantStorage` primitive's operation dispatch (`isa`/`set` — both
   value and `init_with=` placement forms — `unwrap`/`unsafe_unwrap`,
   `replace`/`unsafe_replace`, and the consuming `deinit_with`), reachable only
@@ -197,9 +202,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   initializer list: `infer_initializer_list` spells `{}` / `{a, b}` at the
   contextual type as that type's construction under an identity derived
   from the brace's, checks it, and records
-  `SemanticAdjustment::InitializerList`, which `mojito-checked`'s arena
-  builder answers at the brace's location and `mojito-hir`
-  (`substitute_initializer_lists`) lowers in the brace's place. Together they own method-call inference (including the inverted write:
+  `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
+  shared with t-strings), which `mojito-checked`'s arena builder answers at
+  the sugar's location and `mojito-hir` (`substitute_spelled_constructions`)
+  lowers in the sugar's place. Together they own method-call inference (including the inverted write:
   `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
   `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive
@@ -827,8 +833,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   dispatcher, collections/comprehensions, nested closures, the
   field-invocation indirect-call branch). `expr_unconverted` in `expr.rs` is
   a dispatch table over `ExprKind`: each arm calls one `Flatten` method.
-  `expr.rs` keeps the variable-read, operator, literal-aggregate, and
-  t-string arms; `expr_call.rs` owns direct calls (`call_expr`,
+  `expr.rs` keeps the variable-read, operator, and literal-aggregate arms
+  (a t-string reaching it is an explicit `Unsupported` boundary); `expr_call.rs` owns direct calls (`call_expr`,
   `direct_call`) and callable-value invocations (`invoke_expr`,
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
   method calls (`method_call_expr`, its value and storage special forms,
@@ -1113,8 +1119,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a body that reached a struct whose method becomes keyed is inferred again
   (`ServedRequests::keyed_templates`).
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
-  friends), struct-specialization argument resolution, and the t-string
-  desugar into a construction of the `TString` template.
+  friends) and struct-specialization argument resolution.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
@@ -1506,9 +1511,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   each loop copy, and `mono/infer.rs:rewrite_subscript_call` binds the index
   before the receiver is inferred. `mono/unify.rs:owner_instance_ty` and
   `substitute_ty` name an instance element by element, the empty tuple
-  included. `comptime/mono.rs` rewrites a checked `t"…"` occurrence into a
-  `TString(...)` construction from the driver's
-  `tstring_specialization_requests`.
+  included. The checker builds a `t"…"` occurrence's `__make_tstring` call
+  itself (`checker/template_string.rs`); the driver derives no t-string
+  request.
 - A read of a closed vector, struct, or tuple binder folds to
   `Const::Value(CtValue)` (`mir/ir.rs`, text `value(...)`, schema 1.27):
   `Specializer::value_param_constant` (`mono/instances.rs`) and

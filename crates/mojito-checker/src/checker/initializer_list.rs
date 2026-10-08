@@ -1,6 +1,7 @@
 //! Initializer lists: `{}` and `{a, b}` at the type their context expects,
 //! upstream's set-initializer literal emitted as the construction `T(a, b)`
-//! of that type.
+//! of that type; and the recording every sugar the checker spells as a
+//! construction shares.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -21,18 +22,28 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let construction = self.initializer_list_construction(expression, entries, expected)?;
         let ty = self.infer_with_expected(&construction, expected, record)?;
+        self.record_spelled_construction(expression, construction, &ty);
+        Ok(ty)
+    }
+
+    /// Record that the sugar `expression` checked as `construction` of type
+    /// `ty`: the sugar answers with the construction's type, and the checked
+    /// arena hands HIR the construction in the sugar's place.
+    pub(super) fn record_spelled_construction(
+        &self,
+        expression: &Expr,
+        construction: Expr,
+        ty: &Ty,
+    ) {
         self.expression_types
             .borrow_mut()
             .insert(expression.source_span(), ty.clone());
         self.operation_adjustments.borrow_mut().insert(
             expression.source_span(),
-            mojito_checked::checked::SemanticAdjustment::InitializerList {
-                construction: mojito_checked::checked::InitializerListConstruction(Box::new(
-                    construction,
-                )),
+            mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
+                construction: mojito_checked::checked::SpelledConstruction(Box::new(construction)),
             },
         );
-        Ok(ty)
     }
 
     /// The construction `expected(entries...)` an initializer list stands
@@ -93,7 +104,7 @@ impl Checker {
             _ => {
                 let name = match mojito_types::ct::source_type(expected, expression.span) {
                     Some(SourceType::Named(name, param_args)) => {
-                        return Ok(self.derived_construction(
+                        return Ok(derived_construction(
                             expression,
                             ExprKind::Call {
                                 name,
@@ -117,41 +128,52 @@ impl Checker {
                 }
             }
         };
-        Ok(self.derived_construction(expression, kind))
+        Ok(derived_construction(expression, kind))
     }
+}
 
-    /// `kind` as the construction spelled for the initializer list
-    /// `expression`: its location, with every synthesized node (the call and
-    /// its spelled parameter arguments, never the entries) numbered from the
-    /// brace's identity.
-    #[allow(clippy::unused_self, reason = "an operation of the checker's pass")]
-    fn derived_construction(&self, expression: &Expr, kind: ExprKind) -> Expr {
-        let mut identities = mojito_ast::visit::DerivedIdentities {
-            parent: expression.syntax_id,
-            next: 1,
-        };
-        let mut construction = Expr {
-            kind,
-            span: expression.span,
-            source: expression.source.clone(),
-            syntax_id: mojito_common::token::SyntaxId::derived(expression.syntax_id, 0),
-        };
-        let synthesized: Vec<&mut Expr> = match &mut construction.kind {
-            ExprKind::Call { param_args, .. } | ExprKind::Invoke { param_args, .. } => param_args
-                .iter_mut()
-                .filter_map(|argument| match argument {
-                    mojito_ast::ast::ParamArg::Value(value) => Some(value),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        for value in synthesized {
-            value.source.clone_from(&expression.source);
-            mojito_ast::visit::walk_expr_mut(&mut identities, value);
-        }
-        construction
+/// A node the checker synthesizes for the sugar `expression`'s construction:
+/// at `span`, in the sugar's source, under the identity `ordinal` derived
+/// from the sugar's. Ordinal 0 is the construction itself.
+pub(super) fn spelled_node(
+    expression: &Expr,
+    ordinal: u32,
+    kind: ExprKind,
+    span: mojito_common::token::Span,
+) -> Expr {
+    Expr {
+        kind,
+        span,
+        source: expression.source.clone(),
+        syntax_id: mojito_common::token::SyntaxId::derived(expression.syntax_id, ordinal),
     }
+}
+
+/// `kind` as the construction spelled for the initializer list
+/// `expression`: its location, with every synthesized node (the call and
+/// its spelled parameter arguments, never the entries) numbered from the
+/// brace's identity.
+fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
+    let mut identities = mojito_ast::visit::DerivedIdentities {
+        parent: expression.syntax_id,
+        next: 1,
+    };
+    let mut construction = spelled_node(expression, 0, kind, expression.span);
+    let synthesized: Vec<&mut Expr> = match &mut construction.kind {
+        ExprKind::Call { param_args, .. } | ExprKind::Invoke { param_args, .. } => param_args
+            .iter_mut()
+            .filter_map(|argument| match argument {
+                mojito_ast::ast::ParamArg::Value(value) => Some(value),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    for value in synthesized {
+        value.source.clone_from(&expression.source);
+        mojito_ast::visit::walk_expr_mut(&mut identities, value);
+    }
+    construction
 }
 
 /// The source spelling of a pack element's index that is still a parameter

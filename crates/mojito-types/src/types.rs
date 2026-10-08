@@ -1091,10 +1091,6 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
         .collect()
 }
 
-pub fn tstring_type(elements: Vec<Ty>) -> Ty {
-    nominal_type(TSTRING_TYPE_NAME, elements)
-}
-
 /// The interleaved element types of a lazy template string.
 ///
 /// Both the public `TString` spelling and the concrete symbols emitted for its

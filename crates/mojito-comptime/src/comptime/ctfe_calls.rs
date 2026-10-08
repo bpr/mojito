@@ -256,7 +256,10 @@ pub(super) fn collect_vm_ctfe_expr_calls(expression: &Expr, calls: &mut HashSet<
                 }
             }
         }
+        // A t-string is the call of its bundled entry point, which the
+        // checker spells over the segments and interpolations.
         ExprKind::TString { parts, .. } => {
+            calls.insert(mojito_checker::checker::template_string_entry());
             for part in parts {
                 if let mojito_ast::ast::TStringPart::Expr(value) = part {
                     collect_vm_ctfe_expr_calls(value, calls);

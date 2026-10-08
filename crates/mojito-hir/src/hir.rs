@@ -1019,7 +1019,7 @@ impl Lower {
     fn expr(&self, e: &Expr) -> HirExpr {
         let original_span = e.source_span();
         let mut syntax = e.clone();
-        self.substitute_initializer_lists(&mut syntax);
+        self.substitute_spelled_constructions(&mut syntax);
         rename_expr(&mut syntax, &|span, n| {
             // A `$contextual` leading-dot root substitutes its checker-
             // resolved base type name; everything downstream sees the
@@ -1064,19 +1064,19 @@ impl Lower {
         }
     }
 
-    /// Replace every initializer list in `syntax` by the construction the
-    /// checker spelled for it, the node the checked arena answers at the
-    /// brace's location, so the CFG lowers the construction where the brace
-    /// was written and the brace's own entries, cloned into it, keep their
-    /// identities.
-    fn substitute_initializer_lists(&self, syntax: &mut Expr) {
+    /// Replace every spelled sugar in `syntax` (an initializer list or a
+    /// template string) by the construction the checker spelled for it, the
+    /// node the checked arena answers at the sugar's location, so the CFG
+    /// lowers the construction where the sugar was written and the sugar's
+    /// own operands, cloned into it, keep their identities.
+    fn substitute_spelled_constructions(&self, syntax: &mut Expr) {
         struct Substitute<'a> {
             checked: &'a CheckedTables,
         }
 
         impl mojito_ast::visit::MutVisitor for Substitute<'_> {
             fn visit_expr_mut(&mut self, expr: &mut Expr) {
-                if !matches!(expr.kind, ExprKind::BraceLit(_)) {
+                if !matches!(expr.kind, ExprKind::BraceLit(_) | ExprKind::TString { .. }) {
                     return;
                 }
                 let Some(construction) = self
@@ -1124,9 +1124,9 @@ impl Lower {
 
     fn statement(&self, mut syntax: Stmt) -> HirStmt {
         // MIR lowers the statement's own syntax against these roots' facts,
-        // so an initializer list is replaced in the statement as well.
+        // so a spelled sugar is replaced in the statement as well.
         for root in statement_expression_roots_mut(&mut syntax) {
-            self.substitute_initializer_lists(root);
+            self.substitute_spelled_constructions(root);
         }
         let declaration = self.checked.declaration_at(&syntax.source_span());
         let expressions = statement_expression_roots(&syntax)

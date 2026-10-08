@@ -155,28 +155,6 @@ impl CarriedSite<'_> {
             .filter_map(|span| result.method_instantiations.get(span))
             .map(|instantiation| (instantiation.owner.as_str(), instantiation.method.as_str()))
     }
-
-    /// Every type the body recorded for an expression, a place, or a
-    /// binding.
-    pub fn recorded_types(&self) -> impl Iterator<Item = &mojito_types::types::Ty> {
-        let result = &self.carry.result;
-        let expressions = result
-            .expression_types
-            .logged(self.record.range(|marks| marks.expression_types))
-            .iter()
-            .filter_map(|span| result.expression_types.get(span));
-        let places = result
-            .expression_place_types
-            .logged(self.record.range(|marks| marks.expression_place_types))
-            .iter()
-            .filter_map(|span| result.expression_place_types.get(span));
-        let bindings = result
-            .binding_types
-            .logged(self.record.range(|marks| marks.binding_types))
-            .iter()
-            .filter_map(|span| result.binding_types.get(span));
-        expressions.chain(places).chain(bindings)
-    }
 }
 
 /// What one body site recorded in one pass.

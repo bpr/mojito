@@ -3123,6 +3123,10 @@ mod inference;
 
 mod initializer_list;
 
+mod template_string;
+
+pub use template_string::template_string_entry;
+
 mod indexing;
 
 mod method_calls;

@@ -1124,10 +1124,10 @@ fn literal_materialization_is_explicit_in_typed_mir() {
 }
 
 #[test]
-fn production_tstrings_construct_the_lazy_specialization() {
-    // Through the whole-program Compiler, a `t"…"` desugars into the concrete
-    // `TString` specialization's construction — no eager `""+String(x)+…`
-    // concatenation chain remains in the lowered main.
+fn production_tstrings_call_the_bundled_entry_point() {
+    // Through the whole-program Compiler, a `t"…"` lowers as the checker's
+    // call of `__make_tstring` over its segments and interpolations, the
+    // call the pin builds; no eager concatenation chain remains in main.
     let source = "def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -1145,12 +1145,13 @@ fn production_tstrings_construct_the_lazy_specialization() {
         .iter()
         .flat_map(|block| &block.instrs)
         .collect::<Vec<_>>();
+    let entry = mojito::checker::template_string_entry();
     assert!(
         instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. } if func.0.starts_with("TString$")
+            MirInstr::Call { func, .. } if func.0 == entry
         )),
-        "expected a TString specialization construction in main"
+        "expected a call of {entry} in main"
     );
     assert_eq!(
         instrs
@@ -1162,40 +1163,6 @@ fn production_tstrings_construct_the_lazy_specialization() {
             .count(),
         1,
         "only the literal segment is materialized as an owned String; the Int interpolation stays lazy"
-    );
-    assert!(
-        mir.invariant_errors.is_empty(),
-        "{:?}",
-        mir.invariant_errors
-    );
-}
-
-#[test]
-fn seam_tstrings_keep_the_eager_conversion_fallback() {
-    // The stage-composed seam (raw parse -> check, no discovery pass) retains
-    // the output-identical eager concatenation lowering for t-strings.
-    let program = parse("def main():\n    var value: Int = 42\n    print(t\"answer={value}\")\n")
-        .expect("parse");
-    let checked = mojito::check_program(&program).expect("check");
-    let mir = mojito::mir::lower_checked_program(&checked);
-    let main = &mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1;
-    let conversion = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .find_map(|instruction| match instruction {
-            MirInstr::Call { dest, func, .. } if func.0 == "String" => Some(*dest),
-            _ => None,
-        })
-        .expect("interpolation conversion");
-    assert_eq!(
-        main.reg_types.get(&conversion.0),
-        Some(&mojito::Ty::StringLiteral)
     );
     assert!(
         mir.invariant_errors.is_empty(),

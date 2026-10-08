@@ -1,15 +1,13 @@
 //! The authoritative whole-program compiler pipeline.
 
-use crate::ast::ExprKind;
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
     ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
-    MethodSpecializationRequest, RecordedKeys, StructInstanceRequest, TStringSpecializationRequest,
-    UnservedTemplateUse, bound_generic_template_names, comptime_generic_template_names,
-    elaborate_prepared, generated_names, instance_traces, overload_family_names,
-    pack_generic_template_names, prepare, unserved_template_parameter,
-    variadic_struct_template_names,
+    MethodSpecializationRequest, RecordedKeys, StructInstanceRequest, UnservedTemplateUse,
+    bound_generic_template_names, comptime_generic_template_names, elaborate_prepared,
+    generated_names, instance_traces, overload_family_names, pack_generic_template_names, prepare,
+    unserved_template_parameter, variadic_struct_template_names,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -380,7 +378,6 @@ impl Compiler {
         let range_templates = scalar_range_template_names(linked);
         let variadic_templates = variadic_struct_template_names(linked);
         let user_structs = user_struct_names(linked);
-        let mut tstring_requests: Vec<TStringSpecializationRequest> = Vec::new();
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         // The checker's selection at each unclosed call of an overload
         // family, so elaboration serves a call whose selected declaration
@@ -480,14 +477,6 @@ impl Compiler {
             // recorded one of these is inferred again next round, whatever
             // else its record still matches (`PassCarry::for_next_round`).
             let mut served = ServedRequests::default();
-            for request in tstring_specialization_requests(checked.result()) {
-                if !tstring_requests.contains(&request) {
-                    last_new_callee = String::from("TString");
-                    served.tstring_elements.push(request.elements().to_vec());
-                    tstring_requests.push(request);
-                    grew = true;
-                }
-            }
             let discovered = [
                 (
                     &mut def_requests,
@@ -571,7 +560,6 @@ impl Compiler {
             grew |= reached.is_some();
             last_new_callee = reached.unwrap_or(last_new_callee);
             drop(requests);
-            timing::count("tstring_requests", tstring_requests.len() as u64);
             timing::count("def_requests", def_requests.len() as u64);
             timing::count("method_requests", method_requests.len() as u64);
             timing::count("struct_requests", struct_requests.len() as u64);
@@ -609,7 +597,6 @@ impl Compiler {
                 elaborate_prepared(
                     &prepared,
                     ElaborationInputs {
-                        tstring_requests: &tstring_requests,
                         def_requests: &def_requests,
                         def_selections: &def_selections,
                         method_requests: &method_requests,
@@ -760,7 +747,6 @@ impl Compiler {
 /// which body records of the previous round are stale.
 #[derive(Default)]
 struct ServedRequests {
-    tstring_elements: Vec<Vec<Ty>>,
     callees: Vec<String>,
     methods: Vec<(String, String)>,
     instances: Vec<StructInstanceRequest>,
@@ -772,17 +758,15 @@ struct ServedRequests {
 
 impl ServedRequests {
     /// The body sites whose facts a newly served request would change:
-    /// those that reached a struct application it instantiates, recorded an instantiation of a callee or method it
-    /// clones, or typed an expression, place, or binding with a t-string it
-    /// materializes. (A rewritten call occurrence changes the
-    /// body's syntax hash instead.)
+    /// those that reached a struct application it instantiates, or recorded
+    /// an instantiation of a callee or method it clones. (A rewritten call
+    /// occurrence changes the body's syntax hash instead.)
     fn dirty_sites(&self, carry: &crate::checker::PassCarry) -> HashSet<crate::token::SourceSpan> {
         let instances: Vec<(&str, &[TyArg])> = self
             .instances
             .iter()
             .map(|instance| (instance.template(), instance.arguments()))
             .collect();
-        let tstrings = !self.tstring_elements.is_empty();
         carry
             .sites()
             .filter(|site| {
@@ -803,11 +787,6 @@ impl ServedRequests {
                                         == Some(owner))
                         })
                     })
-                    || (tstrings
-                        && site.recorded_types().any(|ty| {
-                            closed_tstring_elements(ty)
-                                .is_some_and(|elements| self.tstring_elements.contains(&elements))
-                        }))
             })
             .map(|site| site.key().clone())
             .collect()
@@ -1176,42 +1155,6 @@ fn closed_generic_argument(argument: &TyArg) -> bool {
             tuple_specialization_value_is_closed_in(value, &ClosingBinders::default())
         }
     }
-}
-
-/// The checker-typed `t"…"` occurrences whose interleaved element lists are
-/// fully concrete and therefore materializable as `TString` specializations.
-/// Open occurrences (a t-string inside a still-abstract generic template body)
-/// produce no request this round; when the enclosing template is specialized,
-/// the cloned body's t-string checks concretely and the fixpoint collects it.
-fn tstring_specialization_requests(checked: &DiscoveryResult) -> Vec<TStringSpecializationRequest> {
-    let mut requests = Vec::new();
-    checked.scan_expressions(&mut |expression| {
-        if matches!(&expression.kind, ExprKind::TString { .. })
-            && let Some(elements) = checked
-                .expression_type(expression)
-                .and_then(closed_tstring_elements)
-        {
-            let request = TStringSpecializationRequest::new(
-                elements,
-                expression.source_span().without_syntax(),
-            );
-            if !requests.contains(&request) {
-                requests.push(request);
-            }
-        }
-    });
-    requests
-}
-
-fn closed_tstring_elements(ty: &Ty) -> Option<Vec<Ty>> {
-    let elements = crate::types::tstring_elements(ty)?
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    elements
-        .iter()
-        .all(tuple_specialization_type_is_closed)
-        .then_some(elements)
 }
 
 fn tuple_specialization_type_is_closed(ty: &Ty) -> bool {
