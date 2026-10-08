@@ -109,10 +109,10 @@ impl Checker {
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
                     owner: sname.clone(),
-                    owner_arguments: owner_arguments.clone(),
+                    owner_arguments,
                     method: source_method.to_string(),
                     parameter_names: resolved.parameter_names.clone(),
-                    overload: overload.clone(),
+                    overload,
                     arguments: arguments.clone(),
                     inferred_values: unsupplied_value_parameters(&resolved.param_decls, param_args),
                     folded_arguments: folded_parameter_arguments(
@@ -122,34 +122,6 @@ impl Checker {
                     ),
                 },
             );
-            let clone = if owner_arguments.is_empty() {
-                self.specialized_method_clone(sname, method, &resolved.param_decls, arguments)
-            } else {
-                self.instance_call_method_clone(
-                    sname,
-                    targs,
-                    source_method,
-                    &resolved.param_decls,
-                    arguments,
-                )
-            }
-            .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()));
-            if let Some(clone) = clone {
-                return self
-                    .infer_method_call(
-                        span,
-                        object,
-                        &clone,
-                        MethodCallArguments {
-                            param_args: &[],
-                            args,
-                            kwargs,
-                            parameterized_syntax,
-                            preserves_receiver_interiors,
-                        },
-                    )
-                    .map(Some);
-            }
         }
         // A concrete generic-struct receiver records its instantiation for
         // per-instantiation method-clone discovery and, once the elaborator

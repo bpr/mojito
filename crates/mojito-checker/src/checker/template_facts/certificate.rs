@@ -576,8 +576,8 @@ impl Checker {
     ///   instance builds them again.
     /// - `PARAMETERIZED_CALLS`: see [`BodyShape::parameterized_call`]. The
     ///   declared compile-time parameters are the callee's, and on a
-    ///   non-generic receiver the per-call clone the call targets is the same
-    ///   under every instance (`realize_method_call`).
+    ///   non-generic receiver the method the call targets is the same under
+    ///   every instance (`realize_method_call`).
     /// - `COMPREHENSIONS`: see [`BodyShape::comprehension`]. Each clause's
     ///   protocol is an `ITERATION` loop's, and each binder is declared from
     ///   that protocol's binding plan, which an instance selects again
@@ -598,8 +598,8 @@ impl Checker {
     ///   most its overload member and, behind a leading-dot root, the
     ///   expected type's head. An instance inherits the head, and the member
     ///   too, except that a generic struct's spelled receiver names the
-    ///   instance's clone of it (`realize_static_overloads`), or the
-    ///   per-call clone of a member with binders of its own
+    ///   instance's clone of it (`realize_static_overloads`), unless a
+    ///   member with binders of its own has one
     ///   (`realize_static_instantiations`).
     ///
     /// Any other handle, borrowed receiver, reference result, interior
@@ -678,7 +678,7 @@ impl Checker {
         // are kept by every clone and bound symbolically as the template
         // binds them, so no fact reads either.
         // A scalar or `DType` value binder of the method's own (`[n: Int]`,
-        // `[dt: DType]`) is folded by every per-call clone, as a value-keyed
+        // `[dt: DType]`) is bound per call below MIR, as a value-keyed
         // `def`'s is; a vector over it (`Scalar[dt]`) is value-shaped.
         // A compile-time callable binder of the method's own is kept by every
         // clone, which the specializer never folds: it names no callable in

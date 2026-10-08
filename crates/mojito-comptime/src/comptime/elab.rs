@@ -414,7 +414,7 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let mut methods = methods
+                let methods = methods
                     .iter()
                     .map(|m| {
                         let mut m = m.clone();
@@ -428,32 +428,26 @@ impl Elab<'_> {
                         m.body = match body {
                             Ok(body) => body,
                             // A method whose body only elaborates with the
-                            // struct's parameters or its own bound — a local
-                            // `comptime` binding over one, or a `comptime
-                            // for` the template does not serve — becomes a
-                            // trap stub on the template; every concrete call
-                            // retargets to a per-instantiation or per-call
-                            // clone, which folds it bound.
-                            Err(error)
-                                if names_struct_parameter(&error, type_params)
-                                    || names_method_parameter(&error, &m) =>
-                            {
+                            // struct's parameters bound becomes a trap stub
+                            // on the template; every concrete call retargets
+                            // to a per-instantiation clone, which folds it
+                            // bound.
+                            Err(error) if names_struct_parameter(&error, type_params) => {
                                 vec![super::specialize::unspecialized_method_stub(name, &m)]
+                            }
+                            // One that fails over its own binders fails
+                            // where a call reaches an instance of it, as
+                            // upstream instantiates a method only there.
+                            Err(error) if names_method_parameter(&error, &m) => {
+                                vec![super::specialize::instantiation_failure_stub(
+                                    name, &m.name, &m, &error,
+                                )]
                             }
                             Err(error) => return Err(error),
                         };
                         Ok(m)
                     })
                     .collect::<Result<Vec<_>, ComptimeError>>()?;
-                // Checker-discovered instantiations of the struct's own
-                // generic methods (`f.fields(1, "a")`, `b.kind[Int]()` on a
-                // non-generic struct) mint per-call clones with the method's
-                // parameters baked; a closed instance of a generic struct
-                // mints its clones in `generate_instance_clones` instead.
-                if !self.is_specializable(stmt) {
-                    let clones = self.plain_struct_per_call_clones(stmt, name, &methods, env);
-                    methods.extend(clones);
-                }
                 out.push(rebuilt(
                     stmt,
                     StmtKind::Struct {
@@ -946,49 +940,6 @@ pub(super) fn pack_binding_marker(binding: &str) -> String {
 }
 
 impl Elab<'_> {
-    /// The per-call clones a non-generic struct's own generic methods mint
-    /// for the checker-discovered requests against it, each recorded as
-    /// generated and traced to its template. A method its template serves
-    /// (`template_serves_method`, judged on its `elaborated` body) mints
-    /// none.
-    fn plain_struct_per_call_clones(
-        &self,
-        stmt: &Stmt,
-        name: &str,
-        elaborated: &[mojito_ast::ast::Method],
-        env: &HashMap<String, CtValue>,
-    ) -> Vec<mojito_ast::ast::Method> {
-        let requests = self.method_requests.get(name);
-        let base = super::specialize::PerCallBase {
-            owner: Some(super::specialize::PerCallOwner {
-                name,
-                module: stmt.module.as_deref(),
-            }),
-            constructors: true,
-            ..super::specialize::PerCallBase::default()
-        };
-        let mut clones = Vec::new();
-        for (method, template) in stmt_methods(stmt).iter().zip(elaborated) {
-            if self.template_serves_method(name, template) {
-                continue;
-            }
-            clones.extend(self.per_call_method_clones(
-                name,
-                method,
-                super::specialize::is_unspecialized_method_stub(&template.body),
-                requests.map_or(&[][..], Vec::as_slice),
-                &base,
-                env,
-            ));
-        }
-        self.per_call_clones.borrow_mut().extend(
-            clones
-                .iter()
-                .map(|clone| (name.to_string(), clone.name.clone())),
-        );
-        clones
-    }
-
     /// A scalar under a SIMD-valued annotation other than `Int` takes the
     /// annotation's dtype, splatted across its width, so every materialized
     /// use carries the declared type. Any other value is returned as is.
@@ -1106,6 +1057,7 @@ impl Elab<'_> {
                     )
                     .collect(),
                 displays: served_display_bindings(&binders, &self.scalar_reads, body),
+                requested: requested_bindings(body),
             });
         self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, env, true);
@@ -1313,6 +1265,7 @@ impl Elab<'_> {
         let TemplateLoopNames {
             value_packs,
             displays,
+            requested,
         } = self
             .template_loop_names
             .borrow()
@@ -1330,6 +1283,7 @@ impl Elab<'_> {
                         .is_some_and(CtValue::is_parameter_value_collection)
             },
             scalars: &self.scalar_reads,
+            requested: &requested,
         };
         if !in_fn || !comptime_for_is_template_served(iter, body, &names) {
             return Ok(false);
@@ -1585,14 +1539,6 @@ fn struct_pack_collectors<'a>(
                             && struct_params.iter().any(|binder| binder.name == *spread))
         })
         .map(|parameter| parameter.name.clone())
-}
-
-/// The source methods of a struct statement (empty for any other statement).
-fn stmt_methods(stmt: &Stmt) -> Vec<mojito_ast::ast::Method> {
-    match &stmt.kind {
-        StmtKind::Struct { methods, .. } => methods.clone(),
-        _ => Vec::new(),
-    }
 }
 
 /// Upstream's spelling of a compile-time tuple's type (`Tuple[Int, String]`).

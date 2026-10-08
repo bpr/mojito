@@ -3,11 +3,10 @@
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
-    MethodSpecializationRequest, RecordedKeys, StructInstanceRequest, UnservedTemplateUse,
-    bound_generic_template_names, comptime_generic_template_names, elaborate_prepared,
-    generated_names, instance_traces, overload_family_names, prepare, unserved_template_parameter,
-    variadic_struct_template_names,
+    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs, RecordedKeys,
+    StructInstanceRequest, UnservedTemplateUse, bound_generic_template_names,
+    comptime_generic_template_names, elaborate_prepared, generated_names, instance_traces,
+    overload_family_names, prepare, unserved_template_parameter,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -376,14 +375,11 @@ impl Compiler {
         // verification run exactly once, on the fixpoint program.
         const SPECIALIZATION_ROUNDS: usize = 5;
         let range_templates = scalar_range_template_names(linked);
-        let variadic_templates = variadic_struct_template_names(linked);
-        let user_structs = user_struct_names(linked);
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
         // The checker's selection at each unclosed call of an overload
         // family, so elaboration serves a call whose selected declaration
         // the template serves even while its arguments are symbolic.
         let mut def_selections: Vec<DefSpecializationRequest> = Vec::new();
-        let mut method_requests: Vec<MethodSpecializationRequest> = Vec::new();
         let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
         let mut template_demand = template_reach::TemplateDemand::new();
         // Occurrences whose recordings conflicted across rounds; determinism
@@ -435,7 +431,6 @@ impl Compiler {
                 program: discovery,
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
-                stub_reaching_methods,
                 unserved_template_uses: unserved,
                 def_traces,
                 method_traces,
@@ -451,7 +446,6 @@ impl Compiler {
             clones = minted_clones;
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
-            template_demand.note_stub_reaching(stub_reaching_methods);
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
@@ -506,30 +500,6 @@ impl Compiler {
                     }
                 }
             }
-            for request in
-                method_specialization_requests(checked.result(), &variadic_templates, &user_structs)
-            {
-                if conflicted.contains(request.occurrence()) {
-                    continue;
-                }
-                match method_requests
-                    .iter()
-                    .position(|existing| existing.occurrence() == request.occurrence())
-                {
-                    None => {
-                        last_new_callee = format!("{}.{}", request.owner(), request.method());
-                        served
-                            .methods
-                            .push((request.owner().to_string(), request.method().to_string()));
-                        method_requests.push(request);
-                        grew = true;
-                    }
-                    Some(index) if method_requests[index] != request => {
-                        conflicted.insert(method_requests.remove(index).occurrence().clone());
-                    }
-                    Some(_) => {}
-                }
-            }
             let mut instances_grew = false;
             // An instance of a struct whose erased method body can reach a
             // compile-time-keyed stub must mint its clones: keeping the
@@ -555,7 +525,6 @@ impl Compiler {
             last_new_callee = reached.unwrap_or(last_new_callee);
             drop(requests);
             timing::count("def_requests", def_requests.len() as u64);
-            timing::count("method_requests", method_requests.len() as u64);
             timing::count("struct_requests", struct_requests.len() as u64);
             if !grew && !instances_grew {
                 converged = true;
@@ -579,7 +548,6 @@ impl Compiler {
                 program: elaborated,
                 instances: minted,
                 stub_reaching_structs: stub_reaching,
-                stub_reaching_methods,
                 unserved_template_uses: unserved,
                 def_traces,
                 method_traces,
@@ -593,7 +561,6 @@ impl Compiler {
                     ElaborationInputs {
                         def_requests: &def_requests,
                         def_selections: &def_selections,
-                        method_requests: &method_requests,
                         struct_requests: &struct_requests,
                         keyed_methods: template_demand.keyed_methods(),
                         ..ElaborationInputs::new(&templates_catalog)
@@ -603,7 +570,6 @@ impl Compiler {
             };
             unserved_template_uses = unserved;
             stub_reaching_structs = stub_reaching;
-            template_demand.note_stub_reaching(stub_reaching_methods);
             clones = minted_clones;
             // Instances the specializer minted on its own (closed applications
             // reached from user code and from other clones) are already
@@ -925,132 +891,6 @@ fn recorded_def_calls(
 /// keyed by the plain family name the checker's scalar-`range` inference
 /// records (the checker never sees the dropped comptime-class templates, so
 /// it cannot record the module-mangled spelling itself).
-/// The checker-recorded generic-method instantiations that are closed and
-/// therefore replayable as per-call clones: on a closed instance of an
-/// ordinary generic struct (the request
-/// owner is the instance key `mangle(template, arguments)`, the key
-/// `generate_instance_clones` consults), on a user-declared struct, or from
-/// a call site outside the unstamped bundled stdlib (user code, and
-/// per-instantiation clone bodies by their `$`-tagged source:
-/// `List[Int].write_repr_to`'s `FormatStruct.params(...)`). A call inside an unstamped bundled body on a
-/// bundled struct keeps the erased path, so a program that never reaches
-/// such a method pays no discovery round. Conflicting recordings for one
-/// occurrence drop it, as for defs.
-fn method_specialization_requests(
-    checked: &DiscoveryResult,
-    variadic_templates: &std::collections::HashSet<String>,
-    user_structs: &std::collections::HashSet<String>,
-) -> Vec<MethodSpecializationRequest> {
-    use std::collections::hash_map::Entry;
-    let mut by_occurrence: std::collections::HashMap<
-        mojito_common::token::SourceSpan,
-        MethodSpecializationRequest,
-    > = std::collections::HashMap::new();
-    let mut conflicted = std::collections::HashSet::new();
-    for (span, instantiation) in checked.method_instantiations() {
-        let instance_owner = !instantiation.owner_arguments.is_empty();
-        // A per-instantiation clone body carries a `$`-tagged source
-        // (`list.mojo$List$write_repr_to$y3:Int`): it exists only for an
-        // instance user code reached, so its calls count as user sites.
-        let user_site = span.source.as_deref().is_none_or(|source| {
-            source.contains('$') || !crate::checker::is_bundled_module_source(Some(source))
-        });
-        // A recording on a variadic template's own name, the abstract type,
-        // names no instance a clone could be minted for.
-        if variadic_templates.contains(&instantiation.owner)
-            || !(instance_owner || user_site || user_structs.contains(&instantiation.owner))
-            || !instantiation.arguments.iter().all(closed_generic_argument)
-            || !instantiation
-                .owner_arguments
-                .iter()
-                .all(closed_generic_argument)
-        {
-            continue;
-        }
-        let owner = if instance_owner {
-            // An erased origin argument contributes the key's own marker
-            // part; it is key vocabulary, never a compile-time value.
-            let types: Vec<Option<CtValue>> = instantiation
-                .owner_arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
-                    TyArg::Val(value) => Some(value.clone()),
-                    TyArg::Origin(_) => None,
-                })
-                .collect();
-            let parts: Vec<crate::symbol::SpecializationKeyPart<'_>> = types
-                .iter()
-                .map(|value| {
-                    value.as_ref().map_or(
-                        crate::symbol::SpecializationKeyPart::ErasedOrigin,
-                        crate::symbol::SpecializationKeyPart::Value,
-                    )
-                })
-                .collect();
-            let Ok(owner) = crate::symbol::mangle_parts(&instantiation.owner, &parts) else {
-                continue;
-            };
-            owner
-        } else {
-            instantiation.owner.clone()
-        };
-        let request = MethodSpecializationRequest::new(
-            span.clone(),
-            owner,
-            instantiation.method.clone(),
-            instantiation.parameter_names.clone(),
-            instantiation
-                .arguments
-                .iter()
-                .map(crate::symbol::materialized_instantiation_argument)
-                .collect(),
-        )
-        .with_overload(instantiation.overload.clone());
-        let key = request.occurrence().clone();
-        if conflicted.contains(&key) {
-            continue;
-        }
-        match by_occurrence.entry(key) {
-            Entry::Occupied(existing) if *existing.get() != request => {
-                let (key, _) = existing.remove_entry();
-                conflicted.insert(key);
-            }
-            Entry::Occupied(_) => {}
-            Entry::Vacant(slot) => {
-                slot.insert(request);
-            }
-        }
-    }
-    let mut requests: Vec<_> = by_occurrence.into_values().collect();
-    requests.sort_by(|a, b| {
-        let key = |request: &MethodSpecializationRequest| {
-            (
-                request.occurrence().source.clone(),
-                request.occurrence().span.0,
-                request.occurrence().span.1,
-                request.owner().to_string(),
-                request.method().to_string(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
-    requests
-}
-
-/// The structs a program declares outside the bundled stdlib: their generic
-/// methods get per-call clones on request.
-fn user_struct_names(linked: &[Stmt]) -> std::collections::HashSet<String> {
-    linked
-        .iter()
-        .filter(|statement| !crate::checker::is_bundled_module_source(statement.module.as_deref()))
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'static str, String> {
     let mut names = std::collections::HashMap::new();
     for statement in linked {

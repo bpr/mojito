@@ -229,8 +229,7 @@ impl Checker {
     /// Check the method bodies of a struct that hold compile-time control
     /// flow, each with `self` bound at the struct's own parameters, and every
     /// body constructing a vector at a lane its method's own binders spell
-    /// (`method_constructs_at_own_lane`), whose elaborated template is a
-    /// trap stub.
+    /// (`method_constructs_at_own_lane`).
     pub(super) fn validate_comptime_method_bodies(
         &mut self,
         declaration: &StructDeclaration<'_>,
@@ -585,13 +584,23 @@ impl Checker {
                     .constant(mojito_types::ct::CtValue::List(elements))
                     .map_err(|error| TypeError::Unsupported(error.to_string()))?,
             ),
-            None => names.or_else(|| self.value_pack_named(&iter)),
+            None => names
+                .or_else(|| self.value_pack_named(&iter))
+                .or_else(|| self.requested_name(&iter)),
         };
-        // A display the check does not close is evaluated per instance.
+        // A display the check does not close is evaluated per instance, as
+        // is a sequence a compile-time application builds (`mk(n)`).
         let evaluated = sequence.is_none() && self.evaluated_display(&iter, &element);
+        let applied = sequence.is_none()
+            && !evaluated
+            && bound.is_none()
+            && !self.source_validation
+            && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
+            && self.applies_callable(&iter)
+            && self.reads_compile_time_alone(&iter);
         let element = match element {
             Ty::Struct(name, args)
-                if evaluated
+                if (evaluated || applied)
                     && args.is_empty()
                     && mojito_types::types::is_stdlib_string_struct(&name) =>
             {
@@ -599,7 +608,8 @@ impl Checker {
             }
             element => element,
         };
-        let binds_index = element == Ty::Int || sequence.is_some() || evaluated || bound.is_some();
+        let binds_index =
+            element == Ty::Int || sequence.is_some() || evaluated || applied || bound.is_some();
         // The executable check sees only a loop the elaborator kept, whose
         // variable must be a binder MIR carries.
         if !binds_index && !self.source_validation {
@@ -612,6 +622,7 @@ impl Checker {
         let binder = binds_index.then(|| comptime_index_binder(var, &iter, &element));
         match (&binder, &bound) {
             (Some(binder), Some(display)) => self.record_bound_iteration(source, binder, display),
+            (Some(binder), None) if applied => self.record_applied_iteration(source, binder),
             (Some(binder), None) => {
                 self.record_comptime_iteration(source, &iter, binder, sequence, evaluated)?;
             }
@@ -742,6 +753,46 @@ impl Checker {
         };
         record(mojito_checked::checked::ComptimeSequence::Range { start, stop, step });
         Ok(())
+    }
+
+    /// The application a local `comptime` binding `expr` names denotes
+    /// (`l` after `comptime l = mk(n)`), which a loop over it iterates.
+    fn requested_name(&self, expr: &Expr) -> Option<ParamExpr> {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return None;
+        };
+        self.local_comptime_parameters
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .map(|(_, expression)| expression)
+            .filter(|expression| {
+                matches!(
+                    expression.kind(),
+                    mojito_types::param_expr::ParamKind::Apply { .. }
+                )
+            })
+            .cloned()
+    }
+
+    /// Record the loop header of a sequence a compile-time application
+    /// builds (`ComptimeSource::Applied`), which MIR lifts over the binders
+    /// in scope and the elaborator evaluates per instance.
+    fn record_applied_iteration(&self, source: &Expr, binder: &ParamExpr) {
+        let Some(reference) = binder.as_decl_ref() else {
+            return;
+        };
+        self.operation_adjustments.borrow_mut().insert(
+            source.source_span(),
+            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
+                mojito_checked::checked::ComptimeIteration {
+                    binder: reference.clone(),
+                    source: mojito_checked::checked::ComptimeSource::Applied {
+                        element: binder.meta().clone(),
+                    },
+                },
+            )),
+        );
     }
 
     /// Whether every local `expr` names is a compile-time binding: a value
@@ -1427,6 +1478,11 @@ impl Checker {
             if let (Some(annotation), Some(found)) = (annotation, expression.meta().as_value()) {
                 let expected = self
                     .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+                // Any other annotation converts the value, as a runtime
+                // binding's does (`comptime x: Float64 = i`).
+                if &expected != found && !matches!(expected, Ty::Int | Ty::Bool) {
+                    return Ok(false);
+                }
                 if &expected != found {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
@@ -1804,11 +1860,34 @@ impl Checker {
     /// position: it would materialize the whole collection, which is not
     /// implicitly copyable, as the pin rejects it.
     pub(super) fn reject_display_crossing(&self, expr: &Expr) -> Result<(), TypeError> {
-        match self.bound_display(expr) {
-            Some(display) if self.crosses_to_runtime() => Err(TypeError::ComptimeCrossing(
+        if !self.crosses_to_runtime() {
+            return Ok(());
+        }
+        if let Some(display) = self.bound_display(expr) {
+            return Err(TypeError::ComptimeCrossing(
                 materialized_collection_spelling(&display.ty),
-            )),
-            _ => Ok(()),
+            ));
+        }
+        // A collection a request builds (`comptime l = mk(n)`) is never
+        // implicitly copyable: it has no runtime form to read.
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return Ok(());
+        };
+        let requested = self
+            .local_comptime_parameters
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .and_then(|(_, expression)| expression.meta().as_value().cloned())
+            .filter(|ty| {
+                self.lookup(name) == Some(ty)
+                    && (mojito_types::types::list_element(ty).is_some()
+                        || mojito_types::types::set_element(ty).is_some()
+                        || mojito_types::types::dict_elements(ty).is_some())
+            });
+        match requested {
+            Some(ty) => Err(TypeError::ComptimeCrossing(ty.to_string())),
+            None => Ok(()),
         }
     }
 

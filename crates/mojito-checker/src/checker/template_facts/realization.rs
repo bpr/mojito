@@ -878,14 +878,11 @@ impl Checker {
         realize_lane_comparisons(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
         Self::realize_pack_accessors(&facts)?;
-        // A per-call request the template recorded names the caller's own
-        // binders; an instance that closed it would retarget the call in the
-        // clone check, which no recipe repeats.
+        // A method-call record the template made over the struct's binders
+        // names the instance's arguments, as the clone check records them.
         for (_, instantiation) in &mut facts.method_instantiations {
-            let arguments = mojito_types::types::map_tyargs(&instantiation.arguments, &substitute);
-            if arguments != instantiation.arguments {
-                return Err("an instance closes a per-call clone request");
-            }
+            instantiation.arguments =
+                mojito_types::types::map_tyargs(&instantiation.arguments, &substitute);
             instantiation.owner_arguments =
                 mojito_types::types::map_tyargs(&instantiation.owner_arguments, &substitute);
         }

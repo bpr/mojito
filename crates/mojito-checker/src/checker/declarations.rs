@@ -2005,11 +2005,9 @@ impl Checker {
         .map_err(Some)
     }
 
-    /// Record a generic constructor's resolved compile-time arguments for
-    /// per-call specialization and, once its clone exists on the struct,
-    /// retarget the construction to it (`C.__init__$y3:Int`). A
-    /// closed instance of a generic struct owns the request, so its clone is
-    /// keyed by the instance and then the call (`C.__init__$y3:Int$y6:String`).
+    /// Record a generic constructor's resolved compile-time arguments: the
+    /// elaborator instantiates its template per call. A closed instance of a
+    /// generic struct owns the record.
     fn record_constructor_instantiation(
         &self,
         span: &SourceSpan,
@@ -2032,13 +2030,8 @@ impl Checker {
         let Some(arguments) = arguments else {
             return;
         };
-        let generic = self
-            .structs
-            .get(name)
-            .is_some_and(|info| !info.decls.is_empty());
-        // A closed instance that mints its own clones keys the request, so
-        // the constructor clone is minted beside the instance's other
-        // per-call clones; any other owner keeps the template's key.
+        // A closed instance that mints its own clones keys the record; any
+        // other owner keeps the template's key.
         let instance = self.instance_arguments(name, owner_arguments);
         // The selected member of an overloaded constructor set: two generic
         // constructors baked alike share a clone name.
@@ -2063,81 +2056,12 @@ impl Checker {
                 owner_arguments: instance.unwrap_or_default(),
                 method: "__init__".to_string(),
                 parameter_names: sig.names.clone(),
-                overload: overload.clone(),
-                arguments: arguments.clone(),
+                overload,
+                arguments,
                 inferred_values: Vec::new(),
                 folded_arguments: Vec::new(),
             },
         );
-        // On a generic struct the instance's own values precede the call's in
-        // a clone name, as `per_call_method_clones` mints them: mangling the
-        // call's alone would name another instance's clone.
-        let clone = if generic {
-            self.instance_call_method_clone(
-                name,
-                owner_arguments,
-                "__init__",
-                &sig.decls,
-                &arguments,
-            )
-        } else {
-            self.specialized_method_clone(name, "__init__", &sig.decls, &arguments)
-        }
-        .filter(|clone| self.clone_serves_overload(name, clone, overload.as_deref()));
-        if let Some(clone) = clone {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), format!("{name}.{clone}"));
-        }
-    }
-
-    /// The lowered target of the per-call clone (`C.__init__$y6:String`) that
-    /// runs a call which selected the generic constructor `selected` of the
-    /// non-generic struct `name`, once the elaborator has minted it. Two
-    /// generic constructors baked alike share the clone name, so the call's
-    /// arguments select the member of that family.
-    fn per_call_constructor_target(
-        &self,
-        name: &str,
-        selected: &MethodCallResolution,
-        arguments: &[TyArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<String> {
-        let clone =
-            self.specialized_method_clone(name, "__init__", &selected.param_decls, arguments)?;
-        let overload = selected
-            .lowered_name
-            .as_deref()
-            .and_then(mojito_symbol::symbol::overload_qualifier);
-        if !self.clone_serves_overload(name, &clone, overload) {
-            return None;
-        }
-        let family = self.structs.get(name)?.methods.get(&clone)?;
-        let [_, _, ..] = family.as_slice() else {
-            return Some(format!("{name}.{clone}"));
-        };
-        let ranked: Vec<(usize, &MethodSig)> = family
-            .iter()
-            .filter_map(|member| {
-                self.score_method_call(
-                    member,
-                    &member.params,
-                    member.variadic.as_deref(),
-                    member.kw_variadic.as_deref(),
-                    args,
-                    kwargs,
-                )
-                .ok()
-                .map(|scored| (scored.rank, member))
-            })
-            .collect();
-        let best = ranked.iter().map(|(rank, _)| *rank).min()?;
-        let mut members = ranked.iter().filter(|(rank, _)| *rank == best);
-        let (_, member) = members.next()?;
-        members.next().is_none().then(|| {
-            method_lowered_name(name, &clone, member, self.self_instance_ty(name).as_ref())
-        })
     }
 
     /// The call diagnostic of a constructor candidate whose availability
@@ -2323,13 +2247,6 @@ impl Checker {
                         .insert(span.clone(), target.clone());
                 }
                 if let Some(arguments) = &selected.instantiation {
-                    if let Some(target) =
-                        self.per_call_constructor_target(name, &selected, arguments, args, kwargs)
-                    {
-                        self.overload_targets
-                            .borrow_mut()
-                            .insert(span.clone(), target);
-                    }
                     self.method_instantiations.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::MethodInstantiation {

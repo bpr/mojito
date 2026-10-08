@@ -25,24 +25,13 @@ pub(super) struct TemplateDemand {
     /// checked bodies hold, as (struct, method). A `def` that still clones
     /// for the same reason is (`def`, "").
     keyed_methods: Vec<(String, String)>,
-    /// Methods the last elaboration found reaching a compile-time-keyed
-    /// stub, as (struct, method): a call of one with binders of its own
-    /// keeps its per-call clone.
-    stub_reaching: Vec<(String, String)>,
 }
 
 impl TemplateDemand {
     pub(super) const fn new() -> Self {
         Self {
             keyed_methods: Vec::new(),
-            stub_reaching: Vec::new(),
         }
-    }
-
-    /// Record the methods an elaboration found reaching a compile-time-keyed
-    /// stub; the next round keys them.
-    pub(super) fn note_stub_reaching(&mut self, methods: Vec<(String, String)>) {
-        self.stub_reaching = methods;
     }
 
     pub(super) fn keyed_methods(&self) -> &[(String, String)] {
@@ -69,18 +58,13 @@ impl TemplateDemand {
         // A method with compile-time parameters of its own is served per
         // call: what its body reaches over its own binders is read at each
         // closed call's arguments.
-        let mut keyed = Vec::new();
         for call in closed_method_calls(checked) {
-            let (instances, keys) = reach.method_call(&call);
-            for request in instances {
+            for request in reach.method_call(&call) {
                 if !struct_requests.contains(&request) {
                     last = Some(request.template().to_string());
                     served.instances.push(request.clone());
                     struct_requests.push(request);
                 }
-            }
-            if keys && !keyed.contains(&(call.owner.clone(), call.method.clone())) {
-                keyed.push((call.owner.clone(), call.method.clone()));
             }
         }
         for request in reach.instances(&owners(struct_requests)) {
@@ -88,16 +72,7 @@ impl TemplateDemand {
             served.instances.push(request.clone());
             struct_requests.push(request);
         }
-        for method in reach
-            .keyed_methods(&owners(struct_requests))
-            .into_iter()
-            .chain(self.stub_reaching.iter().cloned())
-        {
-            if !keyed.contains(&method) {
-                keyed.push(method);
-            }
-        }
-        for method in keyed {
+        for method in reach.keyed_methods(&owners(struct_requests)) {
             if !self.keyed_methods.contains(&method) {
                 last = Some(format!("{}.{}", method.0, method.1));
                 served.keyed_templates.push(method.0.clone());
@@ -208,11 +183,9 @@ impl<'a> TemplateReach<'a> {
         keyed
     }
 
-    /// What one closed call of a method with binders of its own reaches
-    /// over them: the closed instances its body applies, and whether the
-    /// body only a per-call clone can serve (a tuple over the method's own
-    /// binders).
-    fn method_call(&mut self, call: &MethodCall) -> (Vec<StructInstanceRequest>, bool) {
+    /// The closed instances one closed call of a method with binders of its
+    /// own reaches over them: those its body applies.
+    fn method_call(&mut self, call: &MethodCall) -> Vec<StructInstanceRequest> {
         let binder_owner = call.binder_owner();
         let mut bind = BindOwner {
             owners: vec![
@@ -221,14 +194,11 @@ impl<'a> TemplateReach<'a> {
             ],
         };
         let mut instances = Vec::new();
-        let mut keyed = false;
         for application in self.applications(&call.owner).iter().filter(|application| {
-            application.method == call.method && application.names(&binder_owner)
+            application.method == call.method
+                && application.names(&binder_owner)
+                && !application.keyed
         }) {
-            if application.keyed {
-                keyed = true;
-                continue;
-            }
             let Some(arguments) = application
                 .arguments
                 .iter()
@@ -250,7 +220,7 @@ impl<'a> TemplateReach<'a> {
                 }
             }
         }
-        (instances, keyed)
+        instances
     }
 
     fn applications(&mut self, template: &str) -> &[Application] {
@@ -268,7 +238,7 @@ impl<'a> TemplateReach<'a> {
 
 /// What one template method's body holds over its struct's parameters or
 /// its own: a struct application, or (`keyed`, naming no struct) a construct
-/// that keeps the method's per-instance or per-call clone.
+/// that keeps the method's per-instance clone.
 struct Application {
     method: String,
     name: String,

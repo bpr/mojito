@@ -444,10 +444,10 @@ impl Checker {
                 span.clone(),
                 mojito_checked::checked::MethodInstantiation {
                     owner: sname.to_string(),
-                    owner_arguments: owner_arguments.clone(),
+                    owner_arguments,
                     method: source_method.to_string(),
                     parameter_names: selected.parameter_names.clone(),
-                    overload: overload.clone(),
+                    overload,
                     arguments: arguments.clone(),
                     inferred_values: unsupplied_value_parameters(&selected.param_decls, param_args),
                     folded_arguments: folded_parameter_arguments(
@@ -457,35 +457,6 @@ impl Checker {
                     ),
                 },
             );
-            let clone = if owner_arguments.is_empty() {
-                self.specialized_method_clone(sname, method, &selected.param_decls, arguments)
-            } else {
-                self.instance_call_method_clone(
-                    sname,
-                    &receiver_targs,
-                    source_method,
-                    &selected.param_decls,
-                    arguments,
-                )
-            }
-            .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()));
-            if let Some(clone) = clone {
-                let ty = self.infer_struct_static_method(
-                    span.clone(),
-                    sname,
-                    struct_targs,
-                    &clone,
-                    MethodCallArguments {
-                        param_args: &[],
-                        args,
-                        kwargs,
-                        parameterized_syntax,
-                        preserves_receiver_interiors: false,
-                    },
-                )?;
-                self.record_static_clone_target(span, sname, &clone);
-                return Ok(ty);
-            }
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
         // records its instantiation and retargets to the per-instantiation
@@ -673,7 +644,7 @@ impl Checker {
         Ok(selected.return_type)
     }
 
-    /// Target a static call retargeted to its per-call clone `clone`: the
+    /// Target a static call retargeted to its per-instantiation clone `clone`: the
     /// clone's sole signature names no target of its own, and the call's
     /// syntax still names the template.
     pub(super) fn record_static_clone_target(&self, span: SourceSpan, sname: &str, clone: &str) {

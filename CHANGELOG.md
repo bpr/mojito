@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method with compile-time parameters of its own is now always served by
+  its template, as at the pin: the per-call clone path, the checker's
+  retargeting to its clones, and the driver's method requests are deleted.
+  A `comptime for` holding a binding with a converting annotation
+  (`comptime t: String = "s"`, which also failed MIR verification in any
+  body), a range bound or binding applying a function whatever its result
+  (`range(len(mk(n)))`, `comptime e = mk(n)[i]`), or iterating a sequence a
+  compile-time application builds (`comptime for x in mk(n)`, or over
+  `comptime l = mk(n)`, which failed in a plain `def` too) is now evaluated
+  per instance below MIR, in a method or a `def`. A runtime read of such a
+  `List` binding is rejected with the pin's "cannot materialize" message.
+  `range(T.K)` over a trait's value member in a method, which ran on a
+  per-call clone, is now rejected where called, as `comptime if T.K` already
+  was (R500).
+
 - Every `def` keyed on a type pack is now served by its template, as at
   the pin, whatever its body holds: the cloner's type-pack branch, its
   served-shape gate, and the signature-only stub a deferred pack call

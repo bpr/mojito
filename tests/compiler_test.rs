@@ -625,19 +625,22 @@ fn view_temporary_argument_conflicts_with_a_later_source_mutation() {
 }
 
 #[test]
-fn generic_methods_instantiate_per_call_on_every_struct() {
+fn generic_methods_instantiate_from_their_templates_on_every_struct() {
     // A method-level type parameter on an ordinary generic instance decides
     // its `comptime if` per call, the instance's argument bound beside the
     // call's, and a method-level pack on a non-generic struct is inferred
-    // from the overflow arguments and its loop unrolled per call.
+    // from the overflow arguments and its loop unrolled per call, each from
+    // the method's template.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
             "struct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def kind[U: AnyType](self) -> Int:\n        comptime if U == Self.T:\n            return 2\n        comptime if U == Int:\n            return 1\n        return 0\n\nstruct Plain(Movable):\n    var n: Int\n\n    def __init__(out self):\n        self.n = 0\n\n    def fields[*Ts: Writable](mut self, *args: *Ts):\n        comptime for i in range(Ts.length):\n            self.n += 1\n\ndef main():\n    var b = Box[Bool](True)\n    print(b.kind[Int](), b.kind[Bool](), b.kind[String]())\n    var p = Plain()\n    p.fields(1, \"a\", True)\n    print(p.n)\n",
-            std::path::Path::new("/tmp/mojito_per_call_clones.mojo"),
+            std::path::Path::new("/tmp/mojito_template_methods.mojo"),
         )
-        .expect("per-call method clones");
-    let output = compiler.execute(&program).expect("run the per-call clones");
+        .expect("template-served methods");
+    let output = compiler
+        .execute(&program)
+        .expect("run the template-served methods");
     assert_eq!(output.output, "1 2 0\n3\n");
 }
 
@@ -4449,7 +4452,7 @@ fn template_method_view_bindings_derive() {
 fn template_method_bound_witness_shapes_derive() {
     // Each instance re-selects the witness a call through the bound names:
     // an overload member the arity picks, a `[H: Hasher]` binder a concrete
-    // hasher bakes into the per-call clone, a `mut self` requirement, and a
+    // hasher closes, a `mut self` requirement, and a
     // `var self` one the receiver's `^` transfer consumes.
     assert_methods_derive(
         include_str!("../assets/ok/template_method_bound_witness_shapes.mojo"),
@@ -5168,7 +5171,7 @@ fn template_generic_static_call_derives() {
 fn template_generic_static_shapes_derive() {
     // A generic struct's static with an availability condition, a `ref` or
     // `mut` parameter, a read-only pack, or binders of its own derives; the
-    // last calls the per-call clone keyed by the instance's receiver.
+    // last calls the static's template.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_generic_static_shapes.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
@@ -5204,11 +5207,10 @@ fn template_generic_static_shapes_derive() {
 fn template_applied_overloaded_static_derives() {
     // A generic struct's static with binders of its own, spelled with
     // explicit compile-time arguments or ranked from an overload family one
-    // of whose members declares binders, derives: the per-call clone keyed by
-    // the instance's receiver exists from the round that mints it, and a
-    // member without binders retargets to the instance's clone of it. A
-    // string literal bound to the static's own binder, inferred or spelled,
-    // converts into the clone's baked parameter type.
+    // of whose members declares binders, derives: a member with binders
+    // names its template, and a member without binders retargets to the
+    // instance's clone of it. A string literal bound to the static's own
+    // binder, inferred or spelled, binds as the template binds it.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_applied_overloaded_static.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
@@ -5219,16 +5221,15 @@ fn template_applied_overloaded_static_derives() {
     );
     let compiler = Compiler::default().with_template_verification(false);
     let program = compile_entry(&compiler, &source);
-    // A method that calls an overloaded static with binders of its own
-    // keeps its clone, which names the per-call clone the instance mints. One
-    // that calls a lone such static is served by its template.
+    // A method that calls a static with binders of its own, lone or
+    // overloaded, is served by its template.
     for (method, clones) in [
         ("scaled", 0),
         ("twice", 0),
-        ("picked", 2),
-        ("applied", 2),
-        ("worded", 2),
-        ("spelled", 2),
+        ("picked", 0),
+        ("applied", 0),
+        ("worded", 0),
+        ("spelled", 0),
     ] {
         let derived: std::collections::HashSet<&String> = program
             .template_stats()

@@ -34,7 +34,9 @@ pub enum CloneClass {
     /// A per-instantiation method clone whose template body holds a
     /// `comptime if` or a `comptime for`.
     InstanceMethodComptime,
-    /// A per-call method clone, for the method's own compile-time parameters.
+    /// A per-call method clone, for the method's own compile-time
+    /// parameters. Every such method is served by its template, so the
+    /// class counts none: it is kept as a regression counter.
     PerCallMethod,
 }
 

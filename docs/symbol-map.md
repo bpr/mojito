@@ -225,10 +225,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_constructor_origins`/`record_constructor_reference_borrows`, retaining
   `mut`/`ref` argument places via `solve_call_origins`, and alias-checking;
   both method paths and the constructor paths record
-  `checked::MethodInstantiation`s and retarget to an existing per-call
-  clone through `specialized_method_clone`, whose value list must agree with
-  the specializer's `method_request_values` (a retargeted static names the
-  clone through `record_static_clone_target`); the method-call, static, and
+  `checked::MethodInstantiation`s, which name the method's template (a
+  static retargeted to its per-instantiation clone names it through
+  `record_static_clone_target`); the method-call, static, and
   constructor paths also record every closed generic-struct application
   reached from a non-bundled source (`record_struct_instantiation` →
   `checked::StructInstantiation`) and retarget a closed receiver's call to
@@ -572,8 +571,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   types to the requirement's witness (a place read, a hashed leaf, or a
   struct's own method with its binders bound, of an overload set the one
   member witnessing the requirement (`traits.rs:requirement_witnesses`),
-  and retargeted to a baked binder's per-call clone, keyed by the
-  instance too when the struct is generic), with
+  naming the member itself), with
   `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
   abstract contract with it (a receiver typed by a binder the instance keeps
   stays a dispatch, reading the summaries of every conformer
@@ -644,8 +642,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
   value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
-  and `MethodInstanceTrace`, recorded by `generate_instance_clones` and by
-  `per_call_method_clones` (`trace_per_call_clone`) for a per-call clone;
+  and `MethodInstanceTrace`, recorded by `generate_instance_clones`;
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
@@ -738,12 +735,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::method_binder_owner` over `symbol::MethodBinderOwners`, which
   the elaborator's `elaborated_binder` shares,
   `value_parameter`, `params_as_args` over `ParamDecl::own_argument`).
-  The same table's `call_qualifier` names the overload a per-call method
-  clone request selects (the qualifier of the symbol `lowered_method_name`
-  declares, which a call records verbatim): the elaborator mints only that
-  overload's clone (`MethodSpecializationRequest::selects`), and the checker
-  retargets a call only to a clone family holding it
-  (`Checker::clone_serves_overload`).
+  The same table's `call_qualifier` names the overload a method-call
+  record selects (the qualifier of the symbol `lowered_method_name`
+  declares, which a call records verbatim).
   `constraint_verdict`/`constraint_proposition` are the three-valued
   evaluator, `assume_declared_propositions`/`assumptions_prove` the evidence
   an enclosing `where` supplies, and `eval_generic_constraint` its
@@ -1074,15 +1068,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   of an instance still clone: the ones whose template body is the trap stub,
   the stub-reaching ones, and the driver-reported ones
   (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
-  whatever the instance's arguments carry, and a method with compile-time
-  parameters of its own, a type pack among them, mints no per-call clone
-  unless it is keyed;
-  `template_serves_method` says the same for a non-generic struct's method,
-  judged on its elaborated body, whose `comptime if`/`comptime for` over its
-  own binders stays in the template (`Elab::def_body`). `per_call_stubs`
-  seeds `stub_reaching_bodies` with the methods whose template is still the
-  trap stub, so a served body calling one over its own binders is
-  stub-reaching. A clone of a stubbed method that fails to elaborate is
+  whatever the instance's arguments carry, and no method mints a per-call
+  clone: a `comptime if`/`comptime for` over a method's own binders stays in
+  its template (`Elab::def_body`), and a body that still fails over them
+  becomes `instantiation_failure_stub`'s body there. A clone of a stubbed method that fails to elaborate is
   minted by `failed_method_clone` with `instantiation_failure_stub`'s body,
   the compiler-private `_mojito_instantiation_failed("…")` the checker types
   like `_mojito_abort` (`call_inference.rs`, diverging in
@@ -1114,9 +1103,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method with compile-time parameters of its own is read at each closed
   call the checker recorded (`closed_method_calls`, `method_call`), its
   struct's and its own binders bound: the instances its body applies are
-  requested, and one applying a tuple over its own binders is keyed, as is a method the last elaboration found reaching a
-  compile-time-keyed stub (`TemplateDemand::note_stub_reaching`, from
-  `Elaborated::stub_reaching_methods`). `compile_linked` consults it every discovery round, and
+  requested. `compile_linked` consults it every discovery round, and
   a body that reached a struct whose method becomes keyed is inferred again
   (`ServedRequests::keyed_templates`).
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
@@ -1263,7 +1250,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamContext::list_get` and `list_length`, whose
   `LIST_LENGTH_FUNCTION` application `builtin_application_value` answers);
   a loop over the name records
-  `ComptimeSource::Bound` (`record_bound_iteration`), a `range` bound the
+  `ComptimeSource::Bound` (`record_bound_iteration`), a sequence a
+  compile-time application builds records `ComptimeSource::Applied`
+  (`record_applied_iteration`), which MIR lifts as `Evaluated`'s is, a
+  name bound to one records its application as the sequence
+  (`requested_name`) and has no runtime form when it is a collection
+  (`lower_comptime_binding`; a runtime read rejected by
+  `reject_display_crossing`), a `range` bound the
   check does not close records `ComptimeSource::EvaluatedRange`
   (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
   `comptime_binding_owners`), a condition naming an evaluated binding is
@@ -1442,11 +1435,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   none when `display_in_unserved_argument` finds a type or parameter
   argument that is a display itself or a collection built from one, which
   the elaborator holds per open template body in
-  `TemplateLoopNames`), and
+  `TemplateLoopNames`), its local bindings of a compile-time application
+  (`requested_bindings`), and
   which bare names are closed collections, `def_bound_names` telling a
   module constant from a name the `def` binds; `parameter_shaped`,
-  `scalar_shaped`, `display_read_shaped`, `reflection_count`, and
-  `reflected_names` are the admitted spellings, a call or method call
+  `scalar_shaped`, `display_read_shaped`, `reflection_count`,
+  `reflected_names`, and `requests_application` (a bound, binding, or
+  sequence that applies a callable whatever its result) are the admitted
+  spellings, a converting annotation or a type alias in the body admitted
+  whatever its value, a call or method call
   admitted by `ScalarReads::call` from the verdict source validation
   recorded alone (no declaration fallback), `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
   `TemplateCatalog::scalar_calls`; a closed-aggregate display element by

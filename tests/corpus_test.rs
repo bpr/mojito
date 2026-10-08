@@ -385,6 +385,8 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_display_binding_arguments",
     "comptime_display_binding_reads",
     "comptime_for_aggregate_binder",
+    "comptime_for_applied_bound",
+    "comptime_for_applied_sequence",
     "comptime_for_display_binding",
     "comptime_for_display_element_reads",
     "comptime_for_display_over_binder",

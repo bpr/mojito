@@ -467,6 +467,12 @@ pub enum ComptimeSource {
         element: mojito_types::param_expr::MetaTy,
         display: SourceSpan,
     },
+    /// A sequence a compile-time application builds (`mk(n)`), whose value
+    /// binds `element`s: MIR lifts the iterable as a function over the
+    /// binders in scope, as it lifts an [`Self::Evaluated`] display.
+    Applied {
+        element: mojito_types::param_expr::MetaTy,
+    },
     /// A `range(...)` with a bound the check does not close (`range(len(L))`
     /// over a local display binding): each bound as written is its
     /// parameter expression, or `None` for one MIR lifts as a function over
@@ -481,7 +487,9 @@ impl ComptimeSource {
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
         match self {
             Self::Sequence(sequence) => sequence.binder_meta(),
-            Self::Evaluated { element, .. } | Self::Bound { element, .. } => element.clone(),
+            Self::Evaluated { element, .. }
+            | Self::Applied { element }
+            | Self::Bound { element, .. } => element.clone(),
             Self::EvaluatedRange { .. } => mojito_types::param_expr::MetaTy::int(),
         }
     }
@@ -526,7 +534,25 @@ impl ComptimeSequence {
                     nominal(element).map_or_else(|| element.clone(), MetaTy::value)
                 }
                 Some(element) => element.clone(),
-                None => MetaTy::int(),
+                // A collection an application builds (`mk(n)`) binds its
+                // element type, a string as its literal.
+                None => elements
+                    .meta()
+                    .as_value()
+                    .and_then(|ty| {
+                        mojito_types::types::list_element(ty)
+                            .or_else(|| mojito_types::types::set_element(ty))
+                            .or_else(|| mojito_types::types::dict_elements(ty).map(|(key, _)| key))
+                    })
+                    .map_or_else(MetaTy::int, |element| match element {
+                        mojito_types::types::Ty::Struct(name, args)
+                            if args.is_empty()
+                                && mojito_types::types::is_stdlib_string_struct(name) =>
+                        {
+                            MetaTy::value(mojito_types::types::Ty::StringLiteral)
+                        }
+                        element => MetaTy::value(element.clone()),
+                    }),
             },
         }
     }

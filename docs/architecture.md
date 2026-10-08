@@ -1153,30 +1153,25 @@ call. The driver reads what such a body reaches at each closed call
 
 A method keyed on a type pack of its own is served the same way: its
 template body opens the pack (`Elab::def_body`), and the call's solved pack
-binds it below MIR. A method keeps per-call AST clones only where its
-template cannot serve: its body reaches a compile-time-keyed
-stub (`per_call_stubs` and the elaborator's stub-reaching walk, reported to
-the driver as `Elaborated::stub_reaching_methods` and keyed the next round),
-or applies a tuple over its own binders.
-Those clones share one minting path (`per_call_method_clones`): the
-elaborator's struct walk mints them for a named owner (`PerCallBase`), and
-`generate_instance_clones` for an instance (instance values first, then the
-call's), each gated by the method's template servability
-(`template_serves_method`, the instance's keyed set). The checker
-retargets a call to such a clone by exact name
-(`specialized_method_clone`, `instance_call_method_clone`), a construction
-through `per_call_constructor_target`. A pack binding expands `*args: *Ts`
-to the `$pack[...]` element list inside `specialize_method_clone` exactly as
-a def specialization does, and the template's method body becomes the
-`unspecialized_method_stub` trap when it only elaborates with the struct's
-parameters or its own pack bound. A clone of such a stubbed method that
-fails to elaborate for its instance (or per call) is still minted, with the
-instance's signature over the one compiler-private call
-`_mojito_instantiation_failed("…")` (`instantiation_failure_stub`): the
-template has no erased body to fall back to, and the failure is the pin's
-`function instantiation failed`, reported only where the program reaches
-the instance. `native::mono` reports it per reached instance after branch
-selection (`discharge_instantiation_failures`, `mono/failure.rs`) as a
+binds it below MIR. No method mints a per-call AST clone: every `comptime
+for` a method's body holds is kept in its template
+(`comptime_for_is_template_served`), its sequence and the bindings its body
+declares evaluated per instance below MIR (`ComptimeSource::Applied` for a
+sequence a compile-time application builds, `EvaluatedRange` for a bound,
+an R7 request for a binding). A method body that still fails to elaborate
+over its own binders becomes, on its template, the one compiler-private
+call `_mojito_instantiation_failed("…")` (`instantiation_failure_stub`),
+and one that fails over a generic struct's parameters the
+`unspecialized_method_stub` trap that its per-instantiation clone replaces.
+A pack binding expands `*args: *Ts` to the `$pack[...]` element list inside
+`specialize_method_clone` exactly as a def specialization does. An
+instance clone of a stubbed method that fails to elaborate for its instance
+is still minted, with the instance's signature over the
+`_mojito_instantiation_failed` call: the template has no erased body to
+fall back to, and the failure is the pin's `function instantiation failed`,
+reported only where the program reaches the instance. `native::mono`
+reports it per reached instance after branch selection
+(`discharge_instantiation_failures`, `mono/failure.rs`) as a
 `MonoErrorKind::Instantiation` error. A template-served body fails the
 same way where a parameter constant its instance reaches cannot be
 computed (`comptime q = [1, 2][i]` past the display): an unrolled
@@ -1194,11 +1189,10 @@ value on a clone that no longer declares the binder. In the checker,
 the heterogeneous `RuntimePack` so each overflow argument scores and converts
 against its own element. An instance call records the clone's name as its
 target; a static call, whose syntax still names the template, records it
-through `record_static_clone_target`. Every clone's body gets its own source
-tag after the uniform module stamp, so span-keyed facts (including the
-requests of calls inside it) stay separate across a template's clones: an
-instance clone is found by its `self_ty`, a clone on a named owner through
-`Elab::per_call_clones`.
+through `record_static_clone_target`. Every instance clone's body, found
+by its `self_ty`, gets its own source tag after the uniform module stamp,
+so span-keyed facts (including the requests of calls inside it) stay
+separate across a template's clones.
 
 Temporaries borrow for their statement through three anchors. A temporary
 receiver of a `ref[self]`-returning method is materialized like a temporary
@@ -1257,18 +1251,7 @@ its body fixes its element from the loop index the elaborator folded there.
 `Compiler::compile_linked` iterates elaborate→check, deriving
 `DefSpecializationRequest`s from the checker's recorded generic
 instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar
-`range` family, a constructor rewrite) and `MethodSpecializationRequest`s from its recorded generic
-*method* instantiations — on a closed
-instance of an ordinary generic struct (the request owner is the instance
-key `mangle(template, arguments)` and the instance's arguments bake before
-the call's: `kind$y3:Int$y4:Bool`), on a user-declared struct, or from any
-call site outside the unstamped bundled stdlib (user code and `$`-stamped
-clone bodies: `List[Int].write_repr_to` reaching `FormatStruct.params`),
-never for a variadic template's own name (the abstract type, which names
-no instance); a method-level pack inferred from
-the overflow arguments is a closed `CtValue::Tuple` of materialized element
-types (closed arguments only, keyed by occurrence span with the phase-local
-syntax id stripped) and
+`range` family, a constructor rewrite) and
 re-elaborating the original linked program with the accumulated monotone
 request set until a round discovers nothing new; a hard round cap reports inferred polymorphic recursion as a
 dedicated divergence diagnostic. Request seeding records each occurrence's
@@ -1281,23 +1264,15 @@ emitted before its specializations because a clone may still reference the
 template abstractly (an inferred recursive call) and the checker binds
 top-level names sequentially.
 
-Methods with their own compile-time parameters inside a *specialized
-variadic struct* (`def isa[T: AnyType](self)`, `def unwrap[T: Movable](deinit
-self) -> T`, a constructor `__init__[T: AnyType, //, F: def() -> T](out self,
-*, init_with: F)`) specialize per call through the same fixpoint. The
-checker's method paths record a `MethodInstantiation` (receiver struct,
-method, declaration-order arguments; an infer-only `T` also solves through a
-callable-bounded sibling's contract) and, once the variadic-struct
-specializer has minted the clone for that instantiation — `isa$y3:Int`, the
-method name mangled with the baked type/value arguments, callable-bounded
-parameters folded into concrete `capturing[_]` contracts — retarget the
-call to it by exact name (`specialized_method_clone`), or for constructors
-select it as a concrete same-name overload that wins over the generic
-template. The template itself survives as a declaration; a template body
-that only elaborates with its parameters bound (a `comptime if` on `T`)
-becomes an `_mojito_abort` stub that no specialized call reaches. A call
-whose arguments stay symbolic (inside an unspecialized generic body) keeps
-the erased path and therefore cannot use such a method.
+Methods with their own compile-time parameters (`def isa[T: AnyType](self)`,
+a constructor `__init__[T: AnyType, //, F: def() -> T](out self, *,
+init_with: F)`) are served by their templates. The checker's method paths
+record a `MethodInstantiation` (receiver struct, method, declaration-order
+arguments; an infer-only `T` also solves through a callable-bounded
+sibling's contract), which the driver reads for the instances the method's
+body reaches (`TemplateReach::method_call`), and `native::mono` instantiates
+the template's MIR per call. A call whose arguments stay symbolic (inside
+an unspecialized generic body) keeps the erased path.
 
 An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
 a plain type parameter) keeps its template in the program — checked once
@@ -1411,8 +1386,7 @@ share values with the nominal-`String` instance. Type identity is
 unchanged (`Optional[Int]` is still `Ty::Struct("Optional", [Int])` and the
 runtime struct name stays `Optional`), so a call whose receiver instance has
 no clone simply keeps today's erased path; a call on a closed receiver
-retargets to the clone by exact name through the `specialized_method_clone`
-funnel (`instance_method_clone`): method and static calls, operator dunders
+retargets to the clone by exact name (`instance_method_clone`): method and static calls, operator dunders
 (re-selected among the clone family by operand), subscript assignment, and
 `for` iteration (`__iter__` by receiver convention) all record the clone
 symbol. The by-name dispatches the backends perform on a runtime struct
@@ -1500,8 +1474,8 @@ HIR/MIR/VM machinery as runtime code.
 
 The helper program is checked (once as a typing probe for a general
 expression, then by `VmBackend::run_function_value`) over a catalog the
-elaborator builds from the compilation's checked templates: the per-call
-clones the subprogram mints are traced like the program's own, and a clone
+elaborator builds from the compilation's checked templates: the clones the
+subprogram mints are traced like the program's own, and a clone
 of a certified template derives its facts instead of being inferred.
 
 The VM has a narrow CTFE entry point:
@@ -2024,8 +1998,8 @@ and its soundness argument, is
   keep the clone check.
 - **The trace is explicit.** The elaborator records which prepared declaration
   each `def` clone instantiates and what each compile-time parameter became
-  (`DefInstanceTrace`), the same for each per-instantiation and per-call
-  method clone (`MethodInstanceTrace`), and everything it generated
+  (`DefInstanceTrace`), the same for each per-instantiation method clone
+  (`MethodInstanceTrace`), and everything it generated
   (`GeneratedDeclarations`). Only that list, or a clone's explicit receiver
   type, says a declaration is generated: a module-qualified source name
   carries a `$` too. A clone node keeps the syntax identity of the template

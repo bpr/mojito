@@ -128,106 +128,6 @@ impl DefSpecializationRequest {
     }
 }
 
-/// One checker-discovered application of a generic *method* of a specialized
-/// variadic struct (`bag.find[Int]()`, `v.set(3)` inferring `T`).
-///
-/// The specializer mints one clone per distinct instantiation (`find$y3:Int`)
-/// inside the owner, and the checker retargets the call to it by exact name on
-/// the next discovery round. A request that names no method, or whose
-/// arguments do not align with the method's declaration, is skipped: the call
-/// keeps the template's erased path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MethodSpecializationRequest {
-    /// The call occurrence, stored without its phase-local syntax id.
-    occurrence: SourceSpan,
-    /// The receiver struct's name as the checker saw it (`Box`).
-    owner: String,
-    method: String,
-    /// The selected overload's runtime parameter names, in declaration
-    /// order: same-named overloads (`set[T](value)` and `set(*, init_with)`)
-    /// mint separate clones.
-    parameter_names: Vec<String>,
-    /// The selected overload's signature qualifier (`$ov$T$Int`), telling
-    /// apart same-arity overloads that share their parameter names.
-    overload: Option<String>,
-    /// The checker's declaration-order argument list from `resolve_use_params`.
-    arguments: Vec<TyArg>,
-}
-
-impl MethodSpecializationRequest {
-    pub const fn new(
-        occurrence: SourceSpan,
-        owner: String,
-        method: String,
-        parameter_names: Vec<String>,
-        arguments: Vec<TyArg>,
-    ) -> Self {
-        Self {
-            occurrence: occurrence.without_syntax(),
-            owner,
-            method,
-            parameter_names,
-            overload: None,
-            arguments,
-        }
-    }
-
-    /// Name the selected overload's signature qualifier as well.
-    #[must_use]
-    pub fn with_overload(mut self, overload: Option<String>) -> Self {
-        self.overload = overload;
-        self
-    }
-
-    pub fn parameter_names(&self) -> &[String] {
-        &self.parameter_names
-    }
-
-    /// Whether this request selects `method`, declared on the struct
-    /// `owner` names: the same source name and regular parameter names, and,
-    /// when the request names one of the method's overloads by its signature
-    /// qualifier, that overload.
-    pub fn selects(
-        &self,
-        method: &mojito_ast::ast::Method,
-        owner: &str,
-        owners: &mojito_symbol::symbol::MethodBinderOwners,
-    ) -> bool {
-        let regular: Vec<&str> = method
-            .params
-            .iter()
-            .filter(|parameter| {
-                parameter.kind == mojito_ast::ast::ParamKind::Regular
-                    && !parameter.is_named_result()
-            })
-            .map(|parameter| parameter.name.as_str())
-            .collect();
-        let same_overload = self
-            .overload
-            .as_deref()
-            .is_none_or(|selected| owners.call_qualifier(owner, method) == Some(selected));
-        self.method == method.name
-            && self.parameter_names.iter().map(String::as_str).eq(regular)
-            && same_overload
-    }
-
-    pub const fn occurrence(&self) -> &SourceSpan {
-        &self.occurrence
-    }
-
-    pub fn owner(&self) -> &str {
-        &self.owner
-    }
-
-    pub fn method(&self) -> &str {
-        &self.method
-    }
-
-    pub fn arguments(&self) -> &[TyArg] {
-        &self.arguments
-    }
-}
-
 /// One checker-discovered closed application of an ordinary generic struct
 /// (`Optional[Int]`): the template name and its declaration-order arguments.
 ///
@@ -510,19 +410,14 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// with such a method: an instance of one that the fixpoint discovers too
 /// late to mint clones for would run that method erased, so the driver
 /// reports divergence rather than converging on the erased path.
-/// `stub_reaching_methods` are those methods, as (struct, method): one with
-/// compile-time parameters of its own keeps its per-call clones, which the
-/// driver keys for the next round, since its template cannot serve a call.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
     pub instances: Vec<StructInstanceRequest>,
     pub stub_reaching_structs: HashSet<String>,
-    pub stub_reaching_methods: Vec<(String, String)>,
     pub unserved_template_uses: Vec<UnservedTemplateUse>,
     /// How each generated `def` clone came from its template.
     pub def_traces: Vec<DefInstanceTrace>,
-    /// How each per-instantiation or per-call method clone came from its
-    /// template.
+    /// How each per-instantiation method clone came from its template.
     pub method_traces: Vec<MethodInstanceTrace>,
     /// Every declaration this elaboration generated rather than kept: a
     /// consumer asks this list, never a `$` in a name, since a
@@ -547,7 +442,6 @@ pub struct ElaborationInputs<'a> {
     /// The checker's selection at each unclosed call of an overload family:
     /// which declaration the call names, with nothing to bake.
     pub def_selections: &'a [DefSpecializationRequest],
-    pub method_requests: &'a [MethodSpecializationRequest],
     pub struct_requests: &'a [StructInstanceRequest],
     /// Template methods of ordinary generic structs, as (struct, method),
     /// whose checked bodies hold a type only an instance can lower: each
@@ -562,7 +456,6 @@ impl<'a> ElaborationInputs<'a> {
         Self {
             def_requests: &[],
             def_selections: &[],
-            method_requests: &[],
             struct_requests: &[],
             keyed_methods: &[],
             templates,
@@ -731,29 +624,6 @@ pub struct UnservedTemplateUse {
     pub callee: String,
     pub site: SourceSpan,
     pub function_value: bool,
-}
-
-/// The top-level variadic struct template names (`struct S[*Ts: Bound]`) of a
-/// linked program.
-///
-/// A specialized instance is named `<template>$t<n>[...]`; the compiler's
-/// discovery loop filters checker-recorded method instantiations to receivers
-/// of that shape.
-pub fn variadic_struct_template_names(program: &[Stmt]) -> HashSet<String> {
-    program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct {
-                name, type_params, ..
-            } if type_params
-                .iter()
-                .any(|parameter| parameter.name.starts_with('*')) =>
-            {
-                Some(name.clone())
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 /// The top-level bound-generic template names of a linked program.
@@ -941,19 +811,10 @@ pub fn elaborate_prepared(
     let ElaborationInputs {
         def_requests,
         def_selections,
-        method_requests,
         struct_requests,
         keyed_methods,
         templates,
     } = inputs;
-    let mut method_requests_by_owner: HashMap<String, Vec<MethodSpecializationRequest>> =
-        HashMap::new();
-    for request in method_requests {
-        method_requests_by_owner
-            .entry(request.owner().to_string())
-            .or_default()
-            .push(request.clone());
-    }
     let mut instance_requests: HashMap<String, Vec<Vec<TyArg>>> = HashMap::new();
     for request in struct_requests {
         instance_requests
@@ -994,17 +855,10 @@ pub fn elaborate_prepared(
         comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
         overload_families: collect_overload_families(program, &scalar_reads),
         scalar_reads,
-        method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::scan(
-            program,
-            &mojito_symbol::symbol::OverloadSets::scan(program),
-        ),
-        method_requests: method_requests_by_owner,
         instance_requests,
         keyed_methods: keyed_methods.iter().cloned().collect(),
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
-        per_call_clones: RefCell::new(HashSet::new()),
-        per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
         fuel: Cell::new(FUEL),
@@ -1046,7 +900,6 @@ pub fn elaborate_prepared(
         program: mut result,
         instances,
         stub_reaching_structs,
-        stub_reaching_methods,
         unserved_template_uses,
         def_traces: _,
         method_traces: _,
@@ -1059,26 +912,20 @@ pub fn elaborate_prepared(
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    // Per-instantiation and per-call method clones reuse their template's
-    // spans; each clone's body gets its own source tag after the uniform
-    // module stamp above (the discipline struct specializations follow),
-    // keeping span-keyed checked facts separate across instantiations.
-    let per_call_clones = elab.per_call_clones.take();
+    // Per-instantiation method clones reuse their template's spans; each
+    // clone's body gets its own source tag after the uniform module stamp
+    // above (the discipline struct specializations follow), keeping
+    // span-keyed checked facts separate across instantiations.
     for statement in &mut result {
         let module = statement.module.clone();
         if let StmtKind::Struct { name, methods, .. } = &mut statement.kind {
-            for method in methods.iter_mut() {
-                if method.self_ty.is_some()
-                    || per_call_clones.contains(&(name.clone(), method.name.clone()))
-                {
-                    let tag = clone_source_tag(module.as_deref(), name, &method.name);
-                    mojito_ast::ast::stamp_source(&mut method.body, &tag);
-                }
+            for method in methods.iter_mut().filter(|method| method.self_ty.is_some()) {
+                let tag = clone_source_tag(module.as_deref(), name, &method.name);
+                mojito_ast::ast::stamp_source(&mut method.body, &tag);
             }
         }
     }
-    let mut generated = elab.generated.take();
-    generated.methods.extend(per_call_clones);
+    let generated = elab.generated.take();
     let def_traces = elab.def_traces.take();
     let method_traces = elab.method_traces.take();
     let clones = census::clone_census(&census::Minted {
@@ -1092,7 +939,6 @@ pub fn elaborate_prepared(
         program: result,
         instances,
         stub_reaching_structs,
-        stub_reaching_methods,
         unserved_template_uses,
         def_traces,
         method_traces,
@@ -1303,6 +1149,9 @@ pub(super) struct LoopNames<'a> {
     pub(super) collection: &'a dyn Fn(&str) -> bool,
     /// The module's scalar-valued declarations ([`ScalarReads`]).
     pub(super) scalars: &'a ScalarReads,
+    /// The body's local `comptime` bindings of a compile-time application
+    /// ([`requested_bindings`]).
+    pub(super) requested: &'a HashSet<String>,
 }
 
 /// The names a generic `def` body open as a template gives the loops it
@@ -1313,6 +1162,7 @@ pub(super) struct LoopNames<'a> {
 pub(super) struct TemplateLoopNames {
     pub(super) value_packs: HashSet<String>,
     pub(super) displays: HashSet<String>,
+    pub(super) requested: HashSet<String>,
 }
 
 /// What shows a compile-time display's element is a scalar a loop binder
@@ -1380,27 +1230,33 @@ impl ScalarReads {
 ///   `Self.` members, the length of one of the `def`'s packs as the pin
 ///   spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
 ///   `len(args)` is a runtime value there), a reflection count
-///   ([`reflection_count`]), and arithmetic over them;
+///   ([`reflection_count`]), and arithmetic over them — or that apply a
+///   callable ([`requests_application`]);
 /// - a list, set, or dictionary display of literals, which the check
 ///   closes, or of scalar expressions over the binders — literals, names,
 ///   `Self.` members, a pack length, and arithmetic, comparison, and boolean
-///   operators over them ([`scalar_shaped`]) — which it leaves for the
-///   elaborator below MIR to evaluate per instance;
+///   operators over them ([`scalar_shaped`]), or applications of a callable
+///   — which it leaves for the elaborator below MIR to evaluate per
+///   instance;
 /// - a named closed collection ([`LoopNames::collection`]);
 /// - a local binding of a display over the binders
-///   ([`LoopNames::displays`]);
+///   ([`LoopNames::displays`]), or of a compile-time application
+///   ([`LoopNames::requested`]);
 /// - one of the `def`'s value packs;
-/// - a reflected field-name list ([`reflected_names`]).
+/// - a reflected field-name list ([`reflected_names`]);
+/// - a sequence a compile-time application builds (`mk(n)`).
 ///
 /// And each `comptime` binding its body declares is an alias of a pack
-/// element ([`pack_element_alias`]), a literal, a parameter expression over
-/// the binders and the loop variable, an element of a named compile-time
-/// list at one, an application of a scalar-returning `def` to them
-/// ([`applied_bound`]), or a display a loop iterates ([`LoopNames::displays`]),
-/// which the check binds with them symbolic. Such a loop is checked once with
-/// the variable symbolic, carried by MIR as a loop header, and unrolled
-/// below MIR; any other is unrolled in the AST, on a clone per
-/// instantiation.
+/// element ([`pack_element_alias`]), a literal, a tuple of scalars, a
+/// parameter expression over the binders and the loop variable, an element
+/// of a named compile-time list at one, an application of a callable to
+/// them ([`applied_bound`], [`requests_application`]), a display a loop
+/// iterates ([`LoopNames::displays`]), a type, or a binding whose
+/// annotation converts its value, which the check binds with them symbolic
+/// or types as a runtime binding. Such a loop is checked once with the
+/// variable symbolic, carried by MIR as a loop header, and unrolled below
+/// MIR; any other is unrolled in the AST, on a clone per instantiation of a
+/// `def`.
 pub(super) fn comptime_for_is_template_served(
     iter: &Expr,
     body: &[Stmt],
@@ -1414,6 +1270,7 @@ pub(super) fn comptime_for_is_template_served(
                     parameter_shaped(bound, packs)
                         || display_read_shaped(bound, packs, names.displays, names.scalars)
                         || applied_bound(bound, packs, names.displays, names.scalars)
+                        || requests_application(bound)
                 })
         }
         ExprKind::ListLit(items) => {
@@ -1430,12 +1287,14 @@ pub(super) fn comptime_for_is_template_served(
         ExprKind::Identifier(name) => {
             names.value_packs.contains(name)
                 || names.displays.contains(name)
+                || names.requested.contains(name)
                 || (names.collection)(name)
         }
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
             names.value_packs.contains(&format!("Self.{field}"))
         }
-        ExprKind::MethodCall { .. } => reflected_names(iter),
+        ExprKind::MethodCall { .. } => reflected_names(iter) || requests_application(iter),
+        ExprKind::Call { .. } | ExprKind::Index { .. } => requests_application(iter),
         _ => false,
     };
     sequence
@@ -1444,6 +1303,26 @@ pub(super) fn comptime_for_is_template_served(
             // (`comptime m: Int = i * n`) leaves the binding the checker's to
             // type; any other annotation converts, which no parameter
             // expression does.
+            // A converting annotation types the binding as a runtime binding
+            // of it is typed (`comptime s: Float64 = 1.5`), and a type is a
+            // local alias (`comptime V = SIMD[DType.int32, i + 1]`,
+            // `comptime F = reflect[T].field_types()[i]`).
+            StmtKind::Comptime {
+                type_params,
+                ty,
+                where_clauses,
+                value,
+                ..
+            } if !matches!(ty, None | Some(Type::Int | Type::Bool))
+                || matches!(
+                    value.kind,
+                    ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
+                )
+                || matches!(&value.kind, ExprKind::Index { object, .. }
+                    if reflection_method(object, &["field_types"])) =>
+            {
+                !(type_params.is_empty() && where_clauses.is_empty())
+            }
             StmtKind::Comptime {
                 name,
                 type_params,
@@ -1459,12 +1338,17 @@ pub(super) fn comptime_for_is_template_served(
                 !(type_params.is_empty()
                     && where_clauses.is_empty()
                     && (literal_element(value)
+                        || literal_tuple(value)
+                        || matches!(&value.kind, ExprKind::TupleLit(items)
+                            if items.iter().all(|item| literal_element(item)
+                                || scalar_shaped(item, packs, names.displays, names.scalars)))
                         || parameter_shaped(value, packs)
                         || condition_shaped(value, packs)
                         || element
                         || names.displays.contains(name)
                         || display_read_shaped(value, packs, names.displays, names.scalars)
-                        || applied_bound(value, packs, names.displays, names.scalars)))
+                        || applied_bound(value, packs, names.displays, names.scalars)
+                        || requests_application(value)))
                     && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
             }
             StmtKind::Comptime { .. } => true,
@@ -1711,7 +1595,8 @@ fn evaluated_display_shaped(
     displays: &HashSet<String>,
     scalars: &ScalarReads,
 ) -> bool {
-    let shaped = |item: &Expr| scalar_shaped(item, packs, displays, scalars);
+    let shaped =
+        |item: &Expr| scalar_shaped(item, packs, displays, scalars) || requests_application(item);
     match &expression.kind {
         ExprKind::ListLit(items) => {
             !items.is_empty()
@@ -1810,6 +1695,45 @@ fn applied_bound(
     };
     mojito_ast::visit::walk_expr(&mut calls, expression);
     calls.found && scalar_shaped(expression, packs, displays, scalars)
+}
+
+/// Whether a loop bound, or a loop-body `comptime` binding, applies a
+/// callable whatever its result (`range(len(mk(n)))`, `comptime t =
+/// mk(n)[i]`): the check lifts it as a request over the binders in scope,
+/// the loop variable included, which the elaborator below MIR evaluates per
+/// instance.
+fn requests_application(expression: &Expr) -> bool {
+    struct Calls(bool);
+
+    impl mojito_ast::visit::Visitor for Calls {
+        fn visit_expr(&mut self, expression: &Expr) {
+            self.0 |= match &expression.kind {
+                ExprKind::Call { name, .. } => !matches!(
+                    name.as_str(),
+                    "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                ),
+                ExprKind::MethodCall { object, .. } => {
+                    matches!(object.kind, ExprKind::Identifier(_))
+                }
+                _ => false,
+            };
+        }
+    }
+
+    if !matches!(
+        expression.kind,
+        ExprKind::Call { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Infix(..)
+            | ExprKind::Prefix(..)
+            | ExprKind::Compare { .. }
+    ) {
+        return false;
+    }
+    let mut calls = Calls(false);
+    mojito_ast::visit::walk_expr(&mut calls, expression);
+    calls.0
 }
 
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
@@ -1962,12 +1886,14 @@ fn def_body_keys_specialization(
     let value_packs = def_value_pack_names(type_params, owner);
     let bound = def_bound_names(type_params, params, body);
     let displays = served_display_bindings(&packs, scalars, body);
+    let requested = requested_bindings(body);
     let names = LoopNames {
         packs: &packs,
         value_packs: &value_packs,
         displays: &displays,
         collection: &|name| !bound.contains(name),
         scalars,
+        requested: &requested,
     };
     block_has_unkept_comptime_for(body, &names)
 }
@@ -2040,6 +1966,42 @@ pub(super) fn served_display_bindings(
         served.clear();
     }
     served
+}
+
+/// The names of `body`'s local `comptime` bindings of a compile-time
+/// application ([`requests_application`]), outside a nested declaration: a
+/// loop over one iterates the sequence its request builds per instance
+/// (`comptime l = mk(n)`, then `comptime for x in l`).
+pub(super) fn requested_bindings(body: &[Stmt]) -> HashSet<String> {
+    fn collect(stmts: &[Stmt], names: &RefCell<HashSet<String>>) {
+        block_has_statement(stmts, &|kind| {
+            match kind {
+                StmtKind::Comptime {
+                    name,
+                    type_params,
+                    value,
+                    ..
+                } if type_params.is_empty() && requests_application(value) => {
+                    names.borrow_mut().insert(name.clone());
+                }
+                StmtKind::ComptimeFor { body, .. } => collect(body, names),
+                StmtKind::ComptimeIf { branches, orelse } => {
+                    for (_, branch) in branches {
+                        collect(branch, names);
+                    }
+                    if let Some(orelse) = orelse {
+                        collect(orelse, names);
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+
+    let names = RefCell::new(HashSet::new());
+    collect(body, &names);
+    names.into_inner()
 }
 
 /// Whether `body` spells one of its `displays` whole, or a local `comptime`
@@ -2788,12 +2750,6 @@ struct Elab<'a> {
     /// to such a name is served only from the checker's recorded
     /// instantiation, which names the selected overload.
     overload_families: HashMap<String, Vec<&'a Stmt>>,
-    /// The owner of each struct method's own binders, as the checker names
-    /// it: an overloaded method's is its lowered symbol.
-    method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
-    /// Checker-discovered generic-method instantiations on specialized
-    /// variadic structs, by owner name: each becomes a per-call clone.
-    method_requests: HashMap<String, Vec<MethodSpecializationRequest>>,
     /// Checker-discovered closed applications of ordinary generic structs, by
     /// template name: each mints per-instantiation method clones on the
     /// template.
@@ -2809,15 +2765,6 @@ struct Elab<'a> {
     templates: &'a mojito_checked::templates::TemplateCatalog,
     /// What those checks derived and inferred.
     ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
-    /// Per-call method clones minted on a non-generic struct, as (owner,
-    /// clone name). They carry no receiver type, so source stamping names
-    /// them here rather than by `Method::self_ty`.
-    per_call_clones: RefCell<HashSet<(String, String)>>,
-    /// The struct methods whose template is a trap stub that only a per-call
-    /// clone serves (a `comptime if` over the method's own binders), as
-    /// [`method_owner`] keys: a body calling one over its own binders reaches
-    /// a stub.
-    per_call_stubs: std::cell::OnceCell<HashSet<String>>,
     /// Whether a bound-generic `def`'s template serves its closed calls, by
     /// name, as first decided ([`Elab::template_serves_def`]).
     template_served_defs: RefCell<HashMap<String, bool>>,
@@ -3942,7 +3889,6 @@ mod vm_bridge_tests {
 fn elaborate_with_requests(
     program: Vec<Stmt>,
     def_requests: &[DefSpecializationRequest],
-    method_requests: &[MethodSpecializationRequest],
     struct_requests: &[StructInstanceRequest],
 ) -> Result<Elaborated, ComptimeError> {
     let prepared = prepare(program)?;
@@ -3953,7 +3899,6 @@ fn elaborate_with_requests(
         &prepared,
         ElaborationInputs {
             def_requests,
-            method_requests,
             struct_requests,
             ..ElaborationInputs::new(&catalog)
         },
@@ -4055,7 +4000,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[])
             .expect("a request on a template-served def must not fail elaboration")
             .program;
 
@@ -4163,7 +4108,7 @@ mod def_request_tests {
             type_params,
         ));
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4190,7 +4135,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -4217,7 +4162,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request], &[])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4240,7 +4185,7 @@ mod def_request_tests {
                       def main():\n    show[3]()\n";
         let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
 
-        let elaborated = elaborate_with_requests(linked, &[], &[], &[])
+        let elaborated = elaborate_with_requests(linked, &[], &[])
             .expect("elaborate")
             .program;
 

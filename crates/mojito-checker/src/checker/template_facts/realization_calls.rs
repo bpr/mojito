@@ -49,13 +49,14 @@ impl Checker {
             return Err("a method call's receiver is not a nominal struct");
         };
         let selected = facts.selected_calls[index].1.contract.target.clone();
-        // A per-call clone (`Scaler.scaled$i3`) bakes the callee's binders
-        // into its target. On a non-generic receiver the request names no
-        // instance, and substitution left its arguments as they were, so the
-        // clone check selects the same clone.
+        // A call of a method with binders of its own names the method,
+        // whose template the elaborator instantiates per call. On a
+        // non-generic receiver the record names no instance, and substitution
+        // left its arguments as they were, so the clone check selects the
+        // same method.
         if let Some(request) = fact_at(&facts.method_instantiations, id) {
             if !arguments.is_empty() || !request.owner_arguments.is_empty() {
-                return Err("a per-call clone request is keyed by a generic receiver");
+                return Err("a method-call record is keyed by a generic receiver");
             }
             note_realized_callee(facts, &selected, &selected);
             return Ok(());
@@ -271,8 +272,8 @@ impl Checker {
     /// family ([`collapses`]) and keeps the erased member, as does a
     /// receiver with no clone of a family differing only in closed parameter
     /// types, or a static on an inferred or contextual receiver, which no
-    /// instance retargets. A member with binders of its own names its
-    /// per-call clone (`realize_static_instantiations`).
+    /// instance retargets. A member with binders of its own names itself
+    /// (`realize_static_instantiations`).
     pub(super) fn realize_static_overloads(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -1028,28 +1029,17 @@ impl Checker {
         Ok(Some(target))
     }
 
-    /// Realize each static with binders of its own a body calls on a
-    /// generic struct's type application (`Pair[Self.T].show(n)`,
-    /// `Pair[Self.T].scaled[3](2)`, [`BodyShape::static_call`]): the
-    /// per-call clone its request names, keyed by the instance as well, once
-    /// the elaborator has minted it. In an overload family that is the clone
-    /// of the member the template ranked, and an explicit application records
-    /// the clone's own compile-time parameters at the call, all baked.
-    ///
-    /// The request's own arguments are closed, or substitution would have
-    /// changed them (`realize_instance_facts`), so the instance requests the
-    /// template's clone of the static at its own receiver arguments, as the
-    /// clone check retargets to it (`instance_call_method_clone`). Before
-    /// that clone exists the clone check calls the instance's clone of the
-    /// static, if any, which no recipe repeats; with neither, both call the
-    /// erased static.
+    /// Reject an instance whose body calls a static with binders of its own
+    /// on a generic struct's type application (`Pair[Self.T].show(n)`,
+    /// [`BodyShape::static_call`]) where the instance declares its own clone
+    /// of that static, which the clone check calls and no recipe repeats.
+    /// Any other such call names the erased static in both.
     fn realize_static_instantiations(
         &self,
-        facts: &mut CheckedBodyFacts,
+        facts: &CheckedBodyFacts,
         occurrences: &[Occurrence],
     ) -> Result<(), &'static str> {
-        for index in 0..facts.method_instantiations.len() {
-            let (id, request) = &facts.method_instantiations[index];
+        for (id, _) in &facts.method_instantiations {
             let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
             else {
                 continue;
@@ -1066,18 +1056,6 @@ impl Checker {
             else {
                 continue;
             };
-            let declared = match info
-                .methods
-                .get(method)
-                .map(Vec::as_slice)
-                .ok_or("a static with binders of its own is not declared")?
-            {
-                [declared] => declared,
-                family => family
-                    .iter()
-                    .find(|member| member.overload == request.overload)
-                    .ok_or("a static's requested overload is not declared")?,
-            };
             let arguments = self
                 .partition_struct_origin_args(owner, &info.source_params, applied)
                 .and_then(|partitioned| {
@@ -1085,85 +1063,11 @@ impl Checker {
                 })
                 .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
                 .1;
-            let clone = self
-                .instance_call_method_clone(
-                    owner,
-                    &arguments,
-                    method,
-                    &declared.decls,
-                    &request.arguments,
-                )
-                .filter(|clone| {
-                    self.clone_serves_overload(owner, clone, request.overload.as_deref())
-                });
-            let target = match clone {
-                Some(clone) => {
-                    let member = info
-                        .methods
-                        .get(&clone)
-                        .and_then(|family| match family.as_slice() {
-                            [member] => Some(member),
-                            family => family
-                                .iter()
-                                .find(|member| member.overload == request.overload),
-                        })
-                        .ok_or("a static's per-call clone declares no requested member")?;
-                    // An explicit application calls the clone, whose binders
-                    // are baked, as the clone check records.
-                    if let Some(entry) = facts
-                        .parameterized_method_calls
-                        .iter_mut()
-                        .find(|(site, _)| site == id)
-                    {
-                        entry.1.clone_from(&member.decls);
-                    }
-                    // A string literal the template bound to the static's
-                    // own binder converts into the clone's baked parameter
-                    // type, selected with every other conversion.
-                    for (position, syntax) in occurrence.arguments.iter().enumerate() {
-                        let argument = OccurrenceId {
-                            syntax: *syntax,
-                            copy: id.copy,
-                        };
-                        if fact_at(&facts.expression_types, argument) != Some(&Ty::StringLiteral)
-                            || fact_at(&facts.conversions, argument).is_some()
-                        {
-                            continue;
-                        }
-                        let parameter = member
-                            .params
-                            .get(position)
-                            .ok_or("a string literal binds a static's variadic parameter")?;
-                        if *parameter != Ty::StringLiteral {
-                            facts.conversions.push((
-                                argument,
-                                mojito_checked::templates::TemplateConversion {
-                                    target: String::new(),
-                                    result: Some(parameter.clone()),
-                                    raises: None,
-                                    source_borrow: None,
-                                },
-                            ));
-                        }
-                    }
-                    format!("{owner}.{clone}")
-                }
-                None if self
-                    .instance_method_clone(owner, method, &arguments)
-                    .is_some() =>
-                {
-                    return Err("an instance calls its own clone of a static with binders");
-                }
-                None => continue,
-            };
-            let id = *id;
-            match facts
-                .overload_targets
-                .iter_mut()
-                .find(|(site, _)| *site == id)
+            if self
+                .instance_method_clone(owner, method, &arguments)
+                .is_some()
             {
-                Some(entry) => entry.1 = target,
-                None => facts.overload_targets.push((id, target)),
+                return Err("an instance calls its own clone of a static with binders");
             }
         }
         Ok(())

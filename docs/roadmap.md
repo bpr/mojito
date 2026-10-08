@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R500**.
+Next free ID: **R503**.
 
 ## Ordered Work
 
@@ -59,34 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
-  clones per call**
-
-  Problem: a method with compile-time parameters of its own keeps its
-  per-call clones where its body reaches a compile-time-keyed stub, holds a
-  nested `def` or a lambda, or applies a tuple or a struct specialized whole
-  over its own binders, so `per_call_method_clones` and the clone-name
-  retargeting it feeds are still live.
-  - The elaborator decides a stub-reaching method after a round's walk and
-    reports it (`Elaborated::stub_reaching_methods`); the driver keys it for
-    the next round, beside what `TemplateReach::method_call`
-    (`src/compiler/template_reach.rs`) reads off the checked body at each
-    closed call.
-  - A member of a variadic struct specialized whole mints its own per-call
-    clones (`generate_struct_spec`); a vector- or struct-keyed one does only
-    where its template does not serve it (`generate_value_struct_spec`). A
-    bundled variadic member's body uses the checker's `Variant` operations, which
-    need `T` closed, and a user one mixes a folded pack loop with a
-    `comptime if` over its own binder (`assets/ok/variadic_method_type_params.mojo`).
-  - When the last class goes, delete `per_call_method_clones`, `PerCallBase`,
-    the driver's `method_specialization_requests`, the checker's
-    `specialized_method_clone`, `instance_call_method_clone`,
-    `clone_serves_overload`, and `per_call_constructor_target`,
-    `MethodProvenance::PerCallConstructor`, and the per-call clauses of the
-    `MethodFeatures` certificate bits.
-  - Depends on R4, R6, R7, R307, and R308.
-  - Model: Fable, Planned.
 
 - [ ] **R329 (P3e) A nested `def` inside a `comptime for` cannot read the
   index**
@@ -2461,6 +2433,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R502 A parametric `comptime` alias in a function body is rejected**
+
+  Problem: `comptime A[k: Int] = k + 1` inside a `def`, read as `A[10]`,
+  fails with "a generic comptime alias must be declared at module scope",
+  where the pin prints `11`.
+  - The same alias at module scope runs.
+  - Probe: `conformance/probes/local_generic_comptime_alias.mojo`.
+  - Found while landing R310 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R475 A local type alias over `Scalar` or `SIMD` is rejected**
 
   Problem: `comptime S = Scalar[DType.float64]` then `S(2) * 1.25` in a
@@ -2544,6 +2527,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R364 (2026-10-07).
   - Depends on R319, which loses a local alias at a call in an unrolled
     body.
+  - Model: Opus, Not Planned.
+
+- [ ] **R501 A struct method cannot iterate a module `comptime` list a call
+  builds**
+
+  Problem: `comptime ML = mk(3)` at module scope, then `comptime for x in
+  ML:` in a struct's method, stops with "function instantiation in
+  parameter domain that recursively requires itself: the initializer of
+  'ML' reads 'ML'", where the pin prints `0`, `1`, `2`.
+  - The same loop in a `def` runs, and so does a literal module list, so
+    the cycle the message names is a false one.
+  - Probe: `conformance/probes/module_call_list_in_method_loop.mojo`.
+  - Found while landing R310 (2026-10-08).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R368 A module `comptime` constant declared after the `def` that
@@ -3315,6 +3312,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/associated_value_self_read.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R500 A trait's compile-time value member read through a type
+  parameter in a compile-time position is rejected**
+
+  Problem: `comptime if T.K > 2:` or `SIMD[DType.int32, T.K - 1]` in `def
+  g[T: HasK]()`, where `HasK` declares `comptime K: Int`, fails with "not a
+  compile-time Int constant: unsupported associated comptime member
+  access", where the pin folds `K` per instance.
+  - `comptime for i in range(T.K)` in a method `m[T: HasK]` fails where a
+    call reaches it ("function instantiation of `S.m` failed"). It ran
+    before R310, on a per-call clone that folded `T`; a generic `def` with
+    the same loop still clones and runs.
+  - No parameter expression names an associated value of a type binder,
+    and `native::mono` has no table of struct associated values to answer
+    one.
+  - Probe: `conformance/probes/trait_value_member_comptime_position.mojo`.
+  - Found while landing R310 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R484 A trait's compile-time value member read through a type
   parameter at run time fails**

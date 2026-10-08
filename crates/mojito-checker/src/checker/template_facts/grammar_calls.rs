@@ -162,8 +162,8 @@ impl BodyShape<'_> {
     /// declare binders of its own, as may a member of a family called on a
     /// spelled receiver, and the call may spell its compile-time arguments
     /// (`parameterized`, from [`Self::parameterized_call`]) on a spelled
-    /// receiver: an instance calls the per-call clone keyed by its own
-    /// receiver (`realize_static_instantiations`).
+    /// receiver: an instance calls the static's template, unless it declares
+    /// its own clone of it (`realize_static_instantiations`).
     /// On an inferred or contextual receiver the members differ only in
     /// closed parameter types, so the call ranks the same member whatever
     /// solves the struct's parameters; on a spelled receiver every instance
@@ -770,8 +770,7 @@ impl BodyShape<'_> {
     /// parameter typed `String`) is selected again per instance
     /// ([`Checker::realize_conversion`]). A literal bound to the static's own
     /// binder records none in the template, whose callee keeps the binder
-    /// symbolic, and one where the instance calls the per-call clone that
-    /// bakes it (`realize_static_instantiations`).
+    /// symbolic (`realize_static_instantiations`).
     fn static_literal(&self, argument: &Expr) -> bool {
         let id = self.occurrence(argument);
         !self.keyed

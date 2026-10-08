@@ -2853,6 +2853,21 @@ impl Flatten<'_> {
         // A thunk lifted after the binding reads it as the expression over
         // the binders it denotes (`comptime k = n + 1`).
         let mut denoted = self.value_binder_expr(value);
+        // A collection a request builds (`comptime l = mk(n)`) is never
+        // implicitly copyable, so the check admits no runtime read of it:
+        // it is the application alone, with no slot.
+        if let Some(application) = self.comptime_application(value)
+            && let Some(binding) = statement_binding
+            && !self.enclosing_binders.lifted
+            && self.checked_ty(value).is_some_and(|ty| {
+                mojito_types::types::list_element(&ty).is_some()
+                    || mojito_types::types::set_element(&ty).is_some()
+                    || mojito_types::types::dict_elements(&ty).is_some()
+            })
+        {
+            self.comptime_thunks.bind_value(binding, application);
+            return;
+        }
         let materialized = self.literal_materialization(value);
         // An `Int` or a `Bool` read off a display binding (`comptime e =
         // L[1]`), or one the check lifted (`comptime b = n > 2`), is the
@@ -2907,8 +2922,14 @@ impl Flatten<'_> {
         // present, or the already-typed initializer register for
         // synthetic/compatibility paths. This makes closure capture
         // places typed without relying on an unrelated later use. A
-        // materialized literal binds at its materialization target.
+        // materialized literal binds at its materialization target, and a
+        // converted initializer (`comptime t: String = "s"`) at its
+        // conversion's.
+        let converted = self
+            .implicit_conversion(value)
+            .and_then(|_| self.f.reg_types.get(&src.0).cloned());
         let binding_ty = materialized
+            .or(converted)
             .or_else(|| self.checked_ty(value))
             .or_else(|| self.f.reg_types.get(&src.0).cloned());
         if let Some(ty) = binding_ty.clone() {
@@ -3020,7 +3041,8 @@ impl Flatten<'_> {
                     use mojito_checked::checked::ComptimeSource;
                     let source = match iteration.source {
                         ComptimeSource::Sequence(sequence) => sequence,
-                        ComptimeSource::Evaluated { element, .. } => {
+                        ComptimeSource::Evaluated { element, .. }
+                        | ComptimeSource::Applied { element } => {
                             let mut index = HashMap::new();
                             index_hir_expression(&iter.syntax, iter, &mut index);
                             self.active_semantics.push(index);

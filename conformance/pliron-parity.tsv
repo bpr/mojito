@@ -68,6 +68,9 @@ assets/ok/comptime_display_binding_arguments.mojo	main	exe-differential	sanitize
 assets/ok/comptime_display_binding_reads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_aggregate_binder.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_annotated_binding.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_applied_bound.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_applied_sequence.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_binding_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_collection_template_served.mojo	main	exe-differential	sanitized

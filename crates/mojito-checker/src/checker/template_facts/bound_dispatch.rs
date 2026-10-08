@@ -522,7 +522,7 @@ impl Checker {
             .map(Vec::as_slice)
             .ok_or("the instance's type declares no witness for the requirement")?;
         let substitution = crate::checker::annotations::struct_subst(&info.decls, struct_arguments);
-        let (mut declared, mut binders) = if let [declared] = candidates {
+        let (declared, binders) = if let [declared] = candidates {
             (
                 declared,
                 self.witness_binders(
@@ -598,63 +598,17 @@ impl Checker {
                 folded_arguments: Vec::new(),
             })
         });
-        // A binder the instance bakes selects the per-call clone once the
-        // elaborator has minted it, as the clone check retargets to it; until
-        // then the call names the method itself.
-        let baked = request.as_ref().filter(|_| {
-            binders
-                .values()
-                .all(|ty| !mojito_types::types::is_symbolic(ty))
-        });
-        if let Some(request) = baked {
-            if overloaded {
-                return Err("the instance bakes a binder of an overloaded witness");
-            }
-            // A generic owner keys its per-call clone by the instance too.
-            let clone = if struct_arguments.is_empty() {
-                self.specialized_method_clone(owner, method, &declared.decls, &request.arguments)
-            } else {
-                self.instance_call_method_clone(
-                    owner,
-                    struct_arguments,
-                    method,
-                    &declared.decls,
-                    &request.arguments,
-                )
-            };
-            if let Some(clone) = clone {
-                let [minted] = info
-                    .methods
-                    .get(&clone)
-                    .map(Vec::as_slice)
-                    .ok_or("the instance's per-call witness clone is not declared")?
-                else {
-                    return Err("the instance's per-call witness clone is overloaded");
-                };
-                declared = minted;
-                binders = self.witness_binders(
-                    declared,
-                    receiver,
-                    receiver_convention,
-                    raising,
-                    &substitution,
-                    arguments,
-                )?;
-                return Ok(BoundWitness::Method {
-                    owner,
-                    arguments: struct_arguments,
-                    declared,
-                    target: format!("{owner}.{clone}"),
-                    binders,
-                    request: Some(request.clone()),
-                    substitution,
-                });
-            }
-        } else if request.is_some()
-            && binders
-                .values()
-                .any(|ty| !mojito_types::types::is_symbolic(ty))
-        {
+        // A binder the instance closes leaves the call naming the method
+        // itself, unless it is a member of an overload set or closes some
+        // binders and not others.
+        let closed = binders
+            .values()
+            .filter(|ty| !mojito_types::types::is_symbolic(ty))
+            .count();
+        if request.is_some() && closed == binders.len() && overloaded {
+            return Err("the instance bakes a binder of an overloaded witness");
+        }
+        if request.is_some() && closed > 0 && closed < binders.len() {
             return Err("the instance would bake some witness binders and not others");
         }
         let target = if self

@@ -236,7 +236,7 @@ record. Taken at `86a25b67` plus the census itself, on the three
 | Member of a variadic struct | P3d | 175 | 175 | 175 |
 | Per-instantiation method clone, no compile-time control flow | P2 | 0 | 80 | 417 |
 | Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 0 | 0 |
-| Per-call method clone | P3e | 14 | 14 | 14 |
+| Per-call method clone | P3e | 14 | 14 | 14 (0 since 2026-10-08; kept as a regression counter) |
 | Minted for a compile-time evaluation's subprogram | P3e | 0 | 0 | 0 |
 | **Checked**: inferred | | 21 | 26 | 48 |
 | **Checked**: derived from a checked template | | 223 | 303 | 618 |
@@ -331,7 +331,7 @@ Hello World at the same revision; rows that read zero in both are left out:
 | Member of a `DType`- or vector-keyed struct | P3c, P3d | 43 | 43 |
 | Member of a variadic struct | P3d | 175 | 175 |
 | Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 3 (0 since 2026-10-05) |
-| Per-call method clone | P3e | 14 | 14 |
+| Per-call method clone | P3e | 14 | 14 (0 since 2026-10-08) |
 | **Checked**: inferred | | 20 | 30 |
 | **Checked**: derived from a checked template | | 212 | 224 |
 | Templates no clone replaces | | 303 | 304 |
@@ -733,8 +733,17 @@ branch for the class is deleted, and so is its certificate class.
   `FormatStruct.params` read 75 too. The hashers' `SIMD[_, _]` leaf
   followed with R259 (2026-10-05): `_update_with_simd` is a generator over
   an infer-only dtype and `SIMDLength` binder pair, the 28 eager leaves
-  are gone, and Hello World reads `method_per_call 47`, total 183. What
-  still clones per call is R310 (a body only a clone serves). The third
+  are gone, and Hello World reads `method_per_call 47`, total 183. The
+  last per-call clones went with R310 (2026-10-08): every `comptime for` a
+  method or a `def` it calls holds is kept in its template, a sequence a
+  compile-time application builds (`comptime for x in mk(n)`) lifted as
+  `ComptimeSource::Applied`, a range bound or loop-body binding that applies
+  a callable lifted as a request, and a converting annotation typed as a
+  runtime binding of it is. The per-call minting path, the checker's
+  retargeting to its clones, and the driver's method requests are deleted;
+  a method body that still fails over its own binders is the
+  `_mojito_instantiation_failed` stub reported where a call reaches it. The
+  third
   step landed with R7 (2026-10-07): the AST route minted no clone for an
   evaluation (the census row above always read 0, and its class is gone),
   but it ran every evaluation outside the worklist. An evaluation in a

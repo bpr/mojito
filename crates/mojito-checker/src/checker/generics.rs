@@ -2,9 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-pub(super) use mojito_symbol::symbol::{
-    materialized_instantiation_argument, specialized_method_values,
-};
+pub(super) use mojito_symbol::symbol::materialized_instantiation_argument;
 pub use mojito_types::types::{map_tyargs, substitute};
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
@@ -1067,82 +1065,6 @@ impl Checker {
         Ok(Some(selected))
     }
 
-    /// The name of the elaborator-minted clone of `method` for this
-    /// instantiation (`isa$y3:Int`), when the receiver struct already
-    /// declares it. The value list must agree with the elaborator's
-    /// `method_request_values`: type arguments and value arguments in
-    /// declaration order; callable-bounded parameters stay symbolic on the
-    /// clone and contribute nothing; packs and symbolic placeholders make the
-    /// call unspecializable.
-    ///
-    /// A generic struct's per-instance clone of the same method can share
-    /// the name (`both$y3:Int` bakes `Pair`'s `T = Int`, not `both`'s
-    /// `U = Int`); it still declares the method's own parameters, which a
-    /// per-call clone has baked, so it is not this call's clone.
-    pub(super) fn specialized_method_clone(
-        &self,
-        owner: &str,
-        method: &str,
-        decls: &[ParamDecl],
-        arguments: &[TyArg],
-    ) -> Option<String> {
-        let values = specialized_method_values(decls, arguments)?;
-        // Nothing baked (only callable-bounded parameters) mangles to the
-        // method's own name: there is no clone, and retargeting would loop.
-        if values.is_empty() {
-            return None;
-        }
-        let name = mojito_symbol::symbol::mangle(method, &values).ok()?;
-        let baked: Vec<&str> = decls
-            .iter()
-            .filter(|decl| {
-                !matches!(
-                    decl,
-                    ParamDecl::Type {
-                        callable_bound: Some(_),
-                        ..
-                    }
-                )
-            })
-            .map(ParamDecl::name)
-            .collect();
-        self.structs
-            .get(owner)
-            .and_then(|info| info.methods.get(&name))
-            .is_some_and(|members| {
-                members
-                    .iter()
-                    .all(|member| !member.decls.iter().any(|decl| baked.contains(&decl.name())))
-            })
-            .then_some(name)
-    }
-
-    /// Whether the per-call clone family `clone` on `owner`
-    /// holds a clone of the overload a call selected (`overload`, its
-    /// signature qualifier).
-    ///
-    /// Two same-arity overloads specialized alike share one clone name, and
-    /// each call mints only its own overload's member: a family minted for
-    /// the other overload does not serve the call until its round mints the
-    /// selected one.
-    pub(super) fn clone_serves_overload(
-        &self,
-        owner: &str,
-        clone: &str,
-        overload: Option<&str>,
-    ) -> bool {
-        overload.is_none_or(|selected| {
-            self.structs
-                .get(owner)
-                .and_then(|info| info.methods.get(clone))
-                .is_some_and(|members| {
-                    members
-                        .iter()
-                        .any(|member| member.overload.as_deref() == Some(selected))
-                })
-        })
-    }
-
     /// Record a generic-struct application reached as a constructor target or
     /// method-call receiver, for per-instantiation method-clone discovery.
     pub(super) fn record_struct_instantiation(
@@ -1221,31 +1143,6 @@ impl Checker {
                 .map(materialized_instantiation_argument)
                 .collect()
         })
-    }
-
-    /// The per-call clone of a generic method (`kind[U]`) on the struct
-    /// instance `owner[owner_arguments]`, once the elaborator has appended it
-    /// to the template: the instance's values are baked before the call's
-    /// (`kind$y3:Int$y4:Bool` on `Box[Int]`), the order
-    /// `generate_instance_clones` mints.
-    pub(super) fn instance_call_method_clone(
-        &self,
-        owner: &str,
-        owner_arguments: &[TyArg],
-        method: &str,
-        method_decls: &[ParamDecl],
-        arguments: &[TyArg],
-    ) -> Option<String> {
-        let info = self.structs.get(owner)?;
-        let instance = self.instance_arguments(owner, owner_arguments)?;
-        let mut values = specialized_method_values(&info.decls, &instance)?;
-        let call = specialized_method_values(method_decls, arguments)?;
-        if values.is_empty() || call.is_empty() {
-            return None;
-        }
-        values.extend(call);
-        let name = mojito_symbol::symbol::mangle(method, &values).ok()?;
-        info.methods.contains_key(&name).then_some(name)
     }
 
     /// The per-instantiation clone of `method` on the struct instance

@@ -167,7 +167,7 @@ impl Checker {
             }
         }
         if let ExprKind::Identifier(sname) = &object.kind {
-            return self.infer_struct_name_call(span, object, sname, method, call);
+            return self.infer_struct_name_call(span, sname, method, call);
         }
         Ok(None)
     }
@@ -178,7 +178,6 @@ impl Checker {
     fn infer_struct_name_call(
         &self,
         span: &SourceSpan,
-        object: &Expr,
         sname: &str,
         method: &str,
         call: MethodCallArguments<'_>,
@@ -188,7 +187,7 @@ impl Checker {
             args,
             kwargs,
             parameterized_syntax,
-            preserves_receiver_interiors,
+            ..
         } = call;
         let Some(info) = self.structs.get(sname) else {
             return Ok(None);
@@ -354,9 +353,9 @@ impl Checker {
                     .borrow_mut()
                     .insert(span.clone(), selected.param_decls.clone());
             }
-            // A generic static records its instantiation and retargets
-            // to the per-call clone once minted, as an instance call
-            // does: a compile-time-keyed body only folds bound.
+            // A generic static records its instantiation, as an instance
+            // call does: the elaborator instantiates its template per
+            // call.
             if let Some(arguments) = &selected.instantiation {
                 let source_method = method.split('$').next().unwrap_or(method);
                 let overload = selected
@@ -372,7 +371,7 @@ impl Checker {
                         owner_arguments: Vec::new(),
                         method: source_method.to_string(),
                         parameter_names: selected.parameter_names.clone(),
-                        overload: overload.clone(),
+                        overload,
                         arguments: arguments.clone(),
                         inferred_values: unsupplied_value_parameters(
                             &selected.param_decls,
@@ -385,25 +384,6 @@ impl Checker {
                         ),
                     },
                 );
-                if let Some(clone) = self
-                    .specialized_method_clone(sname, method, &selected.param_decls, arguments)
-                    .filter(|clone| self.clone_serves_overload(sname, clone, overload.as_deref()))
-                {
-                    let ty = self.infer_method_call(
-                        span,
-                        object,
-                        &clone,
-                        MethodCallArguments {
-                            param_args: &[],
-                            args,
-                            kwargs,
-                            parameterized_syntax,
-                            preserves_receiver_interiors,
-                        },
-                    )?;
-                    self.record_static_clone_target(span.clone(), sname, &clone);
-                    return Ok(Some(ty));
-                }
             }
             return self
                 .finish_static_call(

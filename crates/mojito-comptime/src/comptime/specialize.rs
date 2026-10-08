@@ -21,7 +21,6 @@ impl Elab<'_> {
                 program,
                 instances: Vec::new(),
                 stub_reaching_structs: HashSet::new(),
-                stub_reaching_methods: Vec::new(),
                 unserved_template_uses: Vec::new(),
                 def_traces: Vec::new(),
                 method_traces: Vec::new(),
@@ -33,8 +32,6 @@ impl Elab<'_> {
         let consts = self.top_consts.borrow().clone();
         let mut mono = Mono::default();
         let mut program = program;
-        self.stamp_per_call_clone_bodies(&mut program);
-        self.per_call_stubs.get_or_init(|| per_call_stubs(&program));
         let mut module_bindings = HashMap::new();
         for statement in &program {
             if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &statement.kind {
@@ -216,19 +213,6 @@ impl Elab<'_> {
                 .filter_map(|body| body.split_once('.'))
                 .map(|(owner, _)| owner.to_string())
                 .collect(),
-            // Computed again after the drains: a generated clone's own
-            // bodies are walked there.
-            stub_reaching_methods: {
-                let mut methods: Vec<(String, String)> = self
-                    .stub_reaching_bodies(&mono.abstract_uses, &mono.method_edges)
-                    .iter()
-                    .filter(|body| owner_method(body).is_some())
-                    .filter_map(|body| body.split_once('.'))
-                    .map(|(owner, method)| (owner.to_string(), method.to_string()))
-                    .collect();
-                methods.sort();
-                methods
-            },
             unserved_template_uses,
             def_traces: Vec::new(),
             method_traces: Vec::new(),
@@ -400,28 +384,6 @@ impl Elab<'_> {
         Ok(())
     }
 
-    /// Tag the body of every per-call clone minted on a non-generic struct
-    /// during elaboration.
-    ///
-    /// Those clones reuse their template's spans, and are tagged here rather
-    /// than where they are minted because `Elab::block` re-stamps the whole
-    /// statement with its module immediately afterwards.
-    fn stamp_per_call_clone_bodies(&self, program: &mut [Stmt]) {
-        let per_call_clones = self.per_call_clones.borrow();
-        for statement in program {
-            let module = statement.module.clone();
-            let StmtKind::Struct { name, methods, .. } = &mut statement.kind else {
-                continue;
-            };
-            for method in methods.iter_mut() {
-                if per_call_clones.contains(&(name.clone(), method.name.clone())) {
-                    let tag = super::clone_source_tag(module.as_deref(), name, &method.name);
-                    mojito_ast::ast::stamp_source(&mut method.body, &tag);
-                }
-            }
-        }
-    }
-
     /// Walk each minted clone of one instance, dropping any whose own
     /// applications do not resolve: that call keeps the erased template
     /// rather than failing the program. A clone of a template whose body is
@@ -474,13 +436,8 @@ impl Elab<'_> {
         uses: &'a [AbstractUse],
         edges: &'a [(String, String)],
     ) -> HashSet<&'a str> {
-        let per_call_stubs = self.per_call_stubs.get().into_iter().flatten();
-        let mut stubbed: HashSet<&str> = self
-            .comptime_generics
-            .iter()
-            .map(String::as_str)
-            .chain(per_call_stubs.map(String::as_str))
-            .collect();
+        let mut stubbed: HashSet<&str> =
+            self.comptime_generics.iter().map(String::as_str).collect();
         loop {
             let reached: Vec<&str> = uses
                 .iter()
@@ -531,20 +488,6 @@ impl Elab<'_> {
             .borrow_mut()
             .insert(name.to_string(), served);
         served
-    }
-
-    /// Whether the template of the non-generic struct `owner`'s method
-    /// serves every call of it, so no call mints a per-call clone: its
-    /// elaborated body is no trap stub, and is not keyed by what its checked
-    /// body holds or reaches
-    /// (the driver's `keyed_methods`, a compile-time-keyed stub among them).
-    /// The elaborator instantiates its MIR per call, the method's own
-    /// binders, a type pack among them, bound from the call.
-    pub(super) fn template_serves_method(&self, owner: &str, method: &Method) -> bool {
-        !is_unspecialized_method_stub(&method.body)
-            && !self
-                .keyed_methods
-                .contains(&(owner.to_string(), method.name.clone()))
     }
 
     /// The abstract references that can run a compile-time-keyed stub.
@@ -1289,16 +1232,6 @@ impl Elab<'_> {
                 unavailable.extend(self.trait_requirement_names(trait_name));
             }
         }
-        // Checker-discovered instantiations of this instance's generic
-        // methods (`b.kind[Bool]()` on `Box[Int]`) and generic constructors
-        // (`Box[Int](s)`) mint per-call clones with the instance's values
-        // baked before the call's (`kind$y3:Int$y4:Bool`); the request owner
-        // is the instance key.
-        let instance_key = mangle(name, values)?;
-        let per_call_requests = self
-            .method_requests
-            .get(&instance_key)
-            .map_or(&[][..], Vec::as_slice);
         let bundled = mojito_checker::checker::is_bundled_module_source(template.module.as_deref());
         // The methods this instance withholds rather than fails to clone: an
         // unavailable method cannot be called on it at all, so its erased body
@@ -1318,41 +1251,7 @@ impl Elab<'_> {
             if bundled && matches!(lifecycle, "__init__" | "__copyinit__" | "__moveinit__") {
                 continue;
             }
-            // A method the template serves is instantiated per call by the
-            // elaborator from its MIR, its own binders bound with the
-            // struct's.
-            let served = !keyed.contains(&method.name);
             let stub = stubbed.contains(&method.name);
-            let per_call = if served {
-                Vec::new()
-            } else {
-                self.per_call_method_clones(
-                    name,
-                    method,
-                    stub,
-                    per_call_requests,
-                    &PerCallBase {
-                        values,
-                        bindings: &bindings,
-                        receiver: Some(&receiver),
-                        owner: Some(PerCallOwner {
-                            name,
-                            module: template.module.as_deref(),
-                        }),
-                        origin_binders: Some(&origin_binders),
-                        constructors: !bundled,
-                    },
-                    &consts,
-                )
-            };
-            if stub {
-                stubbed_clones.extend(
-                    per_call
-                        .iter()
-                        .map(|clone| (clone.name.clone(), method.name.clone())),
-                );
-            }
-            clones.extend(per_call);
             // A synthesized trait-default body (Copyable's `copy`, Hashable's
             // `__hash__`; no source provenance) has no instance-specific
             // behavior: the template's serves every instance.
@@ -1413,13 +1312,6 @@ impl Elab<'_> {
             };
             clone.where_clauses.clear();
             clone.self_ty = Some(receiver.clone());
-            // Its own lane still unbound, a vector construction lowers only
-            // in the per-call clones: this one stands as the stub.
-            if super::synth::constructs_at_own_lane(&clone) {
-                clone.body = vec![unspecialized_method_stub(name, &clone)];
-                clones.push(clone);
-                continue;
-            }
             let clone_body = clone.body.first().map(|first| first.span);
             if let (Some(first), Some(clone_body)) = (method.body.first(), clone_body) {
                 self.method_traces
@@ -1501,176 +1393,6 @@ impl Elab<'_> {
             withheld,
             stubbed: stubbed_clones,
         })
-    }
-
-    /// Per-call clones of one generic method (`kind[U]`) for every
-    /// checker-discovered instantiation in `requests` that selects it: the
-    /// owner's values (`base_values`, an instance's baked arguments; empty
-    /// for a non-generic struct) precede the call's in the clone name
-    /// (`kind$y3:Int$y4:Bool`), `base_bindings` bind them for elaboration,
-    /// and `receiver` is the instance clone's explicit receiver type. A
-    /// method with no baked parameter, a request whose arguments do not
-    /// align, a `where` clause false for the instantiation, or a body that
-    /// fails to elaborate mints nothing: the call keeps the erased path.
-    /// `template` is the struct whose declaration `method` is, which owns
-    /// the method's binders. A `stubbed` method, whose template body is the
-    /// trap stub, has no erased path: its clone that fails to elaborate is
-    /// minted anyway, its body reporting the failure.
-    pub(super) fn per_call_method_clones(
-        &self,
-        template: &str,
-        method: &Method,
-        stubbed: bool,
-        requests: &[MethodSpecializationRequest],
-        base: &PerCallBase<'_>,
-        consts: &HashMap<String, CtValue>,
-    ) -> Vec<Method> {
-        let PerCallBase {
-            values: base_values,
-            bindings: base_bindings,
-            receiver,
-            owner,
-            origin_binders: base_binders,
-            constructors,
-        } = *base;
-        let specializable = method
-            .type_params
-            .iter()
-            .any(|parameter| method_parameter_is_baked(parameter, &method.type_params));
-        if !specializable || (method.name == "__init__" && !constructors) {
-            return Vec::new();
-        }
-        let mut clones = Vec::new();
-        let mut minted = HashSet::new();
-        let binder_owner = self.method_binder_owners.owner(template, method);
-        for request in requests
-            .iter()
-            .filter(|request| request.selects(method, template, &self.method_binder_owners))
-        {
-            // The call's own loan-carrying arguments bind their origin slots
-            // to binders numbered after the instance's: both land on the
-            // clone, which declares the instance's first.
-            let mut binders = base_binders.cloned().unwrap_or_default();
-            let Some((call_values, call_bindings)) = self.method_request_values(
-                &binder_owner,
-                &method.type_params,
-                request.arguments(),
-                &mut binders,
-            ) else {
-                continue;
-            };
-            let mut values = base_values.to_vec();
-            values.extend(call_values);
-            let Ok(clone_name) = mangle(&method.name, &values) else {
-                continue;
-            };
-            if !minted.insert(clone_name.clone()) {
-                continue;
-            }
-            let mut bindings = base_bindings.to_vec();
-            bindings.extend(call_bindings);
-            let mut env = consts.clone();
-            for binding in &bindings {
-                env.insert(binding.name.clone(), binding.value.clone());
-            }
-            let available = method
-                .where_clauses
-                .iter()
-                .all(|predicate| matches!(self.eval(predicate, &env), Ok(CtValue::Bool(true))));
-            if !available {
-                continue;
-            }
-            let (mut clone, failed) = match self.specialize_method_clone(
-                method,
-                clone_name.clone(),
-                &bindings,
-                consts,
-                consts,
-            ) {
-                Ok(clone) => (clone, false),
-                Err(error) if stubbed => {
-                    let Some(clone) = self.failed_method_clone(
-                        template, method, clone_name, &bindings, consts, &error,
-                    ) else {
-                        continue;
-                    };
-                    (clone, true)
-                }
-                Err(_) => continue,
-            };
-            clone.where_clauses.clear();
-            clone.self_ty = receiver.cloned();
-            let first_own = base_binders.map_or(0, |base| base.params().len());
-            clone
-                .type_params
-                .splice(0..0, binders.params()[first_own..].iter().cloned());
-            if let (Some(owner), false) = (owner, failed) {
-                self.trace_per_call_clone(owner, method, &clone, &bindings, base_bindings.len());
-            }
-            clones.push(clone);
-        }
-        clones
-    }
-
-    /// Record how a per-call clone came from its template: the struct's
-    /// type bindings (an instance's, first) and the method's own, the
-    /// method's folded values, and its expanded type packs.
-    fn trace_per_call_clone(
-        &self,
-        owner: PerCallOwner<'_>,
-        method: &Method,
-        clone: &Method,
-        bindings: &[MethodBinding],
-        struct_bindings: usize,
-    ) {
-        let (Some(first), Some(clone_first)) = (method.body.first(), clone.body.first()) else {
-            return;
-        };
-        let own = &bindings[struct_bindings..];
-        let pack = |binding: &MethodBinding| {
-            method.type_params.iter().any(|parameter| {
-                parameter.name.strip_prefix('*') == Some(binding.name.as_str())
-                    && parameter.value_type.is_none()
-            })
-        };
-        let pack_bindings = own
-            .iter()
-            .filter(|binding| pack(binding))
-            .filter_map(|binding| {
-                let CtValue::Tuple(elements) = &binding.value else {
-                    return None;
-                };
-                let sources = elements
-                    .iter()
-                    .map(|element| match element {
-                        CtValue::Type(ty) => self.pack_element_source_type(ty),
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some((binding.name.clone(), sources))
-            })
-            .collect();
-        self.method_traces
-            .borrow_mut()
-            .push(super::MethodInstanceTrace {
-                owner: owner.name.to_string(),
-                owner_module: owner.module.map(str::to_string),
-                clone_module: super::clone_source_tag(owner.module, owner.name, &clone.name),
-                clone_name: clone.name.clone(),
-                template_name: method.name.clone(),
-                body: first.span,
-                clone_body: clone_first.span,
-                type_bindings: bindings
-                    .iter()
-                    .filter_map(|binding| Some((binding.name.clone(), binding.source.clone()?)))
-                    .collect(),
-                value_bindings: own
-                    .iter()
-                    .filter(|binding| binding.source.is_none() && !pack(binding))
-                    .map(|binding| (binding.name.clone(), binding.value.clone()))
-                    .collect(),
-                pack_bindings,
-            });
     }
 
     /// The method names a trait requires, including those of the traits it
@@ -1908,33 +1630,7 @@ impl Elab<'_> {
     }
 }
 
-/// What a per-call method clone inherits from where it is minted: an
-/// instance's baked values and bindings (empty for a non-generic struct),
-/// the instance clone's explicit receiver type, the struct whose method
-/// list the clone joins under its own source tag, which a trace names, and
-/// the origin binders the instance declares on every clone of it.
-/// `constructors` says a generic `__init__` mints here too
-/// (`__init__$y6:String`, or `__init__$y3:Int$y6:String` on an instance); a
-/// bundled template's constructors stay erased.
-#[derive(Clone, Copy, Default)]
-pub(super) struct PerCallBase<'a> {
-    pub(super) values: &'a [CtValue],
-    pub(super) bindings: &'a [MethodBinding],
-    pub(super) receiver: Option<&'a Type>,
-    pub(super) owner: Option<PerCallOwner<'a>>,
-    pub(super) origin_binders: Option<&'a CloneOriginBinders>,
-    pub(super) constructors: bool,
-}
-
-/// The struct a traced per-call clone joins, whose method is the clone's
-/// template, and its module.
-#[derive(Clone, Copy)]
-pub(super) struct PerCallOwner<'a> {
-    pub(super) name: &'a str,
-    pub(super) module: Option<&'a str>,
-}
-
-/// One baked compile-time parameter of a per-call method clone: its name,
+/// One baked compile-time parameter of a method clone: its name,
 /// the compile-time value bound in the clone's elaboration environment, and
 /// (for a type parameter) the source type substituted into the signature.
 #[derive(Clone)]
@@ -1995,31 +1691,6 @@ fn keyed_methods(
                     || stub_reaching.contains(&super::method_owner(template, &method.name)))
         })
         .map(|method| method.name.clone())
-        .collect()
-}
-
-/// The [`super::method_owner`] keys of the struct methods in `program`
-/// whose template body is the trap stub although they declare compile-time
-/// parameters of their own: only a per-call clone serves a call of one.
-fn per_call_stubs(program: &[Stmt]) -> HashSet<String> {
-    program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct { name, methods, .. } => Some((name, methods)),
-            _ => None,
-        })
-        .flat_map(|(name, methods)| {
-            methods
-                .iter()
-                .filter(|method| {
-                    method.self_ty.is_none()
-                        && is_unspecialized_method_stub(&method.body)
-                        && method.type_params.iter().any(|parameter| {
-                            method_parameter_is_baked(parameter, &method.type_params)
-                        })
-                })
-                .map(|method| super::method_owner(name, &method.name))
-        })
         .collect()
 }
 
