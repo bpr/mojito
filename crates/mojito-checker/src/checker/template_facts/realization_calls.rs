@@ -9,7 +9,6 @@ use crate::checker::builtins::{is_numeric, print_keyword};
 use crate::checker::{Checker, callable_contract_target, callable_lowered_name};
 use mojito_checked::templates::{
     CallParameterFact, CheckedBodyFacts, OccurrenceId, TemplateCallContract, TemplateOwner,
-    TemplateReference,
 };
 use mojito_types::types::{Ty, TySubst};
 
@@ -50,15 +49,6 @@ impl Checker {
             return Err("a method call's receiver is not a nominal struct");
         };
         let selected = facts.selected_calls[index].1.contract.target.clone();
-        // A tuple element's accessor is realized by its own recipe
-        // (`realize_tuple_elements`).
-        if tuple_element_accessor(&selected).is_some()
-            && fact_at(&facts.expression_types, receiver)
-                .and_then(mojito_types::types::tuple_elements)
-                .is_some()
-        {
-            return Ok(());
-        }
         // A per-call clone (`Scaler.scaled$i3`) bakes the callee's binders
         // into its target. On a non-generic receiver the request names no
         // instance, and substitution left its arguments as they were, so the
@@ -107,226 +97,19 @@ impl Checker {
         Ok(())
     }
 
-    /// Realize each tuple element read (`BodyShape::tuple_element`) on the
-    /// instance's own Tuple, as its own check selects it.
-    ///
-    /// A generated Tuple the instance's type names, once declared, has one
-    /// place accessor per position, and the check calls the element's
-    /// (`__getitem_param__$k`) as a reference call on the local, read by
-    /// copy; before any such Tuple is declared, the check types the element
-    /// from the tuple's arguments and records nothing else. Which of the two
-    /// the template met depends on whether its own Tuple was declared yet,
-    /// and on whether its type was closed, so the instance records the call
-    /// afresh whatever the template recorded. The position is the literal
-    /// index, which no instance changes. The read is by copy, so an element
-    /// the instance cannot copy implicitly is left to the clone check.
-    pub(super) fn realize_tuple_elements(
-        &self,
-        facts: &mut CheckedBodyFacts,
-        occurrences: &[Occurrence],
-        pack_accessors: &[OccurrenceId],
-    ) -> Result<(), &'static str> {
-        let mut realized = false;
-        for occurrence in occurrences
-            .iter()
-            .filter(|occurrence| !pack_accessors.contains(&occurrence.id))
-        {
-            let (Some((receiver, method)), Some((_, position))) =
-                (&occurrence.method_call, occurrence.folded_index)
-            else {
-                continue;
-            };
-            let id = occurrence.id;
-            let receiver = OccurrenceId {
-                syntax: *receiver,
-                copy: id.copy,
-            };
-            let Some(tuple @ Ty::Struct(owner, arguments)) =
-                fact_at(&facts.expression_types, receiver)
-            else {
-                continue;
-            };
-            let Some(elements) = mojito_types::types::tuple_elements(tuple) else {
-                continue;
-            };
-            if method != "__getitem__" {
-                continue;
-            }
-            let accessor = format!("{TUPLE_ELEMENT_ACCESSOR}${position}");
-            let declared = self
-                .structs
-                .get(owner)
-                .is_some_and(|info| info.methods.contains_key(&accessor));
-            if !declared {
-                if fact_at(&facts.selected_calls, id).is_some() {
-                    return Err("a tuple element's accessor is not declared on the instance");
-                }
-                continue;
-            }
-            let element = usize::try_from(position)
-                .ok()
-                .and_then(|position| elements.get(position))
-                .ok_or("a tuple element's position is outside the tuple")?;
-            if matches!(element, Ty::Ref(_)) {
-                return Err("a tuple element holds a reference");
-            }
-            if !self.is_implicitly_copyable(element) {
-                return Err("a tuple element read by value is not implicitly copyable");
-            }
-            let root = fact_at(&facts.expression_bindings, receiver)
-                .cloned()
-                .ok_or("a tuple element's local has no binding")?;
-            let target = format!("{owner}.{accessor}");
-            let (element, application) = ((*element).clone(), (owner.clone(), arguments.to_vec()));
-            let reference = TemplateReference {
-                referent: element.clone(),
-                origin: mojito_checked::templates::TemplateOrigin::Place(
-                    mojito_checked::templates::TemplatePlace {
-                        root,
-                        path: Vec::new(),
-                    },
-                ),
-                mutability: mojito_types::origin::Mutability::Mutable,
-            };
-            let call = TemplateCallContract {
-                contract: mojito_checked::checked::CheckedCallContract {
-                    target: target.clone(),
-                    raises: None,
-                    result_ty: element,
-                    result_adapter: None,
-                    receiver_requires_place: true,
-                    receiver_elided: false,
-                    receiver_convention: Some(mojito_ast::ast::ArgConvention::Ref),
-                    arguments: Vec::new(),
-                    captures: Vec::new(),
-                    reference_result: None,
-                    parameter_arguments: Vec::new(),
-                    param_decls: Vec::new(),
-                    boundary: mojito_checked::checked::CheckedCallBoundary::default(),
-                },
-                reference_result: Some(reference.clone()),
-                result_origins: Vec::new(),
-                arguments: Vec::new(),
-                invalidations: Vec::new(),
-            };
-            upsert(&mut facts.selected_calls, id, call);
-            upsert(&mut facts.overload_targets, id, target.clone());
-            upsert(&mut facts.call_parameters, id, Vec::new());
-            upsert(&mut facts.reference_results, id, reference);
-            if !facts.copyable_reference_result_reads.contains(&id) {
-                facts.copyable_reference_result_reads.push(id);
-            }
-            note_realized_callee(facts, &target, &target);
-            // The receiver's application is recorded only from a source
-            // that records applications at all.
-            let source = occurrence.span.source.as_deref();
-            if source.is_some()
-                && !crate::checker::overload_support::is_bundled_module_source(source)
-            {
-                facts.struct_applications.push(application);
-            }
-            realized = true;
-        }
-        if realized {
-            let position = |id: &OccurrenceId| {
-                occurrences
-                    .iter()
-                    .position(|occurrence| occurrence.id == *id)
-            };
-            facts.selected_calls.sort_by_key(|(id, _)| position(id));
-            facts.call_parameters.sort_by_key(|(id, _)| position(id));
-            facts.reference_results.sort_by_key(|(id, _)| position(id));
-            facts.copyable_reference_result_reads.sort_by_key(position);
+    /// Refuse each pack accessor (`BodyShape::pack_accessor`) at an
+    /// instance: the template's `Tuple.__getitem_param__[i]` request names
+    /// no member an instance's check selects, so the instance's own clone
+    /// check keeps the body.
+    pub(super) fn realize_pack_accessors(facts: &CheckedBodyFacts) -> Result<(), &'static str> {
+        let requested = facts.method_instantiations.iter().any(|(_, request)| {
+            request.owner == mojito_types::types::TUPLE_TYPE_NAME
+                && request.method == TUPLE_ELEMENT_ACCESSOR
+        });
+        if requested {
+            return Err("an instance reads a pack element through the Tuple accessor");
         }
         Ok(())
-    }
-
-    /// Realize each pack accessor (`BodyShape::pack_accessor`) on the
-    /// instance's own Tuple: the template's `Tuple.__getitem_param__[i]`
-    /// request becomes the generated accessor for the position the
-    /// elaborator folded `i` to (`__getitem_param__$k`), a reference call
-    /// that declares no parameters and requests no clone. The reference's
-    /// origin is the template's, on the same field. Returns the accessors
-    /// realized, which the tuple element recipe leaves alone.
-    pub(super) fn realize_pack_accessors(
-        &self,
-        facts: &mut CheckedBodyFacts,
-        occurrences: &[Occurrence],
-    ) -> Result<Vec<OccurrenceId>, &'static str> {
-        let requests: Vec<OccurrenceId> = facts
-            .method_instantiations
-            .iter()
-            .filter(|(_, request)| {
-                request.owner == mojito_types::types::TUPLE_TYPE_NAME
-                    && request.method == TUPLE_ELEMENT_ACCESSOR
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        for &id in &requests {
-            let occurrence = occurrences
-                .iter()
-                .find(|occurrence| occurrence.id == id)
-                .ok_or("a pack accessor is not an occurrence of the instance")?;
-            let (Some((receiver, _)), Some((_, position))) =
-                (&occurrence.method_call, occurrence.folded_index)
-            else {
-                return Err("a pack accessor's index is not folded in the instance");
-            };
-            let receiver = OccurrenceId {
-                syntax: *receiver,
-                copy: id.copy,
-            };
-            let Some(tuple @ Ty::Struct(owner, _)) = fact_at(&facts.expression_types, receiver)
-            else {
-                return Err("a pack accessor's storage is not a nominal struct");
-            };
-            let accessor = format!("{TUPLE_ELEMENT_ACCESSOR}${position}");
-            let element = mojito_types::types::tuple_elements(tuple)
-                .and_then(|elements| {
-                    usize::try_from(position)
-                        .ok()
-                        .and_then(|position| elements.get(position).map(|ty| (*ty).clone()))
-                })
-                .ok_or("a pack accessor's position is outside the tuple")?;
-            if matches!(element, Ty::Ref(_)) {
-                return Err("a pack accessor's element holds a reference");
-            }
-            if !self
-                .structs
-                .get(owner)
-                .is_some_and(|info| info.methods.contains_key(&accessor))
-            {
-                return Err("a pack accessor's Tuple declares no accessor for its position");
-            }
-            let target = format!("{owner}.{accessor}");
-            facts.method_instantiations.retain(|(site, _)| *site != id);
-            facts
-                .parameterized_method_calls
-                .retain(|(site, _)| *site != id);
-            let call = facts
-                .selected_calls
-                .iter_mut()
-                .find(|(site, _)| *site == id)
-                .map(|(_, call)| call)
-                .ok_or("a pack accessor lost its contract")?;
-            let selected = std::mem::replace(&mut call.contract.target, target.clone());
-            call.contract.parameter_arguments.clear();
-            call.contract.param_decls.clear();
-            call.contract.result_ty = element.clone();
-            if let Some(reference) = &mut call.reference_result {
-                reference.referent = element.clone();
-            }
-            if let Some((_, reference)) = facts
-                .reference_results
-                .iter_mut()
-                .find(|(site, _)| *site == id)
-            {
-                reference.referent = element;
-            }
-            upsert(&mut facts.overload_targets, id, target.clone());
-            note_realized_callee(facts, &selected, &target);
-        }
-        Ok(requests)
     }
 
     /// Realize the value getter each element store through a setter embeds,
@@ -1131,14 +914,12 @@ impl Checker {
 
     /// Rewrite one method call's contract for an instance whose receiver is
     /// the struct `owner` under `arguments`: the target is the instance's
-    /// clone of the selected declaration, where one exists, or the copy a
-    /// struct specialized whole holds of it, and the result,
+    /// clone of the selected declaration, where one exists, and the result,
     /// raised, parameter, and referent types substitute under the whole
-    /// instance (`substitute`: its packs and folded values too, so a variadic
-    /// struct specialized whole names itself, `Bag$t2[…]`, where the template
-    /// has `Bag[*Ts]`). The receiver's own arguments judge an availability
-    /// condition under `substitution`. `None` where the template already
-    /// selected the receiver's clone, whose contract stands.
+    /// instance (`substitute`: its packs and folded values too). The
+    /// receiver's own arguments judge an availability condition under
+    /// `substitution`. `None` where the template already selected the
+    /// receiver's clone, whose contract stands.
     fn realize_method_contract(
         &self,
         types: &[(OccurrenceId, Ty)],
@@ -1157,15 +938,6 @@ impl Checker {
             .get(method)
             .ok_or("a called method is missing")?;
         let self_ty = self.self_instance_ty(owner);
-        // A struct specialized whole (`AHasher$…`) holds its own copy of
-        // each member the template selected on the template struct
-        // (`AHasher._update`).
-        let selected_owner = selected
-            .split_once('.')
-            .map(|(selected_owner, _)| selected_owner)
-            .filter(|selected_owner| {
-                *selected_owner != owner && owner.starts_with(&format!("{selected_owner}$"))
-            });
         let clone_name =
             mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments);
         // A receiver whose type was already closed in the template (`List[Pair]`)
@@ -1182,7 +954,7 @@ impl Checker {
                 .iter()
                 .find(|member| {
                     crate::checker::overload_support::method_lowered_name(
-                        selected_owner.unwrap_or(owner),
+                        owner,
                         method,
                         member,
                         self_ty.as_ref(),
@@ -1238,27 +1010,7 @@ impl Checker {
                     return Err("a called method is unavailable at the instance");
                 }
             }
-            match selected_owner.and_then(|selected_owner| selected.strip_prefix(selected_owner)) {
-                Some(member) => {
-                    let target = format!("{owner}{member}");
-                    let declared_here = match family.as_slice() {
-                        [_] => target == format!("{owner}.{method}"),
-                        members => members.iter().any(|candidate| {
-                            crate::checker::overload_support::method_lowered_name(
-                                owner,
-                                method,
-                                candidate,
-                                self_ty.as_ref(),
-                            ) == target
-                        }),
-                    };
-                    if !declared_here {
-                        return Err("a specialized struct does not declare the selected member");
-                    }
-                    target
-                }
-                None => selected.clone(),
-            }
+            selected.clone()
         };
         // The callee has no binders of its own, so its parameter types were
         // recorded at the receiver's arguments: in the caller's binder scope,
@@ -1582,13 +1334,6 @@ fn method_call_at(occurrences: &[Occurrence], id: OccurrenceId) -> Option<(Occur
         },
         method,
     ))
-}
-
-/// The generated Tuple member a tuple element's read selected, from its
-/// lowered callee `Tuple$….__getitem_param__$k`.
-fn tuple_element_accessor(target: &str) -> Option<&str> {
-    let start = target.rfind(&format!(".{TUPLE_ELEMENT_ACCESSOR}$"))?;
-    Some(&target[start + 1..])
 }
 
 /// The built-in conversions of a bound-typed place an instance realizes

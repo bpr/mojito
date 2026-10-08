@@ -1326,8 +1326,8 @@ serve), and one that reaches a compile-time-keyed `def`. A type name over
 the struct's parameters clones nothing: the template carries the type in
 `MirInstr::TypeName`, and the elaborator writes the name from the
 substituted type. The driver adds the ones only checked types show
-(`src/compiler/template_reach.rs`): a body whose types hold a tuple or a
-struct specialized whole over the struct's parameters, and one that calls an
+(`src/compiler/template_reach.rs`): a body whose types hold a tuple over
+the struct's parameters, and one that calls an
 overloaded method with binders of its own. An instance whose argument
 carries a loan clones no more than a plain-data one. A plain trait-bound
 generic `def` keeps its template at every closed call, inferred or explicit
@@ -2017,8 +2017,7 @@ and its soundness argument, is
 - **The trace is explicit.** The elaborator records which prepared declaration
   each `def` clone instantiates and what each compile-time parameter became
   (`DefInstanceTrace`), the same for each per-instantiation and per-call
-  method clone and each member of a struct it specialized whole
-  (`MethodInstanceTrace`), and everything it generated
+  method clone (`MethodInstanceTrace`), and everything it generated
   (`GeneratedDeclarations`). Only that list, or a clone's explicit receiver
   type, says a declaration is generated: a module-qualified source name
   carries a `$` too. A clone node keeps the syntax identity of the template

@@ -445,7 +445,7 @@ impl Checker {
                     let source_params = info.source_params.clone();
                     let (_, tyargs) =
                         self.resolve_struct_use_args(name, &decls, &source_params, args, &[], &[])?;
-                    return Ok(self.struct_instance_type(name, tyargs));
+                    return Ok(Self::struct_instance_type(name, tyargs));
                 }
                 if matches!(
                     name.as_str(),
@@ -2734,14 +2734,8 @@ impl Checker {
         })
     }
 
-    /// Construct the checked identity of an ordinary struct or of a concrete
-    /// erased specialization whose source parameters have become fixed facts.
-    pub(super) fn struct_instance_type(&self, name: &str, arguments: Vec<TyArg>) -> Ty {
-        let arguments = self
-            .structs
-            .get(name)
-            .and_then(|info| info.fixed_arguments.clone())
-            .unwrap_or(arguments);
+    /// Construct the checked identity of a struct application.
+    pub(super) fn struct_instance_type(name: &str, arguments: Vec<TyArg>) -> Ty {
         Ty::Struct(
             name.to_string(),
             mojito_types::types::canonical_pack_arguments(name, arguments).into(),

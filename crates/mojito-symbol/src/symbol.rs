@@ -2130,17 +2130,6 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
     }
 }
 
-pub fn tuple_specialization_values(elements: &[Ty]) -> Vec<CtValue> {
-    vec![CtValue::Tuple(
-        elements
-            .iter()
-            .cloned()
-            .map(Box::new)
-            .map(CtValue::Type)
-            .collect(),
-    )]
-}
-
 /// Current Mojo's unqualified spelling of a checked type, with minted value
 /// specializations spelled through their baked arguments.
 ///

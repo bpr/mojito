@@ -515,7 +515,7 @@ impl Checker {
                 score,
                 variadic.is_some() || kw_variadic.is_some(),
                 baked,
-                baked > 0 || signature.per_call_constructor,
+                baked > 0,
             ) + self
                 .argument_binding(
                     variadic.map(|_| overflow.len()),

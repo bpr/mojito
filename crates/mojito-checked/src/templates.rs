@@ -2366,14 +2366,6 @@ pub struct InstanceTrace {
     pub pack_bindings: Vec<(String, Vec<mojito_ast::ast::Type>)>,
     /// The parameters the clone still declares.
     pub residual: Vec<String>,
-    /// Whether the template is a body the elaborator shaped itself and copied
-    /// into every clone the trace names with its syntax identities: the trap
-    /// stub of an unavailable member, shared by every
-    /// specialization, or a
-    /// `Tuple` specialization's synthesized default constructor, its own in
-    /// every discovery round. No check validates it, so the first clone
-    /// checked is its template, and the others inherit that check.
-    pub first_copy_template: bool,
 }
 
 /// The arguments a method call through a trait bound binds from its

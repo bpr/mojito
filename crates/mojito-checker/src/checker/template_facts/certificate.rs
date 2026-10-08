@@ -606,7 +606,8 @@ impl Checker {
     /// reference, or copyable read in the body refuses it
     /// ([`BodyShape::references_recorded`]).
     /// The struct binders `select` picks for a member only source
-    /// validation checks: a struct specialized whole, whose clones fold them.
+    /// validation checks: a generator's binders, which each
+    /// per-instantiation clone folds.
     fn validated_struct_binders(&self, select: fn(&[ParamDecl]) -> Vec<&str>) -> Vec<&str> {
         if self.source_validation {
             select(&self.self_decls)
@@ -708,12 +709,12 @@ impl Checker {
         // as `Self.length`, a runtime read of the reified parameter on the
         // erased path every such struct keeps: neither is substituted. A
         // type pack (`Tuple[*Ts]`) is fixed per instance as a type binder is:
-        // the struct is specialized whole, its receiver's arguments are the
-        // pack's elements, and an element the body reads by loop index is
-        // fixed by the unrolling. Only source validation checks such a body.
-        // A vector value binder (`AHasher[key]`) keys a struct specialized
-        // whole: only source validation checks its members, and each specialization's member
-        // folds the values its trace names. The method's own `DType`
+        // its receiver's arguments are the pack's elements, and an element
+        // the body reads by loop index is fixed by the unrolling. Only source
+        // validation checks such a body. A vector value binder
+        // (`AHasher[key]`) keys a generator: only source validation checks
+        // its members, and each per-instantiation clone folds the values its
+        // trace names. The method's own `DType`
         // binders are among the declarations, folded as its scalar ones are.
         let plain_struct = decls.iter().all(|decl| {
             matches!(

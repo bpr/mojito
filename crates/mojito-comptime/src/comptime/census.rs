@@ -86,9 +86,7 @@ pub(super) fn clone_census(minted: &Minted<'_>) -> CloneCensus {
                 .body
                 .first()
                 .and_then(|first| clone_traces.get(&(name.as_str(), &*method.name, first.span)))
-                .and_then(|trace| {
-                    method_templates.get(&(trace.template_owner.as_str(), trace.body))
-                })
+                .and_then(|trace| method_templates.get(&(trace.owner.as_str(), trace.body)))
                 .copied()
         };
         // A per-call clone counts as one wherever it was minted: on a

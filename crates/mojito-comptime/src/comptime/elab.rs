@@ -897,7 +897,6 @@ impl Elab<'_> {
             owner: Some(super::specialize::PerCallOwner {
                 name,
                 module: stmt.module.as_deref(),
-                template: name,
             }),
             constructors: true,
             ..super::specialize::PerCallBase::default()

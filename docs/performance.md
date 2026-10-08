@@ -373,9 +373,10 @@ ordinary bundled structs. The figures below replace it.
 | `generic.mojo` | 2118 | 1517 | 1542 | 474 | 274 | 410 |
 
 - Hello World mints no per-instantiation method clones: a program without its
-  own instantiations has none. Its generated bodies are members of structs the
-  elaborator specialized whole (`Tuple$…`, the `DType`-keyed ranges, the
-  hasher) and per-call clones, all from concrete-only templates.
+  own instantiations has none. When measured, its generated bodies were
+  members of structs the elaborator then specialized whole (`Tuple$…`, the
+  `DType`-keyed ranges, the hasher) and per-call clones, all from
+  concrete-only templates; no struct is specialized whole since 2026-10-06.
 - `stdlib_heavy.mojo` checks an instance clone 2254 times and derives 860 of
   them, 38%; `generic.mojo` derives 274 of 474, 58%. With scalar getters alone
   (`MethodScalarBody`) those were 242 and 70, and wall time did not move.

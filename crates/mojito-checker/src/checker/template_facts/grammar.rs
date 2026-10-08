@@ -173,9 +173,9 @@ impl BodyShape<'_> {
 
     /// Whether `expr` is `Self.<value>` in a method body, reading the
     /// struct's own scalar value binder: a runtime read of the reified
-    /// parameter on the erased path, and in a struct specialized whole a
-    /// literal every specialization folds under the name's identity, with no
-    /// binding of its own either way.
+    /// parameter on the erased path, and in a generator's per-instantiation
+    /// clone a literal it folds under the name's identity, with no binding
+    /// of its own either way.
     pub(super) fn struct_value(&self, expr: &Expr) -> bool {
         self.receiver
             && matches!(&expr.kind, ExprKind::Member { object, field }
@@ -498,7 +498,7 @@ impl BodyShape<'_> {
     }
 
     /// A `SIMD` type whose open slots name only the struct's lane binders,
-    /// which every specialization of a struct specialized whole folds, and
+    /// which every per-instantiation clone folds, and
     /// the declaration's own value binders, folded as a keyed body's are
     /// (`SIMD[dt, Self.n]` in `rep[dt: DType]` of `Width[n: Int]`).
     pub(super) fn struct_lane_simd(&self, ty: &Ty) -> bool {
@@ -853,7 +853,7 @@ impl BodyShape<'_> {
     }
 
     /// `Self.<v>` of a closed vector value binder (`Self.key`), which every
-    /// specialization folds to its vector's construction under the name's
+    /// per-instantiation clone folds to its vector's construction under the name's
     /// identity (`construct_folded_vectors`): the template typed it as that
     /// closed vector and recorded nothing else there.
     fn struct_vector(&self, expr: &Expr) -> bool {

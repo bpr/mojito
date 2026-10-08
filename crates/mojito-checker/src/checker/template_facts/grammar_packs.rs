@@ -1,7 +1,7 @@
 //! Certificate grammar for packs and folded compile-time values: pack
 //! storage, accessors, element construction, and tuple elements.
 
-use super::{BodyShape, LocalKind, TUPLE_ELEMENT_ACCESSOR, fact_at, names_method, push_unique};
+use super::{BodyShape, LocalKind, TUPLE_ELEMENT_ACCESSOR, fact_at, push_unique};
 use mojito_ast::ast::{Expr, ExprKind};
 use mojito_checked::templates::MethodFeatures;
 use mojito_types::types::Ty;
@@ -13,12 +13,12 @@ impl BodyShape<'_> {
     ///
     /// The template selected `Tuple.__getitem_param__[i]` as a reference
     /// call yielding the dependent `Ts[i]` and requested its per-call clone
-    /// keyed by the binder. Each unrolled instance folds the binder to its
-    /// position, where the check selects the generated Tuple's accessor for
-    /// that position instead (`__getitem_param__$k`), a reference call on
-    /// the same field ([`Checker::realize_pack_accessors`]). It is admitted
-    /// where a reference call is: returned as the method's reference result,
-    /// or the receiver of a call through the element's bound.
+    /// keyed by the binder. No instance's check selects a member for that
+    /// request, so an instance refuses the read
+    /// ([`Checker::realize_pack_accessors`]) and its own clone check keeps
+    /// the body. It is admitted where a reference call is: returned as the
+    /// method's reference result, or the receiver of a call through the
+    /// element's bound.
     pub(super) fn pack_accessor(&self, expr: &Expr) -> bool {
         let ExprKind::Index { object, index } = &expr.kind else {
             return false;
@@ -77,13 +77,9 @@ impl BodyShape<'_> {
     /// index, read as a scalar operand or by value into a `var` or the
     /// result ([`Self::tuple_element_value`]).
     ///
-    /// The index is the element's position, which no instance changes, and
-    /// the element's type substitutes. The template either typed the element
-    /// from the tuple's arguments and recorded nothing else there, or
-    /// selected the generated Tuple's accessor for that position
-    /// (`__getitem_param__$k`) as a closed reference call read by copy, which
-    /// an instance records again on its own Tuple
-    /// ([`Checker::realize_tuple_elements`]).
+    /// The index is the element's position, which no instance changes. The
+    /// template typed the element from the tuple's arguments and recorded
+    /// nothing else there, so an instance substitutes the element's type.
     pub(super) fn tuple_element(&self, expr: &Expr) -> bool {
         let ExprKind::Index { object, index } = &expr.kind else {
             return false;
@@ -99,32 +95,17 @@ impl BodyShape<'_> {
         let Some(facts) = self.facts else {
             return true;
         };
-        let Some(tuple @ Ty::Struct(owner, _)) =
-            fact_at(&facts.expression_types, self.occurrence(object))
-        else {
-            return false;
-        };
-        if mojito_types::types::tuple_elements(tuple).is_none() {
-            return false;
-        }
-        let Some(call) = fact_at(&facts.selected_calls, id) else {
-            return fact_at(&facts.overload_targets, id).is_none()
-                && fact_at(&facts.operation_adjustments, id).is_none();
-        };
-        let accessor = names_method(&call.contract.target, owner, TUPLE_ELEMENT_ACCESSOR)
-            && mojito_checked::templates::closed_reference_contract(call)
-            && facts.copyable_reference_result_reads.contains(&id);
-        if accessor {
-            self.references.borrow_mut().push(id);
-        }
-        accessor && self.holds(MethodFeatures::REFERENCE_CALLS)
+        fact_at(&facts.expression_types, self.occurrence(object))
+            .and_then(mojito_types::types::tuple_elements)
+            .is_some()
+            && fact_at(&facts.selected_calls, id).is_none()
+            && fact_at(&facts.overload_targets, id).is_none()
+            && fact_at(&facts.operation_adjustments, id).is_none()
     }
 
     /// A tuple element read by value into a `var` or the result, whatever
-    /// its type. The template either typed it from the tuple's arguments or
-    /// selected the accessor as a copyable reference read, and an instance
-    /// records the accessor read again and owes the copy at its own element
-    /// type ([`Checker::realize_tuple_elements`]).
+    /// its type. The template typed it from the tuple's arguments, and an
+    /// instance owes the copy at its own element type.
     pub(super) fn tuple_element_value(&self, expr: &Expr) -> bool {
         self.tuple_element(expr) && self.holds(MethodFeatures::OPAQUE_MOVES)
     }

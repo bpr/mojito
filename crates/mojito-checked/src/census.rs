@@ -130,7 +130,7 @@ pub struct InstantiationCensus {
     /// no `main` or monomorphization refuses it.
     pub erased_served: Option<ErasedServed>,
     /// Cloned bodies that are still parametric in MIR: a clone that keeps a
-    /// parameter of its own (`Variant$t2[…].write_to`, generic in its writer).
+    /// parameter of its own, such as a writer it does not bake.
     /// Each is counted in `cloned` and in no erased row.
     pub parametric_clones: usize,
     /// What `main` reaches of the parametric clones, as `erased_served` is

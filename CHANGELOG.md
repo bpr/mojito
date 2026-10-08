@@ -1704,6 +1704,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The support left for structs specialized whole, which nothing mints since
+  every struct became a generator, is deleted: a per-call clone trace's
+  separate template owner, first-copy stub traces, a struct's fixed
+  arguments, the minted value-struct renaming in template derivations, the
+  per-position `Tuple` accessor recipes (a template's `Tuple.__getitem_param__`
+  pack accessor is now refused at the instance outright), and the per-call
+  constructor provenance that let a clone named `__init__` displace its
+  template. Behaviour is unchanged.
+
 - `Tuple` and `TString` members and conformances now come only from their
   bundled declarations (`std/builtin/tuple.mojo`, `std/format/tstring.mojo`),
   as at the pin, including the declared conditional conformances

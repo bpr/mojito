@@ -1344,7 +1344,6 @@ impl Elab<'_> {
                         owner: Some(PerCallOwner {
                             name,
                             module: template.module.as_deref(),
-                            template: name,
                         }),
                         origin_binders: Some(&origin_binders),
                         constructors: !bundled,
@@ -1433,7 +1432,6 @@ impl Elab<'_> {
                     .borrow_mut()
                     .push(super::MethodInstanceTrace {
                         owner: name.to_string(),
-                        template_owner: name.to_string(),
                         owner_module: template.module.clone(),
                         clone_module: super::clone_source_tag(
                             template.module.as_deref(),
@@ -1452,7 +1450,6 @@ impl Elab<'_> {
                             .collect(),
                         value_bindings: Vec::new(),
                         pack_bindings: Vec::new(),
-                        first_copy_template: false,
                     });
             }
             clones.push(clone);
@@ -1663,7 +1660,6 @@ impl Elab<'_> {
             .borrow_mut()
             .push(super::MethodInstanceTrace {
                 owner: owner.name.to_string(),
-                template_owner: owner.template.to_string(),
                 owner_module: owner.module.map(str::to_string),
                 clone_module: super::clone_source_tag(owner.module, owner.name, &clone.name),
                 clone_name: clone.name.clone(),
@@ -1680,7 +1676,6 @@ impl Elab<'_> {
                     .map(|binding| (binding.name.clone(), binding.value.clone()))
                     .collect(),
                 pack_bindings,
-                first_copy_template: false,
             });
     }
 
@@ -1922,13 +1917,10 @@ impl Elab<'_> {
 /// instance's baked values and bindings (empty for a non-generic struct),
 /// the instance clone's explicit receiver type, the struct whose method
 /// list the clone joins under its own source tag, which a trace names, and
-/// the origin binders the instance declares on every clone of it. A
-/// clone minted into a struct specialized whole names the specialization
-/// as its owner and the template struct as its template's. `constructors`
-/// says a generic `__init__` mints here too (`__init__$y6:String`, or
-/// `__init__$y3:Int$y6:String` on an instance); a struct specialized whole
-/// mints those itself, under the name `__init__`, and a bundled template's
-/// constructors stay erased.
+/// the origin binders the instance declares on every clone of it.
+/// `constructors` says a generic `__init__` mints here too
+/// (`__init__$y6:String`, or `__init__$y3:Int$y6:String` on an instance); a
+/// bundled template's constructors stay erased.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PerCallBase<'a> {
     pub(super) values: &'a [CtValue],
@@ -1939,14 +1931,12 @@ pub(super) struct PerCallBase<'a> {
     pub(super) constructors: bool,
 }
 
-/// The struct a traced per-call clone joins, its module, and the struct
-/// whose method is the clone's template: the same struct, except for a
-/// struct specialized whole (`AHasher$…`, whose template is `AHasher`).
+/// The struct a traced per-call clone joins, whose method is the clone's
+/// template, and its module.
 #[derive(Clone, Copy)]
 pub(super) struct PerCallOwner<'a> {
     pub(super) name: &'a str,
     pub(super) module: Option<&'a str>,
-    pub(super) template: &'a str,
 }
 
 /// One baked compile-time parameter of a per-call method clone: its name,

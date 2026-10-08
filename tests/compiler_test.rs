@@ -2599,8 +2599,8 @@ fn reference_result_read_in_method_derives() {
 
 #[test]
 fn template_vector_keyed_members_derive() {
-    // A struct keyed on a closed vector value, specialized whole as the
-    // bundled `AHasher` is, reads `Self.key`, constructs through the vector
+    // A struct keyed on a closed vector value, a generator as the bundled
+    // `AHasher` is, reads `Self.key`, constructs through the vector
     // alias, copies a lane into a field, reads the module's integer
     // constants, and calls a module function over closed values; every
     // member derives at every key.
@@ -3485,11 +3485,10 @@ fn template_method_simd_leaf_default_bits_lanes_derive() {
 
 #[test]
 fn template_value_keyed_struct_members_derive() {
-    // A struct keyed on a vector value is specialized whole per value;
-    // source validation checks its members once with the value symbolic, and
-    // every specialization's members derive, a sibling call naming the
-    // specialization's own member. A `DType`-keyed struct is a generator the
-    // template serves, so it mints no specialization at all.
+    // A struct keyed on a vector value is a generator; source validation
+    // checks its members once with the value symbolic, and every instance's
+    // members derive. A `DType`-keyed struct is a generator the template
+    // serves, so it mints no clone at all.
     let source = include_str!("../assets/ok/template_value_keyed_struct.mojo");
     let expected = "3 18 6\n2 20 10\n3751\n";
     let compiler = Compiler::default();
@@ -4824,8 +4823,8 @@ fn closed_def_call_is_served_by_its_template() {
     // Every closed call of a plain trait-bound `def` keeps the template,
     // inferred or explicit, and a type argument no runtime parameter or
     // result spells (`bytes[Int]()`) binds from the arguments the call
-    // records. A `def` whose body applies a struct specialized whole over
-    // its parameter (`Tuple[Int, T]`) still clones.
+    // records. A `def` whose body applies a tuple over its parameter
+    // (`Tuple[Int, T]`) still clones.
     assert_defs_served_by_template(
         include_str!("../assets/ok/template_served_def_closed_call.mojo"),
         "3\n3\nhi\n0 8 8\n4 7\n2 8\n9\ncaught checked failed\nmoved\n5\n5\n11\n11\nt\n12\n",

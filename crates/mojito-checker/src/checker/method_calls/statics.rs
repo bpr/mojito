@@ -126,7 +126,7 @@ impl Checker {
                 self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
             self.resolve_use_params(sname, &info.decls, &partitioned.forwarded, &[], &[])
                 .ok()
-                .map(|(_, tyargs)| self.struct_instance_type(sname, tyargs))
+                .map(|(_, tyargs)| Self::struct_instance_type(sname, tyargs))
         };
         let compatible = match (&actual, &expected) {
             (Ty::Struct(name, _), None) => name == sname,

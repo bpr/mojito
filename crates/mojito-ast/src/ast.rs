@@ -824,10 +824,6 @@ pub enum MethodProvenance {
     /// serves every instance of a generic struct, which mints no clone of
     /// it.
     SynthesizedDefault,
-    /// A per-call clone of a generic constructor that the elaborator minted
-    /// under the name `__init__`, beside its template: the mark is what
-    /// tells it from a concrete overload written in source.
-    PerCallConstructor,
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`

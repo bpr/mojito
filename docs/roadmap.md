@@ -106,21 +106,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
 
-- [ ] **R412 (P3d) Code for a struct specialized whole outlives the last
-  one**
-
-  Problem: since `Variant` became a generator (2026-10-06), the cloner
-  specializes no struct whole, but code that served or described one
-  remains.
-  - The frozen template-facts modules keep recipes and comments for a member
-    of such a struct: `realization_calls.rs`'s per-index
-    `__getitem_param__$k` accessor recipes, and notes in `certificate.rs`,
-    `grammar.rs`, and `realization.rs`.
-  - `PerCallOwner::template` (`comptime/specialize.rs`) differs from the
-    owner only for such a struct.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
 

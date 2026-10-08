@@ -1071,15 +1071,9 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
     };
-    // `$` cannot be written in a source identifier. Besides the ordinary and
-    // historically module-qualified public names, accept the concrete symbols
-    // emitted for variadic Tuple specializations. Their retained type arguments
-    // are semantic metadata; the symbol itself is never decoded.
-    if name != TUPLE_TYPE_NAME
-        && !name.ends_with(&format!("${TUPLE_TYPE_NAME}"))
-        && !name.starts_with(&format!("{TUPLE_TYPE_NAME}$"))
-        && !name.contains(&format!("${TUPLE_TYPE_NAME}$"))
-    {
+    // `$` cannot be written in a source identifier: besides the ordinary
+    // name, accept the historically module-qualified public one.
+    if name != TUPLE_TYPE_NAME && !name.ends_with(&format!("${TUPLE_TYPE_NAME}")) {
         return None;
     }
     arguments

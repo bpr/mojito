@@ -54,9 +54,8 @@ impl Checker {
     /// Derive each unpacking's value type for the instance, and prove its
     /// plan builds there.
     ///
-    /// The value must stay a tuple. Only the accessor lookup can fail for an
-    /// instance: a temporary of a generated Tuple is read through value
-    /// accessors, which exist only for implicitly copyable elements. The
+    /// The value must stay a tuple. Only the plan's element reads can fail
+    /// for an instance (`tuple_unpack_plan`). The
     /// place's origin does not decide whether the plan builds, so the proof
     /// roots it nowhere; installation roots it at the instance's binding.
     pub(super) fn realize_tuple_unpacks(

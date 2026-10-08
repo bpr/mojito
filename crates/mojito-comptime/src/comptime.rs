@@ -38,7 +38,7 @@ use mojito_ast::ast::{
     ArgConvention, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
     StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
-pub use mojito_symbol::symbol::{mangle, tuple_specialization_values};
+pub use mojito_symbol::symbol::mangle;
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_checked::census::CloneClass;
@@ -141,7 +141,7 @@ impl DefSpecializationRequest {
 pub struct MethodSpecializationRequest {
     /// The call occurrence, stored without its phase-local syntax id.
     occurrence: SourceSpan,
-    /// The specialized struct's name as the checker saw it (`Bag$t2[...]`).
+    /// The receiver struct's name as the checker saw it (`Box`).
     owner: String,
     method: String,
     /// The selected overload's runtime parameter names, in declaration
@@ -592,11 +592,8 @@ pub struct GeneratedDeclarations {
 /// `Method` has no range of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodInstanceTrace {
-    /// The struct the clone is a method of.
+    /// The struct the clone is a method of, whose method it instantiates.
     pub owner: String,
-    /// The struct whose method the clone instantiates: `owner` itself for a
-    /// per-instantiation or per-call clone.
-    pub template_owner: String,
     /// The template struct's module.
     pub owner_module: Option<String>,
     pub clone_name: String,
@@ -618,11 +615,6 @@ pub struct MethodInstanceTrace {
     /// A per-call clone's own type packs, or a variadic struct's, each with
     /// the source element types written in its signature.
     pub pack_bindings: Vec<(String, Vec<Type>)>,
-    /// Whether the clone copies a body the elaborator shaped itself — the
-    /// trap stub of an unavailable template method, or a `Tuple`
-    /// specialization's synthesized default constructor: `body` is then that
-    /// body's own first statement, and the clone binds nothing.
-    pub first_copy_template: bool,
 }
 
 /// The declaration-level expansion trace of one generated `def` clone.
@@ -685,7 +677,6 @@ pub fn instance_traces(
                 value_bindings: trace.value_bindings,
                 pack_bindings: trace.pack_bindings,
                 residual: trace.residual,
-                first_copy_template: false,
             },
         )
     });
@@ -700,7 +691,7 @@ pub fn instance_traces(
             InstanceTrace {
                 template: TemplateId {
                     module: trace.owner_module,
-                    owner: Some(trace.template_owner),
+                    owner: Some(trace.owner),
                     name: trace.template_name,
                     declaration: trace.body,
                 },
@@ -708,7 +699,6 @@ pub fn instance_traces(
                 value_bindings: trace.value_bindings,
                 pack_bindings: trace.pack_bindings,
                 residual: Vec::new(),
-                first_copy_template: trace.first_copy_template,
             },
         )
     });
@@ -3202,7 +3192,7 @@ struct Elab<'a> {
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The same for every whole-instance method clone.
     method_traces: RefCell<Vec<MethodInstanceTrace>>,
-    /// The `def` clones and whole-struct specializations generated so far.
+    /// The `def` clones and per-call method clones generated so far.
     generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →

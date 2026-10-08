@@ -412,8 +412,7 @@ impl Checker {
         let mut decls = self.self_decls.clone();
         decls.extend(method_decls.iter().cloned());
         // A per-instantiation clone carries its receiver type. Every other
-        // generated method is one the elaborator listed: a per-call clone, or
-        // a member of a struct it specialized whole (`Tuple$…`).
+        // generated method is one the elaborator listed: a per-call clone.
         let generated = m.self_ty.is_some()
             || self
                 .template_catalog
@@ -575,27 +574,9 @@ impl Checker {
         // class is retained as such without being captured.
         let shape = template.then(|| self.certificate(site, None).0);
         let admitted = matches!(shape, Some(TemplateCoverage::Certified(_)));
-        // The first copy checked of a body the elaborator shaped itself is
-        // that body's template.
-        let stub_template = (generated && derived.is_none())
-            .then(|| self.instance_trace(site))
-            .flatten()
-            .filter(|trace| {
-                trace.first_copy_template
-                    && self
-                        .template_catalog
-                        .borrow()
-                        .template(&trace.template)
-                        .is_none()
-            })
-            .map(|trace| trace.template);
         let census = site.participates && !decls.is_empty() && timing::enabled();
-        let baseline = (derived.is_some()
-            || admitted
-            || stub_template.is_some()
-            || census
-            || timing::notes_enabled())
-        .then(|| self.body_fact_baseline());
+        let baseline = (derived.is_some() || admitted || census || timing::notes_enabled())
+            .then(|| self.body_fact_baseline());
         Self::count_body_inference(BodyClass::of(generated, !decls.is_empty()), || name.clone());
         // A nested body records what it reads for its enclosing body too.
         let queries =
@@ -721,13 +702,6 @@ impl Checker {
             && let Some(shape) = shape
         {
             self.record_template(site, param_owners, &baseline, &reads, shape);
-        } else if let Some(template_id) = stub_template {
-            let shape = self.certificate(site, None).0;
-            let stub = BodySite {
-                template_id,
-                ..site.clone()
-            };
-            self.record_template(&stub, param_owners, &baseline, &reads, shape);
         } else if (traced || template) && timing::notes_enabled() {
             // Capture emits the `template_capture.tables` note: what this
             // body recorded, for comparing a clone with its template.
@@ -755,8 +729,8 @@ impl Checker {
     }
 }
 
-/// The generated Tuple accessor a subscript at a literal index selects, one
-/// member per position (`__getitem_param__$k`).
+/// The bundled Tuple's index-keyed element accessor
+/// (`Tuple.__getitem_param__[i]`).
 const TUPLE_ELEMENT_ACCESSOR: &str = "__getitem_param__";
 
 /// How many fact stores `unkeyed_fact_entries` watches.
@@ -1639,8 +1613,8 @@ struct BodyShape<'a> {
     /// (`SIMD[dt, Self.n]`) and every clone folds
     /// ([`Self::value_shaped_scalar`]).
     struct_lanes: Vec<&'a str>,
-    /// The closed vector binders of a struct specialized whole
-    /// (`AHasher[key: U256]`), which a validated member reads as
+    /// The closed vector binders of a generator (`AHasher[key: U256]`),
+    /// which a validated member reads as
     /// `Self.<value>` ([`Self::struct_vector`]).
     struct_vectors: Vec<&'a str>,
     /// The `print(...)` calls admitted, whose arguments an instance proves

@@ -256,7 +256,6 @@ impl Checker {
                     nested_origins: NestedOrigins::AsDeclared,
                     template_ret: None,
                     overload: None,
-                    per_call_constructor: false,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
@@ -326,7 +325,6 @@ impl Checker {
             },
             decls.clone(),
         );
-        let fixed_arguments: Option<Vec<TyArg>> = None;
 
         let explicit_destroy_message = declaration
             .decorators
@@ -364,7 +362,6 @@ impl Checker {
             StructInfo {
                 decls,
                 source_params: type_params.to_vec(),
-                fixed_arguments,
                 conforms: declaration.conforms.to_vec(),
                 callable_conformance: None,
                 callable_target: None,
@@ -408,11 +405,7 @@ impl Checker {
             ))
         })?;
         let decls = info.decls.clone();
-        let fixed_arguments = info.fixed_arguments.clone();
-        let self_ty = Ty::Struct(
-            name.to_string(),
-            (fixed_arguments.unwrap_or_else(|| info.self_arguments())).into(),
-        );
+        let self_ty = Ty::Struct(name.to_string(), info.self_arguments().into());
         let saved = SavedStructScope {
             type_params: std::mem::replace(
                 &mut self.enclosing_type_params,
@@ -1233,14 +1226,7 @@ impl Checker {
         else {
             return Vec::new();
         };
-        let self_ty = Ty::Struct(
-            name.to_string(),
-            (info
-                .fixed_arguments
-                .clone()
-                .unwrap_or_else(|| info.self_arguments()))
-            .into(),
-        );
+        let self_ty = Ty::Struct(name.to_string(), info.self_arguments().into());
         let mut witnesses: Vec<&MethodSig> = Vec::new();
         for tr in &info.conforms {
             let Some(requirements) = self
@@ -1433,7 +1419,6 @@ impl Checker {
             nested_origins: req_sig.nested_origins,
             template_ret: None,
             overload: None,
-            per_call_constructor: false,
         }
     }
 
@@ -2073,10 +2058,7 @@ impl Checker {
         let always = || vec![GenericConstraint::Bool(true)];
         let trivial = mojito_types::types::trivial_predicate_name(required);
         if info.decls.is_empty() {
-            let self_ty = Ty::Struct(
-                name.to_string(),
-                info.fixed_arguments.clone().unwrap_or_default().into(),
-            );
+            let self_ty = Ty::Struct(name.to_string(), Vec::new().into());
             let holds = trivial.map_or_else(
                 || self.conforms_to(&self_ty, required),
                 |kind| self.is_trivially(kind, &self_ty),

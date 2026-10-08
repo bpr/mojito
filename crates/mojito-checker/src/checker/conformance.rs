@@ -87,7 +87,6 @@ impl ConformanceOracle {
                 StructInfo {
                     decls,
                     source_params: type_params.clone(),
-                    fixed_arguments: None,
                     conforms: conforms.clone(),
                     callable_conformance: None,
                     callable_target: None,

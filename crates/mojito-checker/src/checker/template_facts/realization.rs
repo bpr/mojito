@@ -2,8 +2,8 @@
 //! template's facts realized under it, obligation by obligation.
 
 use super::realization_folds::{
-    closed_pack_values, construct_folded_vectors, constructed_element_indices, fold_vector_values,
-    folded_literals, loop_element_indices, merge_element_constructions, realize_lane_comparisons,
+    construct_folded_vectors, constructed_element_indices, fold_vector_values, folded_literals,
+    loop_element_indices, merge_element_constructions, realize_lane_comparisons,
     realize_lane_float_methods, realize_simd_intrinsics, realize_value_shaped_constructions,
     relocate_packs, spread_packs, transferred_element_indices,
 };
@@ -11,7 +11,7 @@ use super::{
     BodyDeclaration, BodyParams, BodyRole, BodySite, DerivedBody, ElementIndices,
     InstanceSubstitution, Occurrence, VectorFold, bound_binder, callable_binder,
     clone_origin_binder, element_construction_part, fact_at, inferred_value_binder, origin_binder,
-    push_unique, sig_origin_members, sorted_applications, without_struct_origins,
+    sig_origin_members, sorted_applications, without_struct_origins,
 };
 use crate::checker::Checker;
 use mojito_ast::ast::{Stmt, StmtKind};
@@ -65,7 +65,6 @@ impl Checker {
                 value_bindings: Vec::new(),
                 pack_bindings: Vec::new(),
                 residual: Vec::new(),
-                first_copy_template: false,
             }
         } else {
             self.instance_trace(site)?
@@ -347,36 +346,33 @@ impl Checker {
                 && trace.residual.iter().all(|name| {
                     method.type_params.iter().any(|binder| binder.name == *name)
                 }));
-        // A body the elaborator shaped itself names no binder its clone
-        // keeps.
-        let baked = trace.first_copy_template
-            || ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
-                && match class {
-                    // A value-keyed struct specialized whole folds its own
-                    // values, and a per-call clone its method's own, which
-                    // `instance_substitution` binds and the occurrences read as
-                    // the literals they folded to (`folded_literals`).
-                    TemplateClass::MethodBody(features)
-                        if features.contains(MethodFeatures::VALUE_BINDERS) =>
-                    {
-                        true
-                    }
-                    TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
-                        trace.value_bindings.is_empty()
-                            || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
-                                && matches!(site.declaration, BodyDeclaration::Method(method)
-                                if trace.value_bindings.iter().all(|(name, _)| {
-                                    method.type_params.iter().all(|binder| binder.name != *name)
-                                })))
-                    }
-                    // The folded values selected the arms, or are read as the
-                    // literals each occurrence folded to (`folded_literals`). A
-                    // folded loop index is read back from the copy it fixed.
-                    TemplateClass::ClosedScalarBody
-                    | TemplateClass::FixedCalls
-                    | TemplateClass::ScalarBranches
-                    | TemplateClass::FunctionBody(_) => true,
-                };
+        let baked = ((trace.residual.is_empty() && !site.residual_binders) || kept_binders)
+            && match class {
+                // A per-instantiation clone folds its struct's values, and
+                // a per-call clone its method's own, which
+                // `instance_substitution` binds and the occurrences read as
+                // the literals they folded to (`folded_literals`).
+                TemplateClass::MethodBody(features)
+                    if features.contains(MethodFeatures::VALUE_BINDERS) =>
+                {
+                    true
+                }
+                TemplateClass::MethodScalarBody | TemplateClass::MethodBody(_) => {
+                    trace.value_bindings.is_empty()
+                        || (matches!(&site.receiver_arguments, Some(arguments) if arguments.is_empty())
+                            && matches!(site.declaration, BodyDeclaration::Method(method)
+                            if trace.value_bindings.iter().all(|(name, _)| {
+                                method.type_params.iter().all(|binder| binder.name != *name)
+                            })))
+                }
+                // The folded values selected the arms, or are read as the
+                // literals each occurrence folded to (`folded_literals`). A
+                // folded loop index is read back from the copy it fixed.
+                TemplateClass::ClosedScalarBody
+                | TemplateClass::FixedCalls
+                | TemplateClass::ScalarBranches
+                | TemplateClass::FunctionBody(_) => true,
+            };
         if !template && !baked {
             return refuse("the clone keeps or folds a compile-time parameter");
         }
@@ -594,22 +590,6 @@ impl Checker {
         if !construct_folded_vectors(&mut selected, &occurrences) {
             return refuse("a folded vector value is not the template's closed vector");
         }
-        // A reference accessor's value twin (`__getitem_param_value__$k`)
-        // returns by value what its template handed out as a reference.
-        let returns_reference = self
-            .return_ref_contracts
-            .last()
-            .is_some_and(Option::is_some);
-        if matches!(class, TemplateClass::MethodBody(features)
-            if features.contains(MethodFeatures::REFERENCE_RESULT))
-            && !returns_reference
-        {
-            let returned: Vec<SyntaxId> = returned_values(body)
-                .into_iter()
-                .map(|syntax| self.syntax_origins.origin(syntax))
-                .collect();
-            read_returns_by_value(&mut selected, &returned);
-        }
         let realized = self
             .realize_instance_facts(&selected, &substitution, &indices, &occurrences)
             .and_then(|mut facts| {
@@ -726,9 +706,8 @@ impl Checker {
                 kept_values: Vec::new(),
             });
         };
-        // A body the elaborator shaped itself names nothing its receiver
-        // binds.
-        if site.role == BodyRole::Template || trace.first_copy_template {
+        // A template names nothing its receiver binds.
+        if site.role == BodyRole::Template {
             return Ok(InstanceSubstitution {
                 types: HashMap::new(),
                 packs: HashMap::new(),
@@ -746,9 +725,7 @@ impl Checker {
         // (`BOUND_BINDERS`); a per-call clone bakes them, and its trace
         // names the source type, element list, or value written for each. A member
         // of a variadic struct has the pack's elements as its receiver's
-        // arguments, as many as its trace names; a specialization whose
-        // receiver carries none binds the element sources its trace names,
-        // resolved as a `def` clone's are, and must mangle back to itself.
+        // arguments, as many as its trace names.
         let struct_owner = template
             .id
             .owner
@@ -788,28 +765,7 @@ impl Checker {
                     .find(|(bound, _)| bound == name.trim_start_matches('*'))
                     .map(|(_, elements)| elements)
                     .ok_or_else(unresolved)?;
-                let elements = if arguments.is_empty() {
-                    let elements = traced.iter().map(resolve).collect::<Result<Vec<_>, _>>()?;
-                    // The template's `Self` names this instance only when the
-                    // resolved pack mangles back to it.
-                    let own = template.id.owner.as_deref().map(|owner| {
-                        self.specialized_value_structs(&Ty::Struct(
-                            owner.to_string(),
-                            elements
-                                .iter()
-                                .cloned()
-                                .map(mojito_types::types::TyArg::Ty)
-                                .collect(),
-                        ))
-                    });
-                    if !matches!(own, Some(Ty::Struct(name, arguments))
-                        if arguments.is_empty()
-                            && site.instance.owner.as_deref() == Some(&*name))
-                    {
-                        return Err(unresolved());
-                    }
-                    elements
-                } else if traced.len() == arguments.len() {
+                let elements = if traced.len() == arguments.len() {
                     resolved_arguments()?
                 } else {
                     return Err(unresolved());
@@ -831,23 +787,6 @@ impl Checker {
                         }
                         _ => return Err(unresolved()),
                     }
-                }
-            }
-            // A value-keyed struct specialized whole folds its values, which
-            // its members' traces name.
-            _ if arguments.is_empty() => {
-                for decl in struct_decls {
-                    let value = match decl {
-                        ParamDecl::Value {
-                            variadic: false, ..
-                        } => trace
-                            .value_bindings
-                            .iter()
-                            .find(|(name, _)| name == decl.name())
-                            .map(|(_, value)| value.clone()),
-                        _ => None,
-                    };
-                    values.push((decl.id().clone(), value.ok_or_else(unresolved)?));
                 }
             }
             _ => return Err(unresolved()),
@@ -929,23 +868,16 @@ impl Checker {
             values,
             kept_values,
         } = instance;
-        let canonical = |ty: Ty| self.specialized_value_structs(&ty);
-        let substitute = |ty: &Ty| {
-            canonical(mojito_types::types::substitute_packs(
-                ty,
-                substitution,
-                packs,
-                values,
-            ))
-        };
-        let mut facts = substituted_facts(template, instance, indices, &canonical)?;
+        let substitute =
+            |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, values);
+        let mut facts = substituted_facts(template, instance, indices)?;
         spread_packs(&mut facts, occurrences)?;
         realize_value_shaped_constructions(template, &mut facts, occurrences)?;
         realize_simd_intrinsics(template, &mut facts, occurrences)?;
         realize_lane_float_methods(template, &mut facts, occurrences)?;
         realize_lane_comparisons(template, &mut facts, occurrences)?;
         self.realize_lane_literals(template, &mut facts, occurrences)?;
-        let pack_accessors = self.realize_pack_accessors(&mut facts, occurrences)?;
+        Self::realize_pack_accessors(&facts)?;
         // A per-call request the template recorded names the caller's own
         // binders; an instance that closed it would retarget the call in the
         // clone check, which no recipe repeats.
@@ -1114,9 +1046,16 @@ impl Checker {
         self.realize_iterations(&mut facts, &substitute)?;
         Self::realize_comprehension_bindings(&mut facts, &substitute);
         self.realize_tuple_unpacks(&mut facts, &substitute)?;
-        facts.struct_applications =
-            self.instance_struct_applications(template, instance, &substitute);
-        realize_pack_accessor_applications(&mut facts, occurrences, &pack_accessors);
+        facts.struct_applications = template
+            .struct_applications
+            .iter()
+            .map(|(name, arguments)| {
+                (
+                    name.clone(),
+                    mojito_types::types::map_tyargs(arguments, &substitute),
+                )
+            })
+            .collect();
         // A call through a bound is realized first: a built-in instance
         // drops it from the calls, and a struct instance gives it a nominal
         // target the closed-call recipe then leaves as it stands.
@@ -1147,7 +1086,6 @@ impl Checker {
             }
             self.realize_method_call(&mut facts, index, occurrences, substitution, &substitute)?;
         }
-        self.realize_tuple_elements(&mut facts, occurrences, &pack_accessors)?;
         self.realize_static_overloads(&mut facts, occurrences, substitution)?;
         // A construction selected its constructor from the arguments' types
         // and named the instance's clone of it, where one exists.
@@ -1245,43 +1183,6 @@ impl Checker {
         Ok(facts)
     }
 
-    /// The generic-struct applications a template reached, substituted for
-    /// an instance. A value-keyed struct's application at the instance's
-    /// values names the specialization the elaborator minted, which the
-    /// clone check records no application of.
-    fn instance_struct_applications(
-        &self,
-        template: &CheckedBodyFacts,
-        InstanceSubstitution {
-            types,
-            packs,
-            values,
-            ..
-        }: &InstanceSubstitution,
-        substitute: &dyn Fn(&Ty) -> Ty,
-    ) -> Vec<(String, Vec<mojito_types::types::TyArg>)> {
-        template
-            .struct_applications
-            .iter()
-            .filter(|(name, arguments)| {
-                let application = mojito_types::types::substitute_packs(
-                    &Ty::Struct(name.clone(), arguments.clone().into()),
-                    types,
-                    packs,
-                    values,
-                );
-                !matches!(self.specialized_value_structs(&application),
-                    Ty::Struct(specialization, _) if specialization != *name)
-            })
-            .map(|(name, arguments)| {
-                (
-                    name.clone(),
-                    mojito_types::types::map_tyargs(arguments, substitute),
-                )
-            })
-            .collect()
-    }
-
     /// `infer_method_call`'s demand on a place a consuming call copies, at
     /// the instance's type.
     fn copied_receivers_hold(&self, facts: &CheckedBodyFacts, occurrences: &[Occurrence]) -> bool {
@@ -1325,53 +1226,6 @@ impl Checker {
                         && (explicit_copy(place) || self.is_implicitly_copyable(ty))
                 })
         })
-    }
-
-    /// `ty` with every application of a vector-keyed struct at closed values
-    /// (`AHasher[…]`) named as the specialization the elaborator minted for
-    /// it (`AHasher$vuint64:4;[…]`), which is the type
-    /// the clone check reads, and so is a user variadic struct at a closed
-    /// pack (`Bag[Int, String]` as `Bag$t2[…]`). An application with no
-    /// minted specialization is left as it is.
-    fn specialized_value_structs(&self, ty: &Ty) -> Ty {
-        struct Specialized<'a>(&'a Checker);
-
-        impl mojito_types::types::TyRewrite for Specialized<'_> {
-            fn visits_closed(&self) -> bool {
-                true
-            }
-
-            fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-                let Ty::Struct(name, arguments) = ty else {
-                    return None;
-                };
-                let values = arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        mojito_types::types::TyArg::Val(value) => Some(value.clone()),
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()
-                    .filter(|values| !values.is_empty())
-                    .or_else(|| closed_pack_values(arguments))?;
-                let mangled = mojito_symbol::symbol::mangle(name, &values).ok()?;
-                self.0
-                    .structs
-                    .get(&mangled)
-                    .is_some_and(|info| info.fixed_arguments.is_none())
-                    .then(|| Ty::Struct(mangled, Vec::new().into()))
-            }
-
-            fn expr(
-                &mut self,
-                expr: &mojito_types::param_expr::ParamExpr,
-            ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
-            {
-                Ok(expr.clone())
-            }
-        }
-
-        mojito_types::types::rewrite_ty(ty, &mut Specialized(self)).unwrap_or_else(|_| ty.clone())
     }
 }
 
@@ -1654,47 +1508,6 @@ fn erased_tail_loans(ty: &Ty) -> bool {
     erased_tail && !other_origin
 }
 
-/// The applications a pack accessor's call reaches in the instance: the
-/// template's `Tuple[*Ts]` receiver is the generated Tuple the instance's
-/// field holds, recorded only from a source that records applications at
-/// all, as a tuple element's is (`realize_tuple_elements`).
-fn realize_pack_accessor_applications(
-    facts: &mut CheckedBodyFacts,
-    occurrences: &[Occurrence],
-    pack_accessors: &[OccurrenceId],
-) {
-    if pack_accessors.is_empty() {
-        return;
-    }
-    facts.struct_applications.retain(|(name, arguments)| {
-        name != mojito_types::types::TUPLE_TYPE_NAME
-            || !arguments.iter().all(|argument| {
-                matches!(argument, mojito_types::types::TyArg::Ty(Ty::RuntimePack(_)))
-            })
-    });
-    for occurrence in occurrences
-        .iter()
-        .filter(|occurrence| pack_accessors.contains(&occurrence.id))
-    {
-        let source = occurrence.span.source.as_deref();
-        let receiver = occurrence
-            .method_call
-            .as_ref()
-            .map(|(receiver, _)| OccurrenceId {
-                syntax: *receiver,
-                copy: occurrence.id.copy,
-            });
-        if let Some(Ty::Struct(owner, arguments)) =
-            receiver.and_then(|receiver| fact_at(&facts.expression_types, receiver))
-            && source.is_some()
-            && !crate::checker::overload_support::is_bundled_module_source(source)
-        {
-            let application = (owner.clone(), arguments.to_vec());
-            facts.struct_applications.push(application);
-        }
-    }
-}
-
 /// Write each realized conversion back into the call boundary that carries
 /// it a second time.
 ///
@@ -1771,16 +1584,9 @@ fn substituted_facts(
         ..
     }: &InstanceSubstitution,
     indices: &ElementIndices,
-    canonical: &dyn Fn(Ty) -> Ty,
 ) -> Result<CheckedBodyFacts, &'static str> {
-    let substitute = |ty: &Ty| {
-        canonical(mojito_types::types::substitute_packs(
-            ty,
-            substitution,
-            packs,
-            values,
-        ))
-    };
+    let substitute =
+        |ty: &Ty| mojito_types::types::substitute_packs(ty, substitution, packs, values);
     // A pack element's index binder is the copy's own at its occurrence.
     let substitute_at = |id: &OccurrenceId, ty: &Ty| {
         let values: Vec<_> = indices
@@ -1789,12 +1595,7 @@ fn substituted_facts(
             .into_iter()
             .chain(values.iter().cloned())
             .collect();
-        canonical(mojito_types::types::substitute_packs(
-            ty,
-            substitution,
-            packs,
-            &values,
-        ))
+        mojito_types::types::substitute_packs(ty, substitution, packs, &values)
     };
     let typed = |entries: &[(OccurrenceId, Ty)]| -> Vec<(OccurrenceId, Ty)> {
         entries
@@ -1954,22 +1755,6 @@ fn substituted_element_stores(
         .collect()
 }
 
-/// The occurrence identities of the values a body's `return`s hand out.
-fn returned_values(body: &[Stmt]) -> Vec<SyntaxId> {
-    struct Returns(Vec<SyntaxId>);
-
-    impl mojito_ast::visit::Visitor for Returns {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            if let StmtKind::Return(Some(value)) = &statement.kind {
-                self.0.push(value.syntax_id);
-            }
-        }
-    }
-    let mut returns = Returns(Vec::new());
-    mojito_ast::visit::walk_block(&mut returns, body);
-    returns.0
-}
-
 /// The syntax of every scope statement in `body`.
 fn scope_statements(body: &[Stmt]) -> Vec<SyntaxId> {
     struct Scopes(Vec<SyntaxId>);
@@ -1984,19 +1769,6 @@ fn scope_statements(body: &[Stmt]) -> Vec<SyntaxId> {
     let mut scopes = Scopes(Vec::new());
     mojito_ast::visit::walk_block(&mut scopes, body);
     scopes.0
-}
-
-/// Read each returned place the template handed out as a reference by
-/// value instead: the place is copied where it lies, which the instance
-/// owes at its own type (`realize_instance_facts`' copy check).
-fn read_returns_by_value(facts: &mut CheckedBodyFacts, returned: &[SyntaxId]) {
-    let (copied, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut facts.reference_value_uses)
-        .into_iter()
-        .partition(|(id, through)| !through && returned.contains(&id.syntax));
-    facts.reference_value_uses = kept;
-    for (id, _) in copied {
-        push_unique(&mut facts.copy_place_value_uses, id);
-    }
 }
 
 /// Whether a template adjustment has no counterpart in an instance: a pack

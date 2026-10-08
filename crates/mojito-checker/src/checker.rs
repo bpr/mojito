@@ -95,9 +95,10 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
 /// here, and asserted per instance by the elaborator, or on each clone of a
 /// body still stubbed (`rebind::rebind_keyed_bodies`, scanned before the
 /// erasure removes the calls). Every method body of a struct keyed on a
-/// vector value (`AHasher[key]`) is checked too, since the elaborator
-/// specializes such a struct whole and drops its template; one this check cannot type gets no verdict, and its
-/// specializations keep their own check. Other bodies are declared (so the
+/// vector value (`AHasher[key]`) is checked too, since each
+/// per-instantiation clone of its keyed members derives from the verdict
+/// given here; one this check cannot type gets no verdict, and its clones
+/// keep their own check. Other bodies are declared (so the
 /// validated bodies can call them) but not checked here — the executable
 /// check covers them.
 ///
@@ -2274,11 +2275,6 @@ struct MethodSig {
     /// several same-named overloads: what a call selecting that overload
     /// records. `None` for every other method.
     overload: Option<String>,
-    /// A per-call clone of a generic constructor declared `__init__`
-    /// ([`mojito_ast::ast::MethodProvenance::PerCallConstructor`]), so a same-name
-    /// overload: it ranks as the generic candidate it was minted from, and
-    /// replaces that template in a selection it matches.
-    per_call_constructor: bool,
 }
 
 impl MethodSig {
@@ -2319,7 +2315,6 @@ impl MethodSig {
             nested_origins: NestedOrigins::AsDeclared,
             template_ret: None,
             overload: None,
-            per_call_constructor: false,
         }
     }
 }
@@ -2333,11 +2328,6 @@ struct StructInfo {
     /// Direct applications consult it to accept, validate, and erase explicit
     /// origin arguments (`EntryIter[K, V, some_origin]`).
     source_params: Vec<mojito_ast::ast::TypeParam>,
-    /// Concrete semantic arguments retained by an erased compiler-generated
-    /// specialization. Public `Tuple[*Ts]` is emitted as a parameter-free
-    /// implementation struct, but its checked identity must still carry the
-    /// element types selected for `Ts`.
-    fixed_arguments: Option<Vec<TyArg>>,
     /// Traits this struct declares conformance to (verified at definition).
     conforms: Vec<String>,
     callable_conformance: Option<Ty>,

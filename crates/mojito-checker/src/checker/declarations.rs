@@ -274,20 +274,6 @@ fn constructor_miss(
     }
 }
 
-/// Whether a constructor candidate ranks as generic: a template baking a
-/// compile-time parameter, or the per-call clone minted from one.
-fn constructor_is_generic(sig: &MethodSig) -> bool {
-    sig.per_call_constructor || !decls_are_concrete(&sig.decls)
-}
-
-/// Whether a matched constructor candidate stays in the set being ranked,
-/// given whether a per-call clone matched too. A clone stands in for the
-/// generic template it was minted from, so the template leaves; a concrete
-/// overload declared in source is ranked against the clone like any other.
-fn ranks_beside_clone(sig: &MethodSig, clone_matched: bool) -> bool {
-    !clone_matched || sig.per_call_constructor || decls_are_concrete(&sig.decls)
-}
-
 /// The place the `__mlir_op` statement `lit.ownership.mark_initialized` marks
 /// (`__get_mvalue_as_litref(place)`), when `expr` is that statement.
 fn marked_place(expr: &Expr) -> Option<&Expr> {
@@ -587,8 +573,6 @@ impl Checker {
             nested_origins: NestedOrigins::of(&method.decorators),
             template_ret: None,
             overload: None,
-            per_call_constructor: method.provenance
-                == mojito_ast::ast::MethodProvenance::PerCallConstructor,
         })
     }
 
@@ -1536,7 +1520,7 @@ impl Checker {
         allowed.extend(self_owner);
         // Variadic collectors are parameters too: a loan rooted at the
         // callee-owned pack moves outward with the stored value (the
-        // generated Tuple constructor stores its `*args` collector into
+        // bundled Tuple constructor stores its `*args` collector into
         // `self.storage`).
         allowed.extend(
             m.params
@@ -2023,7 +2007,7 @@ impl Checker {
 
     /// Record a generic constructor's resolved compile-time arguments for
     /// per-call specialization and, once its clone exists on the struct,
-    /// retarget the construction to it (`Variant$…​.__init__$y3:Int`). A
+    /// retarget the construction to it (`C.__init__$y3:Int`). A
     /// closed instance of a generic struct owns the request, so its clone is
     /// keyed by the instance and then the call (`C.__init__$y3:Int$y6:String`).
     fn record_constructor_instantiation(
@@ -2224,9 +2208,6 @@ impl Checker {
         if let Some(sigs) = info.methods.get("__init__") {
             if info.decls.is_empty() {
                 let mut matches = Vec::new();
-                // Per match, whether it stays ranked beside a matching clone.
-                let mut beside_clone = Vec::new();
-                let mut clone_matched = false;
                 // The reason the last candidate failed its origin binding, so a
                 // miss caused by an explicit-origin or pointer-permission
                 // mismatch reports that, not a bare miss.
@@ -2286,8 +2267,6 @@ impl Checker {
                             availability_failure.get_or_insert(unavailable);
                             continue;
                         }
-                        clone_matched |= sig.per_call_constructor;
-                        beside_clone.push(ranks_beside_clone(sig, true));
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
                             simd_erasures: scored.simd_erasures,
@@ -2333,13 +2312,6 @@ impl Checker {
                             nested_origins: sig.nested_origins,
                         });
                     }
-                }
-                // A per-call clone of a generic constructor is a same-name
-                // overload; it replaces the generic template it was minted
-                // from whenever it matches at all.
-                if clone_matched {
-                    let mut kept = beside_clone.into_iter();
-                    matches.retain(|_| kept.next().unwrap_or(true));
                 }
                 let selected =
                     select_method_overload("__init__", matches, None).map_err(|kind| {
@@ -2744,7 +2716,7 @@ impl Checker {
                             score,
                             sig.variadic.is_some(),
                             0,
-                            constructor_is_generic(sig),
+                            !decls_are_concrete(&sig.decls),
                         ) + binding.rank();
                         matches.push((
                             rank,
@@ -2762,13 +2734,6 @@ impl Checker {
             }
             let best = matches.iter().map(|(rank, ..)| *rank).min();
             if let Some(best) = best {
-                // A per-call clone of a generic constructor is a same-name
-                // overload; it replaces the generic template it was minted
-                // from whenever it matches at all.
-                let mut matches = matches;
-                let clone_matched = matches.iter().any(|(_, sig, ..)| sig.per_call_constructor);
-                matches.retain(|(_, sig, ..)| ranks_beside_clone(sig, clone_matched));
-                let best = matches.iter().map(|(rank, ..)| *rank).min().unwrap_or(best);
                 let mut best_matches = matches
                     .into_iter()
                     .filter(|(rank, ..)| *rank == best)
@@ -3662,7 +3627,7 @@ impl Checker {
                 },
             )
         } else {
-            self.struct_instance_type(name, tyargs.clone())
+            Self::struct_instance_type(name, tyargs.clone())
         };
         if !coerces(&arg_ty, &expected) {
             return Err(TypeError::TypeMismatch {
@@ -3679,7 +3644,7 @@ impl Checker {
             }
             _ => arguments.extend(partitioned.tail_arguments()),
         }
-        Ok(self.struct_instance_type(name, arguments))
+        Ok(Self::struct_instance_type(name, arguments))
     }
 
     /// Bind a hand-written constructor's struct origin binders named by its

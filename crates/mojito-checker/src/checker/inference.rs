@@ -1919,7 +1919,7 @@ impl Checker {
         // Reference-typed values normally read through to their referents in
         // expression position.  A reference-typed parameter is a storage
         // context, just like a reference field or aggregate element: infer and
-        // forward the handle itself.  This matters for generated Tuple
+        // forward the handle itself.  This matters for `Tuple`'s
         // `consume_elements`, whose element type may itself be `ref[...] T`.
         if matches!(expected, Ty::Ref(_)) {
             let actual = self.infer_storage_value(expression, expected)?;

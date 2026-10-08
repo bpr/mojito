@@ -535,11 +535,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `fold_vector_values` tells from the template's syntax and
   `construct_folded_vectors` records; `operators.rs:vector_alias` types a
   vector alias's call (`U256(...)`) as the `SIMD` it spells.
-  `specialized_value_structs` names a value-keyed struct
-  at closed values as the specialization the elaborator minted.
   `realize_method_call` retargets a closed method call to the clone member
-  `declarations.rs:method_clone_target` finds, or to the copy a struct
-  specialized whole holds of the member the template selected (the helper
+  `declarations.rs:method_clone_target` finds (the helper
   `constructor_clone_target` shares; its `realize_method_contract` half also
   realizes an element store's embedded value getter,
   `realize_element_getters`, and `realize_element_dunders` re-selects an
@@ -1108,8 +1105,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method with compile-time parameters of its own is read at each closed
   call the checker recorded (`closed_method_calls`, `method_call`), its
   struct's and its own binders bound: the instances its body applies are
-  requested, and one applying a tuple or a struct specialized whole over its
-  own binders is keyed, as is a method the last elaboration found reaching a
+  requested, and one applying a tuple over its own binders is keyed, as is a method the last elaboration found reaching a
   compile-time-keyed stub (`TemplateDemand::note_stub_reaching`, from
   `Elaborated::stub_reaching_methods`). `compile_linked` consults it every discovery round, and
   a body that reached a struct whose method becomes keyed is inferred again

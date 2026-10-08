@@ -963,28 +963,6 @@ pub(super) fn construct_folded_vectors(
     true
 }
 
-/// The mangling values of a variadic struct applied to a closed pack,
-/// spelled as the elaborator spells them. The template itself is not
-/// registered in the clone check, so only a specialization minted under that
-/// name says it was one.
-pub(super) fn closed_pack_values(
-    arguments: &[mojito_types::types::TyArg],
-) -> Option<Vec<mojito_types::ct::CtValue>> {
-    let elements = arguments
-        .iter()
-        .map(|argument| match argument {
-            mojito_types::types::TyArg::Ty(ty) if !mojito_types::types::is_symbolic(ty) => {
-                Some(ty.clone())
-            }
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()
-        .filter(|elements| !elements.is_empty())?;
-    Some(mojito_symbol::symbol::tuple_specialization_values(
-        &elements,
-    ))
-}
-
 /// Lay each [`PackRelocation`](mojito_checked::templates::PackRelocation)
 /// over the instance's occurrences: the collector is read where it lies, as
 /// the moved place the call's value is, bound to its parameter. `false` when

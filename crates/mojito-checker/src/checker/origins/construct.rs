@@ -119,7 +119,7 @@ impl Checker {
                     .map(TyArg::Origin),
             );
         }
-        self.struct_instance_type(name, arguments)
+        Self::struct_instance_type(name, arguments)
     }
 
     /// Bind the struct origin binders the selected constructor's parameters
