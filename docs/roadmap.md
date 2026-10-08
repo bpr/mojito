@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R498**.
+Next free ID: **R500**.
 
 ## Ordered Work
 
@@ -59,33 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R253 (P3b) The cloner's type-pack branch is still live**
-
-  Problem: `pack_generic_template_names`, the `pack_generics` arm of the
-  explicit-application dispatch (`comptime/mono.rs`), and the
-  `unspecialized type-pack function` stub (`comptime/specialize.rs`) still
-  clone the pack-keyed `def`s the template does not serve.
-  - Every fixture already reports `def_pack 0`; the branch is reached only
-    by shapes no fixture holds.
-  - A nested `def` or a lambda in the body (R6: `holds_instance_construct`
-    gates both, so R6 must lift it for both).
-  - A `comptime for` over tuple elements (R405), or over a display that
-    calls a raising `def` or a method (R401).
-  - A loop that constructs a reflected field type (R364), or a reflected
-    list materialized whole (R365).
-  - Each shape is pinned by `pack_defs_the_template_does_not_serve_yet`
-    (`comptime.rs`); its owner flips its line when it lands.
-  - The clone is also semantically wrong: it accepts `range(len(args))` as
-    a `comptime for` bound, which the pin rejects.
-  - Then delete the branch, `served_pack_defs` and its gate, the
-    `Elab::pack_generics`/`served_packs` fields, and the `served_packs`
-    parameter of `is_specializable_declaration`.
-  - Keep `def_pack_names`, `generate_spec`'s `type_pack_expansions` (R4,
-    R6), `DefSpecializationRequest::with_variadic`, and
-    `CloneClass::PackDef` as a regression counter.
-  - Depends on R6, R364, R365, R401, and R405.
-  - Model: Fable, Planned.
 
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
@@ -3577,6 +3550,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R498 A nested `def` keyed on a type pack fails MIR verification**
+
+  Problem: `def inner[*Ts: Writable](*args: *Ts)` declared inside `def
+  outer()` and called there (`inner(1, "a")`) stops with "callable contract
+  names parameter `*Ts` of `inner` that no enclosing declaration binds",
+  where the pin runs it.
+  - The same `def` at module level is served by its template and runs.
+  - Found while landing R253 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R106 A variadic struct's pack bound is not enforced at an explicit
   application**
 
@@ -3855,6 +3839,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`mono/specializer.rs`) drops the out-of-range error, so the verifier
     reports the surviving constant instead of a failed instantiation.
   - Found while landing R403 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R499 An invalid SIMD width computed per instance is reported as
+  unverifiable MIR**
+
+  Problem: `comptime w = twice(i + 1)` then `SIMD[DType.int32, w](1)` in a
+  served `comptime for` stops with "specialized MIR that does not verify:
+  ... SIMD width 6 is not a positive power of two" when a copy computes 6.
+  - The pin reports "SIMD vector length must be a power of two between 1
+    and 2^15" at the use.
+  - The same width also read under a `comptime if` over `comptime b =
+    flag(i)` reports "keeps symbolic type `SIMD[DType.int32, twice(i + 1)]`
+    in elaborated MIR" instead.
+  - A clone used to report "SIMD width must be a positive power of two, got
+    6".
+  - Both compilers reject the program; only the words differ.
+  - Found while landing R253 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

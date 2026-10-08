@@ -370,7 +370,7 @@ impl Elab<'_> {
             } => {
                 // A comptime-dependent generic template can't be elaborated now (its
                 // parameter value is unknown); keep it verbatim for monomorphization.
-                if is_specializable_declaration(stmt, &self.served_packs, &self.scalar_reads) {
+                if is_specializable_declaration(stmt, &self.scalar_reads) {
                     out.push(stmt.clone());
                     return Ok(());
                 }

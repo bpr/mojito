@@ -21,7 +21,9 @@ pub enum CloneClass {
     ComptimeIfDef,
     /// A `def` clone whose template holds a `comptime for`, with no pack.
     ComptimeForDef,
-    /// A `def` clone that expands a type pack.
+    /// A `def` clone that expands a type pack. Every type-pack `def` is
+    /// served by its template, so the class counts none: it is kept as a
+    /// regression counter.
     PackDef,
     /// A `def` clone keyed by any other value, with no compile-time control
     /// flow in its template.

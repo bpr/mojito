@@ -16,7 +16,7 @@ const CTFE_PROBE_RESULT: &str = "$ctfe$result";
 impl Elab<'_> {
     /// Specializability under this elaboration's served `def` sets.
     pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
-        is_specializable_declaration(statement, &self.served_packs, &self.scalar_reads)
+        is_specializable_declaration(statement, &self.scalar_reads)
     }
 
     pub(super) fn ctfe_call(

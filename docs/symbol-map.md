@@ -969,8 +969,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   own binders (`Elab::template_binders`) for the check, where every other
   one is selected), type
   resolution, the template classifications (`bound_generic_template_names`,
-  `pack_generic_template_names` for type-pack defs whose non-evident calls
-  specialize from checker-recorded instantiations, and
+  a type-pack def among them, since every one is template-served, and
   `comptime_generic_template_names` for defs keyed only by a `comptime
   if`/`for` body, whose inferred calls do the same, gated by
   `omits_required_param` in `comptime/mono.rs`; a `DType`- or lane-keyed
@@ -1464,13 +1463,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Elab::keep_template_comptime_for` keeps the served loop and
   `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
-- A type pack the template serves: `served_pack_defs` (a fixpoint over
-  `pack_def_shape_served`, `pack_spread_callees` with its `SpreadCallee`,
-  `pack_collector_methods`, `pack_collector_constructors` (both over
-  `collects_type_pack`), `def_pack_names`, and
-  `def_body_keys_specialization`, `comptime.rs`) names the served `def`s and
-  `pack_def_template_served` reads it; `PackRewriter::served_callees`
-  (`comptime/rewrite.rs`) spells a clone's spread into a served callee
+- Every type pack is template-served: `is_specializable_declaration`
+  (`comptime.rs`) never names a `def` that `pack_keyed_declaration` holds,
+  and `Elab::pack_defs` feeds `PackRewriter::served_callees`
+  (`comptime/rewrite.rs`), which spells a clone's spread into such a callee
   element by element; `comptime_for_is_template_served` admits a pack's
   length as a bound; a whole-pack spread is `MirInstr::Call::spread` or
   `MirInstr::MethodCall::spread`

@@ -187,15 +187,6 @@ impl Elab<'_> {
             if self.bound_generics.contains(&template_name) {
                 out.push(stmt);
             } else if retained
-                && self.pack_generics.contains(&template_name)
-                && pack_keyed_declaration(&stmt)
-            {
-                // A type-pack template with a deferred call survives as a
-                // signature-only stub: the discovery check types the call
-                // against it and records the instantiation the next round
-                // mints; its body only specializes concretely.
-                out.push(template_stub(&stmt, "unspecialized type-pack function"));
-            } else if retained
                 && self.comptime_generics.contains(&template_name)
                 && comptime_keyed_declaration(&stmt, &self.scalar_reads)
             {
@@ -269,10 +260,7 @@ impl Elab<'_> {
                     .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
                 continue;
             }
-            if !self.bound_generics.contains(callee)
-                && !self.pack_generics.contains(callee)
-                && !self.comptime_generics.contains(callee)
-            {
+            if !self.bound_generics.contains(callee) && !self.comptime_generics.contains(callee) {
                 continue;
             }
             // An overloaded template name is a family: the request's
@@ -870,7 +858,7 @@ impl Elab<'_> {
             &mut final_body,
             &specialized_params,
             &type_pack_expansions,
-            &self.served_packs,
+            &self.pack_defs,
         );
         let mut specialized_ret = ret.clone();
         if let Some(ret) = &mut specialized_ret {
@@ -1912,7 +1900,7 @@ impl Elab<'_> {
                 &mut clone.body,
                 &clone.params,
                 &type_pack_expansions,
-                &self.served_packs,
+                &self.pack_defs,
             );
         }
         substitute_type_bindings_in_block(&mut clone.body, &type_bindings);

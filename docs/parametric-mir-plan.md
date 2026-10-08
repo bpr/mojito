@@ -327,7 +327,7 @@ Hello World at the same revision; rows that read zero in both are left out:
 | **Minted by the AST cloner** | | **232** | **254** |
 | `def` holding a `comptime if` | P3a | 0 | 11 |
 | `def` holding a `comptime for` | P3b | 0 | 3 |
-| `def` expanding a type pack | P3b | 0 | 5 |
+| `def` expanding a type pack | P3b | 0 | 5 (0 since 2026-10-07; class retired 2026-10-08) |
 | Member of a `DType`- or vector-keyed struct | P3c, P3d | 43 | 43 |
 | Member of a variadic struct | P3d | 175 | 175 |
 | Per-instantiation method clone holding a `comptime if` or `for` | P3 | 0 | 3 (0 since 2026-10-05) |
@@ -664,7 +664,9 @@ branch for the class is deleted, and so is its certificate class.
   bundled trait with upstream's default `write`; a spread into
   `String.format` still keys a clone (R421), the element-typed binding keeps
   the clone (R252), and the certificate class waits on them and on the
-  methods (R253).
+  methods. On 2026-10-08 the type-pack clone class was retired: every
+  type-pack `def` is served by its template whatever its body holds, and
+  the cloner's type-pack branch is deleted.
 - **P3c. `DType`, vector, and other value-dependent types.** Layout is asked
   only of a concrete type, and a compile-time layout query names the target
   it is answered for. A concrete type does not make layout independent of

@@ -411,6 +411,25 @@ fn pack_def_beside_scalar_value_binder_is_template_served() {
 }
 
 #[test]
+fn pack_def_unkept_loop_is_template_served() {
+    // A type-pack `def` is served by its template whatever its body holds:
+    // a display element reading a field off a method's result, and a
+    // loop-body binding applying a `def` to the index, are evaluated per
+    // instance, beside the pack or not, and nothing clones.
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    def twin(self) -> P:\n        return P(self.v * 2)\n\ndef twice(n: Int) -> Int:\n    return n * 2\n\ndef fields[*Ts: Writable](*args: *Ts):\n    comptime for p in [P(1).twin().v, 5]:\n        print(p, len(args))\n\ndef squares[*Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime sq = twice(i)\n        print(sq, args[i])\n\ndef plain[n: Int]():\n    comptime for i in range(n):\n        comptime sq = twice(i)\n        print(sq)\n\ndef main():\n    fields(1, \"a\")\n    squares(7, \"b\")\n    plain[2]()\n",
+            std::path::Path::new("/tmp/mojito_pack_def_unkept_loop.mojo"),
+        )
+        .expect("a pack def whose loop the template serves");
+    let census = program.instantiation_census();
+    assert_eq!(census.cloned.total(), 0);
+    let output = compiler.execute(&program).expect("run the served defs");
+    assert_eq!(output.output, "2 2\n5 2\n0 7\n2 b\n0\n2\n");
+}
+
+#[test]
 fn pack_spread_into_struct_pack_method_is_template_served() {
     // A variadic struct's method collecting the struct's own pack
     // (`*b: *Self.Ts`) takes a spread of a forwarding `def`'s collector over

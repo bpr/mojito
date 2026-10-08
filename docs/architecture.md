@@ -627,17 +627,19 @@ another name of it: the check binds the alias to the display's owner and
 sequence, so a loop over it is the display's loop. Every other `comptime
 for` — over a display with an element that applies a function, and every
 one outside a generic `def` or a generic struct's method — is unrolled in
-the AST as before (roadmap R363). A served loop may construct a reflected
+the AST as before (roadmap R363). A display element source validation typed
+as a scalar is served whatever its spelling (`twice(n)`, `P(n).get()`, a
+field read `P(n).twin().v`), and so is a loop-body `comptime` binding that
+applies a `def` to the index (`comptime w = twice(i)`), the application
+`native::mono` demands per copy. A served loop may construct a reflected
 field type (`types[i]()`, `FT()` over `comptime FT = types[i]`): the check
 records the construction of that type expression, MIR carries it as
 `MirInstr::ConstructType`, a template-only form beside `SizeOf` and
 `TypeName`, and the elaborator writes the closed type's default
-construction in each unrolled copy. A type pack crosses the waist the same way: a pack-keyed `def`
-the template serves (`served_pack_defs`: binders a non-pack `def`'s template
-also serves (`template_serves_binders`), a read or owned collector, every
-spread of the pack a call argument into `print`, another served `def`, a
-method, or a constructor with a type-pack collector, no local `comptime`
-alias keying a clone) keeps its body; the checker
+construction in each unrolled copy. A type pack crosses the waist the same way: every
+pack-keyed `def` keeps its body, as upstream's does
+(`is_specializable_declaration` never names one, so no type-pack `def` is
+cloned); the checker
 types it with the collector a `VariadicPack` of the symbolic pack, each
 `args[i]` the dependent `Ts[i]` (`ParamKind::ListGet`), and the pack's
 length — `args.__len__()`, `Ts.length`, `len(Ts)`, as the pin reads them at
@@ -660,13 +662,11 @@ analysis sees the whole collector lent or moved, and the elaborator
 per element of the bound pack before it binds the callee, so concrete MIR
 carries no spread. A method call carries the same position
 (`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator and the
-erased oracle expand alike. The gate (`pack_spread_callees`) judges such a
-callee by name, before the check types its receiver: the name must be one
-some struct declares with a type-pack collector, the method's own
-(`*a: *Ts`) or the struct's (`*b: *Self.Ts`); a construction's
-(`Tuple(*args^)`, `Bag[*Ts](*args^)`) must be a struct whose `__init__`
-has one (`pack_collector_constructors`). The checker types such a
-construction as a call of the declared `__init__` it selects, the forwarded
+erased oracle expand alike. The checker types the spread against the
+callee it selects, a `def`, method, or constructor whose collector is a
+type pack (a method's own `*a: *Ts` or its struct's `*b: *Self.Ts`); a
+spread into a homogeneous collector is rejected, as at the pin. It types a
+construction (`Tuple(*args^)`, `Bag[*Ts](*args^)`) as a call of the declared `__init__` it selects, the forwarded
 pack bound whole to its collector (`bind_forwarded_pack`), so MIR names the
 constructor overload and its collector's ownership is checked as at the
 pin. Every such call names a

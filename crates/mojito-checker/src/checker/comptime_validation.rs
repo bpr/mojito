@@ -200,9 +200,9 @@ pub(super) fn applicable_functions(
 }
 
 impl Checker {
-    /// The calls and method calls of `program` this validation typed as a
-    /// scalar a `comptime for` binder takes (`Int`, `Bool`, `Float64`, a
-    /// string) without raising, by the syntax identity the elaborated
+    /// The calls, method calls, and field reads of `program` this validation
+    /// typed as a scalar a `comptime for` binder takes (`Int`, `Bool`,
+    /// `Float64`, a string) without raising, by the syntax identity the elaborated
     /// program keeps. A node copied more than once (a trait default per
     /// conformer) qualifies only when every copy did.
     pub(super) fn scalar_calls(&self, program: &[Stmt]) -> HashSet<mojito_common::token::SyntaxId> {
@@ -1297,7 +1297,7 @@ impl Checker {
     }
 
     /// The calls and method calls of `program`, and its tuple displays when
-    /// `tuples` holds, this validation typed as `accept` takes without
+    /// `tuples` holds or its field reads when it does not, this validation typed as `accept` takes without
     /// raising, by the syntax identity the elaborated program keeps. A node
     /// copied more than once qualifies only when every copy did.
     fn typed_display_elements(
@@ -1317,6 +1317,7 @@ impl Checker {
                 let candidate = match expression.kind {
                     ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
                     ExprKind::TupleLit(_) => self.tuples,
+                    ExprKind::Member { .. } => !self.tuples,
                     _ => false,
                 };
                 if !candidate {

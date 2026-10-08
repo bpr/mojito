@@ -379,6 +379,7 @@ assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_beside_value_binder.mojo	main	exe-differential	sanitized
 assets/ok/pack_constructor_spread_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_def_scalar_value_binders_served.mojo	main	exe-differential	sanitized
+assets/ok/pack_def_unkept_loop_template_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_alias_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_alias_string_literal.mojo	main	exe-differential	sanitized
 assets/ok/pack_element_binding_served.mojo	main	exe-differential	sanitized

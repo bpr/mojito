@@ -248,8 +248,8 @@ pub(super) fn expand_type_packs(ty: &mut Type, packs: &HashMap<String, Vec<Type>
 
 /// Expand pack operations in one specialized function body. Runtime pack
 /// identity comes from the already-specialized `$pack[...]` parameter type, not
-/// from a name-to-length side table. `served_callees` are the pack-keyed
-/// `def`s the template serves, into which a spread expands element by element.
+/// from a name-to-length side table. `served_callees` are the top-level
+/// type-pack `def`s, into which a spread expands element by element.
 pub(super) fn expand_pack_spreads_in_function_body(
     statements: &mut [Stmt],
     parameters: &[FnParam],
@@ -1057,9 +1057,9 @@ struct PackRewriter {
     type_scopes: Vec<HashMap<String, ElabBindingId>>,
     runtime_packs: HashMap<ElabBindingId, usize>,
     type_packs: HashMap<ElabBindingId, Vec<Type>>,
-    /// The pack-keyed `def`s the template serves: a spread into one is the
-    /// call of its template, which binds the pack from the elements, so the
-    /// clone spells the elements where a cloned callee takes the pack whole.
+    /// The top-level type-pack `def`s, each served by its template: a spread
+    /// into one is the call of its template, which binds the pack from the
+    /// elements, so the clone spells the elements.
     served_callees: HashSet<String>,
 }
 

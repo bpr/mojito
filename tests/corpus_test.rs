@@ -391,6 +391,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_for_string_aggregates",
     "comptime_for_tuple_elements",
     "comptime_for_value_struct_method",
+    "pack_def_unkept_loop_template_served",
     // R385, the erased oracle: an erased frame runs no function lifted for
     // an application a type spells.
     "comptime_application_argument",

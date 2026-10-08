@@ -956,55 +956,6 @@ impl Elab<'_> {
                                 }
                             }
                         }
-                    } else if self.pack_generics.contains(name.as_str()) {
-                        // A type-pack call: element types read syntactically
-                        // specialize at once; a call whose elements are not
-                        // statically evident (a local, a generic construction,
-                        // an origin-bearing temporary) consults the
-                        // checker-recorded instantiation for this occurrence
-                        // and otherwise keeps the template for the discovery
-                        // check. A bound violation is a real error either way.
-                        let template = self.specializable[name.as_str()];
-                        let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
-                        let resolved =
-                            top_level_forwarded_pack_types(template, name, args, kwargs, mono)
-                                .and_then(|forwarded| {
-                                    self.resolve_spec_args_for(
-                                        template,
-                                        name,
-                                        SpecRequest {
-                                            param_args,
-                                            call_args: args,
-                                            kwargs,
-                                            consts,
-                                            request_site: &request_site,
-                                            forwarded_pack_types: forwarded.as_deref(),
-                                        },
-                                    )
-                                });
-                        match resolved {
-                            Ok((values, kept)) if self.pack_values_statically_evident(&values) => {
-                                (values, kept, whole_pack_abi)
-                            }
-                            Err(
-                                error @ (ComptimeError::GenericBound(_)
-                                | ComptimeError::PackBound(_)),
-                            ) => return Err(error),
-                            // A syntactic guess that names a generic struct
-                            // bare (`Box(7)`, `Named("k", w)`) is not
-                            // evident either: its arguments are the
-                            // checker's to solve.
-                            Ok(_) | Err(_) => {
-                                if let Some((values, kept, _)) =
-                                    self.def_request_target(name, &source_span, param_args, mono)
-                                {
-                                    (values, kept, whole_pack_abi)
-                                } else {
-                                    mono.retained.insert(name.clone());
-                                    return Ok(());
-                                }
-                            }
-                        }
                     } else if self.comptime_generics.contains(name.as_str())
                         && omits_required_param(self.specializable[name.as_str()], param_args)
                     {

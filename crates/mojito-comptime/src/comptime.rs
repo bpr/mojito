@@ -769,20 +769,6 @@ pub fn bound_generic_template_names(
     collect_bound_generic_templates(program, &ScalarReads::of(program, templates))
 }
 
-/// The top-level type-pack template names (`def show[*Ts: Writable](*args:
-/// *Ts)`) of a linked program.
-///
-/// A call whose element types are not statically evident before checking (a
-/// local, a generic construction, an origin-bearing temporary) is minted from
-/// the checker-recorded instantiation on the next discovery round, as inferred
-/// bound-generic calls are.
-pub fn pack_generic_template_names(
-    program: &[Stmt],
-    templates: &mojito_checked::templates::TemplateCatalog,
-) -> HashSet<String> {
-    collect_pack_generic_templates(program, &ScalarReads::of(program, templates))
-}
-
 /// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
 /// T)` whose body holds a `comptime if`/`comptime for`) of a linked program.
 ///
@@ -984,7 +970,6 @@ pub fn elaborate_prepared(
         })?;
     let scalar_reads = ScalarReads::of(program, templates);
     let bound_generics = collect_bound_generic_templates(program, &scalar_reads);
-    let pack_generics = collect_pack_generic_templates(program, &scalar_reads);
     let elab = Elab {
         program,
         fns: collect_fns(program),
@@ -998,8 +983,14 @@ pub fn elaborate_prepared(
             .collect(),
         specializable: collect_specializable(program, &bound_generics, &scalar_reads),
         bound_generics,
-        pack_generics,
-        served_packs: served_pack_defs(program, &scalar_reads),
+        pack_defs: program
+            .iter()
+            .filter(|statement| pack_keyed_declaration(statement))
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
         comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
         overload_families: collect_overload_families(program, &scalar_reads),
         scalar_reads,
@@ -1327,9 +1318,11 @@ pub(super) struct TemplateLoopNames {
 /// What shows a compile-time display's element is a scalar a loop binder
 /// takes (`Int`, `Bool`, `String`, `Float64`) ([`scalar_shaped`]).
 ///
-/// A call or method call shows it when source validation typed it so, with
-/// the binders symbolic (`TemplateCatalog::scalar_calls`): the check, not the
-/// callee's spelling, decides `twice(n)`, `P(n).get()`, or `S[n].g(n)`. A
+/// A call, method call, or field read shows it when source validation typed
+/// it so, with the binders symbolic (`TemplateCatalog::scalar_calls`): the
+/// check, not the callee's spelling, decides `twice(n)`, `P(n).get()`,
+/// `S[n].g(n)`, or `P(n).twin().v`, a field read off a scalar or a parameter
+/// aggregate. A
 /// subscript shows it when it reads a module `comptime` list display of
 /// literals of one kind.
 ///
@@ -1373,8 +1366,8 @@ impl ScalarReads {
         self.aggregates.contains(&expression.syntax_id)
     }
 
-    /// Whether the call or method call `expression` returns a scalar a loop
-    /// binder takes.
+    /// Whether the call, method call, or field read `expression` is a
+    /// scalar a loop binder takes.
     fn call(&self, expression: &Expr) -> bool {
         self.checked.contains(&expression.syntax_id)
     }
@@ -1402,7 +1395,8 @@ impl ScalarReads {
 /// And each `comptime` binding its body declares is an alias of a pack
 /// element ([`pack_element_alias`]), a literal, a parameter expression over
 /// the binders and the loop variable, an element of a named compile-time
-/// list at one, or a display a loop iterates ([`LoopNames::displays`]),
+/// list at one, an application of a scalar-returning `def` to them
+/// ([`applied_bound`]), or a display a loop iterates ([`LoopNames::displays`]),
 /// which the check binds with them symbolic. Such a loop is checked once with
 /// the variable symbolic, carried by MIR as a loop header, and unrolled
 /// below MIR; any other is unrolled in the AST, on a clone per
@@ -1469,7 +1463,8 @@ pub(super) fn comptime_for_is_template_served(
                         || condition_shaped(value, packs)
                         || element
                         || names.displays.contains(name)
-                        || display_read_shaped(value, packs, names.displays, names.scalars)))
+                        || display_read_shaped(value, packs, names.displays, names.scalars)
+                        || applied_bound(value, packs, names.displays, names.scalars)))
                     && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
             }
             StmtKind::Comptime { .. } => true,
@@ -1649,6 +1644,8 @@ fn scalar_shaped(
         ExprKind::Member { object, .. } => {
             matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
                 || pack_length(expression, packs)
+                || (scalars.call(expression)
+                    && (shaped(object) || aggregate_shaped(object, packs, displays, scalars)))
         }
         ExprKind::Index { object, index } => (display(object) || list(object)) && shaped(index),
         ExprKind::Call {
@@ -1784,8 +1781,9 @@ fn display_read_shaped(
         && scalar_shaped(expression, packs, displays, scalars)
 }
 
-/// Whether a loop bound applies a function to compile-time values
-/// (`range(f(n))`): the application the elaborator below MIR demands.
+/// Whether a loop bound, or a loop-body `comptime` binding, applies a
+/// function to compile-time values (`range(f(n))`, `comptime w = f(i)`):
+/// the application the elaborator below MIR demands.
 fn applied_bound(
     expression: &Expr,
     packs: &HashSet<String>,
@@ -2250,257 +2248,6 @@ fn def_bound_names(
         .extend(params.iter().map(|parameter| parameter.name.clone()));
     mojito_ast::visit::walk_block(&mut bound, body);
     bound.names
-}
-
-/// Whether a top-level `def` keyed on a type pack is served by its template:
-/// its name is among [`served_pack_defs`].
-fn pack_def_template_served(statement: &Stmt, served_packs: &HashSet<String>) -> bool {
-    matches!(&statement.kind, StmtKind::Def { name, .. } if served_packs.contains(name))
-}
-
-/// The names of the pack-keyed top-level `def`s the template serves. Every
-/// declaration of the name passes the shape test ([`pack_def_shape_served`]),
-/// and every callee a body spreads its pack into is `print`, a served name,
-/// a method with a type-pack collector ([`pack_collector_methods`]), or a
-/// struct whose `__init__` has one ([`pack_collector_constructors`]), by
-/// fixpoint: a served body's spread is a call of the callee's template, which
-/// the elaborator expands into the bound pack's elements, so a spread into a
-/// cloned callee (a `def` the template does not serve) keeps the spreading
-/// `def` on the cloner. An overloaded name is served or cloned
-/// whole, since a forward (`tally(*rest)`) may bind any of its declarations.
-fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
-    let methods = pack_collector_methods(program);
-    let constructors = pack_collector_constructors(program);
-    let mut spreads: HashMap<String, Vec<SpreadCallee>> = HashMap::new();
-    let mut cloned: HashSet<String> = HashSet::new();
-    for statement in program {
-        let StmtKind::Def { name, .. } = &statement.kind else {
-            continue;
-        };
-        if !variadic_keyed_declaration(statement) {
-            continue;
-        }
-        match pack_def_shape_served(statement, scalars) {
-            Some(callees) => spreads.entry(name.clone()).or_default().extend(callees),
-            None => {
-                cloned.insert(name.clone());
-            }
-        }
-    }
-    let mut served: HashSet<String> = spreads
-        .keys()
-        .filter(|name| !cloned.contains(*name))
-        .cloned()
-        .collect();
-    loop {
-        let before = served.len();
-        let kept: HashSet<String> = served
-            .iter()
-            .filter(|name| {
-                spreads[*name].iter().all(|callee| match callee {
-                    SpreadCallee::Def(callee) => {
-                        callee == "print"
-                            || served.contains(callee)
-                            || constructors.contains(callee)
-                    }
-                    SpreadCallee::Method(method) => methods.contains(method),
-                })
-            })
-            .cloned()
-            .collect();
-        served = kept;
-        if served.len() == before {
-            return served;
-        }
-    }
-}
-
-/// Whether a pack-keyed `def`'s own shape lets its template serve it, and
-/// the callees its body spreads its pack into when so: its binders are ones
-/// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
-/// pack among them and a scalar value beside it (`Int`, `UInt`, `Bool`,
-/// `Float64`, `StringLiteral`, or `DType`), which
-/// an explicit application binds from its brackets (a value pack read at
-/// run time is the `ParameterList` the check spells); the collector is read
-/// or owned (`var *args`, destroyed last to first after its last element use;
-/// an element transferred out by subscript is rejected, as the pin rejects
-/// it, since the collector is a `VariadicPack`); every spread of the pack is
-/// a call's argument (`show(*args)`, `print(*args)`, `drain(*args^)`); and
-/// the body keys no clone. The check types
-/// such a body once, with the collector a pack of the symbolic `Ts` and each
-/// `args[i]` the dependent `Ts[i]`, and the elaborator below MIR binds the
-/// pack from the call.
-fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<SpreadCallee>> {
-    let StmtKind::Def {
-        name,
-        type_params,
-        params,
-        body,
-        ..
-    } = &statement.kind
-    else {
-        return None;
-    };
-    let packs = def_pack_names(type_params, params);
-    let shape = template_serves_binders(type_params, name)
-        && !def_body_keys_specialization(type_params, params, name, body, scalars);
-    shape.then(|| pack_spread_callees(body, &packs)).flatten()
-}
-
-/// The callees a block spreads one of `packs` into as a call or method-call
-/// argument (`other(*args)`, `other(*args^)`, `sink.take(*args)`), a nested
-/// `def` included; `None` when a spread of one of `packs` stands anywhere
-/// else (a parameterized call), which only a clone expands.
-fn pack_spread_callees(stmts: &[Stmt], packs: &HashSet<String>) -> Option<Vec<SpreadCallee>> {
-    struct Finder<'a> {
-        packs: &'a HashSet<String>,
-        callees: Vec<SpreadCallee>,
-        spreads: usize,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            match &expr.kind {
-                ExprKind::Spread(inner) => {
-                    let spread = match &inner.kind {
-                        ExprKind::Identifier(name) => Some(name),
-                        ExprKind::Transfer(moved) => match &moved.kind {
-                            ExprKind::Identifier(name) => Some(name),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    self.spreads +=
-                        usize::from(spread.is_some_and(|name| self.packs.contains(name)));
-                }
-                ExprKind::Call { name, args, .. } => {
-                    self.callees.extend(
-                        args.iter()
-                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
-                            .map(|_| SpreadCallee::Def(name.clone())),
-                    );
-                }
-                ExprKind::MethodCall { method, args, .. } => {
-                    self.callees.extend(
-                        args.iter()
-                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
-                            .map(|_| SpreadCallee::Method(method.clone())),
-                    );
-                }
-                // The parameterized spellings: `f[*Ts](*a)`, `x.m[*Ts](*a)`.
-                ExprKind::Invoke { callee, args, .. } => {
-                    let spread_callee = match &callee.kind {
-                        ExprKind::Identifier(name) => Some(SpreadCallee::Def(name.clone())),
-                        ExprKind::Member { field, .. } => Some(SpreadCallee::Method(field.clone())),
-                        _ => None,
-                    };
-                    if let Some(spread_callee) = spread_callee {
-                        let count = args
-                            .iter()
-                            .filter(|argument| matches!(argument.kind, ExprKind::Spread(_)))
-                            .count();
-                        self.callees
-                            .extend(std::iter::repeat_n(spread_callee, count));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut finder = Finder {
-        packs,
-        callees: Vec::new(),
-        spreads: 0,
-    };
-    mojito_ast::visit::walk_block(&mut finder, stmts);
-    (finder.callees.len() == finder.spreads).then_some(finder.callees)
-}
-
-/// A callee a pack-keyed `def`'s body spreads its pack into: a `def`,
-/// `print`, or a struct's constructor by name, or a method by name, whose
-/// receiver the pre-check judgment cannot type.
-#[derive(Clone)]
-enum SpreadCallee {
-    Def(String),
-    Method(String),
-}
-
-/// The method names a served pack-keyed body may spread its pack into: a
-/// struct in the program declares a method of the name whose collector is a
-/// type pack ([`collects_type_pack`]), which its template serves with the
-/// spread expanded per call. Every such call names a declared callee: a
-/// string literal's `format` is the static call of the bundled stand-in.
-fn pack_collector_methods(program: &[Stmt]) -> HashSet<String> {
-    declared_structs(program)
-        .flat_map(|(_, struct_packs, methods)| {
-            methods
-                .iter()
-                .filter(move |method| collects_type_pack(method, &struct_packs))
-                .map(|method| method.name.clone())
-        })
-        .collect()
-}
-
-/// The struct names a served pack-keyed body may spread its pack into as a
-/// construction (`Tuple(*args^)`, `Bag[*Ts](*args^)`): the struct declares an
-/// `__init__` whose collector is a type pack ([`collects_type_pack`]), which
-/// the checker selects with the forwarded pack bound whole to it. A name
-/// the pre-check judgment cannot see (an import alias) keeps the clone.
-fn pack_collector_constructors(program: &[Stmt]) -> HashSet<String> {
-    declared_structs(program)
-        .filter(|(_, struct_packs, methods)| {
-            methods
-                .iter()
-                .any(|method| method.name == "__init__" && collects_type_pack(method, struct_packs))
-        })
-        .map(|(name, ..)| name.clone())
-        .collect()
-}
-
-/// Every struct the program declares: its name, the names of its own type
-/// packs, and its methods.
-fn declared_structs(
-    program: &[Stmt],
-) -> impl Iterator<Item = (&String, HashSet<String>, &Vec<mojito_ast::ast::Method>)> {
-    program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Struct {
-                name,
-                type_params,
-                methods,
-                ..
-            } => Some((name, type_pack_binders(type_params), methods)),
-            _ => None,
-        })
-}
-
-/// Whether a method's positional collector is a type pack: the method's own
-/// (`*a: *Ts`) or its struct's (`*b: *Self.Ts`, one of `struct_packs`).
-fn collects_type_pack(method: &mojito_ast::ast::Method, struct_packs: &HashSet<String>) -> bool {
-    let own_packs = type_pack_binders(&method.type_params);
-    method.params.iter().any(|parameter| {
-        parameter.kind == ParamKind::Variadic
-            && match &parameter.ty {
-                Type::Named(spread, arguments) if arguments.is_empty() => spread
-                    .strip_prefix('*')
-                    .is_some_and(|pack| own_packs.contains(pack) || struct_packs.contains(pack)),
-                Type::SelfParam(spread) => spread
-                    .strip_prefix('*')
-                    .is_some_and(|pack| struct_packs.contains(pack)),
-                _ => false,
-            }
-    })
-}
-
-/// The names of the type packs a parameter list declares (`*Ts` as `Ts`).
-fn type_pack_binders(type_params: &[TypeParam]) -> HashSet<String> {
-    type_params
-        .iter()
-        .filter_map(|parameter| parameter.name.strip_prefix('*'))
-        .map(str::to_string)
-        .collect()
 }
 
 /// Substitute one now-concrete type binder in a source annotation, wherever
@@ -2975,14 +2722,15 @@ struct CtStruct<'a> {
 }
 
 /// Whether a declaration must remain a template until a concrete call selects
-/// its compile-time arguments. This predicate is intentionally independent of
-/// the top-level registry: nested generic pack functions need the same delayed
-/// elaboration even though their lexical specialization happens later.
-fn is_specializable_declaration(
-    statement: &Stmt,
-    served_packs: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
+/// its compile-time arguments: a generic `def` whose body keys a clone per
+/// instantiation ([`def_body_keys_specialization`]), or one keyed on a value
+/// pack whose binders its template does not serve
+/// ([`template_serves_binders`]). A `def` keyed on a type pack never does: its
+/// template serves the body, as upstream's does, with the collector a pack of
+/// the symbolic `Ts`, and the elaborator below MIR binds the pack from the
+/// call. This predicate is intentionally independent of the top-level
+/// registry, so a nested `def` answers it the same way.
+fn is_specializable_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
     match &statement.kind {
         StmtKind::Def {
             name,
@@ -2992,13 +2740,10 @@ fn is_specializable_declaration(
             ..
         } => {
             !type_params.is_empty()
+                && !pack_keyed_declaration(statement)
                 && (def_body_keys_specialization(type_params, params, name, body, scalars)
-                    // A type pack keys a clone per call unless the template
-                    // serves the body (`pack_def_template_served`).
-                    || (type_params
-                        .iter()
-                        .any(|parameter| parameter.name.starts_with('*'))
-                        && !pack_def_template_served(statement, served_packs)))
+                    || (variadic_keyed_declaration(statement)
+                        && !template_serves_binders(type_params, name)))
         }
         _ => false,
     }
@@ -3027,14 +2772,9 @@ struct Elab<'a> {
     /// application monomorphizes, every other reference stays on the template's
     /// abstract erased-dispatch path and retains the template.
     bound_generics: HashSet<String>,
-    /// Top-level type-pack `def`s (a `*Ts` type parameter, unique name). A
-    /// call whose pack element types the elaborator cannot read syntactically
-    /// consults the checker-recorded instantiation for its occurrence, and a
-    /// deferred call keeps the template as a signature-only stub for the
-    /// discovery check.
-    pack_generics: HashSet<String>,
-    /// The pack-keyed `def`s the template serves ([`served_pack_defs`]).
-    served_packs: HashSet<String>,
+    /// Top-level type-pack `def`s, every one served by its template: a
+    /// clone's spread of its own pack into one expands element by element.
+    pack_defs: HashSet<String>,
     /// The module's scalar-valued declarations ([`ScalarReads`]).
     scalar_reads: ScalarReads,
     /// The subset of `specializable` specialized only for its compile-time
@@ -3584,12 +3324,10 @@ fn collect_specializable<'a>(
     bound_generics: &HashSet<String>,
     scalars: &ScalarReads,
 ) -> HashMap<String, &'a Stmt> {
-    let served_packs = served_pack_defs(program, scalars);
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s, &served_packs, scalars)
-                || bound_generics.contains(name))
+            && (is_specializable_declaration(s, scalars) || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
@@ -3625,13 +3363,11 @@ fn collect_overload_families<'a>(
             families.entry(name.clone()).or_default().push(statement);
         }
     }
-    let served_packs = served_pack_defs(program, scalars);
     families.retain(|_, declarations| {
         declarations.len() > 1
-            && declarations.iter().any(|s| {
-                comptime_keyed_declaration(s, scalars)
-                    || (pack_keyed_declaration(s) && !pack_def_template_served(s, &served_packs))
-            })
+            && declarations
+                .iter()
+                .any(|s| comptime_keyed_declaration(s, scalars))
     });
     families
 }
@@ -3778,26 +3514,6 @@ fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
     counts
 }
 
-/// Top-level type-pack templates: a `def` with a `*Ts` type parameter (see
-/// [`pack_generic_template_names`]) whose template does not serve it
-/// ([`pack_def_template_served`]). Value packs stay on the syntactic (hard)
-/// specialization path. An overloaded name is a template family
-/// ([`collect_overload_families`]), whose request path tells its declarations
-/// apart, since overload selection is the checker's.
-fn collect_pack_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
-    let served_packs = served_pack_defs(program, scalars);
-    program
-        .iter()
-        .filter(|statement| {
-            pack_keyed_declaration(statement) && !pack_def_template_served(statement, &served_packs)
-        })
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Def { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Whether a top-level `def` is a type-pack template: it declares a `*Ts` type
 /// parameter — the type-pack class's per-declaration predicate.
 fn pack_keyed_declaration(statement: &Stmt) -> bool {
@@ -3850,7 +3566,6 @@ fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -
 /// selection is the checker's.
 fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
     let def_counts = def_name_counts(program);
-    let served_packs = served_pack_defs(program, scalars);
     program
         .iter()
         .filter_map(|statement| {
@@ -3860,9 +3575,7 @@ fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
             else {
                 return None;
             };
-            if is_specializable_declaration(statement, &served_packs, scalars)
-                || def_counts[name.as_str()] != 1
-            {
+            if is_specializable_declaration(statement, scalars) || def_counts[name.as_str()] != 1 {
                 return None;
             }
             let has_type_binder = type_params.iter().any(|parameter| {
@@ -4015,7 +3728,7 @@ impl<'a> Elab<'a> {
             return false;
         };
         self.overload_families.contains_key(name)
-            && !is_specializable_declaration(statement, &self.served_packs, &self.scalar_reads)
+            && !is_specializable_declaration(statement, &self.scalar_reads)
     }
 
     /// Whether `name` is an overloaded template family: a call to it
@@ -4137,30 +3850,6 @@ impl<'a> Elab<'a> {
         };
         let source = source_type_from_ty(&bound)?;
         Some((bound, source))
-    }
-
-    /// Whether syntactically guessed pack element types are the whole truth:
-    /// a bare generic struct name (`Box(7)` guessed as `Box`, `Named("k",
-    /// w)` as `Named`) hides arguments only the checker can solve, so the
-    /// call defers to the checker-recorded instantiation instead.
-    pub(super) fn pack_values_statically_evident(&self, values: &[CtValue]) -> bool {
-        values.iter().all(|value| match value {
-            CtValue::Tuple(elements) => elements.iter().all(|element| match element {
-                CtValue::Type(ty) => !mojito_types::types::mentions(ty, &|candidate| {
-                    matches!(
-                        candidate,
-                        Ty::Struct(name, arguments)
-                            if arguments.is_empty()
-                                && self.structs.get(name).is_some_and(|declaration| {
-                                    !declaration.decls.is_empty()
-                                        || self.struct_has_explicit_origin_slots(name)
-                                })
-                    )
-                }),
-                _ => true,
-            }),
-            _ => true,
-        })
     }
 
     /// The source spelling of a heterogeneous pack element type, with every
@@ -4382,88 +4071,36 @@ mod def_request_tests {
     }
 
     #[test]
-    fn a_pack_spread_into_a_pack_collector_constructor_is_template_served() {
-        let source = "struct Bag[*Ts: Movable](Movable):\n    var n: Int\n    \
-                      def __init__(out self, var *a: *Self.Ts):\n        self.n = 0\n\n\
-                      struct Box(Movable):\n    var n: Int\n    \
-                      def __init__[*Us: Movable](out self, var *a: *Us):\n        self.n = 0\n\n\
-                      struct Ints(Movable):\n    var n: Int\n    \
+    fn no_top_level_type_pack_def_is_specializable() {
+        let source = "struct Ints(Movable):\n    var n: Int\n    \
                       def __init__(out self, *a: Int):\n        self.n = 0\n\n\
-                      def bag[*Ts: Movable](var *args: *Ts) -> Int:\n    return Bag[*Ts](*args^).n\n\n\
-                      def box[*Ts: Movable](var *args: *Ts) -> Int:\n    return Box(*args^).n\n\n\
+                      def mk(n: Int) raises -> Int:\n    return n\n\n\
                       def ints[*Ts: Movable](*args: *Ts) -> Int:\n    return Ints(*args).n\n\n\
-                      def nested[*Ts: Movable](var *args: *Ts) -> Int:\n    \
-                      def one() -> Int:\n        return 1\n    return Box(*args^).n + one()\n";
-        let parsed = parse(source).expect("parse");
-
-        let served = super::served_pack_defs(
-            &parsed,
-            &super::ScalarReads::of(
-                &parsed,
-                &mojito_checked::templates::TemplateCatalog::new(false),
-            ),
-        );
-
-        assert!(served.contains("bag"), "{served:?}");
-        assert!(served.contains("box"), "{served:?}");
-        // A homogeneous collector takes no pack; a nested `def` is a
-        // generator over the pack's binders.
-        assert!(!served.contains("ints"), "{served:?}");
-        assert!(served.contains("nested"), "{served:?}");
-    }
-
-    #[test]
-    fn pack_defs_the_template_does_not_serve_yet() {
-        let source = "def mk(n: Int) raises -> Int:\n    return n\n\n\
-                      def scaled[s: Float64, *Ts: Writable](*args: *Ts):\n    \
-                      comptime for i in range(args.__len__()):\n        print(args[i], s)\n\n\
-                      def tagged[t: StringLiteral, n: UInt, *Ts: Writable](*args: *Ts):\n    \
-                      print(t, n, len(args))\n\n\
                       def nested[*Ts: Writable](*args: *Ts):\n    \
                       def one() -> Int:\n        return 1\n    print(one())\n\n\
-                      def lambda_[*Ts: Writable](*args: *Ts):\n    \
-                      var g = lambda -> Int: 7\n    print(g())\n\n\
-                      def tuples[*Ts: Writable](*args: *Ts):\n    \
-                      comptime for p in [(1, 2), (3, 4)]:\n        print(p[0])\n\n\
-                      def string_tuples[*Ts: Writable](*args: *Ts):\n    \
-                      comptime for p in [(1, \"x\"), (3, \"y\")]:\n        print(p[1])\n\n\
                       def raising[*Ts: Writable](*args: *Ts) raises:\n    \
                       comptime for p in [mk(1), 2]:\n        print(p)\n\n\
-                      def field_type[T: AnyType, *Ts: Writable](*args: *Ts):\n    \
-                      comptime types = reflect[T].field_types()\n    \
-                      comptime for i in range(len(types)):\n        \
-                      comptime FT = types[i]\n        print(FT())\n\n\
-                      def names[T: AnyType, *Ts: Writable](*args: *Ts):\n    \
-                      comptime names = reflect[T].field_names()\n    \
-                      var all = materialize[names]()\n    print(len(all))\n";
+                      def runtime_bound[s: Float64, *Ts: Writable](*args: *Ts):\n    \
+                      comptime for i in range(len(args)):\n        print(args[i], s)\n\n\
+                      def keyed[n: Int]():\n    \
+                      comptime for p in [mk(n), 2]:\n        print(p)\n";
         let parsed = parse(source).expect("parse");
-
-        let served = super::served_pack_defs(
+        let scalars = super::ScalarReads::of(
             &parsed,
-            &super::ScalarReads::of(
-                &parsed,
-                &mojito_checked::templates::TemplateCatalog::new(false),
-            ),
+            &mojito_checked::templates::TemplateCatalog::new(false),
         );
+        let specializable: Vec<&str> = parsed
+            .iter()
+            .filter(|statement| super::is_specializable_declaration(statement, &scalars))
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
 
-        // A scalar value binder beside the pack is bound from the brackets.
-        assert!(served.contains("scaled"), "{served:?}");
-        assert!(served.contains("tagged"), "{served:?}");
-        // A nested `def` or lambda is a generator over the pack's binders.
-        assert!(served.contains("nested"), "{served:?}");
-        assert!(served.contains("lambda_"), "{served:?}");
-        // A reflected field type is constructed by its expression.
-        assert!(served.contains("field_type"), "{served:?}");
-        // A closed tuple display's loop binds each tuple as a parameter.
-        assert!(served.contains("tuples"), "{served:?}");
-        // So does one whose tuples hold a string, which each read constructs.
-        assert!(served.contains("string_tuples"), "{served:?}");
-        // A reflected list materialized whole is constructed per instance.
-        assert!(served.contains("names"), "{served:?}");
-        // Each shape below still keys a type-pack clone; its owner flips the
-        // line to `contains` when it lands, and R253 deletes the branch once
-        // none is left.
-        assert!(!served.contains("raising"), "R404: {served:?}");
+        // Every type-pack `def`'s template serves its body, whatever it
+        // holds; a body without a pack still keys a clone.
+        assert_eq!(specializable, ["keyed"]);
     }
 
     #[test]
@@ -4471,23 +4108,30 @@ mod def_request_tests {
         let source = "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    \
                       def get(self) -> Int:\n        return self.v\n\n    \
                       def twin(self) -> P:\n        return P(self.v)\n\n\
-                      def method[*Ts: Writable](*args: *Ts):\n    \
-                      comptime for p in [P(1).get(), 2]:\n        print(p)\n\n\
-                      def structural[*Ts: Writable](*args: *Ts):\n    \
-                      comptime for p in [P(1).twin().v, 2]:\n        print(p)\n";
+                      def method[n: Int]():\n    \
+                      comptime for p in [P(n).get(), 2]:\n        print(p)\n\n\
+                      def structural[n: Int]():\n    \
+                      comptime for p in [P(n).twin().v, 2]:\n        print(p)\n\n\
+                      def whole[n: Int]():\n    \
+                      comptime for p in [P(n).twin(), P(2)]:\n        print(p.v)\n";
         let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
         let prepared = super::prepare(linked).expect("prepare");
         let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
         mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
             .expect("validate");
-
-        let checked =
-            super::served_pack_defs(&prepared, &super::ScalarReads::of(&prepared, &catalog));
+        let scalars = super::ScalarReads::of(&prepared, &catalog);
+        let served = |name: &str| {
+            prepared.iter().any(|statement| {
+                matches!(&statement.kind, StmtKind::Def { name: def, .. } if def == name)
+                    && !super::is_specializable_declaration(statement, &scalars)
+            })
+        };
 
         // The method's name says nothing about its result; the check does.
-        assert!(checked.contains("method"), "{checked:?}");
-        // A field read off a method's result is not a call the check types.
-        assert!(!checked.contains("structural"), "{checked:?}");
+        assert!(served("method"));
+        // A field read off a method's result is typed by the check too.
+        assert!(served("structural"));
+        assert!(served("whole"));
     }
 
     #[test]

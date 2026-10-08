@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Every `def` keyed on a type pack is now served by its template, as at
+  the pin, whatever its body holds: the cloner's type-pack branch, its
+  served-shape gate, and the signature-only stub a deferred pack call
+  checked against are deleted, and no type-pack `def` is cloned. A
+  `comptime for` display element reading a field off a method's result
+  (`[P(n).twin().v, n]`), and a loop-body binding applying a `def` to the
+  index (`comptime w = twice(i + 1)`), are now evaluated per instance
+  below MIR, beside a pack or not, where they were cloned.
+
 - A reflected field-name list materialized whole over a type parameter
   now runs from the template, on the VM and natively, as at the pin: `var
   all = materialize[names]()` over `comptime names =
