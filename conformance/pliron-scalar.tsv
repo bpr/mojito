@@ -135,6 +135,8 @@ assets/ok/ctfe_body_requests.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_construction_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_display_tuple_subscript_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_module_constant_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_module_display_constant_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape

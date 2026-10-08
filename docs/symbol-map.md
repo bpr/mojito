@@ -1058,7 +1058,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reader above the check (`Elab::eval`'s identifier fallback, and
   `Elab::pending_lookup` inside `materialize_block`), and
   `Elab::request_pending_reads` rewrites a body's value read to the request
-  `comptime(<initializer>)` (under an annotation's conversion), a name the
+  `comptime(<initializer>)` (under an annotation's conversion), extended
+  over the read's field chain (`comptime(<initializer>.s)`), a name the
   body binds itself left alone, `Elab::restore_forced_constants` putting back
   only the declarations something forced.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
@@ -1340,11 +1341,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   callable at a type no parameter expression spells (a `String`, a tuple, a
   struct) is lifted by name at its own type
   (`Checker::requested_binding`, `checker/comptime_validation.rs`), in any
-  body; the erased oracle runs such an application by calling its function
+  body, a projection of a temporary it builds copied out as the thunk's
+  `return` operand (`Checker::copy_compile_time_result`); the erased oracle runs such an application by calling its function
   (`VmBackend::erased_application`, `backend/vm.rs`);
   `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
   operand of a kept `materialize[X]()` or `comptime(e)`
-  (`Checker::infer_template_materialize`, `infer_template_comptime`), a
+  (`Checker::infer_template_materialize`, `infer_template_comptime`, which
+  rejects an operand that is not `ImplicitlyCopyable` as a crossing), a
   whole display through `crossing_display`. Every thunk begins with the
   local `comptime` bindings its expression reads that denote no parameter
   expression (`ComptimeThunks::bind_evaluated`, `thunk_prologue`,

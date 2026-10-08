@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A module constant whose initializer is a display, a tuple, or a subscript
+  that applies a callable (`comptime QS = [Q(1, "x"), mk(7)]`,
+  `comptime T = (f(1), "a")`, `comptime Y = XS[1]`) now waits for its first
+  demand like every other applied constant, instead of being folded where
+  it is declared. A body's field read of a pending constant (`q0.s`) is a
+  compile-time projection inside its request, and a body's read that
+  would materialize a collection or a struct that is not
+  `ImplicitlyCopyable` (`print(XS[1])`, `var x = q0`, `comptime(mk(3))`)
+  is now rejected with the pin's "cannot materialize comptime value"
+  message; `var x = q0` used to run. A lifted compile-time initializer now
+  copies a field or element of a temporary out before dropping it, which
+  fixes `comptime first = [Q(1, "x"), mk(7)][0].s` failing VM CTFE with a
+  raw pointer and `comptime q = [Q(1, "x"), mk(3)][1]` being rejected as an
+  implicit copy, and a tuple value holding a `String` (`comptime T =
+  (f(1), "a")` in a body) is now constructed at its `Tuple` instance.
+
 - No compile-time evaluation in a function body runs on the AST route any
   more, as at the pin: an application of a `def` generic over a type
   (`comptime c = capacity[Buffer[8]]()`, whose instance reads `T.size`), a

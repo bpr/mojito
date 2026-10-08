@@ -30,6 +30,21 @@ retained declaration — which forces a pending module constant once
 (`Elab::eval_in_body`). A module constant nothing forces is never
 evaluated above MIR, though source validation types its initializer.
 
+Since roadmap R507 (2026-10-08) a module constant's initializer root does
+not matter: a display, a tuple, or a subscript that applies a callable is
+deferred like a call (`Elab::defer_constant`). The rewrite of a body's
+read extends the request over the read's `Member` chain, so `q0.s` is
+`comptime(<q0>.s)`, a compile-time projection as at the pin; a subscript,
+a method call, or a whole-value read stays outside and materializes the
+value. The checker rejects a `comptime(...)` whose value is not
+`ImplicitlyCopyable` with the pin's crossing message
+(`Checker::infer_template_comptime`). The lifted thunk returns its
+initializer as a `return` operand: a projection or a reference result of a
+`Copyable` value is copied out of the temporaries the thunk drops
+(`Checker::copy_compile_time_result`). A local `comptime` binding that
+subscripts or calls a method of a pending constant spells it by its
+initializer (`Elab::spelled_value_reads`).
+
 The AST route evaluates a compile-time call above the check, in
 `crates/mojito-comptime`, once per discovery round:
 

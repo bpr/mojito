@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R512**.
+Next free ID: **R513**.
 
 ## Ordered Work
 
@@ -59,22 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R507 (P3e) A module constant whose initializer is a display or a
-  subscript is still evaluated where it is declared**
-
-  Problem: `comptime QS = [Q(1, "x"), mk(7)]` at module scope is folded
-  above the check, on the AST route, though it applies a callable.
-  - Deferring it, as every other applied constant is, would spell a body's
-    read of an element (`QS[0].s`) as a subscript of the written display
-    at run time, which stops with "reference binding to a non-place
-    expression".
-  - `Elab::defer_constant` (`comptime/requests.rs`) refuses a display, a
-    tuple, or a subscript root for that reason.
-  - `assets/ok/comptime_struct_string_field.mojo` is the program that
-    stops if the refusal goes.
-  - Depends on R274.
-  - Model: Opus, Not Planned.
 
 - [ ] **R8 (P3) A method that reaches a compile-time construct still
   clones per instance**
@@ -2841,6 +2825,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
     neither the source name nor which arguments are compile-time ones.
   - Found while landing the callee shapes a signature applies (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R512 A subscript of a module list or tuple constant in a parameter
+  argument is rejected**
+
+  Problem: `show[XS[1]]()`, `show[T[1]]()`, and `SIMD[DType.int64,
+  xs[1]](7)` over module constants `comptime XS = [1, 4, 5]` and
+  `comptime T = (2, 3)` are rejected, where the pin runs all three.
+  - A capitalized constant (`XS[1]`, `T[1]`) parses as a type application
+    and is rejected with "type mismatch for value parameter 'n': expected a
+    value, found a type", or "SIMD width … got a type".
+  - A lowercase one (`xs[1]`) is rejected with "not a compile-time Int
+    constant: xs".
+  - It does not matter whether the constant is folded where it is declared
+    or waits for its first demand.
+  - R383 reports the local display binding's spelling of the same parse.
+  - Found while deferring display and subscript module constants
+    (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

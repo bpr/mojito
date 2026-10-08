@@ -37,16 +37,7 @@ impl Elab<'_> {
             let names: HashSet<String> = pending.keys().cloned().collect();
             !names.is_empty() && super::elab::expression_names_any(value, &names)
         };
-        // A display or a subscript is folded here: a body's read of an
-        // element would subscript a written display at run time (R274).
-        let folded_root = matches!(
-            value.kind,
-            ExprKind::ListLit(_)
-                | ExprKind::TupleLit(_)
-                | ExprKind::BraceLit(_)
-                | ExprKind::Index { .. }
-        );
-        if folded_root || (!reads_pending && !self.applies_callable(value)) {
+        if !reads_pending && !self.applies_callable(value) {
             return false;
         }
         self.pending_constants.borrow_mut().insert(
@@ -409,10 +400,35 @@ fn request_value_reads(
         expansions: &'x HashMap<String, Expr>,
         shadowed: &'x HashSet<String>,
         skipped: HashSet<usize>,
+        /// The address of every request this rewrite wrote.
+        written: HashSet<usize>,
     }
 
     impl mojito_ast::visit::MutVisitor for Requests<'_> {
         fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            // A field read of a requested value is a compile-time
+            // projection, as at the pin: the request extends over it.
+            if let ExprKind::Member { object, .. } = &expr.kind
+                && self
+                    .written
+                    .contains(&(std::ptr::from_ref(&**object) as usize))
+                && let ExprKind::Member { object, field } =
+                    std::mem::replace(&mut expr.kind, ExprKind::None)
+                && let ExprKind::Call { mut args, .. } = object.kind
+                && let Some(requested) = args.pop()
+            {
+                let projection = Expr {
+                    kind: ExprKind::Member {
+                        object: Box::new(requested),
+                        field,
+                    },
+                    syntax_id: SyntaxId::derived(expr.syntax_id, 0),
+                    ..expr.clone()
+                };
+                *expr = request(projection, expr);
+                self.written.insert(std::ptr::from_ref(expr) as usize);
+                return;
+            }
             let ExprKind::Identifier(name) = &expr.kind else {
                 return;
             };
@@ -424,16 +440,21 @@ fn request_value_reads(
             let Some(expansion) = self.expansions.get(name) else {
                 return;
             };
-            let request = Expr {
-                kind: ExprKind::Call {
-                    name: "comptime".to_string(),
-                    param_args: Vec::new(),
-                    args: vec![expansion.clone()],
-                    kwargs: Vec::new(),
-                },
-                ..expr.clone()
-            };
-            *expr = request;
+            *expr = request(expansion.clone(), expr);
+            self.written.insert(std::ptr::from_ref(expr) as usize);
+        }
+    }
+
+    /// The request `comptime(<requested>)` standing where `at` stands.
+    fn request(requested: Expr, at: &Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Call {
+                name: "comptime".to_string(),
+                param_args: Vec::new(),
+                args: vec![requested],
+                kwargs: Vec::new(),
+            },
+            ..at.clone()
         }
     }
 
@@ -446,6 +467,7 @@ fn request_value_reads(
         expansions,
         shadowed,
         skipped: reads.skipped,
+        written: HashSet::new(),
     };
     mojito_ast::visit::walk_block_mut(&mut requests, body);
 }

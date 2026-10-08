@@ -2969,6 +2969,29 @@ impl Checker {
         Ok(())
     }
 
+    /// A compile-time initializer is its thunk's `return` operand: a
+    /// projection or a reference result of a `Copyable` value is copied
+    /// out of the temporaries the thunk drops. The pin's compile-time
+    /// materialization asks `Copyable`, not `ImplicitlyCopyable`; any
+    /// other value is returned as it stands.
+    pub(super) fn copy_compile_time_result(&self, value: &Expr, ty: &Ty) {
+        if !self.is_copyable(ty) {
+            return;
+        }
+        let span = value.source_span();
+        let reference_result = matches!(
+            self.operation_adjustments.borrow().get(&span),
+            Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. })
+        );
+        if reference_result {
+            self.copyable_reference_result_reads
+                .borrow_mut()
+                .insert(span);
+        } else if is_place_expr(value) {
+            self.copy_place_value_uses.borrow_mut().insert(span);
+        }
+    }
+
     /// Find every `method` required by the given trait `bounds`. Keeping the
     /// full candidate set is important: bounded calls use the same named-argument
     /// binder, generic specialization, overload ranking, and effect selection as

@@ -883,8 +883,8 @@ impl Elab<'_> {
     /// `expression` with each value binding of `env` that a method call
     /// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
     /// binding a subscript reads (`M["a"]`), spelled by its literal form,
-    /// and a pending module constant a method call reads spelled by its
-    /// initializer, so that the request the elaborator below MIR serves
+    /// and a pending module constant a method call or a subscript reads
+    /// spelled by its initializer, so that the request the elaborator below MIR serves
     /// constructs the value itself, as the pin's parameter expression does.
     /// `None` when it reads none.
     pub(super) fn spelled_value_reads(
@@ -916,8 +916,7 @@ impl Elab<'_> {
                     display.source.clone_from(&object.source);
                     **object = display;
                     self.spelled = true;
-                } else if !subscripted
-                    && !self.env.contains_key(name)
+                } else if !self.env.contains_key(name)
                     && let Some(initializer) = self.pending.get(name)
                 {
                     **object = super::requests::located(initializer.clone(), object);
@@ -1416,9 +1415,10 @@ impl Elab<'_> {
                 receivers.subscripts.insert(name.clone());
             }
         }
-        receivers
-            .methods
-            .extend(self.pending_constants.borrow().keys().cloned());
+        for name in self.pending_constants.borrow().keys() {
+            receivers.methods.insert(name.clone());
+            receivers.subscripts.insert(name.clone());
+        }
         for statement in body {
             let StmtKind::Comptime { name, value, .. } = &statement.kind else {
                 continue;

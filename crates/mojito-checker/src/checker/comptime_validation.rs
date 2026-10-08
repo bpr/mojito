@@ -1580,6 +1580,7 @@ impl Checker {
             ));
         }
         let ty = mojito_types::types::default_literal(&ty?);
+        self.copy_compile_time_result(value, &ty);
         // A dictionary or a set has no compile-time form to freeze
         // (roadmap R196).
         if matches!(&ty, Ty::Struct(name, _)
@@ -2199,6 +2200,14 @@ impl Checker {
                 "a 'comptime(...)' operand that reads a runtime value".to_string(),
             ));
         }
+        // An operand that applies a callable is the application MIR lifts,
+        // which the elaborator below MIR evaluates.
+        if !self.source_validation
+            && self.applies_callable(operand)
+            && self.lifted_application(operand).is_none()
+        {
+            self.requested_binding(operand)?;
+        }
         let ty = {
             let _position = self.comptime_position();
             self.infer(operand)?
@@ -2211,13 +2220,17 @@ impl Checker {
                 materialized_collection_spelling(&display.ty),
             ));
         }
-        // An operand that applies a callable is the application MIR lifts,
-        // which the elaborator below MIR evaluates.
-        if !self.source_validation
-            && self.applies_callable(operand)
-            && self.lifted_application(operand).is_none()
+        // The runtime value of a compile-time operand is its implicit copy,
+        // as the pin materializes one: a collection or a struct that is
+        // not `ImplicitlyCopyable` does not cross.
+        let resolved = mojito_types::types::default_literal(&ty);
+        if self.crosses_to_runtime()
+            && !mojito_types::types::is_symbolic(&resolved)
+            && !self.is_implicitly_copyable(&resolved)
         {
-            self.requested_binding(operand)?;
+            return Err(TypeError::ComptimeCrossing(
+                materialized_collection_spelling(&resolved),
+            ));
         }
         Ok(ty)
     }

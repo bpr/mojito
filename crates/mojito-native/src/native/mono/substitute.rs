@@ -1506,7 +1506,7 @@ pub(super) fn parameter_value_construction(
             return Ok(instrs);
         }
         (CtValue::Tuple(elements), _) if value.is_constructed_parameter_value() => {
-            let types = mojito_types::types::tuple_elements(ty)
+            let types = tuple_instance_parts(ty)
                 .filter(|types| types.len() == elements.len())
                 .ok_or_else(unsupported)?;
             (
@@ -1821,6 +1821,24 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
         [TyArg::Ty(element), TyArg::Val(CtValue::Int(length))] => Some((element, *length)),
         _ => None,
     }
+}
+
+/// The element types of a `Tuple` instance, its monomorphized spelling
+/// included.
+fn tuple_instance_parts(ty: &Ty) -> Option<Vec<&Ty>> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if nominal_template(name) != mojito_types::types::TUPLE_TYPE_NAME {
+        return mojito_types::types::tuple_elements(ty);
+    }
+    arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(ty),
+            TyArg::Val(_) | TyArg::Origin(_) => None,
+        })
+        .collect()
 }
 
 /// The list-literal initializer call over `elements`, as MIR lowers a
