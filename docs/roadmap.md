@@ -106,21 +106,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
 
-- [ ] **R328 (P3) A thunk condition cannot read a local `comptime` binding
-  over a binder**
-
-  Problem: `comptime m = n + 1` then `comptime if is_even(m):` in `def
-  k[n: Int]()` fails with "VM CTFE failed for `$comptime$k$0$mono$V1`:
-  operator Mod is not defined for None and Int", where the pin prints `k`.
-  - The checker binds `m` to its parameter expression, so a compiled
-    condition over it closes, but the thunk lifted for an application reads
-    `m` as a frame slot no binder fills.
-  - The thunk should read `m` as the parameter expression it denotes
-    (`Const::Param`), as it reads an enclosing `comptime for` index.
-  - Found while landing R248 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R357 (P3d) A `t"…"` literal reaches its `TString` construction
   through a request the driver derives**
 

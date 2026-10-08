@@ -1003,6 +1003,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime if` condition applying a function to a local `comptime`
+  binding over a binder (`comptime m = n + 1` then `comptime if
+  is_even(m):`), chained or read beside a `comptime for` index, now decides
+  as at the pin; the lifted thunk reads the binding as the parameter
+  expression it denotes, and a fixture now pins the shape.
 - A local `comptime` binding of one function no longer leaks into a later
   function's body: `def g[n: Int]()` holding `comptime xs = ["a",
   String(n)]` printed the closed `xs` of an earlier `def f` instead of its
