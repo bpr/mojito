@@ -329,6 +329,18 @@ struct Specializer<'a> {
     instances: Vec<(InstanceKey, String)>,
     /// Each demanded key's position in `instances`.
     instance_index: HashMap<InstanceKey, usize>,
+    /// Each instance's position in `instances`, by its name.
+    instance_names: HashMap<String, usize>,
+    /// The instances each instance's materialization demanded, by its
+    /// position in `instances`: the edges a compile-time demand follows to
+    /// the fragment it runs.
+    references: Vec<Vec<String>>,
+    /// The references of each materialization under way, innermost last.
+    reference_frames: Vec<Vec<String>>,
+    /// The positions in `instances` of each struct instance's lifecycle
+    /// members, by the struct's name: what a value of the struct runs
+    /// without a call naming it.
+    lifecycle_instances: HashMap<String, Vec<usize>>,
     /// The state of each instance, by its position in `instances`.
     states: Vec<InstanceState>,
     /// The instances a compile-time evaluation is waiting on, outermost
@@ -349,6 +361,8 @@ struct Specializer<'a> {
     /// met again in a later body has nothing left to discover.
     discovered_types: HashSet<Ty>,
     output_functions: Vec<(String, MirFunction)>,
+    /// Each output function's position in `output_functions`, by name.
+    output_positions: HashMap<String, usize>,
     output_function_decls: Vec<MirFunctionDeclaration>,
     output_structs: Vec<MirStructDeclaration>,
     /// Each output struct's position in `output_structs`, by name.

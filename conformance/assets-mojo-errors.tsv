@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	536
+# swept-count	541
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -213,6 +213,8 @@ assets/type_error/comptime_for_tuple.mojo	compile-reject	agree	error: 'Tuple[Str
 assets/type_error/comptime_if_arm_conditional_destroy.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
 assets/type_error/comptime_if_constructor_arm_leaves_field_uninitialized.mojo	compile-reject	agree	error: 'self.x' is uninitialized at the implicit return from this function
 assets/type_error/comptime_if_instantiated_bad_branch.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["bad"]' value to 'Int'
+assets/type_error/comptime_initializer_dynamic_value.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
+assets/type_error/comptime_initializer_raising_call.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
 assets/type_error/comptime_keyed_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/comptime_layout_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 16]' to 'SIMD[.float32, size_of[Pair]()]'
 assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(3)]' to runtime because it is not 'ImplicitlyCopyable'
@@ -227,6 +229,9 @@ assets/type_error/contiguous_slice_not_equatable.mojo	compile-reject	agree	error
 assets/type_error/copyable_bound_rejects_move_only.mojo	compile-reject	agree	error: invalid call to 'duplicate': value passed to 'x' cannot be converted from 'Handle' to 'T', argument type 'Handle' does not conform to trait 'Copyable'
 assets/type_error/copyable_field_rejects_move_only.mojo	compile-reject	agree	error: cannot synthesize copy constructor because field 'h' has non-copyable type 'Handle'
 assets/type_error/copy_method_requires_copyable.mojo	compile-reject	agree	error: 'Plain' value has no attribute 'copy'
+assets/type_error/ctfe_constant_cycle.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/ctfe_local_binding_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
+assets/type_error/ctfe_method_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'
 assets/type_error/def_typed_field_rejected.mojo	compile-reject	agree	error: struct fields do not support trait types; 'def(Int) -> Int' is a trait, use a concrete type or compile-time generic
 assets/type_error/def_typed_local_annotation_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'def increment(x: Int) thin -> Int' value to 'def(Int) -> Int'
@@ -269,7 +274,7 @@ assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	er
 assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'
 assets/type_error/generic_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
-assets/type_error/generic_ctfe_impure.mojo	runs	subset	the pin runs it;Mojito rejects: not a compile-time value
+assets/type_error/generic_ctfe_impure.mojo	runs	subset	the pin runs it;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/hashable_bound_value_hash.mojo	compile-reject	agree	error: invalid call to '__hash__': missing required argument: 'hasher'
 assets/type_error/hashable_no_equality.mojo	compile-reject	agree	error: 'K' does not implement the '__eq__' method
 assets/type_error/hasher_missing_finish.mojo	compile-reject	agree	error: 'BrokenHasher' does not implement all requirements for 'Hasher'

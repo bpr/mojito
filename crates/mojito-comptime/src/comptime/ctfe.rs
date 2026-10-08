@@ -197,7 +197,7 @@ impl Elab<'_> {
         }
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(needed);
-        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations)?;
         self.rewrite_vm_ctfe_program(&mut program, name, locals)?;
         if program.is_empty() {
             return Err(ComptimeError::NotComptime(format!(
@@ -305,7 +305,7 @@ impl Elab<'_> {
         );
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations)?;
         program.push(entry);
         let run = vm.run_function_value(
             &program,
@@ -464,7 +464,7 @@ impl Elab<'_> {
         );
         let mut vm = VmBackend::new();
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations)?;
         program.push(entry);
         let run = vm.run_function_value(
             &program,
@@ -545,7 +545,7 @@ impl Elab<'_> {
             ));
         }
         let declarations = self.vm_ctfe_declaration_closure(&needed);
-        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations);
+        let (mut program, mut templates) = self.vm_ctfe_subprogram(&declarations)?;
         // The typing probe: `var $r = <expr>` inside a non-raising def. The
         // expression's own node gets a fresh identity — a rewritten chain may
         // share syntax ids among its nodes, and the checker re-keys
@@ -1372,7 +1372,7 @@ impl Elab<'_> {
     fn vm_ctfe_subprogram(
         &self,
         declarations: &HashSet<String>,
-    ) -> (Vec<Stmt>, mojito_checked::templates::TemplateCatalog) {
+    ) -> Result<(Vec<Stmt>, mojito_checked::templates::TemplateCatalog), ComptimeError> {
         let program = self
             .program
             .iter()
@@ -1450,8 +1450,19 @@ impl Elab<'_> {
                 _ => None,
             })
             .collect();
-        let mut program =
-            super::rewrite::materialize_block(program, &consts, &type_names, &HashSet::new());
+        // A pending module constant a retained declaration reads is
+        // demanded now.
+        let failure = RefCell::new(None);
+        let mut program = super::rewrite::materialize_block(
+            program,
+            &consts,
+            &type_names,
+            &HashSet::new(),
+            &self.pending_lookup(&failure),
+        );
+        if let Some(error) = failure.into_inner() {
+            return Err(error);
+        }
         // A retained struct's method that only elaborates with its own
         // compile-time parameters bound (a `comptime for` over a method pack,
         // `FormatStruct.params`), or with its struct's bound (a `comptime if`
@@ -1500,7 +1511,7 @@ impl Elab<'_> {
             instance_traces(Vec::new(), traces),
             generated_names(generated),
         );
-        (program, templates)
+        Ok((program, templates))
     }
 
     /// Fold what a VM-CTFE subprogram's checks derived and inferred into

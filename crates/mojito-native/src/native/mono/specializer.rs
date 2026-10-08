@@ -56,6 +56,10 @@ impl<'a> Specializer<'a> {
             queue: VecDeque::new(),
             instances: Vec::new(),
             instance_index: HashMap::new(),
+            instance_names: HashMap::new(),
+            references: Vec::new(),
+            reference_frames: Vec::new(),
+            lifecycle_instances: HashMap::new(),
             states: Vec::new(),
             demand_stack: Vec::new(),
             evaluations: HashMap::new(),
@@ -72,6 +76,7 @@ impl<'a> Specializer<'a> {
             vm: VmBackend::new(),
             discovered_types: HashSet::new(),
             output_functions: Vec::new(),
+            output_positions: HashMap::new(),
             output_function_decls: Vec::new(),
             output_structs: Vec::new(),
             output_struct_positions: HashMap::new(),
@@ -238,7 +243,9 @@ impl<'a> Specializer<'a> {
             owner,
         };
         if let Some(&index) = self.instance_index.get(&key) {
-            return Ok(self.instances[index].1.clone());
+            let name = self.instances[index].1.clone();
+            self.note_reference(&name);
+            return Ok(name);
         }
         // The one elaboration bound: counted where an instance is demanded,
         // so a wide and a deep explosion both stop here.
@@ -298,10 +305,11 @@ impl<'a> Specializer<'a> {
                     .zip(self.functions.get(template))
                     .is_some_and(|(known, template)| functions_equivalent(known, template))
         }) {
+            self.note_reference(&name);
             return Ok(name);
         }
         if (name != template && self.functions.contains_key(name.as_str()))
-            || self.instances.iter().any(|(_, n)| n == &name)
+            || self.instance_names.contains_key(&name)
         {
             return Err(self.error(
                 Some(template),
@@ -310,9 +318,29 @@ impl<'a> Specializer<'a> {
         }
         self.instance_index
             .insert(key.clone(), self.instances.len());
+        self.instance_names
+            .insert(name.clone(), self.instances.len());
+        if let Some((owner, method)) = mojito_symbol::symbol::split_method_symbol(&name)
+            && [
+                "__init__",
+                "__copyinit__",
+                "__moveinit__",
+                "__deinit__",
+                "__del__",
+            ]
+            .iter()
+            .any(|lifecycle| method.starts_with(lifecycle))
+        {
+            self.lifecycle_instances
+                .entry(owner.to_string())
+                .or_default()
+                .push(self.instances.len());
+        }
         self.instances.push((key.clone(), name.clone()));
         self.states.push(InstanceState::Pending);
+        self.references.push(Vec::new());
         self.queue.push_back((key, bindings));
+        self.note_reference(&name);
         Ok(name)
     }
 
@@ -326,6 +354,118 @@ impl<'a> Specializer<'a> {
             self.materialize(&key, &bindings)?;
         }
         Ok(())
+    }
+
+    /// Record `name` as a reference of the instance being materialized.
+    fn note_reference(&mut self, name: &str) {
+        if let Some(frame) = self.reference_frames.last_mut() {
+            frame.push(name.to_string());
+        }
+    }
+
+    /// Materialize the reference closure of the instance at `root` — the
+    /// instances its body demanded, the lifecycle members of every struct
+    /// its types name, theirs, and so on — and return the positions of its
+    /// completed members. A pending instance off the closure stays queued
+    /// for the outer drain, so a failure there is not this demand's. A path
+    /// into an instance being materialized is a cycle in the parameter
+    /// domain.
+    fn materialize_closure(&mut self, root: usize) -> Result<Vec<usize>, MonoError> {
+        // Each member beside whether a call reaches it, rather than only a
+        // value of its struct.
+        let mut pending = vec![(root, true)];
+        let mut seen = HashSet::new();
+        let mut structs = HashSet::new();
+        let mut closure = Vec::new();
+        while let Some((index, called)) = pending.pop() {
+            match self.states[index] {
+                // A lifecycle member being materialized is the struct whose
+                // layout this evaluation answers; no call reaches it.
+                InstanceState::Active if !called => continue,
+                _ if !seen.insert(index) => continue,
+                InstanceState::Pending => {
+                    let key = self.instances[index].0.clone();
+                    let bindings = self
+                        .queue
+                        .iter()
+                        .find(|(queued, _)| *queued == key)
+                        .map(|(_, bindings)| bindings.clone())
+                        .expect("a pending instance is queued");
+                    self.materialize(&key, &bindings)?;
+                }
+                InstanceState::Failed => {
+                    return Err(self.error(
+                        None,
+                        format!(
+                            "compile-time application reaches `{}`, which failed to elaborate",
+                            self.instances[index].1
+                        ),
+                    ));
+                }
+                // The fragment would call an instance whose body is still
+                // being written: the evaluation requires itself.
+                InstanceState::Active => {
+                    let path = self
+                        .demand_stack
+                        .iter()
+                        .map(String::as_str)
+                        .chain(std::iter::once(self.instances[index].1.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" -> ");
+                    return Err(self.error(
+                        None,
+                        format!(
+                            "function instantiation in parameter domain that recursively \
+                             requires itself: {path}"
+                        ),
+                    ));
+                }
+                InstanceState::Completed => {}
+            }
+            if self.states[index] == InstanceState::Completed {
+                closure.push(index);
+                let lifecycle = self.lifecycle_references(index, &mut structs);
+                pending.extend(lifecycle.into_iter().map(|member| (member, false)));
+            }
+            pending.extend(
+                self.references[index]
+                    .iter()
+                    .filter_map(|name| self.instance_names.get(name).map(|&member| (member, true))),
+            );
+        }
+        Ok(closure)
+    }
+
+    /// The lifecycle members of the structs the completed instance at
+    /// `index` names in its types, fields of fields included, that no
+    /// earlier member named (`structs`).
+    fn lifecycle_references(&self, index: usize, structs: &mut HashSet<String>) -> Vec<usize> {
+        let Some(&position) = self.output_positions.get(&self.instances[index].1) else {
+            return Vec::new();
+        };
+        let function = &self.output_functions[position].1;
+        let mut types: Vec<Ty> = function_types(function).cloned().collect();
+        push_instruction_types(&function.blocks, &mut types);
+        let mut references = Vec::new();
+        while let Some(ty) = types.pop() {
+            collect_nested_types(&ty, &mut types);
+            let Ty::Struct(name, _) = ty else {
+                continue;
+            };
+            if !structs.insert(name.clone()) {
+                continue;
+            }
+            if let Some(&declared) = self.output_struct_positions.get(&name) {
+                types.extend(
+                    self.output_structs[declared]
+                        .fields
+                        .iter()
+                        .map(|(_, ty)| ty.clone()),
+                );
+            }
+            references.extend(self.lifecycle_instances.get(&name).into_iter().flatten());
+        }
+        references
     }
 
     pub(super) fn instance_name(&self, key: &InstanceKey) -> &str {
@@ -406,7 +546,9 @@ impl<'a> Specializer<'a> {
     ) -> Result<(), MonoError> {
         let index = self.instance_index[key];
         self.states[index] = InstanceState::Active;
+        self.reference_frames.push(Vec::new());
         let result = self.materialize_body(key, bindings);
+        self.references[index] = self.reference_frames.pop().unwrap_or_default();
         self.states[index] = if result.is_ok() {
             InstanceState::Completed
         } else {
@@ -526,6 +668,8 @@ impl<'a> Specializer<'a> {
         self.discover_structs(&key.template, &function)?;
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
+        self.output_positions
+            .insert(name.clone(), self.output_functions.len());
         self.output_functions.push((name, function));
         Ok(())
     }
@@ -713,9 +857,9 @@ impl<'a> Specializer<'a> {
     }
 
     /// Evaluate the application of `function` to `args` under `bindings` by
-    /// demanding its instance: the instance and every pending instance are
-    /// materialized now, the completed output is verified as the fragment the
-    /// VM runs, and the frozen result is cached by the instance's name. The
+    /// demanding its instance: the instance's reference closure is
+    /// materialized now and verified as the fragment the VM runs, and the
+    /// frozen result is cached by the instance's name. The
     /// arguments past the function's compile-time parameters are the values
     /// of its runtime ones (`h(n)`, a `def` the check applied by name), which
     /// the call passes and the cache keys beside the name. A demand on an
@@ -824,12 +968,8 @@ impl<'a> Specializer<'a> {
         if let Some(value) = self.evaluations.get(&evaluation) {
             return Ok(value.clone());
         }
-        let index = self
-            .instances
-            .iter()
-            .position(|(_, instance)| *instance == name)
-            .expect("an enqueued instance is recorded");
-        match self.states[index] {
+        let index = self.instance_names[&name];
+        let closure = match self.states[index] {
             InstanceState::Active => {
                 let path = self
                     .demand_stack
@@ -852,41 +992,38 @@ impl<'a> Specializer<'a> {
                     format!("compile-time application `{name}` failed to elaborate"),
                 ));
             }
-            // The fragment the VM runs must hold every callee the thunk can
-            // reach, and a callee may be pending from an earlier body, so
-            // every pending instance is materialized before the call: the
-            // whole worklist, which the run would materialize anyway.
-            InstanceState::Pending => {
-                let key = self.instances[index].0.clone();
-                let position = self
-                    .queue
-                    .iter()
-                    .position(|(queued, _)| *queued == key)
-                    .expect("a pending instance is queued");
-                let (_, demanded) = self.queue.remove(position).expect("position is in range");
+            // The fragment the VM runs holds every instance the thunk can
+            // reach, and only those: the demand blocks on its own closure.
+            InstanceState::Pending | InstanceState::Completed => {
                 let frame = self.take_frame();
                 self.demand_stack.push(name.clone());
-                let drained = self
-                    .materialize(&key, &demanded)
-                    .and_then(|()| self.drain());
+                let closure = self.materialize_closure(index);
                 self.demand_stack.pop();
                 self.restore_frame(frame);
-                drained?;
+                closure.map_err(|mut error| {
+                    error.function.get_or_insert_with(|| template.to_string());
+                    error
+                })?
             }
-            InstanceState::Completed => {
-                let frame = self.take_frame();
-                self.demand_stack.push(name.clone());
-                let drained = self.drain();
-                self.demand_stack.pop();
-                self.restore_frame(frame);
-                drained?;
-            }
-        }
+        };
+        let names: HashSet<&str> = closure
+            .iter()
+            .map(|&member| self.instances[member].1.as_str())
+            .collect();
         let fragment = ConcreteMir::verified(MirProgram {
-            functions: self.output_functions.clone(),
+            functions: closure
+                .iter()
+                .filter_map(|&member| self.output_positions.get(&self.instances[member].1))
+                .map(|&position| self.output_functions[position].clone())
+                .collect(),
             declarations: MirDeclarations {
                 structs: self.output_structs.clone(),
-                functions: self.output_function_decls.clone(),
+                functions: self
+                    .output_function_decls
+                    .iter()
+                    .filter(|declaration| names.contains(declaration.lowered_name.as_str()))
+                    .cloned()
+                    .collect(),
                 traits: self.source.declarations.traits.clone(),
             },
             invariant_errors: Vec::new(),
@@ -2965,8 +3102,8 @@ fn close_parameter_slots(instruction: &mut MirInstr) {
     }
 }
 
-/// The first effectful builtin (`print`, `input`) a call from `entry`
-/// reaches in `program`, through its call edges.
+/// The first effectful builtin (`print`, `input`) `entry` reaches in
+/// `program`, through every edge by which one function names another.
 fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
     let mut pending = vec![entry.to_string()];
     let mut seen = HashSet::new();
@@ -2977,11 +3114,11 @@ fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
         let Some((_, function)) = program.functions.iter().find(|(known, _)| *known == name) else {
             continue;
         };
-        let mut callees = Vec::new();
+        let mut referenced = Vec::new();
         for block in &function.blocks {
-            collect_callees(&block.instrs, &mut callees);
+            collect_referenced_functions(&block.instrs, &mut referenced);
         }
-        for callee in callees {
+        for callee in referenced {
             if matches!(callee.as_str(), "print" | "input") {
                 return Some(callee);
             }
@@ -2991,10 +3128,23 @@ fn effectful_callee(program: &MirProgram, entry: &str) -> Option<String> {
     None
 }
 
-fn collect_callees(instructions: &[MirInstr], callees: &mut Vec<String>) {
+/// The functions `instructions` name: a call's callee, a method call's or a
+/// subscript's resolved target, a callable struct's `__call__`, a closure's
+/// lifted body, and those of a `try`'s regions.
+fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<String>) {
     for instruction in instructions {
         match instruction {
-            MirInstr::Call { func, .. } => callees.push(func.0.clone()),
+            MirInstr::Call { func, .. } => referenced.push(func.0.clone()),
+            MirInstr::MethodCall { resolved, .. } | MirInstr::CallIndirect { resolved, .. } => {
+                referenced.extend(resolved.iter().cloned());
+            }
+            MirInstr::MakeClosure { function, .. } => referenced.push(function.clone()),
+            MirInstr::Index { call, .. }
+            | MirInstr::Slice { call, .. }
+            | MirInstr::MultiIndex { call, .. } => {
+                referenced.extend(call.iter().map(|call| call.target.clone()));
+            }
+            MirInstr::MultiSet { call, .. } => referenced.push(call.target.clone()),
             MirInstr::Try {
                 body,
                 handler,
@@ -3008,7 +3158,7 @@ fn collect_callees(instructions: &[MirInstr], callees: &mut Vec<String>) {
                     .chain(finalbody.iter());
                 for region in regions {
                     for block in region {
-                        collect_callees(&block.instrs, callees);
+                        collect_referenced_functions(&block.instrs, referenced);
                     }
                 }
             }

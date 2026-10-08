@@ -731,7 +731,14 @@ branch for the class is deleted, and so is its certificate class.
   followed with R259 (2026-10-05): `_update_with_simd` is a generator over
   an infer-only dtype and `SIMDLength` binder pair, the 28 eager leaves
   are gone, and Hello World reads `method_per_call 47`, total 183. What
-  still clones per call is R310 (a body only a clone serves).
+  still clones per call is R310 (a body only a clone serves). The third
+  step landed with R7 (2026-10-07): the AST route minted no clone for an
+  evaluation (the census row above always read 0, and its class is gone),
+  but it ran every evaluation outside the worklist. An evaluation in a
+  body, and a body's read of a module constant whose initializer applies a
+  callable, is now a request the elaborator serves, its demand draining
+  the thunk's reference closure alone (`docs/notes/ctfe-request-path.md`);
+  the in-body shapes still evaluated above the check are R488's.
 
 One mixed-feature probe is carried through every P3 step, so migrations that
 pass alone also compose.

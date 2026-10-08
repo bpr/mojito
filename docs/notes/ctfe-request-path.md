@@ -10,7 +10,19 @@ end move it.
 
 ## Today
 
-A compile-time call is evaluated above the check, by the AST elaborator in
+Since roadmap R7 (2026-10-07), an evaluation whose consumer sits below the
+check takes the request path: a local `comptime` binding, a `comptime if`
+condition, a `comptime for` range bound, or a `comptime(...)` operand in a
+function body that applies a callable (`Elab::applies_callable`), and a
+body's value read of a module constant whose initializer applies one
+(`comptime/requests.rs`). The AST route below is entered only by a reader
+above the check — a type, a condition or bound the elaborator decides
+itself, another constant, a VM-CTFE subprogram's retained declaration —
+which forces a pending module constant once (`Elab::force_constant`), and
+by the in-body shapes roadmap R488 lists. A module constant nothing forces
+is never evaluated above MIR.
+
+The AST route evaluates a compile-time call above the check, in
 `crates/mojito-comptime`, once per discovery round:
 
 ```text
@@ -311,14 +323,22 @@ The boundary:
   with a `comptime if` condition that applies a function as the first
   consumer (`Specializer::demand_application`). A layout query in a module
   constant stays symbolic through elaboration (`CtMarker::Layout`) and is
-  answered by `Bindings::layout` (`LayoutOracle`) in `eval_ct`. Two
-  simplifications of this note's design stand in the first landing: a demand
-  materializes every pending instance, not the thunk's reference closure
-  alone, and verifies the whole completed output as the fragment; and an
-  application is evaluated only as a whole condition operand (roadmap
-  R139). `Apply` crosses MIR text since schema 1.14, the branch since 1.15.
-- **Roadmap R7** (clones minted during CTFE) and **R131**, **R132**
-  close when a demand serves a keyed instance.
+  answered by `Bindings::layout` (`LayoutOracle`) in `eval_ct`. `Apply`
+  crosses MIR text since schema 1.14, the branch since 1.15.
+- **Roadmap R7 landed (2026-10-07).** A demand materializes the thunk's
+  reference closure alone (`Specializer::materialize_closure`): the
+  instances each body's materialization enqueued
+  (`Specializer::references`), and the lifecycle members of every struct a
+  member's types name, so a failure in an unrelated pending instance is the
+  outer drain's. The fragment the VM runs and verifies is that closure. A
+  closure that reaches an `Active` instance is the cycle error. The effect
+  scan follows every reference edge — calls, method and subscript targets,
+  a callable struct's `__call__`, closures, `try` regions
+  (`collect_referenced_functions`). Every in-body evaluation that applies a
+  callable is a request (see Today), so R131, R132, R486, and the
+  instance-budget stop of R162 hold on the request path; the erased oracle
+  evaluates an application constant by calling the function
+  (`VmBackend::erased_application`).
 - **Roadmap R9** (P4) deletes the AST route, the early folding of applied
   constants, and the per-round fuel reset; `run_function_value` goes with
   it. The instance budget is reachable without exhausting memory

@@ -126,6 +126,8 @@ assets/ok/copyable.mojo	main	exe-differential	sanitized
 assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/ok/copyinit_moveinit.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_beside_comptime_if_struct_method.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_body_requests.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_module_constant_requests.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized

@@ -328,6 +328,11 @@ impl Elab<'_> {
                 && param_args.is_empty()
                 && kwargs.is_empty() =>
             {
+                // An operand that applies a callable is a request the
+                // elaborator below MIR serves.
+                if self.applies_callable(&args[0]) {
+                    return Ok(());
+                }
                 let value = match self.eval(&args[0], env) {
                     Ok(value) => value,
                     // An operand over the binders of a generic body is the

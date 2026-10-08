@@ -41,7 +41,6 @@ use mojito_ast::ast::{
 pub use mojito_symbol::symbol::mangle;
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
-use mojito_checked::census::CloneClass;
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
@@ -1014,7 +1013,6 @@ pub fn elaborate_prepared(
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         per_call_clones: RefCell::new(HashSet::new()),
-        ctfe_clones: Cell::new(0),
         per_call_stubs: std::cell::OnceCell::new(),
         template_served_defs: RefCell::new(HashMap::new()),
         conformance,
@@ -1026,22 +1024,32 @@ pub fn elaborate_prepared(
         method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
         top_consts: RefCell::new(HashMap::new()),
+        pending_constants: RefCell::new(HashMap::new()),
+        forced_constants: RefCell::new(HashMap::new()),
+        forcing_constants: RefCell::new(HashSet::new()),
         generic_aliases: RefCell::new(HashMap::new()),
     };
     drop(indexes);
     elab.check_default_effects(program)?;
     let mut env = HashMap::new();
     let mut elaborated = elab.block(program, &mut env, false)?;
+    let deferred = elab.request_pending_reads(&mut elaborated);
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // Materialize module-level comptime constants into runtime literals.
-    let materialized = materialize_block(
+    let failure = RefCell::new(None);
+    let mut materialized = materialize_block(
         elaborated,
         &consts,
         &elab.struct_names,
         &elab.applied_constants(),
+        &elab.pending_lookup(&failure),
     );
+    if let Some(error) = failure.into_inner() {
+        return Err(error);
+    }
+    elab.restore_forced_constants(&mut materialized, deferred);
     // Monomorphize comptime-dependent generic templates against their call sites.
     let Elaborated {
         program: mut result,
@@ -1082,14 +1090,13 @@ pub fn elaborate_prepared(
     generated.methods.extend(per_call_clones);
     let def_traces = elab.def_traces.take();
     let method_traces = elab.method_traces.take();
-    let mut clones = census::clone_census(&census::Minted {
+    let clones = census::clone_census(&census::Minted {
         prepared: program,
         elaborated: &result,
         def_traces: &def_traces,
         method_traces: &method_traces,
         generated: &generated,
     });
-    clones.add(CloneClass::Ctfe, elab.ctfe_clones.get());
     Ok(Elaborated {
         program: result,
         instances,
@@ -1111,6 +1118,7 @@ mod elab;
 mod pack_qualification;
 mod packs;
 mod params;
+mod requests;
 mod synth;
 mod unparse;
 
@@ -1469,6 +1477,7 @@ pub(super) fn comptime_for_is_template_served(
                 && args.iter().all(|bound| {
                     parameter_shaped(bound, packs)
                         || display_read_shaped(bound, packs, names.displays, names.scalars)
+                        || applied_bound(bound, packs, names.displays, names.scalars)
                 })
         }
         ExprKind::ListLit(items) => {
@@ -1831,6 +1840,36 @@ fn display_read_shaped(
 ) -> bool {
     elab::expression_names_any(expression, displays)
         && scalar_shaped(expression, packs, displays, scalars)
+}
+
+/// Whether a loop bound applies a function to compile-time values
+/// (`range(f(n))`): the application the elaborator below MIR demands.
+fn applied_bound(
+    expression: &Expr,
+    packs: &HashSet<String>,
+    displays: &HashSet<String>,
+    scalars: &ScalarReads,
+) -> bool {
+    struct Calls<'s> {
+        scalars: &'s ScalarReads,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Calls<'_> {
+        fn visit_expr(&mut self, expression: &Expr) {
+            self.found |= matches!(
+                expression.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            ) && self.scalars.call(expression);
+        }
+    }
+
+    let mut calls = Calls {
+        scalars,
+        found: false,
+    };
+    mojito_ast::visit::walk_expr(&mut calls, expression);
+    calls.found && scalar_shaped(expression, packs, displays, scalars)
 }
 
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
@@ -3167,8 +3206,6 @@ struct Elab<'a> {
     /// clone name). They carry no receiver type, so source stamping names
     /// them here rather than by `Method::self_ty`.
     per_call_clones: RefCell<HashSet<(String, String)>>,
-    /// Bodies minted for VM CTFE subprograms, for the instantiation census.
-    ctfe_clones: Cell<usize>,
     /// The struct methods whose template is a trap stub that only a per-call
     /// clone serves (a `comptime if` over the method's own binders), as
     /// [`method_owner`] keys: a body calling one over its own binders reaches
@@ -3195,6 +3232,14 @@ struct Elab<'a> {
     /// The `def` clones and per-call method clones generated so far.
     generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
+    /// The module constants evaluated on demand, by name
+    /// ([`Self::defer_constant`]).
+    pending_constants: RefCell<HashMap<String, requests::PendingConstant>>,
+    /// The pending constants a reader above the check forced, with their
+    /// values.
+    forced_constants: RefCell<HashMap<String, CtValue>>,
+    /// The pending constants being forced, which a cycle demands again.
+    forcing_constants: RefCell<HashSet<String>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the
     /// checker's alias registry, but an application inside a `comptime if`

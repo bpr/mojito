@@ -2755,6 +2755,76 @@ fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
     }
 }
 
+impl VmBackend {
+    /// The value of a compile-time application an erased frame reads as a
+    /// constant (`comptime x = f(n)`): the function called with the
+    /// frame's values of its arguments, its compile-time ones bound by name
+    /// as an erased call binds them. `None` for any other parameter
+    /// constant, or an application of no function of the program.
+    fn erased_application(
+        &mut self,
+        prog: &Prog,
+        expr: &mojito_types::param_expr::ParamExpr,
+        function: &MirFunction,
+        variables: &[Value],
+        comptime: &[(String, Value)],
+    ) -> Result<Option<Value>, RuntimeError> {
+        let mojito_types::param_expr::ParamKind::Apply {
+            function: callee,
+            args,
+            evaluated: None,
+        } = expr.kind()
+        else {
+            return Ok(None);
+        };
+        let (Some(index), Some(declaration)) = (
+            prog.index_of(callee),
+            prog.mir
+                .declarations
+                .functions
+                .iter()
+                .find(|declaration| declaration.lowered_name == *callee),
+        ) else {
+            return Ok(None);
+        };
+        // A static method of a generic struct is applied to its instance
+        // first, which an erased call does not pass.
+        let on_instance = mojito_symbol::symbol::split_method_symbol(callee)
+            .and_then(|(owner, _)| prog.structs.get(owner))
+            .is_some_and(|owner| !owner.param_decls.is_empty());
+        let args = &args[usize::from(on_instance).min(args.len())..];
+        let parameters = erased_parameter_values(function, variables, comptime);
+        let value = |arg: &mojito_types::param_expr::ParamExpr| {
+            arg.evaluate_named(&parameters)
+                .ok()
+                .and_then(ct_value_as_runtime)
+                .ok_or_else(|| {
+                    RuntimeError::Unsupported(format!(
+                        "the erased oracle cannot evaluate the argument `{arg}` of `{expr}`"
+                    ))
+                })
+        };
+        let (compile_time, runtime) = args.split_at(declaration.param_decls.len().min(args.len()));
+        let mut value_params = Vec::new();
+        for (decl, arg) in declaration.param_decls.iter().zip(compile_time) {
+            if let ParamDecl::Value { name, .. } = decl {
+                value_params.push((name.clone(), value(arg)?));
+            }
+        }
+        let runtime = runtime.iter().map(value).collect::<Result<Vec<_>, _>>()?;
+        // A compile-time evaluation is fuel-bounded wherever it runs.
+        let outermost = self.ctfe_fuel.is_none();
+        if outermost {
+            self.ctfe_fuel = Some(crate::crossing::CTFE_FUEL);
+        }
+        let result = self.call_function(prog, index, runtime, &value_params);
+        if outermost {
+            self.ctfe_fuel = None;
+        }
+        result.map(Some)
+    }
+}
+
 /// Whether a branch condition register holds `True`.
 fn is_true(v: &Value) -> bool {
     matches!(v, Value::Bool(true))

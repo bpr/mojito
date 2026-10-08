@@ -177,6 +177,19 @@ impl VmBackend {
                     field.clone()
                 };
             }
+            MirInstr::Const {
+                dest,
+                k: Const::Param(expr),
+            } if let Some(value) = self.erased_application(
+                prog,
+                expr,
+                &prog.mir.functions[function].1,
+                vars,
+                comptime,
+            )? =>
+            {
+                regs[dest.0 as usize] = value;
+            }
             MirInstr::Const { dest, k } => {
                 let mut value = const_value(k, &prog.mir.functions[function].1, vars, comptime)?;
                 // An aggregate parameter constant holds each tuple as the

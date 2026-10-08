@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R488**.
+Next free ID: **R490**.
 
 ## Ordered Work
 
@@ -149,20 +149,27 @@ correctness fix to existing behavior is allowed.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R7 (P3e) A compile-time evaluation mints its own clones**
+- [ ] **R488 (P3e) Some compile-time evaluations in a body still run on
+  the AST route**
 
-  Problem: a generic call inside a compile-time evaluation is cloned in the
-  AST subprogram that evaluation builds, outside every other instantiation
-  path.
-  - The evaluation requests the instance from the worklist, by the request
-    path already designed.
-  - The path's first landing (2026-10-03, `Specializer::demand_application`)
-    materializes every pending instance before a compile-time call and
-    verifies the whole completed output as the fragment the VM runs; the
-    reference closure of the thunk alone is the refinement, and the effect
-    scan follows `Call` edges only.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  Problem: an in-body evaluation the elaborator does not see apply a
+  callable is still evaluated above the check, on the erased VM-CTFE
+  subprogram, rather than requested from the worklist.
+  - A collection display or a tuple whose elements apply a callable
+    (`comptime L = [f(1), 2]`), a construction that calls nothing else
+    (`comptime p = P(3)`), a method chain on a compile-time value
+    (`M.get("a").value()`), and a dictionary subscript.
+  - An annotated or constrained module constant (`comptime C: Int = f(1)`)
+    is evaluated where it is declared.
+  - An application of a `def` generic over a type (`capacity[Buffer[8]]()`)
+    stays there too, since its body may read an associated member through
+    the type (`T.size`), which MIR cannot yet (R484); a non-generic callee
+    that reaches such a body is requested and stops the same way.
+  - `Elab::applies_callable` (`comptime/elab.rs`) and its checker twin
+    (`comptime_validation.rs`) draw the line.
+  - Readers above the check that force a module constant are entry R9's.
+  - Depends on R484, for the application of a `def` generic over a type.
+  - Model: Fable, Not Planned.
 
 - [ ] **R8 (P3) A method that reaches a compile-time construct still
   clones per instance**
@@ -2663,6 +2670,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     sized integers want the same.
   - Found while landing an application in a type or a parameter argument
     (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R489 An associated `comptime` member that applies a function is
+  rejected**
+
+  Problem: `comptime V = f(Self.k)` in `struct S[k: Int]`, read as
+  `Self.V`, prints at the pin, while Mojito reports "not a compile-time Int
+  constant: not an associated comptime expression".
+  - A function body's local binding of the same call is a request the
+    elaborator serves per instance (`docs/notes/ctfe-request-path.md`).
+  - The member is the generator's, evaluated under the instance's bindings,
+    so it can denote the same application.
+  - Found while planning R7 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

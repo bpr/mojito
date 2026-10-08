@@ -188,24 +188,47 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         match value {
             Value::Tuple(items) => {
-                let storage = target
-                    .and_then(|target| match target {
-                        Ty::Struct(name, _) => prog.structs.get(name),
-                        _ => None,
-                    })
-                    .and_then(|definition| match definition.fields.as_slice() {
-                        [(_, Ty::Tuple(elements))] => Some(elements.clone()),
+                let instance = target.and_then(|target| match target {
+                    Ty::Struct(name, _) => {
+                        prog.structs.get(name).map(|definition| (name, definition))
+                    }
+                    _ => None,
+                });
+                let storage =
+                    instance.and_then(|(_, definition)| match definition.fields.as_slice() {
+                        [(field, Ty::Tuple(elements))] => Some((field.clone(), elements.clone())),
                         _ => None,
                     });
                 let items = items
                     .into_iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        let element = storage.as_ref().and_then(|elements| elements.get(index));
+                        let element = storage
+                            .as_ref()
+                            .and_then(|(_, elements)| elements.get(index));
                         self.materialize_parameter_value(prog, item, element)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                self.materialize_checked_result(prog, Value::Tuple(items), target)
+                // A concrete `Tuple` instance holds the elements as its
+                // storage, each at its storage type.
+                match (instance, storage) {
+                    (Some((name, _)), Some((field, elements)))
+                        if elements.len() == items.len()
+                            && mojito_types::types::pack_spread(&elements).is_none() =>
+                    {
+                        let storage = items
+                            .into_iter()
+                            .zip(&elements)
+                            .map(|(item, ty)| crate::runtime::coerce_checked(item, ty))
+                            .collect();
+                        Ok(Value::Struct {
+                            name: name.clone(),
+                            fields: vec![(field, Value::Tuple(storage))],
+                            value_params: Vec::new(),
+                        })
+                    }
+                    _ => self.materialize_checked_result(prog, Value::Tuple(items), target),
+                }
             }
             Value::Struct {
                 name,

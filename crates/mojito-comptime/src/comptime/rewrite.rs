@@ -21,11 +21,14 @@ pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 /// `applied` names the constants whose initializer applies a function: each
 /// folds to its value in a value position and keeps its name in a type
 /// argument, where the checker reads its identity as the application.
+/// `pending` forces a module constant evaluated on demand that a position
+/// reads.
 pub(super) fn materialize_block(
     stmts: Vec<Stmt>,
     consts: &HashMap<String, CtValue>,
     type_names: &HashSet<String>,
     applied: &HashSet<String>,
+    pending: &dyn Fn(&str) -> Option<CtValue>,
 ) -> Vec<Stmt> {
     // Declared struct names are marked so a subscript-shaped projection on a
     // runtime local (`v[String]`) can be told from ordinary indexing.
@@ -34,6 +37,9 @@ pub(super) fn materialize_block(
     let subs: Subs = &|n| {
         consts
             .get(n)
+            .map(std::borrow::Cow::Borrowed)
+            .or_else(|| pending(n).map(std::borrow::Cow::Owned))
+            .as_deref()
             .filter(|value| !value.is_runtime_collection())
             .map(|value| match value {
                 CtValue::Int(folded) if applied.contains(n) => {

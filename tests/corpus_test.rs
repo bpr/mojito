@@ -389,6 +389,7 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_application_argument",
     "comptime_call_callee_shapes",
     "comptime_call_signature",
+    "ctfe_body_requests",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",

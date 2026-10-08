@@ -34,13 +34,10 @@ pub enum CloneClass {
     InstanceMethodComptime,
     /// A per-call method clone, for the method's own compile-time parameters.
     PerCallMethod,
-    /// A method clone minted for a compile-time evaluation's own
-    /// subprogram.
-    Ctfe,
 }
 
 impl CloneClass {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::TypeDef,
         Self::ComptimeIfDef,
         Self::ComptimeForDef,
@@ -49,7 +46,6 @@ impl CloneClass {
         Self::InstanceMethod,
         Self::InstanceMethodComptime,
         Self::PerCallMethod,
-        Self::Ctfe,
     ];
 
     /// The class's `--timings` counter.
@@ -65,7 +61,6 @@ impl CloneClass {
                 "instantiation.cloned.method_per_instantiation_comptime"
             }
             Self::PerCallMethod => "instantiation.cloned.method_per_call",
-            Self::Ctfe => "instantiation.cloned.ctfe",
         }
     }
 }

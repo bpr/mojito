@@ -3107,14 +3107,10 @@ impl Flatten<'_> {
     /// expression. `None` for an expression that reads no display.
     fn display_read(&mut self, expression: &Expr) -> Option<(Reg, Option<ParamExpr>)> {
         let displays = self.displays_read(expression);
-        // An expression the check lifted denotes its application; one that
-        // reads no display is computed here as well.
+        // An expression the check lifted denotes its application, which the
+        // elaborator evaluates per instance.
         if let Some(application) = self.comptime_application(expression) {
-            let value = if displays.is_empty() {
-                self.expr(expression)
-            } else {
-                self.param_value_register(expression, application.clone())
-            };
+            let value = self.param_value_register(expression, application.clone());
             return Some((value, Some(application)));
         }
         if displays.is_empty() {

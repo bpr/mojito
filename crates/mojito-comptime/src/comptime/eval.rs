@@ -27,6 +27,9 @@ impl Elab<'_> {
                 if let Some(value) = scope.get(name) {
                     return Ok(value.clone());
                 }
+                if let Some(value) = self.force_constant(name)? {
+                    return Ok(value);
+                }
                 self.type_value(name, &[], scope)
             }
             ExprKind::TypeValue(ty) => Ok(CtValue::Type(Box::new(

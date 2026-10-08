@@ -58,7 +58,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | String formatting | `stdlib/std/string.mojo` (`_FormatUtils`, `_FormatCurlyEntry`, `_PrecompiledEntriesRuntime`, and the `format` methods of `String` and `StringSpan`), the literal stand-in named by `mojito_symbol::symbol::{STDLIB_FORMAT_UTILS_STRUCT, FORMAT_LITERAL_METHOD}` | Upstream's `collections/string/format.mojo`, kept beside `String` because `format` builds a `String`. A string literal's `format` reaches `_FormatUtils.format_literal` through `infer_literal_format` (`checker/method_calls/intrinsic_receivers.rs`) and `SemanticAdjustment::LiteralFormat`; nothing in the VM or the native backend formats a template. |
 | Native compile (`backend-pliron`) | `backend::pliron::{compile, compile_mir, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. `compile` takes the driver's cached concrete graph and elaborates nothing; `compile_mir` elaborates drop-elaborated MIR from the entries a caller names. |
 | Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, LayoutError, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the elaborator's answer to a layout query (`native::mono`, under the compilation's target; `LayoutError::Symbolic` is the one refusal of a type that still names a parameter), the erased oracle's `SizeOf` on the host, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
-| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError, MonoErrorKind}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mono/rebind.rs`: `Specializer::discharge_rebinds`; `mono/failure.rs`: `Specializer::discharge_instantiation_failures` (a reached method clone whose instantiation failed above MIR), `reached_failure` (a parameter constant an unrolled iteration could not compute, reported once the instance reaches it); `mono/gather.rs`: `Specializer::close_lane_masks`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
+| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError, MonoErrorKind}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, materialize_closure, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mono/rebind.rs`: `Specializer::discharge_rebinds`; `mono/failure.rs`: `Specializer::discharge_instantiation_failures` (a reached method clone whose instantiation failed above MIR), `reached_failure` (a parameter constant an unrolled iteration could not compute, reported once the instance reaches it); `mono/gather.rs`: `Specializer::close_lane_masks`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
 
 ## Source Versus Checked Naming
 
@@ -1043,6 +1043,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its traced clones from: `TemplateCatalog::for_subprogram` over the
   driver's catalog that `elaborate_prepared` receives), and the effect walk (`vm_ctfe_safe_*`: deterministic bodies run, only
   `print`/`input` reject).
+- `comptime/requests.rs` owns the module constants evaluated on demand
+  (R7): `Elab::defer_constant` records one whose initializer applies a
+  callable (`Elab::applies_callable`, `comptime/elab.rs`, the line every
+  in-body request is drawn by, with its checker twin in
+  `comptime_validation.rs`), `Elab::force_constant` evaluates it for a
+  reader above the check (`Elab::eval`'s identifier fallback, and
+  `Elab::pending_lookup` inside `materialize_block`), and
+  `Elab::request_pending_reads` rewrites a body's value read to the request
+  `comptime(<initializer>)`, `Elab::restore_forced_constants` putting back
+  only the declarations something forced.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
   literals, and so does a reflection query over a closed handle
@@ -1313,9 +1323,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   already lifted, and `Flatten::comptime_application` reads the expression
   back as its application in `display_read` and `value_binder_expr`.
   `Flatten::display_read` (`mir.rs`)
-  lowers a compile-time expression that reads a display (`displays_read`):
-  an `Int` or `Bool` as a parameter constant over its thunk's application,
-  any other value in place after `build_display`;
+  lowers an expression the check lifted as the parameter constant of its
+  application, and a compile-time expression that reads a display
+  (`displays_read`): an `Int` or `Bool` as a parameter constant over its
+  thunk's application, any other value in place after `build_display`. A
+  local `comptime` binding or a `comptime(e)` operand that applies a
+  callable at a type no parameter expression spells (a `String`, a tuple, a
+  struct) is lifted by name at its own type
+  (`Checker::requested_binding`, `checker/comptime_validation.rs`), in any
+  body; the erased oracle runs such an application by calling its function
+  (`VmBackend::erased_application`, `backend/vm.rs`);
   `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
   operand of a kept `materialize[X]()` or `comptime(e)`
   (`Checker::infer_template_materialize`, `infer_template_comptime`), a
@@ -1665,9 +1682,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   condition on the erased path from the frame's reified parameters
   (`Frame::comptime`).
 - `native::mono`: `InstanceState`, `Specializer::drain`,
-  `demand_application` (the demand edge: materialize every pending instance,
-  verify the output as the fragment, refuse an effectful callee, burn fuel,
-  run, freeze, cache by instance name and runtime arguments; the arguments
+  `demand_application` (the demand edge: materialize the instance's
+  reference closure — `Specializer::materialize_closure` over the names each
+  materialization enqueued, `Specializer::references`, and the lifecycle
+  members of the structs its types name, `lifecycle_instances`; a member
+  still `Active` is the parameter-domain cycle — verify that closure as the
+  fragment, refuse an effectful callee reached through any reference edge
+  (`collect_referenced_functions`), burn fuel, run, freeze, cache by
+  instance name and runtime arguments; the arguments
   past the callee's compile-time parameters are its runtime ones, for a
   `def` the check applied by name; a demand on an `Active` instance is
   the parameter-domain cycle), `resolve_applications` over a branch

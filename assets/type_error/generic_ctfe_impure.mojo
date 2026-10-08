@@ -1,4 +1,4 @@
-# expect: not a compile-time value
+# expect: is not safe for VM-backed compile-time execution
 def bad() -> Int:
     print("no")
     return 1

@@ -8,6 +8,33 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time evaluation in a function body is now requested from the
+  elaborator's worklist, as at the pin: a local `comptime` binding, a
+  `comptime if` condition, a `comptime for` range bound, or a
+  `comptime(...)` operand that applies a callable, in a generic body or
+  not. A binding over a binder (`comptime x = f(k)` in `def g[k: Int]`)
+  no longer calls `f` at run time on every call, and a binding may hold a
+  `String`, a tuple, or a struct (`comptime s = label(3)` through a
+  t-string or a `Tuple`, which stopped with "TString.write_to:
+  unspecialized type-keyed method"). A module constant whose initializer
+  applies a callable is evaluated on demand: a body's read of it is such a
+  request, so one that calls a generic struct's method holding a
+  `comptime if` (which stopped at "Cell.m: unspecialized type-keyed
+  method") or a value-keyed `def` recursing under one (which stopped at
+  "unknown compile-time function 'rep'") now runs, natively too; a type
+  that reads it forces it once, and one nothing reads is never evaluated.
+  A constant whose evaluation demands itself is now upstream's "function
+  instantiation in parameter domain that recursively requires itself"
+  (was "Undefined variable"), a keyed recursion under a runtime `if` stops
+  at the instance budget instead of printing a value, and a binding that
+  reads a runtime value or calls a raising function is rejected as at the
+  pin (`comptime a: Float64 = f(1)` over an `Int` result is rejected too).
+  A demand runs only its instance's reference closure, and its effect
+  check follows method calls, closures, and subscripts, so a `print`
+  reached through a method is rejected rather than silently dropped. A
+  tuple-valued parameter constant now materializes as its `Tuple` instance
+  on the VM, which fixes `assets/ok/comptime_for_aggregate_binder.mojo`.
+
 - A `t"…"` literal is now written by the checker in one pass, as at the
   pin, as a call of the bundled `__make_tstring` entry point, named by
   module path rather than looked up in user scope. Previously a driver

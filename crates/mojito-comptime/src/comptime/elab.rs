@@ -176,6 +176,20 @@ impl Elab<'_> {
                 if self.keep_template_comptime_binding(stmt, value, in_fn, out) {
                     return Ok(());
                 }
+                // A module constant that applies a callable waits for its
+                // first demand.
+                if !in_fn
+                    && self.defer_constant(
+                        name,
+                        ty.is_some(),
+                        !where_clauses.is_empty(),
+                        value,
+                        env,
+                    )
+                {
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 let mut v = self.eval(value, env)?;
                 // A collection display takes the binding's annotation as its
                 // spelled type; an empty `{}` has no other typing.
@@ -867,6 +881,58 @@ impl Elab<'_> {
         }
         self.eval(&assoc.value, &env)
     }
+
+    /// Whether `expression` applies a callable this elaborator does not
+    /// fold itself: a call of a module `def`, or of a static method of a
+    /// struct (`S.f(n)`). A compile-time evaluation of one in a body is a
+    /// request the elaborator below MIR serves from its worklist.
+    pub(super) fn applies_callable(&self, expression: &Expr) -> bool {
+        struct Finder<'e, 'a> {
+            elab: &'e Elab<'a>,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_, '_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.found |= match &expr.kind {
+                    // A `def` generic over a type may read an associated
+                    // member through it, which MIR cannot yet (R484).
+                    ExprKind::Call { name, .. } => {
+                        self.elab.fns.get(name.as_str()).is_some_and(|callee| {
+                            !callee
+                                .ct_params
+                                .iter()
+                                .any(|parameter| matches!(parameter, ParamDecl::Type { .. }))
+                        }) && !matches!(
+                            name.as_str(),
+                            "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                        )
+                    }
+                    ExprKind::MethodCall { object, .. } => matches!(&object.kind,
+                        ExprKind::Identifier(owner) if self.elab.structs.contains_key(owner.as_str())),
+                    _ => false,
+                };
+            }
+        }
+
+        // A display or a tuple is evaluated here, element by element.
+        if !matches!(
+            expression.kind,
+            ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Infix(..)
+                | ExprKind::Prefix(..)
+                | ExprKind::Compare { .. }
+        ) {
+            return false;
+        }
+        let mut finder = Finder {
+            elab: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, expression);
+        finder.found
+    }
 }
 
 /// The environment key marking `binding` as a specialized variadic pack.
@@ -1003,7 +1069,9 @@ impl Elab<'_> {
         // A body's local `comptime` bindings are its own: a later
         // declaration never reads them.
         let env = &mut env.clone();
-        if struct_params.is_empty() && type_params.is_empty() {
+        // A body that binds a request is a template over no binders, so
+        // what reads the binding stays for the check too.
+        if struct_params.is_empty() && type_params.is_empty() && !self.binds_request(body) {
             return self.block(body, env, true);
         }
         // A pack's collector stands for the pack in a bound (`len(args)`),
@@ -1069,9 +1137,11 @@ impl Elab<'_> {
     }
 
     /// Keep a local `comptime` binding whose value names a binder of the
-    /// generic `def` being elaborated as a template (`comptime m = N + 1`):
-    /// the check binds it with the binders symbolic, and the binding is a
-    /// binder of the rest of its block, so a `comptime if` over it stays too.
+    /// generic `def` being elaborated as a template (`comptime m = N + 1`),
+    /// or applies a callable in any body (`comptime x = f(1)`): the check
+    /// binds it with the binders symbolic, the elaborator below MIR
+    /// evaluates an application on demand, and the binding is a binder of
+    /// the rest of its block, so a `comptime if` over it stays too.
     /// Whether the statement was kept.
     fn keep_template_comptime_binding(
         &self,
@@ -1087,7 +1157,7 @@ impl Elab<'_> {
         let Some(binders) = binders.last_mut() else {
             return false;
         };
-        if !in_fn || !expression_names_any(value, binders) {
+        if !in_fn || !(expression_names_any(value, binders) || self.applies_callable(value)) {
             return false;
         }
         binders.insert(name.clone());
@@ -1118,6 +1188,7 @@ impl Elab<'_> {
         let symbolic = in_fn
             && branches.iter().any(|(cond, _)| {
                 asks_layout(cond)
+                    || self.applies_callable(cond)
                     || binders
                         .as_ref()
                         .is_some_and(|binders| expression_names_any(cond, binders))
@@ -1279,6 +1350,47 @@ impl Elab<'_> {
             },
         ));
         Ok(true)
+    }
+
+    /// Whether `body` holds a local `comptime` binding, a `comptime if`
+    /// condition, or a `comptime for` range bound that applies a callable
+    /// ([`Self::applies_callable`]), outside a nested declaration.
+    fn binds_request(&self, body: &[Stmt]) -> bool {
+        struct Finder<'e, 'a> {
+            elab: &'e Elab<'a>,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_, '_> {
+            fn visit_stmt(&mut self, statement: &Stmt) {
+                self.found |= match &statement.kind {
+                    StmtKind::Comptime {
+                        type_params, value, ..
+                    } => type_params.is_empty() && self.elab.applies_callable(value),
+                    StmtKind::ComptimeIf { branches, .. } => branches
+                        .iter()
+                        .any(|(condition, _)| self.elab.applies_callable(condition)),
+                    StmtKind::ComptimeFor { iter, .. } => matches!(&iter.kind,
+                        ExprKind::Call { name, args, .. } if name == "range"
+                            && args.iter().any(|bound| self.elab.applies_callable(bound))),
+                    _ => false,
+                };
+            }
+        }
+
+        let mut finder = Finder {
+            elab: self,
+            found: false,
+        };
+        for statement in body {
+            if !matches!(
+                statement.kind,
+                StmtKind::Def { .. } | StmtKind::Struct { .. }
+            ) {
+                mojito_ast::visit::walk_stmt(&mut finder, statement);
+            }
+        }
+        finder.found
     }
 }
 

@@ -808,6 +808,7 @@ impl Elab<'_> {
             &subs,
             &self.struct_names,
             &self.applied_constants(),
+            &|_| None,
         );
         fold_pack_uses(&mut final_body, &type_pack_values);
         for parameter in &mut specialized_params {
@@ -1899,6 +1900,7 @@ impl Elab<'_> {
             &clone_subs,
             &self.struct_names,
             &self.applied_constants(),
+            &|_| None,
         );
         if !type_pack_expansions.is_empty() {
             expand_pack_spreads_in_function_body(

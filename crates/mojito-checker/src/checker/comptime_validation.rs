@@ -1365,6 +1365,19 @@ impl Checker {
         value: &Expr,
     ) -> Result<bool, TypeError> {
         let Some(level) = self.tparams.len().checked_sub(1) else {
+            // A body with no binders keeps a binding only when it applies a
+            // callable (`comptime x = f(1)`): its reads in a compile-time
+            // position are the application, and the rest of the statement
+            // is typed as any binding is.
+            let expression = match self.comptime_value_expression(value) {
+                Some(expression) => Some(expression),
+                None => self.requested_binding(value)?,
+            };
+            if let Some(expression) = expression
+                && let Some(scope) = self.local_comptime_parameters.last_mut()
+            {
+                scope.insert(name.to_string(), (0, expression));
+            }
             return Ok(false);
         };
         if let Some(ty) = self.comptime_type_operand(value)? {
@@ -1390,7 +1403,8 @@ impl Checker {
                 .insert(name.to_string(), display);
             return Ok(true);
         }
-        if let Some(expression) = self.comptime_value_expression(value) {
+        let denoted = self.comptime_value_expression(value);
+        if let Some(expression) = denoted.clone() {
             // An annotation names the parameter expression's own type: no
             // conversion applies to one.
             if let (Some(annotation), Some(found)) = (annotation, expression.meta().as_value()) {
@@ -1439,7 +1453,106 @@ impl Checker {
                 .insert(name.to_string(), value.clone());
             return Ok(true);
         }
+        if denoted.is_none()
+            && let Some(expression) = self.requested_binding(value)?
+            && let Some(scope) = self.local_comptime_parameters.last_mut()
+        {
+            scope.insert(name.to_string(), (level, expression));
+        }
         Ok(false)
+    }
+
+    /// The application a local `comptime` binding of a body denotes when
+    /// its initializer applies a callable at a type no parameter expression
+    /// spells (`comptime s = label(3)`, a `String`): the function MIR lifts
+    /// for it, at the initializer's own type, which the elaborator below MIR
+    /// demands and runs once per instance. `None` for any other
+    /// initializer.
+    fn requested_binding(&self, value: &Expr) -> Result<Option<ParamExpr>, TypeError> {
+        if self.source_validation || !self.applies_callable(value) {
+            return Ok(None);
+        }
+        if let ExprKind::Call { name, .. } = &value.kind
+            && matches!(
+                self.lookup(name),
+                Some(Ty::Func { raises: true, .. } | Ty::GenericFunc { raises: true, .. })
+            )
+        {
+            return Err(TypeError::Unsupported(
+                "cannot call raising function in comptime initializer".to_string(),
+            ));
+        }
+        if !self.reads_compile_time_alone(value) {
+            return Err(TypeError::Unsupported(
+                "cannot use a dynamic value in comptime initializer".to_string(),
+            ));
+        }
+        let ty = {
+            let _position = self.comptime_position();
+            self.infer(value)?
+        };
+        let ty = mojito_types::types::default_literal(&ty);
+        let Some(application) = self.named_application(value, &names_read(value), ty) else {
+            return Ok(None);
+        };
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(value.source_span(), application.clone());
+        Ok(Some(application))
+    }
+
+    /// Whether `value` applies a callable the elaborator does not fold
+    /// itself — a call of a module `def`, or of a static method of a struct
+    /// — under a root that computes one value (`f(1)`, `S.f(n) + 1`), as
+    /// the elaborator keeps a binding of one for the check.
+    fn applies_callable(&self, value: &Expr) -> bool {
+        struct Finder<'c> {
+            checker: &'c Checker,
+            found: bool,
+        }
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                self.found |= match &expr.kind {
+                    ExprKind::Call { name, .. } => {
+                        self.checker.binding_scope(name).is_none_or(|scope| scope == 0)
+                            && (self.checker.overload_sets.is_function(name)
+                                || matches!(
+                                    self.checker.lookup(name),
+                                    Some(Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_))
+                                ))
+                            // A `def` generic over a type stays the
+                            // elaborator's, as there.
+                            && !matches!(self.checker.lookup(name), Some(Ty::GenericFunc { decls, .. })
+                                if decls.iter().any(|decl| matches!(decl, ParamDecl::Type { .. })))
+                            && !matches!(
+                                name.as_str(),
+                                "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                            )
+                    }
+                    ExprKind::MethodCall { object, .. } => matches!(&object.kind,
+                        ExprKind::Identifier(owner)
+                            if self.checker.binding_scope(owner).is_none()
+                                && self.checker.structs.contains_key(owner)),
+                    _ => false,
+                };
+            }
+        }
+        if !matches!(
+            value.kind,
+            ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Infix(..)
+                | ExprKind::Prefix(..)
+                | ExprKind::Compare { .. }
+        ) {
+            return false;
+        }
+        let mut finder = Finder {
+            checker: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, value);
+        finder.found
     }
 
     /// What the value of a local `comptime` binding over a template body's
@@ -1993,17 +2106,27 @@ impl Checker {
                 "a 'comptime(...)' operand that reads a runtime value".to_string(),
             ));
         }
-        let _position = self.comptime_position();
-        let ty = self.infer(operand)?;
-        match self
+        let ty = {
+            let _position = self.comptime_position();
+            self.infer(operand)?
+        };
+        if let Some(display) = self
             .bound_display(operand)
             .filter(|_| !self.source_validation)
         {
-            Some(display) => Err(TypeError::ComptimeCrossing(
+            return Err(TypeError::ComptimeCrossing(
                 materialized_collection_spelling(&display.ty),
-            )),
-            None => Ok(ty),
+            ));
         }
+        // An operand that applies a callable is the application MIR lifts,
+        // which the elaborator below MIR evaluates.
+        if !self.source_validation
+            && self.applies_callable(operand)
+            && self.lifted_application(operand).is_none()
+        {
+            self.requested_binding(operand)?;
+        }
+        Ok(ty)
     }
 
     /// The parameter-list reference of the variadic pack a spread names: a
