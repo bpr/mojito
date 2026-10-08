@@ -125,16 +125,12 @@ impl VmBackend {
         value_params: &[(String, Value)],
         fuel: usize,
     ) -> Result<(Value, usize), RuntimeError> {
-        let checked = mojito_checker::checker::check_program_with_templates(
-            program,
-            &std::collections::HashMap::new(),
-            templates,
-        )
-        .map_err(|error| {
-            RuntimeError::TypeError(format!(
-                "VM compile-time program failed the checked boundary: {error}"
-            ))
-        })?;
+        let checked = mojito_checker::checker::check_program_with_templates(program, templates)
+            .map_err(|error| {
+                RuntimeError::TypeError(format!(
+                    "VM compile-time program failed the checked boundary: {error}"
+                ))
+            })?;
         let prog = build_prog_checked(&checked)?;
         self.configure_lifecycle(&prog);
         let idx = prog.index_of(name).ok_or_else(|| {

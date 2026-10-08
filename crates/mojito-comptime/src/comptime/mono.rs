@@ -734,8 +734,7 @@ impl Elab<'_> {
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)
-            | Type::SelfType
-            | Type::MaterializedCallable(_) => Ok(()),
+            | Type::SelfType => Ok(()),
         }
     }
 

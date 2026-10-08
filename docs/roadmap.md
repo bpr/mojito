@@ -106,36 +106,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R325, which needs the same runtime list.
   - Model: Opus, Not Planned.
 
-- [ ] **R358 (P3d) Clone machinery for `Tuple` and `TString` is still in the
-  tree, though nothing reaches it**
-
-  Problem: both structs are served by their templates, but code that named
-  or derived their per-element-list clones remains.
-  - `Type::MaterializedCallable` (`mojito-ast`) and the checker's
-    `materialized_callables` map spelled a callable element of a cloned
-    `Tuple`.
-  - `Checker::infer_tuple_method` and the `$Tuple.declaration` shell
-    (`TUPLE_DECLARATION_SHELL`, `comptime/specialize.rs`) typed a member of
-    a `Tuple` no clone served yet. Only a check with no linked prelude still
-    takes that path.
-  - The frozen template-facts modules derive `Tuple` and `TString` clone
-    members (`template_facts/tuple_unpacks.rs`, `realization.rs`'s
-    `tstring_specialization`).
-  - Comments across `native::mono` and the census still cite `Tuple$tN`.
-  - Tests that pin a `Tuple` clone's derivation statistics are stale: four
-    in `tests/compiler_test.rs` were rewritten, and the nightly gate names
-    the rest. `tstring_write_to_derives` and the t-string row before it
-    still expect `TString$…` derived members.
-  - Since a `t"…"` is the checker's own `__make_tstring` call (2026-10-07),
-    its type is that call's, so bridges that reconciled a literal's type
-    with its construction's serve only the dead clone paths: the
-    public-vs-specialized `TString` clause in `coerces`
-    (`mojito-types/src/types.rs`), the Writable "staging seam" clause in
-    `checker/traits.rs`, and the structural `TString` answers in
-    `is_copyable` and `is_implicitly_copyable`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R412 (P3d) Code for a struct specialized whole outlives the last
   one**
 

@@ -7366,12 +7366,7 @@ fn method_templates_are_identified_by_their_struct_and_body() {
         .expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
     let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::check_program_with_templates(
-        &program,
-        &std::collections::HashMap::<String, mojito::Ty>::new(),
-        &mut catalog,
-    )
-    .expect("check");
+    mojito::checker::check_program_with_templates(&program, &mut catalog).expect("check");
     let picks: Vec<_> = catalog
         .templates()
         .filter(|template| {
@@ -7451,12 +7446,7 @@ fn method_template_classes_name_what_the_body_holds() {
         .expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
     let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::check_program_with_templates(
-        &program,
-        &std::collections::HashMap::<String, mojito::Ty>::new(),
-        &mut catalog,
-    )
-    .expect("check");
+    mojito::checker::check_program_with_templates(&program, &mut catalog).expect("check");
     let coverage = |method: &str| {
         catalog
             .templates()

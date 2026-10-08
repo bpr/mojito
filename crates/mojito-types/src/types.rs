@@ -1091,31 +1091,6 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
         .collect()
 }
 
-/// The interleaved element types of a lazy template string.
-///
-/// Both the public `TString` spelling and the concrete symbols emitted for its
-/// variadic specializations are accepted — the same acceptance rule as
-/// [`tuple_elements`].
-pub fn tstring_elements(ty: &Ty) -> Option<Vec<&Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
-        return None;
-    };
-    if name != TSTRING_TYPE_NAME
-        && !name.ends_with(&format!("${TSTRING_TYPE_NAME}"))
-        && !name.starts_with(&format!("{TSTRING_TYPE_NAME}$"))
-        && !name.contains(&format!("${TSTRING_TYPE_NAME}$"))
-    {
-        return None;
-    }
-    arguments
-        .iter()
-        .map(|argument| match argument {
-            TyArg::Ty(ty) => Some(ty),
-            TyArg::Val(_) | TyArg::Origin(_) => None,
-        })
-        .collect()
-}
-
 pub fn range_type() -> Ty {
     nominal_type(RANGE_TYPE_NAME, Vec::new())
 }
@@ -2321,26 +2296,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 && to_args.is_empty() =>
         {
             true
-        }
-        // Public Tuple remains nominal, but its generated specialization symbol
-        // deliberately differs from the canonical discovery-pass name. Compare
-        // the retained semantic element arguments instead of requiring those
-        // implementation symbols to match.
-        (from, to) if tuple_elements(from).is_some() && tuple_elements(to).is_some() => {
-            let from = tuple_elements(from).expect("guard established Tuple elements");
-            let to = tuple_elements(to).expect("guard established Tuple elements");
-            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
-        }
-        // The same public-vs-specialized bridge for the lazy TString.
-        (from, to)
-            if crate::types::tstring_elements(from).is_some()
-                && crate::types::tstring_elements(to).is_some() =>
-        {
-            let from =
-                crate::types::tstring_elements(from).expect("guard established TString elements");
-            let to =
-                crate::types::tstring_elements(to).expect("guard established TString elements");
-            from.len() == to.len() && from.iter().zip(to).all(|(from, to)| coerces(from, to))
         }
         (Ty::Param { binder: a, .. }, Ty::Param { binder: b, .. }) => a == b,
         (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {

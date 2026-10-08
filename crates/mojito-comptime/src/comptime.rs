@@ -2607,9 +2607,8 @@ fn type_pack_binders(type_params: &[TypeParam]) -> HashSet<String> {
         .collect()
 }
 
-/// Substitute one now-concrete method type binder in source annotations. This
-/// is used when variadic Tuple specialization turns its type-filtered generic
-/// membership implementation into ordinary overloads.
+/// Substitute one now-concrete type binder in a source annotation, wherever
+/// it appears unshadowed.
 fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Type) {
     match ty {
         Type::Named(name, arguments) if name == binding && arguments.is_empty() => {
@@ -2680,8 +2679,7 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
+        | Type::SelfType => {}
     }
 }
 

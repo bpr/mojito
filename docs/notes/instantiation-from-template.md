@@ -488,16 +488,12 @@ collector (`PackSpread`), the trace check counts the derived nodes as the
 spread's elaboration, and the derivation types each element at the
 instance's element type, the collector as the element tuple bound to its
 parameter, each move a transfer, and the call's overload target as the
-instance's tuple specialization (`spread_packs`). A `TString`
-specialization is named by its public segments while its storage pack
-holds a `String` for each `StringLiteral` segment
-(`tstring_storage_elements`), so the pack does not mangle back to the
-instance; the instance's `Self` is instead the specialization whose
-fields are the public tuple of that pack (`tstring_specialization`,
-`InstanceSubstitution::named_self`).
+instance's tuple specialization (`spread_packs`). `TString` and `Tuple`
+themselves are struct generators served by their templates, so no
+instance of either is derived here; a variadic instance whose resolved
+pack does not mangle back to its own name is refused.
 Every element type must be plain data or carry only loans whose origins
-the elaborator erased (obligation 12), so `Tuple$t2[StringSpan, StringSpan]`
-derives every member too.
+the elaborator erased (obligation 12).
 
 The compiler-private trap `_mojito_abort("message")` is a statement of any
 non-keyed body: the built-in types its literal and selects nothing. A

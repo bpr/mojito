@@ -72,14 +72,6 @@ pub(super) fn has_equality_bound(ty: &Ty) -> bool {
 }
 
 pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool {
-    // A public Tuple's conditional Equatable contract is evaluated structurally
-    // until its concrete specialization replaces the variadic template (the
-    // same discovery-staging seam as `Checker::is_comparable`).
-    if let Some(elements) = mojito_types::types::tuple_elements(ty) {
-        return elements
-            .into_iter()
-            .all(|element| has_equality_bound_or_concrete(checker, element));
-    }
     match ty {
         // A conditional conformance (`Equatable where conforms_to(T,
         // Equatable)`) is judged against the struct's arguments.
@@ -477,9 +469,7 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
 /// (`print`, `len`, `range`, conversions, `divmod`, …). Moved from `checker.rs`.
 impl Checker {
     /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
-    /// including public collections, opt into current `Writable`. During tuple
-    /// specialization discovery an as-yet-unmaterialized nominal shape is checked
-    /// element-wise; executable values always cross the concrete struct boundary.
+    /// including public collections, opt into current `Writable`.
     /// Type the built-in `print(*args, sep=, end=, flush=, file=)`: every
     /// positional argument is printable; `sep`/`end` are strings, `flush` a
     /// `Bool`, and `file` the stdlib `FileDescriptor`.

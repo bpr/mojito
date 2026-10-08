@@ -549,38 +549,6 @@ pub(super) fn realize_lane_comparisons(
     Ok(())
 }
 
-/// `ty` with every type equal to the first of a pair in `views` replaced,
-/// whole, by the second.
-pub(super) fn fold_binder_views(ty: &Ty, views: &[(Ty, Ty)]) -> Ty {
-    struct Folder<'a>(&'a [(Ty, Ty)]);
-
-    impl mojito_types::types::TyRewrite for Folder<'_> {
-        fn visits_closed(&self) -> bool {
-            true
-        }
-
-        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-            self.0
-                .iter()
-                .find(|(view, _)| view == ty)
-                .map(|(_, baked)| baked.clone())
-        }
-
-        fn expr(
-            &mut self,
-            expr: &mojito_types::param_expr::ParamExpr,
-        ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
-        {
-            Ok(expr.clone())
-        }
-    }
-
-    if views.is_empty() {
-        return ty.clone();
-    }
-    mojito_types::types::rewrite_ty(ty, &mut Folder(views)).unwrap_or_else(|_| ty.clone())
-}
-
 /// The literals an instance holds where its template read a compile-time
 /// value by name, each with the facts its own check records there; `None`
 /// when a value does not fit the type the template recorded for the name.

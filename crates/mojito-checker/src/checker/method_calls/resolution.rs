@@ -29,7 +29,7 @@ impl Checker {
     }
 
     /// A name no signature answers: a callable-typed field invoked through
-    /// the receiver, or the public Tuple's structural surface.
+    /// the receiver.
     pub(super) fn infer_unresolved_method(
         &self,
         site: MethodCallSite<'_>,
@@ -61,70 +61,10 @@ impl Checker {
                 return self.infer_field_invocation(span.clone(), object, &field_ty, args, kwargs);
             }
         }
-        // A public Tuple no specialization serves yet, or a member its
-        // specialization was not asked to keep.
-        if let Some(elements) = tuple_elements(obj_ty) {
-            reject_kwargs(kwargs)?;
-            let elements = elements.into_iter().cloned().collect::<Vec<_>>();
-            return self.infer_tuple_member(site, &elements);
-        }
         Err(TypeError::NoSuchMethod {
             object_type: obj_ty.to_string(),
             method: method.to_string(),
         })
-    }
-
-    /// Type a member call on a public Tuple of `elements` that no
-    /// specialization answers: the structural surface
-    /// ([`Self::infer_tuple_method`]) first, and what it does not serve from
-    /// the member `std/builtin/tuple.mojo` declares, resolved against the
-    /// declaration's shell with its pack bound to `elements`.
-    pub(super) fn infer_tuple_member(
-        &self,
-        site: MethodCallSite<'_>,
-        elements: &[Ty],
-    ) -> Result<Ty, TypeError> {
-        let MethodCallSite {
-            span,
-            object,
-            method,
-            call,
-            ..
-        } = site;
-        let shell = mojito_symbol::symbol::TUPLE_DECLARATION_SHELL;
-        let structural = self.infer_tuple_method(span, object, method, elements, call);
-        if !matches!(structural, Err(TypeError::NoSuchMethod { .. }))
-            || !self.structs.contains_key(shell)
-        {
-            return structural;
-        }
-        // A receiver spreading a pack still open, or a list computed from
-        // one, binds the declaration's pack to that spread whole.
-        let pack = match elements {
-            [spread]
-                if mojito_types::types::pack_spread(elements).is_some()
-                    || mojito_types::types::list_spread(spread).is_some() =>
-            {
-                TyArg::Ty(spread.clone())
-            }
-            _ => TyArg::Val(CtValue::Tuple(
-                elements
-                    .iter()
-                    .cloned()
-                    .map(Box::new)
-                    .map(CtValue::Type)
-                    .collect(),
-            )),
-        };
-        let mut availability_failure = None;
-        let selection =
-            self.resolve_struct_method(site, shell, &[pack], &mut availability_failure)?;
-        let Some(resolved) =
-            super::mc_infer::selected_method(method, selection, availability_failure)?
-        else {
-            return structural;
-        };
-        self.infer_selected_method_call(site, resolved)
     }
 
     /// A generic method's resolved compile-time arguments, and a concrete

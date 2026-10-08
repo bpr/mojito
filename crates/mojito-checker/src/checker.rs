@@ -78,7 +78,10 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 
 /// Type-check and retain the semantic facts consumed by lowering/backends.
 pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    check_program_with_materialized_callables(stmts, &HashMap::new())
+    check_program_with_templates(
+        stmts,
+        &mut mojito_checked::templates::TemplateCatalog::new(false),
+    )
 }
 
 /// Validate every compile-time control-flow construct of a prepared source
@@ -165,31 +168,16 @@ pub fn validate_comptime_templates_into(
     })
 }
 
-/// Check compiler-generated Tuple declarations with the exact callable types
-/// referenced by their opaque, parser-unconstructible annotation ids.
-#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
-pub fn check_program_with_materialized_callables(
-    stmts: &[Stmt],
-    materialized_callables: &HashMap<String, Ty>,
-) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    check_program_with_templates(
-        stmts,
-        materialized_callables,
-        &mut mojito_checked::templates::TemplateCatalog::new(false),
-    )
-}
-
-/// [`check_program_with_materialized_callables`] over a template catalog.
+/// [`check_program`] over a template catalog.
 ///
 /// A generic body this check infers is retained there, and a clone the
 /// catalog traces to a certified template takes its facts from it instead of
 /// being inferred (`checker/template_facts.rs`).
-pub fn check_program_with_templates<S: std::hash::BuildHasher>(
+pub fn check_program_with_templates(
     stmts: &[Stmt],
-    materialized_callables: &HashMap<String, Ty, S>,
     catalog: &mut mojito_checked::templates::TemplateCatalog,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    let discovery = check_program_for_discovery(stmts, materialized_callables, catalog)?;
+    let discovery = check_program_for_discovery(stmts, catalog)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
     Ok(discovery.finalize())
@@ -203,12 +191,11 @@ pub fn check_program_with_templates<S: std::hash::BuildHasher>(
 /// destruction. What is left is building the checked arena, which the
 /// discovery loop needs only for the round that converges
 /// ([`DiscoveryResult::finalize`](mojito_checked::checked::DiscoveryResult::finalize)).
-pub fn check_program_for_discovery<S: std::hash::BuildHasher>(
+pub fn check_program_for_discovery(
     stmts: &[Stmt],
-    materialized_callables: &HashMap<String, Ty, S>,
     catalog: &mut mojito_checked::templates::TemplateCatalog,
 ) -> Result<mojito_checked::checked::DiscoveryResult, TypeError> {
-    check_program_carrying(stmts, materialized_callables, catalog, None).map(PassCarry::into_result)
+    check_program_carrying(stmts, catalog, None).map(PassCarry::into_result)
 }
 
 /// [`check_program_for_discovery`] over the previous discovery round's
@@ -218,9 +205,8 @@ pub fn check_program_for_discovery<S: std::hash::BuildHasher>(
 /// starts from the previous pass's committed effect maps and serves every
 /// body site whose record is clean and whose effect reads are still
 /// current from that pass instead of inferring it (`body_carry`).
-pub fn check_program_carrying<S: std::hash::BuildHasher>(
+pub fn check_program_carrying(
     stmts: &[Stmt],
-    materialized_callables: &HashMap<String, Ty, S>,
     catalog: &mut mojito_checked::templates::TemplateCatalog,
     previous: Option<PassCarry>,
 ) -> Result<PassCarry, TypeError> {
@@ -245,10 +231,6 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
             .map(|(name, _)| name.clone())
     }
 
-    let materialized_callables: HashMap<String, Ty> = materialized_callables
-        .iter()
-        .map(|(name, ty)| (name.clone(), ty.clone()))
-        .collect();
     let mut expanded = {
         let _expand = timing::span("trait_defaults_expand");
         expand_trait_defaults(stmts)?
@@ -275,11 +257,7 @@ pub fn check_program_carrying<S: std::hash::BuildHasher>(
         let _round = timing::round("transfer.round", rounds);
         let (transfer_seed, call_through_seed) =
             previous.as_ref().map(PassCarry::seeds).unwrap_or_default();
-        let mut checker = Checker::new_with_materialized_callables(
-            materialized_callables.clone(),
-            transfer_seed,
-            call_through_seed,
-        );
+        let mut checker = Checker::new_seeded(transfer_seed, call_through_seed);
         if let Some(previous) = &previous {
             checker.next_owner.set(previous.next_owner());
             checker.fresh_owner_cursor.set(previous.next_owner());
@@ -518,10 +496,6 @@ pub struct Checker {
     /// Top-level traits registered by `check_program`'s pre-pass; the walk
     /// removes each entry instead of re-registering.
     predeclared_traits: HashSet<String>,
-    /// Exact semantic callable contracts named by compiler-only opaque type
-    /// ids in generated Tuple declarations. Parsed source cannot populate this
-    /// namespace.
-    materialized_callables: HashMap<String, Ty>,
     /// Defined traits, by name (their method requirements).
     traits: HashMap<String, TraitInfo>,
     /// Stack of a generic `def`'s checked type parameters, innermost last. A
@@ -1003,11 +977,10 @@ pub struct Checker {
 
 impl Checker {
     pub fn new() -> Self {
-        Self::new_with_materialized_callables(HashMap::new(), HashMap::new(), HashMap::new())
+        Self::new_seeded(HashMap::new(), HashMap::new())
     }
 
-    fn new_with_materialized_callables(
-        materialized_callables: HashMap<String, Ty>,
+    fn new_seeded(
         transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>>,
         call_through_seed: HashMap<String, Vec<mojito_checked::checked::CallThroughEffect>>,
     ) -> Self {
@@ -1050,7 +1023,6 @@ impl Checker {
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
             predeclared_traits: HashSet::new(),
-            materialized_callables,
             traits: HashMap::new(),
             tparams: Vec::new(),
             vparams: Vec::new(),
@@ -2029,10 +2001,8 @@ impl Checker {
             return Ok(());
         }
 
-        // A public Tuple literal is discovered under the canonical nominal
-        // name and checked again under its generated specialization name. The
-        // names are implementation identities; literal materialization follows
-        // the retained element types across that handoff.
+        // A tuple literal's elements materialize to the element types the
+        // `Tuple` it initializes declares.
         if let (Some(actual), Some(expected)) = (tuple_elements(from), tuple_elements(to))
             && actual.len() == expected.len()
         {

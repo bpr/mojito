@@ -297,11 +297,6 @@ struct InstanceSubstitution {
     /// symbolic (`VALUE_BINDERS`): an occurrence reading one is bound to
     /// the clone's own compile-time parameter of that name.
     kept_values: Vec<String>,
-    /// The template's `Self` at the instance's pack, with the specialization
-    /// the instance names it by where that is not the pack's own mangling:
-    /// a `TString` is named by its public segments, while its storage pack
-    /// holds each textual segment as an owning `String`.
-    named_self: Option<(Ty, Ty)>,
 }
 
 /// The loop index each pack-element occurrence of an instance was copied

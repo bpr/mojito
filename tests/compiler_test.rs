@@ -2217,41 +2217,21 @@ fn float_lane_literals_are_template_served() {
 }
 
 #[test]
-fn spread_pack_initializer_derives() {
-    // `self.storage = Tuple(*args^)` in a variadic struct's initializer, a
-    // user struct's and the bundled `TString`'s (named by its public
-    // segments, not its storage pack), derives for every specialization.
-    for (source, expected, owner) in [
-        (
-            include_str!("../assets/ok/template_method_variadic_struct.mojo"),
-            "3 2 4\n6\n",
-            "Bag$",
-        ),
-        (
-            include_str!("../assets/ok/tstring_lazy.mojo"),
-            "x=1\n2\n",
-            "TString$",
-        ),
-    ] {
-        let compiler = Compiler::default();
-        let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-        let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-        for program in [&derived, &verified] {
-            assert_eq!(compiler.execute(program).expect("execute").output, expected);
-        }
-        let stats = derived.template_stats();
-        let initializer = |name: &&String| name.starts_with(owner) && name.ends_with(".__init__");
-        assert!(
-            stats.derived.iter().any(|name| initializer(&name)),
-            "{owner} initializers derive; refused: {:?}",
-            stats.refused
-        );
-        assert!(
-            !stats.inferred_clones.iter().any(|name| initializer(&name)),
-            "no {owner} initializer is inferred: {:?}",
-            stats.inferred_clones
+fn spread_pack_initializer_is_template_served() {
+    // `self.storage = Tuple(*args^)` in a user variadic struct's
+    // initializer runs from the template: the struct is a generator, as at
+    // the pin, and mints no specialization.
+    let source = include_str!("../assets/ok/template_method_variadic_struct.mojo");
+    let compiler = Compiler::default();
+    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
+    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    for program in [&derived, &verified] {
+        assert_eq!(
+            compiler.execute(program).expect("execute").output,
+            "3 2 4\n6\n"
         );
     }
+    assert_struct_is_a_generator(&derived, "Bag");
 }
 
 #[test]
@@ -2294,13 +2274,10 @@ fn sibling_call_result_field_derives() {
 }
 
 #[test]
-fn tstring_write_to_derives() {
-    // `TString.write_to` binds each element with a `ref` local over its
-    // `Tuple` storage inside a `comptime for` and writes it: every
-    // t-string specialization's unrolled body derives, each copy's local
-    // typed at its own element. A t-string nested in another is stored as
-    // its own specialization, so the outer storage Tuple is declared the
-    // round the outer specialization is, and no round checks a member again.
+fn tstring_is_template_served() {
+    // `TString` is a struct generator, as at the pin: a t-string, nested
+    // or interpolating a generic value, runs from the template of
+    // `std/format/tstring.mojo`, and no specialization is minted for it.
     for (source, expected) in [
         (include_str!("../assets/ok/tstring_lazy.mojo"), "x=1\n2\n"),
         (
@@ -2318,29 +2295,7 @@ fn tstring_write_to_derives() {
         for program in [&derived, &verified] {
             assert_eq!(compiler.execute(program).expect("execute").output, expected);
         }
-        let stats = derived.template_stats();
-        let member = |name: &String| {
-            name.starts_with("TString$")
-                && (name.ends_with(".write_to") || name.ends_with(".__init__"))
-        };
-        assert!(
-            stats
-                .derived
-                .iter()
-                .any(|name| member(name) && name.ends_with(".write_to")),
-            "TString.write_to derives; refused: {:?}",
-            stats.refused
-        );
-        let inferred: Vec<&String> = stats
-            .inferred_clones
-            .iter()
-            .filter(|name| member(name))
-            .collect();
-        assert!(
-            inferred.is_empty(),
-            "no round checks a TString member again: {inferred:?}; refused: {:?}",
-            stats.refused
-        );
+        assert_struct_is_a_generator(&derived, "TString");
     }
 }
 
@@ -2863,7 +2818,6 @@ fn discovery_scan_matches_the_checked_arena() {
         let program = mojito::elaborate(linked).expect("elaborate");
         let discovery = mojito::checker::check_program_for_discovery(
             &program,
-            &std::collections::HashMap::new(),
             &mut mojito::templates::TemplateCatalog::default(),
         )
         .expect("check");

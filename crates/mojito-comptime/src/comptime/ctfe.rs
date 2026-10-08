@@ -562,11 +562,7 @@ impl Elab<'_> {
             span,
         ));
         program.push(synthesized_entry(CTFE_PROBE, None, probe_body, span));
-        let probe = mojito_checker::checker::check_program_with_templates(
-            &program,
-            &HashMap::new(),
-            &mut templates,
-        );
+        let probe = mojito_checker::checker::check_program_with_templates(&program, &mut templates);
         let checked = probe.map_err(|error| {
             ComptimeError::NotComptime(match error {
                 mojito_common::error::TypeError::UnhandledRaise(_) => {

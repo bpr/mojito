@@ -96,8 +96,7 @@ pub(super) fn collect_vm_ctfe_type_calls(ty: &Type, calls: &mut HashSet<String>)
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
+        | Type::SelfType => {}
     }
 }
 

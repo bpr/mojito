@@ -430,8 +430,7 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
+        | Type::SelfType => {}
     }
 }
 
@@ -1149,8 +1148,7 @@ pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
         | Type::Float64
         | Type::None
         | Type::SelfParam(_)
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
+        | Type::SelfType => {}
     }
 }
 

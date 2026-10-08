@@ -930,8 +930,7 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
         | Type::ClosedStringLiteral
         | Type::Float64
         | Type::None
-        | Type::SelfType
-        | Type::MaterializedCallable(_) => {}
+        | Type::SelfType => {}
     }
 }
 
@@ -1125,8 +1124,7 @@ impl PackRewriter {
             | Type::Float64
             | Type::None
             | Type::SelfParam(_)
-            | Type::SelfType
-            | Type::MaterializedCallable(_) => {}
+            | Type::SelfType => {}
         }
     }
 

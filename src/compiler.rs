@@ -460,13 +460,8 @@ impl Compiler {
             templates_catalog.set_traces(instance_traces(def_traces, method_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("discovery.initial.check");
-            crate::checker::check_program_carrying(
-                &discovery,
-                &std::collections::HashMap::new(),
-                &mut templates_catalog,
-                None,
-            )
-            .map_err(CompilerError::Type)?
+            crate::checker::check_program_carrying(&discovery, &mut templates_catalog, None)
+                .map_err(CompilerError::Type)?
         };
         let mut converged = false;
         for round in 0..=SPECIALIZATION_ROUNDS {
@@ -631,7 +626,6 @@ impl Compiler {
             timing::count("body_facts.dirty_sites", dirty.len() as u64);
             checked = crate::checker::check_program_carrying(
                 &elaborated,
-                &std::collections::HashMap::new(),
                 &mut templates_catalog,
                 Some(checked.for_next_round(&dirty)),
             )

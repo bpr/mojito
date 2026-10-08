@@ -205,20 +205,6 @@ impl Checker {
                     transfers: TransferSet::default(),
                 }
             }
-            SourceType::MaterializedCallable(key) => {
-                let callable = self.materialized_callables.get(key).ok_or_else(|| {
-                    TypeError::InvariantViolation(format!(
-                        "compiler-generated callable annotation has unknown id '{key}'"
-                    ))
-                })?;
-                if !matches!(callable, Ty::Func { .. } | Ty::GenericFunc { .. }) {
-                    return Err(TypeError::InvariantViolation(
-                        "compiler-generated callable annotation contains a non-callable type"
-                            .to_string(),
-                    ));
-                }
-                callable.clone()
-            }
             SourceType::Ref { referent, origin } => {
                 let spec = origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported(

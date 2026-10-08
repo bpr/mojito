@@ -1900,37 +1900,23 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
-                "Writable" => {
-                    // The discovery check runs before a `t"…"` occurrence's
-                    // variadic `TString` specialization exists.  Preserve the
-                    // template's Writable contract structurally across that
-                    // staging seam, exactly like unmaterialized public Tuple
-                    // in `is_comparable`.
-                    if let Some(elements) =
-                        mojito_types::types::tstring_elements(ty).or_else(|| tuple_elements(ty))
+                "Writable" => match ty {
+                    // The intrinsic slice descriptors write as
+                    // `Slice(start, end, step)` (upstream's `Writable`).
+                    Ty::Struct(name, args)
+                        if args.is_empty()
+                            && matches!(
+                                name.as_str(),
+                                "Slice" | "ContiguousSlice" | "StridedSlice"
+                            ) =>
                     {
-                        return elements
-                            .into_iter()
-                            .all(|element| self.conforms_to(element, tr));
+                        true
                     }
-                    match ty {
-                        // The intrinsic slice descriptors write as
-                        // `Slice(start, end, step)` (upstream's `Writable`).
-                        Ty::Struct(name, args)
-                            if args.is_empty()
-                                && matches!(
-                                    name.as_str(),
-                                    "Slice" | "ContiguousSlice" | "StridedSlice"
-                                ) =>
-                        {
-                            true
-                        }
-                        Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                        Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
-                        _ => true,
-                    }
-                }
+                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                    Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
+                    _ => true,
+                },
                 "Hasher" => match ty {
                     Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
@@ -1938,16 +1924,9 @@ impl Checker {
                 },
                 // Default construction is a declared conformance on structs
                 // (current `Tuple`/`Array` default-construct their elements
-                // through it); the scalar built-ins, `None`, and the
-                // unmaterialized public Tuple answer structurally.
+                // through it); the scalar built-ins and `None` answer
+                // structurally.
                 "Defaultable" => match ty {
-                    // A minted Tuple instance answers by its elements (its
-                    // conditional pack clause is not evaluated by the
-                    // declared-conformance oracle).
-                    _ if tuple_elements(ty).is_some() => tuple_elements(ty)
-                        .expect("guard established tuple elements")
-                        .into_iter()
-                        .all(|element| self.conforms_to(element, tr)),
                     Ty::Int
                     | Ty::IntLiteral
                     | Ty::UInt
@@ -2105,10 +2084,7 @@ impl Checker {
             return Some(if holds { always() } else { Vec::new() });
         }
         let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls).into());
-        if tuple_elements(&self_ty).is_some()
-            || mojito_types::types::tstring_elements(&self_ty).is_some()
-            || mojito_types::types::uninit_storage_element(&self_ty).is_some()
-        {
+        if mojito_types::types::uninit_storage_element(&self_ty).is_some() {
             return None;
         }
         // The conditions of the declared conformances `accepts` admits. One
@@ -2440,23 +2416,6 @@ impl Checker {
         {
             return true;
         }
-        // A lazy TString is declared Movable + Writable only.  Answer
-        // structurally so a not-yet-materialized specialization (a nested
-        // t-string element during discovery) never falls back to the
-        // permissive unregistered-struct default below.
-        if mojito_types::types::tstring_elements(ty).is_some() {
-            return false;
-        }
-        // The public `Tuple` no specialization serves yet is copyable
-        // exactly when its elements are, as its declaration's conditional
-        // conformance says.
-        if matches!(ty, Ty::Struct(name, _) if name == mojito_types::types::TUPLE_TYPE_NAME)
-            && let Some(elements) = tuple_elements(ty)
-        {
-            return elements
-                .into_iter()
-                .all(|element| self.is_copyable(element));
-        }
         match ty {
             Ty::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
                 // A declared Copyable-family conformance is the contract
@@ -2518,25 +2477,11 @@ impl Checker {
         if self.has_assumed_conformance(ty, "ImplicitlyCopyable") {
             return true;
         }
-        // Structural, like `is_copyable`: a lazy TString never copies.
-        if mojito_types::types::tstring_elements(ty).is_some() {
-            return false;
-        }
         // Compiler-private inline uninit storage copies its raw bits; the
         // `MaybeUninit` header conditions gate the public copy on the
         // payload's triviality.
         if mojito_types::types::uninit_storage_element(ty).is_some() {
             return true;
-        }
-        // The public `Tuple` no specialization serves yet is implicitly
-        // copyable exactly when its elements are, as its declaration's
-        // conditional conformance says.
-        if matches!(ty, Ty::Struct(name, _) if name == mojito_types::types::TUPLE_TYPE_NAME)
-            && let Some(elements) = tuple_elements(ty)
-        {
-            return elements
-                .into_iter()
-                .all(|element| self.is_implicitly_copyable(element));
         }
         match ty {
             Ty::Struct(name, args) => self.structs.get(name).map_or_else(
@@ -2853,14 +2798,6 @@ impl Checker {
         if self.has_assumed_conformance(ty, "Hashable") {
             return true;
         }
-        // Same discovery-staging seam as `is_comparable`: a public Tuple's
-        // conditional Hashable contract is evaluated structurally until its
-        // concrete specialization replaces the variadic template.
-        if let Some(elements) = tuple_elements(ty) {
-            return elements
-                .into_iter()
-                .all(|element| self.is_hashable(element));
-        }
         match ty {
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
             Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
@@ -2871,16 +2808,6 @@ impl Checker {
     pub(super) fn is_comparable(&self, ty: &Ty) -> bool {
         if self.has_assumed_conformance(ty, "Comparable") {
             return true;
-        }
-        // The discovery check runs before variadic public-Tuple templates have
-        // been replaced by concrete generated declarations. Preserve the
-        // template's conditional Comparable contract structurally across that
-        // staging seam; the final specialization carries the same conformance
-        // as an ordinary nominal declaration.
-        if let Some(elements) = tuple_elements(ty) {
-            return elements
-                .into_iter()
-                .all(|element| self.is_comparable(element));
         }
         match ty {
             Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),

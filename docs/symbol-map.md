@@ -186,16 +186,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and argument conventions and builds the reference result, and
   `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
   `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
-  pointer/List/Tuple helpers, and `mlir_op.rs` the one `__mlir_op` statement
+  pointer/List helpers, and `mlir_op.rs` the one `__mlir_op` statement
   the bundled modules spell. `mc_infer.rs:infer_selected_method_call` is the
   tail every selected signature takes (clone retarget, effects, receiver and
-  argument contracts, result). `resolution.rs:infer_tuple_member` types a
-  member of a public `Tuple` no specialization serves: the structural
-  surface (`builtin_types.rs:infer_tuple_method`) first, then the member
-  `std/builtin/tuple.mojo` declares (`reverse`, `concat`), resolved on the
-  declaration's shell (`mojito-symbol`'s `TUPLE_DECLARATION_SHELL`, emitted
-  by `comptime/specialize.rs:tuple_declaration_shell`) with its pack bound
-  to the receiver's elements. A method's named `out` result is read off
+  argument contracts, result). A member of `Tuple` or `TString` is an
+  ordinary struct method of its declaration in `std/builtin/tuple.mojo` or
+  `std/format/tstring.mojo`; no Rust surface types one. A method's named `out` result is read off
   `mojito-ast`'s `named_result` / `FnParam::is_named_result` by
   `declarations.rs:method_sig`, `check_method_inner`, and MIR's method
   lowering alike. `checker/initializer_list.rs` owns the
@@ -523,7 +519,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `FunctionBody` — `method_certificate`, `record_template`).
   `BodyShape::simd_intrinsic` admits the lane reads of a closed or
   lane-shaped vector, `instance_substitution` folds a wildcard vector
-  binder's hidden slots (`simd_binder_values`, `fold_binder_views`), and
+  binder's hidden slots, and
   `realize_simd_intrinsics` records each instance's reinterpretation and
   lane-count shapes. `BodyShape::struct_lane_simd` admits a `DType`-keyed
   struct's symbolic lane (`Scalar[Self.dtype]`) as a scalar, and

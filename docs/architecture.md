@@ -1624,9 +1624,9 @@ Entry point:
 ```rust
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
-checker::check_program_for_discovery(program, materialized_callables, catalog) -> Result<DiscoveryResult, TypeError>
-checker::check_program_carrying(program, materialized_callables, catalog, previous: Option<PassCarry>) -> Result<PassCarry, TypeError>
-checker::check_program_with_templates(program, materialized_callables, catalog) -> Result<CheckedProgram, TypeError>
+checker::check_program_for_discovery(program, catalog) -> Result<DiscoveryResult, TypeError>
+checker::check_program_carrying(program, catalog, previous: Option<PassCarry>) -> Result<PassCarry, TypeError>
+checker::check_program_with_templates(program, catalog) -> Result<CheckedProgram, TypeError>
 ```
 
 `check` is the compatibility validation wrapper, and `check_program` the

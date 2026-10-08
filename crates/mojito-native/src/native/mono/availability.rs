@@ -11,8 +11,7 @@ use mojito_checked::checked::StructConformance;
 use mojito_types::param_expr::fold::integer_value;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, PackPredicateRef, TrivialLifecycle,
-    trivial_predicate_name, trivial_predicate_spelling, tstring_elements, tuple_elements,
-    uninit_storage_element,
+    trivial_predicate_spelling, uninit_storage_element,
 };
 
 /// The verdict of a member's availability clauses under an instance's
@@ -276,9 +275,7 @@ impl Specializer<'_> {
             // conforming aggregate is in doubt.
             return (!conforms || !undecided).then_some(conforms);
         };
-        let Some(template) = self.structs.get(nominal_template(name)).copied() else {
-            return self.elements_conform(ty, trait_name, visiting);
-        };
+        let template = self.structs.get(nominal_template(name)).copied()?;
         let row = template
             .conformances
             .iter()
@@ -293,39 +290,6 @@ impl Specializer<'_> {
         let holds = self.any_holds(&row.conditions, &bindings, visiting);
         visiting.remove(&key);
         holds
-    }
-
-    /// A variadic `Tuple` or `TString` whose specialization does not exist
-    /// answers by its elements, as the checker's `conforms_to` does: the
-    /// lifecycle traits and `Writable` hold when every element's does, and a
-    /// `TString` never copies. `None` for any other type or trait.
-    fn elements_conform(
-        &self,
-        ty: &Ty,
-        trait_name: &str,
-        visiting: &mut HashSet<(String, String)>,
-    ) -> Option<bool> {
-        let tstring = tstring_elements(ty);
-        let copies = matches!(trait_name, "Copyable" | "ImplicitlyCopyable");
-        if tstring.is_some() && copies {
-            return Some(false);
-        }
-        let elements = tstring.or_else(|| tuple_elements(ty))?;
-        if let Some(kind) = trivial_predicate_name(trait_name) {
-            return every(
-                elements
-                    .into_iter()
-                    .map(|element| self.trivially(kind, element, visiting)),
-            );
-        }
-        if !copies && !matches!(trait_name, "Movable" | "Deinitable" | "Writable") {
-            return None;
-        }
-        every(
-            elements
-                .into_iter()
-                .map(|element| self.type_conforms(element, trait_name, visiting)),
-        )
     }
 }
 

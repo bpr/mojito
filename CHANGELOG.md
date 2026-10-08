@@ -1704,6 +1704,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Tuple` and `TString` members and conformances now come only from their
+  bundled declarations (`std/builtin/tuple.mojo`, `std/format/tstring.mojo`),
+  as at the pin, including the declared conditional conformances
+  (`Hashable where conforms_to(Ts.values, Hashable)` and the rest). The
+  checker's Rust-typed `Tuple` member surface, the element-wise conformance
+  answers and clone-name coercions left from their clone era, the
+  `TString` clone derivation in `template_facts`, and the opaque
+  compiler-only callable annotation (`Type::MaterializedCallable`) are
+  gone, and `check_program_with_templates`, `check_program_for_discovery`,
+  and `check_program_carrying` no longer take a callable map. A check with
+  no linked prelude now reports `NoSuchMethod` on a `Tuple` member.
+
 - Every elaboration now follows a source validation run and reads its
   verdict: a `comptime for` display element's call or method call
   (`[P(n).get(), n]`) is judged by the type validation gave it, as at the

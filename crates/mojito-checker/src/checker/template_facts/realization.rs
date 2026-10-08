@@ -2,10 +2,10 @@
 //! template's facts realized under it, obligation by obligation.
 
 use super::realization_folds::{
-    closed_pack_values, construct_folded_vectors, constructed_element_indices, fold_binder_views,
-    fold_vector_values, folded_literals, loop_element_indices, merge_element_constructions,
-    realize_lane_comparisons, realize_lane_float_methods, realize_simd_intrinsics,
-    realize_value_shaped_constructions, relocate_packs, spread_packs, transferred_element_indices,
+    closed_pack_values, construct_folded_vectors, constructed_element_indices, fold_vector_values,
+    folded_literals, loop_element_indices, merge_element_constructions, realize_lane_comparisons,
+    realize_lane_float_methods, realize_simd_intrinsics, realize_value_shaped_constructions,
+    relocate_packs, spread_packs, transferred_element_indices,
 };
 use super::{
     BodyDeclaration, BodyParams, BodyRole, BodySite, DerivedBody, ElementIndices,
@@ -724,7 +724,6 @@ impl Checker {
                 packs,
                 values,
                 kept_values: Vec::new(),
-                named_self: None,
             });
         };
         // A body the elaborator shaped itself names nothing its receiver
@@ -735,7 +734,6 @@ impl Checker {
                 packs: HashMap::new(),
                 values: Vec::new(),
                 kept_values: Vec::new(),
-                named_self: None,
             });
         }
         let unresolved = || {
@@ -747,11 +745,10 @@ impl Checker {
         // own. A per-instantiation clone keeps its own symbolic
         // (`BOUND_BINDERS`); a per-call clone bakes them, and its trace
         // names the source type, element list, or value written for each. A member
-        // of a variadic struct specialized whole (`Tuple$t2[String, Int]`)
-        // has the pack's elements as its receiver's arguments, as many as its
-        // trace names; a specialization whose receiver carries none (a user
-        // struct's `Pair$t2[…]`, `TString$…`) binds the element sources its
-        // trace names, resolved as a `def` clone's are.
+        // of a variadic struct has the pack's elements as its receiver's
+        // arguments, as many as its trace names; a specialization whose
+        // receiver carries none binds the element sources its trace names,
+        // resolved as a `def` clone's are, and must mangle back to itself.
         let struct_owner = template
             .id
             .owner
@@ -776,7 +773,6 @@ impl Checker {
         let mut packs = HashMap::new();
         let mut values = Vec::new();
         let mut kept_values = Vec::new();
-        let mut named_self = None;
         match struct_decls {
             [
                 ParamDecl::Type {
@@ -806,18 +802,11 @@ impl Checker {
                                 .collect(),
                         ))
                     });
-                    match own {
-                        Some(Ty::Struct(name, arguments))
-                            if arguments.is_empty()
-                                && site.instance.owner.as_deref() == Some(&*name) => {}
-                        Some(own) => {
-                            named_self = Some((
-                                own,
-                                self.tstring_specialization(site, &elements)
-                                    .ok_or_else(unresolved)?,
-                            ));
-                        }
-                        None => return Err(unresolved()),
+                    if !matches!(own, Some(Ty::Struct(name, arguments))
+                        if arguments.is_empty()
+                            && site.instance.owner.as_deref() == Some(&*name))
+                    {
+                        return Err(unresolved());
                     }
                     elements
                 } else if traced.len() == arguments.len() {
@@ -825,7 +814,7 @@ impl Checker {
                 } else {
                     return Err(unresolved());
                 };
-                if elements.is_empty() && named_self.is_none() {
+                if elements.is_empty() {
                     return Err(unresolved());
                 }
                 packs.insert(id.clone(), elements);
@@ -895,16 +884,12 @@ impl Checker {
             packs,
             values,
             kept_values,
-            named_self,
         })
     }
 
     /// A trace's source type, resolved as the clone's own signature
     /// resolved it: a generated declaration's spelling of an already-checked
-    /// type (`StringLiteral`) is admitted where a user-spelled one is not. A
-    /// t-string element that is itself a t-string (`TString[StringLiteral,
-    /// Int]`) names the specialization discovery minted for its elements by
-    /// its symbol alone, as the clone check does; no annotation may spell it.
+    /// type (`StringLiteral`) is admitted where a user-spelled one is not.
     fn trace_source_ty(&self, source: &mojito_ast::ast::Type) -> Result<Ty, TypeError> {
         let generated = self.generated_declaration.replace(true);
         self.bare_string_literal_parameter.set(
@@ -914,33 +899,6 @@ impl Checker {
         self.bare_string_literal_parameter.set(false);
         self.generated_declaration.set(generated);
         ty
-    }
-
-    /// A substituted type as the clone check names it: a value-keyed or
-    /// variadic struct at closed arguments by the specialization selected
-    /// for it (`specialized_value_structs`), and a clone's `Self` by its own
-    /// symbol (`named_self`).
-    fn instance_names(&self, ty: &Ty, named_self: &[(Ty, Ty)]) -> Ty {
-        fold_binder_views(&self.specialized_value_structs(ty), named_self)
-    }
-
-    /// The `TString` specialization a member instance belongs to, when its
-    /// storage is the public tuple of `elements`: the type the clone check
-    /// names its `Self` by. Its symbol names the public segments, which the
-    /// storage pack no longer tells apart (`tstring_storage_elements`).
-    fn tstring_specialization(&self, site: &BodySite<'_>, elements: &[Ty]) -> Option<Ty> {
-        let owner = site.instance.owner.as_deref()?;
-        let storage = mojito_types::types::tuple_type(elements.to_vec());
-        let stored = self
-            .structs
-            .get(owner)?
-            .fields
-            .iter()
-            .all(|(_, ty)| *ty == storage);
-        (stored
-            && mojito_symbol::symbol::specialization_template(owner)
-                == Some(mojito_types::types::TSTRING_TYPE_NAME))
-        .then(|| Ty::Struct(owner.to_string(), Vec::new().into()))
     }
 
     /// A template's facts for one instance: every retained type substituted,
@@ -970,9 +928,8 @@ impl Checker {
             packs,
             values,
             kept_values,
-            named_self,
         } = instance;
-        let canonical = |ty: Ty| self.instance_names(&ty, named_self.as_slice());
+        let canonical = |ty: Ty| self.specialized_value_structs(&ty);
         let substitute = |ty: &Ty| {
             canonical(mojito_types::types::substitute_packs(
                 ty,

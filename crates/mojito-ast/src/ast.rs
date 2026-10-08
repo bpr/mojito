@@ -175,17 +175,6 @@ pub enum Type {
         /// contract's parameter declarations; rejected on plain annotations.
         where_clauses: Vec<Expr>,
     },
-    /// An opaque checked callable id carried through compiler-generated AST.
-    ///
-    /// Public variadic `Tuple` specializations are still generated as source
-    /// declarations, but source `def(...)` annotations cannot represent every
-    /// semantic callable fact: generic declaration metadata, ordinary default
-    /// masks/variadics, bound capture origins, and selected error types are all
-    /// richer than [`Type::Func`]. The elaborator therefore uses this variant
-    /// only for already-checked `Func`/`GenericFunc` element types and the
-    /// compiler seeds the second checker pass with the exact type keyed by this
-    /// id. The parser never constructs it.
-    MaterializedCallable(String),
     /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
     /// reference — used in a `ref[origin]` return type). The origin specifier is
     /// parsed but **discarded** (origins are not modeled); `ty` is the referent
@@ -2148,8 +2137,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 | Type::Float64
                 | Type::None
                 | Type::SelfParam(_)
-                | Type::SelfType
-                | Type::MaterializedCallable(_) => {}
+                | Type::SelfType => {}
             }
         }
 

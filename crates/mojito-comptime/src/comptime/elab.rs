@@ -671,9 +671,9 @@ impl Elab<'_> {
                 reference.referent = referent;
                 Ok(Ty::Ref(reference))
             }
-            Type::SelfType | Type::Func { .. } | Type::MaterializedCallable(_) => Err(
-                ComptimeError::NotComptime("unsupported compile-time type argument".to_string()),
-            ),
+            Type::SelfType | Type::Func { .. } => Err(ComptimeError::NotComptime(
+                "unsupported compile-time type argument".to_string(),
+            )),
         }
     }
 
@@ -689,13 +689,6 @@ impl Elab<'_> {
             }
             if let Some(ty) = scalar_type_name(name) {
                 return Ok(ty);
-            }
-            // A nested t-string's specialization, minted beside the one
-            // whose storage names it (`tstring_storage_elements`).
-            if mojito_symbol::symbol::specialization_template(name)
-                == Some(mojito_types::types::TSTRING_TYPE_NAME)
-            {
-                return Ok(Ty::Struct(name.to_string(), Vec::new().into()));
             }
         }
         // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value).

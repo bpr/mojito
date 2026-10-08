@@ -1570,7 +1570,6 @@ fn ast_raw(
             encode_identifier(name)
         ),
         Type::SelfType => "Self".to_string(),
-        Type::MaterializedCallable(key) => key.clone(),
         Type::Func { .. } => func_annotation_raw(ty),
         other => format!("{other:?}"),
     };
@@ -2095,15 +2094,6 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
         SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());
     Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
-
-/// The name the public `Tuple`'s declaration stands under in an elaborated
-/// program.
-///
-/// It names the shell of `std/builtin/tuple.mojo`'s template, against which
-/// the checker types a declared member of a `Tuple` no specialization serves
-/// yet. `$` keeps the name out of source, and it is neither the public name
-/// nor a specialization symbol.
-pub const TUPLE_DECLARATION_SHELL: &str = "$Tuple.declaration";
 
 /// The specialization-key spelling of a type: a caller place a clone binder
 /// stands for spells as the first clone binder, at every depth.

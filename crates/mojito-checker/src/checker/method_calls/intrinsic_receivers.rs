@@ -118,10 +118,6 @@ impl Checker {
             reject_kwargs(kwargs)?;
             return Ok(Some(ty));
         }
-        if let Ty::Tuple(elements) = obj_ty {
-            reject_kwargs(kwargs)?;
-            return self.infer_tuple_member(site, elements).map(Some);
-        }
         // A value pack that is still a parameter answers its length as the
         // parameter constant the elaborator folds.
         if method == "__len__"
@@ -174,7 +170,7 @@ impl Checker {
         Ok(None)
     }
 
-    /// A `List`, `Set`, or `Tuple` receiver no linked declaration registers.
+    /// A `List` or `Set` receiver no linked declaration registers.
     fn infer_unregistered_collection_method(
         &self,
         site: MethodCallSite<'_>,
@@ -200,11 +196,6 @@ impl Checker {
         }
         if let Some(element) = set_element(obj_ty) {
             return self.infer_set_method(site, element).map(Some);
-        }
-        if let Some(elements) = tuple_elements(obj_ty) {
-            reject_kwargs(kwargs)?;
-            let elements = elements.into_iter().cloned().collect::<Vec<_>>();
-            return self.infer_tuple_member(site, &elements).map(Some);
         }
         Ok(None)
     }

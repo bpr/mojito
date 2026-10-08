@@ -1,13 +1,12 @@
 //! Re-derivation of a tuple unpacking's element reads for an instance.
 //!
 //! An unpacking records one plan at its value: each element's checked type
-//! and, for a generated Tuple, the accessor that reads it and the reference
-//! a place accessor yields. The recipe keeps what the plan is built from, not
-//! what it holds: the value's type, the reference the unpacked place yields
-//! (`None` for a temporary), and the statement's named targets. An
-//! instance substitutes the value's type, which names the generated Tuple
-//! the clone check selects (`canonicalize_public_tuple_types`), and builds
-//! the plan again from it and its own binding of the place
+//! and, for a `Tuple`, the `__getitem_param__` accessor that reads it and the
+//! reference a place accessor yields. The recipe keeps what the plan is built
+//! from, not what it holds: the value's type, the reference the unpacked place
+//! yields (`None` for a temporary), and the statement's named targets. An
+//! instance substitutes the value's type and builds the plan again from it
+//! and its own binding of the place
 //! ([`Checker::realize_tuple_unpacks`], [`Checker::install_tuple_unpacks`]),
 //! exactly as the statement does (`tuple_unpack_plan`).
 
