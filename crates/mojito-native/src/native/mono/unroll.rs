@@ -278,7 +278,7 @@ impl Specializer<'_> {
                 &ty,
                 tables.n_regs,
                 tables.reg_types,
-                &self.structs,
+                self.construction_decls(),
             )
             .map_err(|mut error| {
                 error.function = Some(frame.template.to_string());

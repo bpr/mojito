@@ -642,6 +642,13 @@ pub fn nominal_string_literal_ctor_symbol() -> String {
     format!("{STDLIB_STRING_STRUCT}.__init__$ov$StringLiteral")
 }
 
+/// Whether a constructor declaration is its struct's list-literal
+/// initializer, the one a collection display (`[a, b]`) selects: variadic,
+/// with a `__list_literal__` keyword.
+pub fn is_list_literal_constructor(param_names: &[String], variadic: bool) -> bool {
+    variadic && param_names.iter().any(|name| name == "__list_literal__")
+}
+
 /// Whether `symbol` is a single-parameter constructor whose parameter is the
 /// nominal `String` (`StringSpan.__init__$ov$String`): the shape of an
 /// `@implicit` view constructor borrowing a String.

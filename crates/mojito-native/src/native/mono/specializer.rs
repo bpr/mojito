@@ -99,6 +99,14 @@ impl<'a> Specializer<'a> {
         }
     }
 
+    /// The declarations a parameter value's construction names.
+    pub(super) const fn construction_decls(&self) -> ConstructionDecls<'_, 'a> {
+        ConstructionDecls {
+            structs: &self.structs,
+            functions: &self.declarations,
+        }
+    }
+
     pub(super) fn run(mut self, entries: &[String]) -> Result<SpecializedProgram, MonoError> {
         let mut entry_map = HashMap::new();
         for entry in entries {
@@ -693,10 +701,12 @@ impl<'a> Specializer<'a> {
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
         let reified = reification_slots(&function, scope);
-        substitute_function(&mut function, bindings, scope, &self.structs).map_err(|mut e| {
-            e.function.get_or_insert_with(|| name.to_string());
-            e
-        })?;
+        substitute_function(&mut function, bindings, scope, self.construction_decls()).map_err(
+            |mut e| {
+                e.function.get_or_insert_with(|| name.to_string());
+                e
+            },
+        )?;
         Ok((function, reified))
     }
 
@@ -1331,7 +1341,7 @@ impl<'a> Specializer<'a> {
                             ty,
                             n_regs,
                             reg_types,
-                            &self.structs,
+                            self.construction_decls(),
                         )?);
                     }
                     Some(k) => instrs.push(MirInstr::Const { dest, k }),

@@ -1,7 +1,7 @@
-# A `DType`-keyed `def` overloaded with a compile-time-keyed one that the
-# cloner specializes per call and a plain one. The checker selects the
-# overload; a call selecting the `DType` member is served by its template, so
-# only the keyed member is cloned.
+# A `DType`-keyed `def` overloaded with a type-keyed one, whose body
+# materializes a reflected list, and a plain one. The checker selects the
+# overload, and a call selecting either keyed member is served by that
+# member's template.
 # requires: discovery
 
 

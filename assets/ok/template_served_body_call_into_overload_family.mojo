@@ -1,10 +1,9 @@
 # A template-served body's call over its own binder into an overload family
-# that keeps a member the cloner specializes (`kind[T]`, whose body
-# materializes a reflected list) is served by the declaration the checker
-# selected, as at the pin: `inferred`, `explicit`, `by_value`, and `h` are
-# served by their templates, while `g`, which selects the cloned member over
-# its own binder, is cloned per call. A losing overload's probe of `n` as a
-# type leaves nothing on the winning `kind[n]` call (`both`).
+# is served by the declaration the checker selected, as at the pin:
+# `inferred`, `explicit`, `by_value`, `g`, and `h` are served by their
+# templates, and so is the type-keyed member `kind[T]`, whose body
+# materializes a reflected list. A losing overload's probe of `n` as a type
+# leaves nothing on the winning `kind[n]` call (`both`).
 @fieldwise_init
 struct P(Copyable):
     var a: Int

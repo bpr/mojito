@@ -1380,64 +1380,6 @@ impl ScalarReads {
     }
 }
 
-/// The names a `def` body binds to a reflected list, by its query:
-/// `comptime names = r.field_names()`, `comptime types = r.field_types()`.
-#[derive(Default, Clone)]
-pub(super) struct ReflectedLists {
-    names: HashSet<String>,
-    types: HashSet<String>,
-}
-
-impl ReflectedLists {
-    pub(super) fn of(body: &[Stmt]) -> Self {
-        let mut lists = Self::default();
-        mojito_ast::visit::walk_block(&mut lists, body);
-        lists
-    }
-
-    /// Whether a block materializes one of these lists whole
-    /// (`materialize[names]()`), which needs the list as runtime storage: no
-    /// template carries that, so the body is a clone's.
-    fn materialized_in(&self, body: &[Stmt]) -> bool {
-        struct Finder<'a> {
-            lists: &'a ReflectedLists,
-            found: bool,
-        }
-
-        impl mojito_ast::visit::Visitor for Finder<'_> {
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.found |= matches!(&expr.kind, ExprKind::Call { name, param_args, args, .. }
-                    if name == "materialize"
-                        && args.is_empty()
-                        && matches!(param_args.as_slice(),
-                            [ParamArg::Value(Expr { kind: ExprKind::Identifier(list), .. })]
-                                if self.lists.names.contains(list)
-                                    || self.lists.types.contains(list)));
-            }
-        }
-
-        let mut finder = Finder {
-            lists: self,
-            found: false,
-        };
-        mojito_ast::visit::walk_block(&mut finder, body);
-        finder.found
-    }
-}
-
-impl mojito_ast::visit::Visitor for ReflectedLists {
-    fn visit_stmt(&mut self, statement: &Stmt) {
-        let StmtKind::Comptime { name, value, .. } = &statement.kind else {
-            return;
-        };
-        if reflection_method(value, &["field_names"]) {
-            self.names.insert(name.clone());
-        } else if reflection_method(value, &["field_types"]) {
-            self.types.insert(name.clone());
-        }
-    }
-}
-
 /// Whether a generic `def`'s template serves a `comptime for`. Its iterable
 /// is one of:
 ///
@@ -2006,12 +1948,11 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
 
 /// Whether a top-level `def`'s body keys a clone per instantiation: it
 /// holds a `comptime for` its template does not serve
-/// ([`comptime_for_is_template_served`]), or it materializes a reflected
-/// list whole ([`ReflectedLists::materialized_in`]). A `comptime if`, a
-/// served `comptime for`, and a `rebind`, its own or a nested `def`'s, do
-/// not: the template keeps the region or the assertion, the check types it
-/// with the binders symbolic, and the elaborator below MIR selects, unrolls,
-/// or judges it.
+/// ([`comptime_for_is_template_served`]). A `comptime if`, a served
+/// `comptime for`, and a `rebind`, its own or a nested `def`'s, do not: the
+/// template keeps the region or the assertion, the check types it with the
+/// binders symbolic, and the elaborator below MIR selects, unrolls, or
+/// judges it.
 fn def_body_keys_specialization(
     type_params: &[TypeParam],
     params: &[FnParam],
@@ -2030,7 +1971,7 @@ fn def_body_keys_specialization(
         collection: &|name| !bound.contains(name),
         scalars,
     };
-    block_has_unkept_comptime_for(body, &names) || ReflectedLists::of(body).materialized_in(body)
+    block_has_unkept_comptime_for(body, &names)
 }
 
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,
@@ -4517,11 +4458,12 @@ mod def_request_tests {
         assert!(served.contains("tuples"), "{served:?}");
         // So does one whose tuples hold a string, which each read constructs.
         assert!(served.contains("string_tuples"), "{served:?}");
+        // A reflected list materialized whole is constructed per instance.
+        assert!(served.contains("names"), "{served:?}");
         // Each shape below still keys a type-pack clone; its owner flips the
         // line to `contains` when it lands, and R253 deletes the branch once
         // none is left.
         assert!(!served.contains("raising"), "R404: {served:?}");
-        assert!(!served.contains("names"), "R365: {served:?}");
     }
 
     #[test]

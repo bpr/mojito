@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R497**.
+Next free ID: **R498**.
 
 ## Ordered Work
 
@@ -86,25 +86,6 @@ correctness fix to existing behavior is allowed.
     `CloneClass::PackDef` as a regression counter.
   - Depends on R6, R364, R365, R401, and R405.
   - Model: Fable, Planned.
-
-- [ ] **R365 (P3) A reflected list materialized whole over a type parameter
-  has no template form**
-
-  Problem: `var all = materialize[names]()` over `comptime names =
-  reflect[T].field_names()` keeps a generic `def` on the cloner
-  (`assets/ok/reflection_field_name_materialize.mojo`), and in a method of a
-  generic struct it is rejected, where the pin prints the list's length.
-  - The method reports "materialize[...]() of a reflected list over a type
-    parameter", since a generic struct's method has no clone to fall back
-    on.
-  - A template would need MIR to build runtime storage from a parameter
-    list, the form R325 lacks for a value pack.
-  - One element crosses already: `materialize[names[i]]()` is served.
-  - The cloner keeps the `def` by syntax (`ReflectedLists::materialized_in`,
-    `comptime.rs`).
-  - Found while landing R246 (2026-10-06).
-  - Depends on R325, which needs the same runtime list.
-  - Model: Opus, Not Planned.
 
 - [ ] **R310 (P3e) A method whose body only a per-call clone can serve still
   clones per call**
@@ -3813,6 +3794,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     as `String` literals.
   - A program that annotates the element as a `StringSpan` is rejected where
     the pin runs it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R497 A reflected field-type list materialized whole is rejected**
+
+  Problem: `var all = materialize[types]()` over `comptime types =
+  reflect[T].field_types()` prints the field count through `len(all)` at
+  the pin and is rejected in Mojito with "type-valued or symbolic comptime
+  values cannot materialize at runtime".
+  - The pin's `field_types()` is a zero-sized `TypeList`, so the runtime
+    value carries only its length.
+  - A closed subject is rejected too, so this is no template-form gap.
+  - Probe: `conformance/probes/reflected_field_types_materialize.mojo`.
+  - Found while landing R365 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -2405,8 +2405,10 @@ impl Checker {
             .and_then(|info| info.methods.get("__init__"))
             .and_then(|sigs| {
                 sigs.iter().find(|sig| {
-                    sig.variadic.is_some()
-                        && sig.names.iter().any(|name| name == "__list_literal__")
+                    mojito_symbol::symbol::is_list_literal_constructor(
+                        &sig.names,
+                        sig.variadic.is_some(),
+                    )
                 })
             })
             .map_or_else(

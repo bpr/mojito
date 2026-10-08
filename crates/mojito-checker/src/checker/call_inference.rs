@@ -411,7 +411,7 @@ impl Checker {
                 // body (`materialize[names[i]]()`): the runtime value of its
                 // compile-time operand, which MIR lowers in its place.
                 "materialize" if args.is_empty() && kwargs.is_empty() => {
-                    return self.infer_template_materialize(param_args);
+                    return self.infer_template_materialize(&span, param_args);
                 }
                 "comptime" if self.source_validation && args.len() == 1 => {
                     return self.infer(&args[0]);

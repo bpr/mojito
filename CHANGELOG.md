@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A reflected field-name list materialized whole over a type parameter
+  now runs from the template, on the VM and natively, as at the pin: `var
+  all = materialize[names]()` over `comptime names =
+  reflect[T].field_names()` in a generic struct's method stopped with
+  "materialize[...]() of a reflected list over a type parameter", and in a
+  generic `def` was cloned per instance. The list is the `Array` of the
+  names sized by the field count, which the elaborator constructs per
+  instance from its parameter value. A query called in place (`var names =
+  reflect[T].field_names()`), rejected before, is the same `Array`.
+
 - A value pack read as a runtime value now runs, on the VM and natively, as
   at the pin: `for v in values`, `values[i]` at a runtime index, and `var l
   = values` over `def f[*values: Int]` (or `Bool`, `Float64`, `DType`, a

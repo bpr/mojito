@@ -1019,15 +1019,11 @@ fn comptime_for_over_non_scalar_elements_in_a_generic_def_is_rejected() {
 }
 
 #[test]
-fn whole_reflected_list_materialized_in_a_generic_method_is_rejected() {
-    // A generic struct's method is served by its template alone, which
-    // carries one element of a reflected list, not the list.
-    let src = "@fieldwise_init\nstruct P:\n    var x: Int\n\n@fieldwise_init\nstruct Box[T: AnyType]:\n    var v: Int\n\n    def names(self) -> Int:\n        comptime names = reflect[Self.T].field_names()\n        var all = materialize[names]()\n        return len(all)\n\ndef main():\n    print(Box[P](1).names())\n";
-    let error = run(src).unwrap_err();
-    assert!(
-        error.contains("materialize[...]() of a reflected list over a type parameter"),
-        "{error}"
-    );
+fn whole_reflected_list_materialized_in_a_generic_method_runs() {
+    // A generic struct's method is served by its template alone: the list
+    // is the `Array` each instance constructs from its parameter value.
+    let src = "@fieldwise_init\nstruct P:\n    var x: Int\n\n@fieldwise_init\nstruct Box[T: AnyType]:\n    var v: Int\n\n    def names(self) -> Int:\n        comptime names = reflect[Self.T].field_names()\n        var all = materialize[names]()\n        print(all[0])\n        return len(all)\n\ndef main():\n    print(Box[P](1).names())\n";
+    assert_eq!(run(src).unwrap(), "x\n1\n");
 }
 
 #[test]

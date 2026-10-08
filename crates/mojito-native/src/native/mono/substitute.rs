@@ -6,6 +6,32 @@ use super::*;
 use mojito_mir::mir::Proj;
 use mojito_types::types::VariantIndex;
 
+/// The declarations a parameter value's construction names: a struct
+/// value's fieldwise constructor, and an `Array`'s list-literal
+/// initializer.
+#[derive(Clone, Copy)]
+pub(super) struct ConstructionDecls<'d, 'a> {
+    pub(super) structs: &'d HashMap<&'a str, &'a MirStructDeclaration>,
+    pub(super) functions: &'d HashMap<&'a str, &'a MirFunctionDeclaration>,
+}
+
+impl ConstructionDecls<'_, '_> {
+    /// The list-literal initializer of the struct `template`, as the
+    /// checker selects it for a collection display.
+    fn list_literal_constructor(&self, template: &str) -> Option<&str> {
+        self.functions
+            .iter()
+            .find(|(symbol, declaration)| {
+                mojito_symbol::symbol::lifecycle_constructor(symbol) == Some((template, "__init__"))
+                    && mojito_symbol::symbol::is_list_literal_constructor(
+                        &declaration.param_names,
+                        declaration.variadic.is_some(),
+                    )
+            })
+            .map(|(symbol, _)| *symbol)
+    }
+}
+
 /// Rewrite each nullary `T()`, `Ts[i]()`, or construction of a type
 /// expression (`types[i]()` over a reflected field-type list) whose
 /// constructed type these bindings decide into that type's default
@@ -69,13 +95,13 @@ pub(super) fn default_construct_parameters(
 /// Substitute `bindings` through `function`, whose declaration declares the
 /// compile-time parameters in `scope`. A value parameter whose value owns a
 /// string ([`CtValue::is_constructed_parameter_value`]) is constructed at each
-/// read ([`construct_parameter_reads`]), with the field types of the
-/// `structs` it names; its slot holds nothing.
+/// read ([`construct_parameter_reads`]), with the constructors `decls`
+/// declares; its slot holds nothing.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
     scope: &[ParamDecl],
-    structs: &HashMap<&str, &MirStructDeclaration>,
+    decls: ConstructionDecls,
 ) -> Result<(), MonoError> {
     let (constructed, locals): (HashMap<_, _>, HashMap<_, _>) =
         bound_parameter_locals(scope, bindings)
@@ -144,7 +170,7 @@ pub(super) fn substitute_function(
             &ty,
             &mut function.n_regs,
             &mut function.reg_types,
-            structs,
+            decls,
         )?;
     }
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
@@ -381,7 +407,7 @@ pub(super) fn construct_parameter_reads(
     ty: &Ty,
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
-    structs: &HashMap<&str, &MirStructDeclaration>,
+    decls: ConstructionDecls,
 ) -> Result<(), MonoError> {
     for block in blocks {
         let mut instrs = Vec::with_capacity(block.instrs.len());
@@ -394,7 +420,7 @@ pub(super) fn construct_parameter_reads(
                     .cloned()
                     .unwrap_or_else(|| ty.clone());
                 instrs.extend(parameter_value_construction(
-                    dest, value, &read, n_regs, reg_types, structs,
+                    dest, value, &read, n_regs, reg_types, decls,
                 )?);
                 continue;
             }
@@ -411,7 +437,7 @@ pub(super) fn construct_parameter_reads(
                     .chain(orelse.iter_mut())
                     .chain(finalbody.iter_mut())
                 {
-                    construct_parameter_reads(region, slot, value, ty, n_regs, reg_types, structs)?;
+                    construct_parameter_reads(region, slot, value, ty, n_regs, reg_types, decls)?;
                 }
             } else if matches!(
                 instruction,
@@ -1332,16 +1358,22 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
     }
 }
 
-/// The value a parameter constant `k` read at `ty` owns a string of, which
-/// is then constructed rather than read as a constant: a string at the
-/// nominal `String`, or an aggregate holding one
-/// ([`CtValue::is_constructed_parameter_value`]).
+/// The value a parameter constant `k` read at `ty` is constructed from
+/// rather than read as a constant: a string at the nominal `String`, an
+/// aggregate holding one ([`CtValue::is_constructed_parameter_value`]), or
+/// a list read at an `Array`, which owns its storage.
 pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtValue> {
     match k {
         Const::Str(text) if matches!(ty, Ty::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name)) => {
             Some(CtValue::Str(text.clone()))
         }
-        Const::Value(value) if value.is_constructed_parameter_value() => Some(value.clone()),
+        Const::Value(value)
+            if value.is_constructed_parameter_value()
+                || (matches!(value, CtValue::Tuple(_) | CtValue::List(_))
+                    && array_instance_parts(ty).is_some()) =>
+        {
+            Some(value.clone())
+        }
         _ => None,
     }
 }
@@ -1415,16 +1447,18 @@ fn seed_captured_parameter_slots(
 
 /// The run-time construction of the parameter value `value`, of the concrete
 /// type `ty`, into `dest`: a string at the nominal `String` is its literal's
-/// `String` constructor, a tuple the `Tuple` constructor over its elements,
-/// and a struct its fieldwise constructor, as `CtValue::materialize` spells
-/// a frozen struct; any other leaf is its constant.
+/// `String` constructor, a list at an `Array` the list-literal initializer
+/// over its elements (the call a display `[a, b]` lowers to), a tuple the
+/// `Tuple` constructor over its elements, and a struct its fieldwise
+/// constructor, as `CtValue::materialize` spells a frozen struct; any other
+/// leaf is its constant.
 pub(super) fn parameter_value_construction(
     dest: Reg,
     value: &CtValue,
     ty: &Ty,
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
-    structs: &HashMap<&str, &MirStructDeclaration>,
+    decls: ConstructionDecls,
 ) -> Result<Vec<MirInstr>, MonoError> {
     let unsupported = || MonoError {
         kind: MonoErrorKind::Unsupported,
@@ -1450,6 +1484,27 @@ pub(super) fn parameter_value_construction(
                 ),
             ]);
         }
+        (CtValue::Tuple(elements) | CtValue::List(elements), _)
+            if let Some((element, length)) = array_instance_parts(ty) =>
+        {
+            if usize::try_from(length).ok() != Some(elements.len()) {
+                return Err(unsupported());
+            }
+            let constructor = decls
+                .list_literal_constructor(mojito_types::types::ARRAY_TYPE_NAME)
+                .ok_or_else(unsupported)?;
+            let parts = elements.iter().map(|value| (value, element.clone()));
+            let (mut instrs, args) = constructed_parts(parts, n_regs, reg_types, decls)?;
+            instrs.extend(array_literal_construction(
+                dest,
+                constructor,
+                args,
+                length,
+                n_regs,
+                reg_types,
+            ));
+            return Ok(instrs);
+        }
         (CtValue::Tuple(elements), _) if value.is_constructed_parameter_value() => {
             let types = mojito_types::types::tuple_elements(ty)
                 .filter(|types| types.len() == elements.len())
@@ -1460,7 +1515,8 @@ pub(super) fn parameter_value_construction(
             )
         }
         (CtValue::Struct { name, fields }, _) if value.is_constructed_parameter_value() => {
-            let declared = structs
+            let declared = decls
+                .structs
                 .get(name.as_str())
                 .filter(|declaration| declaration.param_decls.is_empty())
                 .ok_or_else(unsupported)?;
@@ -1482,17 +1538,7 @@ pub(super) fn parameter_value_construction(
             return Ok(vec![MirInstr::Const { dest, k }]);
         }
     };
-    let mut instrs = Vec::new();
-    let mut args = Vec::new();
-    for (part, part_ty) in parts {
-        let arg = Reg(*n_regs);
-        *n_regs += 1;
-        reg_types.insert(arg.0, part_ty.clone());
-        instrs.extend(parameter_value_construction(
-            arg, part, &part_ty, n_regs, reg_types, structs,
-        )?);
-        args.push(arg);
-    }
+    let (mut instrs, args) = constructed_parts(parts, n_regs, reg_types, decls)?;
     instrs.push(plain_call(dest, &func, args));
     Ok(instrs)
 }
@@ -1740,6 +1786,99 @@ fn plain_call(dest: Reg, func: &str, args: Vec<Reg>) -> MirInstr {
         instantiated_args: Vec::new(),
         spread: None,
     }
+}
+
+/// Construct each part of a parameter value at its type into a fresh
+/// register: the instructions, and the registers in order.
+fn constructed_parts<'v>(
+    parts: impl IntoIterator<Item = (&'v CtValue, Ty)>,
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+    decls: ConstructionDecls,
+) -> Result<(Vec<MirInstr>, Vec<Reg>), MonoError> {
+    let mut instrs = Vec::new();
+    let mut args = Vec::new();
+    for (part, part_ty) in parts {
+        let arg = fresh_register(part_ty.clone(), n_regs, reg_types);
+        instrs.extend(parameter_value_construction(
+            arg, part, &part_ty, n_regs, reg_types, decls,
+        )?);
+        args.push(arg);
+    }
+    Ok((instrs, args))
+}
+
+/// The element type and length of an `Array` instance, a mono-named one
+/// included.
+fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
+    let Ty::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if nominal_template(name) != mojito_types::types::ARRAY_TYPE_NAME {
+        return None;
+    }
+    match arguments.as_slice() {
+        [TyArg::Ty(element), TyArg::Val(CtValue::Int(length))] => Some((element, *length)),
+        _ => None,
+    }
+}
+
+/// The list-literal initializer call over `elements`, as MIR lowers a
+/// display: `__list_literal__` selects the overload, and the `length`
+/// parameter argument reifies the constructed value's length.
+fn array_literal_construction(
+    dest: Reg,
+    constructor: &str,
+    elements: Vec<Reg>,
+    length: i64,
+    n_regs: &mut u32,
+    reg_types: &mut HashMap<u32, Ty>,
+) -> Vec<MirInstr> {
+    let none = fresh_register(Ty::None, n_regs, reg_types);
+    let length_reg = fresh_register(Ty::Int, n_regs, reg_types);
+    let unbound = || mojito_mir::mir::MirParamArg {
+        name: None,
+        value: None,
+        binder: None,
+        expr: None,
+    };
+    vec![
+        MirInstr::Const {
+            dest: none,
+            k: Const::None,
+        },
+        MirInstr::Const {
+            dest: length_reg,
+            k: Const::Int(length),
+        },
+        MirInstr::Call {
+            dest,
+            func: mojito_mir::mir::FuncRef::named(constructor),
+            raises: None,
+            arg_places: vec![None; elements.len()],
+            args: elements,
+            kwargs: vec![("__list_literal__".to_string(), none)],
+            kwarg_places: vec![None],
+            capture_accesses: Vec::new(),
+            param_arg_regs: vec![
+                unbound(),
+                mojito_mir::mir::MirParamArg {
+                    value: Some(length_reg),
+                    ..unbound()
+                },
+            ],
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        },
+    ]
+}
+
+fn fresh_register(ty: Ty, n_regs: &mut u32, reg_types: &mut HashMap<u32, Ty>) -> Reg {
+    let reg = Reg(*n_regs);
+    *n_regs += 1;
+    reg_types.insert(reg.0, ty);
+    reg
 }
 
 /// `SIMD.to_bits`' constraint, decided once an instance closes its source

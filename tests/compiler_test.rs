@@ -1330,22 +1330,10 @@ def fields[T: AnyType]():
     comptime for name in reflect[T].field_names():
         print(name)
 
-def main():
-    named[1]()
-    display[3]()
-    keyed[5]()
-    pack[7, 8]()
-    bound[3]()
-    read[3]()
-    fields[Point]()
-";
-
-/// One generic `def` per `comptime for` shape that still keys a clone.
-const COMPTIME_FOR_CLONED: &str = "\
-@fieldwise_init
-struct Point:
-    var x: Int
-    var y: Int
+def whole[T: AnyType]():
+    comptime names = reflect[T].field_names()
+    var all = materialize[names]()
+    print(len(all))
 
 def twice(x: Int) -> Int:
     return x * 2
@@ -1361,15 +1349,17 @@ def built[T: AnyType]():
         comptime if conforms_to(FT, Defaultable & Deinitable & Writable):
             print(FT())
 
-def whole[T: AnyType]():
-    comptime names = reflect[T].field_names()
-    var all = materialize[names]()
-    print(len(all))
-
 def main():
+    named[1]()
+    display[3]()
+    keyed[5]()
+    pack[7, 8]()
+    bound[3]()
+    read[3]()
+    fields[Point]()
+    whole[Point]()
     applied[4]()
     built[Point]()
-    whole[Point]()
 ";
 
 #[test]
@@ -1388,27 +1378,20 @@ fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
             .count(CloneClass::ComptimeForDef),
         0,
         "a named collection, a display over a binder, a value pack, a local binding of a \
-         display, one read for an element and its length and materialized, and a reflected list"
+         display, one read for an element and its length and materialized, a reflected list, \
+         an applied element, and a constructed field type"
+    );
+    assert_eq!(
+        served
+            .instantiation_census()
+            .cloned
+            .count(CloneClass::TypeDef),
+        0,
+        "a reflected list materialized whole"
     );
     assert_eq!(
         Compiler::default().execute(&served).expect("run").output,
-        "11\n21\n6\n8\n5\n6\n7\n8\n6\n11\n11\n16\n3\n6\n0\n1\n2\nx\ny\nx\ny\n"
-    );
-    let cloned = compile(COMPTIME_FOR_CLONED);
-    let census = cloned.instantiation_census();
-    assert_eq!(
-        census.cloned.count(CloneClass::ComptimeForDef),
-        2,
-        "an applied element and a constructed field type"
-    );
-    assert_eq!(
-        census.cloned.count(CloneClass::TypeDef),
-        1,
-        "a whole materialized list"
-    );
-    assert_eq!(
-        Compiler::default().execute(&cloned).expect("run").output,
-        "8\n4\n0\n0\n2\n"
+        "11\n21\n6\n8\n5\n6\n7\n8\n6\n11\n11\n16\n3\n6\n0\n1\n2\nx\ny\nx\ny\n2\n8\n4\n0\n0\n"
     );
 }
 
@@ -2668,7 +2651,7 @@ fn template_overloaded_lane_def_is_template_served() {
     // An overloaded `DType`-keyed `def` is served by its template like a
     // uniquely named one: the checker selects the overload, and a call
     // selecting the lane member is left as written, beside a plain sibling
-    // and beside a compile-time-keyed sibling the cloner still specializes.
+    // and beside a type-keyed sibling that materializes a reflected list.
     let source = "@fieldwise_init\nstruct P(Copyable):\n    var a: Int\n    var b: Int\n\ndef lane[dt: DType](a: Scalar[dt]) -> Int:\n    return 1\n\ndef lane(a: String) -> Int:\n    return 2\n\ndef kind[T: AnyType](a: Int) -> Int:\n    comptime names = reflect[T].field_names()\n    var all = materialize[names]()\n    return len(all) + a\n\ndef kind[dt: DType](a: Scalar[dt]) -> Int:\n    return 3\n\ndef kind(a: String) -> Int:\n    return 4\n\ndef main():\n    print(lane(Int32(1)), lane[DType.float64](2.0), lane(String(\"s\")))\n    print(kind[P](10), kind[DType.float64](1.8), kind(Int32(4)), kind(String(\"s\")))\n";
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);

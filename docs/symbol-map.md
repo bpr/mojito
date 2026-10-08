@@ -1152,7 +1152,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `crates/mojito-symbol/src/symbol.rs` also owns the string identities
   (`is_stdlib_string_struct`/`is_stdlib_string_span_struct`, re-exported from
   `mojito-types`; `nominal_string_literal_ctor_symbol`, the literal→`String`
-  wrap MIR emits) and the
+  wrap MIR emits), the list-literal initializer predicate
+  `is_list_literal_constructor` (the checker's display construction and
+  mono's `Array` parameter-value construction), and the
   instance-clone identity shared by the checker and both backends:
   `specialized_method_values`,
   `materialized_instantiation_argument`, and `instance_method_clone_name`
@@ -1385,7 +1387,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_template_comptime` inlines a bound reflected list;
   `infer_template_materialize` (`checker/comptime_validation.rs`) types
   `materialize[X]()` over a binder, which `Flatten::expr`
-  (`mir/lower_expr/expr.rs`) lowers as its operand; `check_ct_bool` compiles
+  (`mir/lower_expr/expr.rs`) lowers as its operand, a whole field-name list
+  (`materialize[names]()`) being the `Array` `materialized_reflection_list`
+  (`checker/reflection.rs`) types and records as a parameter value that
+  mono constructs per instance; `check_ct_bool` compiles
   `conforms_to` over a dependent element to `ParamKind::Conforms`
   propositions, which `Specializer::resolve_application`
   (`mono/specializer.rs`) decides through `type_conforms`; and
@@ -1659,8 +1664,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `verify/concrete.rs` rejects a survivor.
 - `Specializer::answer_param_constants` and `param_constant`
   (`mono/specializer.rs`) fold it per instance, a value owning a `String`
-  constructed instead (`constructed_parameter_constant`,
-  `parameter_value_construction`, `mono/substitute.rs`): a length through `eval_ct`,
+  or a list read at an `Array` constructed instead
+  (`constructed_parameter_constant`, `parameter_value_construction`,
+  `mono/substitute.rs`; an `Array` through the list-literal initializer
+  `ConstructionDecls::list_literal_constructor` finds, the call MIR lowers a
+  display to): a length through `eval_ct`,
   a membership or conformance as a `GenericConstraint` through
   `constraint_holds` (`mono/availability.rs`). `eval_ct`
   (`mono/symbolic.rs`) answers a reflection query through

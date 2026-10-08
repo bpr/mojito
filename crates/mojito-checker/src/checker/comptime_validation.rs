@@ -2090,10 +2090,11 @@ impl Checker {
     /// `materialize[X]()` in the executable check: the crossing pass folds
     /// every operand it evaluates, so `X` is over a binder of a template
     /// body, and the call is the runtime value of that operand at its type.
-    /// A whole reflected list (`materialize[names]()`) has no runtime form a
-    /// template carries.
+    /// A whole field-name list (`materialize[names]()`) is the `Array` the
+    /// elaborator constructs per instance.
     pub(super) fn infer_template_materialize(
         &self,
+        span: &SourceSpan,
         param_args: &[ParamArg],
     ) -> Result<Ty, TypeError> {
         let [ParamArg::Value(operand)] = param_args else {
@@ -2101,12 +2102,8 @@ impl Checker {
                 "materialize[...]() takes one compile-time value".to_string(),
             ));
         };
-        if self.reflection_list(operand)?.is_some() {
-            return Err(TypeError::Unsupported(
-                "materialize[...]() of a reflected list over a type parameter: a template \
-                 carries one element of it (materialize[names[i]]()), not the list"
-                    .to_string(),
-            ));
+        if let Some(ty) = self.materialized_reflection_list(span, operand)? {
+            return Ok(ty);
         }
         let _position = self.comptime_position();
         self.infer(operand)

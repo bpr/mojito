@@ -603,7 +603,8 @@ branch for the class is deleted, and so is its certificate class.
   parameters is served too since 2026-10-07 (an annotated one, an element
   of a closed list at a loop index, a type alias keying a `comptime if`);
   what still keys a clone is listed in `docs/features.md`'s Comptime row
-  (R365 among them). The same step made `rebind` a
+  (a reflected field-name list materialized whole is served since
+  2026-10-08, R365). The same step made `rebind` a
   template form: MIR carries it as a value rebind (`MirInstr::Rebind`,
   schema 1.23) or a place retyped to its target, and the elaborator asserts
   the equality per instance after deciding its branches, as upstream's

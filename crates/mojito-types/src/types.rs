@@ -670,9 +670,15 @@ pub fn list_type(element: Ty) -> Ty {
 }
 
 pub fn array_type(element: Ty, length: i64) -> Ty {
+    array_type_of(element, CtValue::Int(length))
+}
+
+/// `Array[element, length]` whose length may still be symbolic, as a
+/// reflected list over a type parameter is sized by its field count.
+pub fn array_type_of(element: Ty, length: CtValue) -> Ty {
     Ty::Struct(
         ARRAY_TYPE_NAME.into(),
-        vec![TyArg::Ty(element), TyArg::Val(CtValue::Int(length))].into(),
+        vec![TyArg::Ty(element), TyArg::Val(length)].into(),
     )
 }
 

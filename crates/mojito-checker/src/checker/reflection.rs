@@ -15,11 +15,12 @@ use mojito_types::types::DependentType;
 
 impl Checker {
     /// The type of a reflection read in a value position: a count, an index,
-    /// or an `is_struct()` answer, an element of `field_names()`, the length
+    /// or an `is_struct()` answer, the `field_names()` list called in place
+    /// (the `Array` the pin's query returns) or an element of it, the length
     /// of either list, or a construction of a field type (`FT()`,
     /// `types[i]()`). `None` when `expr` reads no reflection handle. A bare
-    /// handle or list is no runtime value, so its `comptime` binding is kept
-    /// for inlining at its compile-time uses.
+    /// handle or field-type list is no runtime value, so its `comptime`
+    /// binding is kept for inlining at its compile-time uses.
     pub(super) fn infer_reflection(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         match &expr.kind {
             ExprKind::Identifier(name) => match self.local_comptime_value(name) {
@@ -30,7 +31,13 @@ impl Checker {
                 match self.reflection_query_of(expr)? {
                     Some((subject, query)) => {
                         let value = self.eval_reflection(&subject, query.clone())?;
-                        let ty = reflection_value_ty(&subject, &query, &value)?;
+                        let names = (query == ReflectQuery::FieldNames)
+                            .then(|| self.reflected_names_array_ty(value.clone()))
+                            .flatten();
+                        let ty = match names {
+                            Some(ty) => ty,
+                            None => reflection_value_ty(&subject, &query, &value)?,
+                        };
                         self.record_reflection_value(expr, value);
                         Ok(Some(ty))
                     }
@@ -99,18 +106,42 @@ impl Checker {
     }
 
     /// The runtime type `materialize[names]()` gives a name bound to
-    /// `field_names()`: the elaborator materializes the closed list as a
-    /// `List[String]` display. `None` for any other operand.
+    /// `field_names()`: an `Array` of the names sized by the field count, as
+    /// the pin's `field_names()` returns. `None` for any other operand.
     pub(super) fn materialized_field_names(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         Ok(match self.reflection_list(expr)? {
-            Some((ReflectQuery::FieldNames, _)) => Some(mojito_types::types::list_type(
-                mojito_types::types::nominal_type(
-                    mojito_symbol::symbol::STDLIB_STRING_STRUCT,
-                    Vec::new(),
-                ),
-            )),
+            Some((ReflectQuery::FieldNames, list)) => self.reflected_names_array_ty(list),
             _ => None,
         })
+    }
+
+    /// `materialize[names]()` of a field-name list in the executable check:
+    /// the list is over a type parameter (the crossing pass folds a closed
+    /// one), so the call is the parameter value MIR carries and the
+    /// elaborator constructs per instance as the `Array` it types as. A
+    /// field-type list is no runtime value here. `None` when `operand` is
+    /// no reflected list.
+    pub(super) fn materialized_reflection_list(
+        &self,
+        span: &SourceSpan,
+        operand: &Expr,
+    ) -> Result<Option<Ty>, TypeError> {
+        match self.reflection_list(operand)? {
+            Some((ReflectQuery::FieldNames, list)) => {
+                let ty = self.reflected_names_array_ty(list.clone()).ok_or_else(|| {
+                    TypeError::NotComptime(
+                        "materialize[...]() of a field-name list whose length is unknown"
+                            .to_string(),
+                    )
+                })?;
+                self.record_param_value(span.clone(), list);
+                Ok(Some(ty))
+            }
+            Some(_) => Err(TypeError::NotComptime(
+                "type-valued or symbolic comptime values cannot materialize at runtime".to_string(),
+            )),
+            None => Ok(None),
+        }
     }
 
     /// The compile-time value of a reflection query, or of the length of a
@@ -483,15 +514,44 @@ impl Checker {
     /// its subject was not (`reflect[Self].field_count()` in a generic
     /// struct's method), so the crossing pass could not fold it.
     fn record_reflection_value(&self, expr: &Expr, value: CtValue) {
-        if let Ok(value) = self.param_context.constant(value) {
-            self.operation_adjustments.borrow_mut().insert(
-                expr.source_span(),
-                mojito_checked::checked::SemanticAdjustment::ParamValue {
-                    value,
-                    materialized: None,
-                },
-            );
-        }
+        self.record_param_value(expr.source_span(), value);
+    }
+
+    /// The runtime `Array` a field-name list materializes as: `String`
+    /// elements, sized by the list's count.
+    fn reflected_names_array_ty(&self, list: CtValue) -> Option<Ty> {
+        self.reflection_list_count(list).map(|count| {
+            mojito_types::types::array_type_of(
+                mojito_types::types::nominal_type(
+                    mojito_symbol::symbol::STDLIB_STRING_STRUCT,
+                    Vec::new(),
+                ),
+                count,
+            )
+        })
+    }
+
+    /// Record `value` as the parameter constant read at `span`. A read
+    /// re-inferred keeps the temporary a borrow of it already materialized
+    /// (`materialize[names]()[0]`).
+    fn record_param_value(&self, span: SourceSpan, value: CtValue) {
+        let Ok(value) = self.param_context.constant(value) else {
+            return;
+        };
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        let materialized = match adjustments.get(&span) {
+            Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                materialized, ..
+            }) => *materialized,
+            _ => None,
+        };
+        adjustments.insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value,
+                materialized,
+            },
+        );
     }
 
     /// Element `index` of a reflected field-type list: a closed list selects
@@ -566,8 +626,8 @@ fn reflection_field_name(param_args: &[ParamArg]) -> Result<String, TypeError> {
     })
 }
 
-/// The runtime type of a query's answer: an `Int`, a `Bool`; a list is a
-/// compile-time value only.
+/// The runtime type of a scalar query's answer: an `Int`, a `Bool`; a
+/// field-type list is a compile-time value only.
 fn reflection_value_ty(
     subject: &Ty,
     query: &ReflectQuery,
