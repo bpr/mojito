@@ -52,5 +52,39 @@ impl Specializer<'_> {
     }
 }
 
+/// The failure of a parameter constant an unrolled iteration could not
+/// compute ([`Specializer::answer_param_constants`]) whose read the
+/// instance still holds once its branches are decided and its unreached
+/// blocks pruned.
+pub(super) fn reached_failure(
+    blocks: &[MirBlock],
+    mut failures: HashMap<u32, MonoError>,
+) -> Result<(), MonoError> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .try_for_each(|instruction| match instruction {
+            MirInstr::Try {
+                body,
+                handler,
+                orelse,
+                finalbody,
+                ..
+            } => std::iter::once(body)
+                .chain(handler.iter().map(|(_, blocks)| blocks))
+                .chain(orelse)
+                .chain(finalbody)
+                .try_for_each(|region| reached_failure(region, failures.clone())),
+            MirInstr::Const {
+                dest,
+                k: Const::Param(_),
+            } => failures.remove(&dest.0).map_or(Ok(()), Err),
+            _ => Ok(()),
+        })
+}
+
 /// The compiler-private call a failed method clone's body makes.
 const INSTANTIATION_FAILED: &str = "_mojito_instantiation_failed";

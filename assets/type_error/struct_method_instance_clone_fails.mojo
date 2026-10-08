@@ -1,7 +1,7 @@
 # expect: function instantiation of `S.f
-# A struct method keyed by the struct's parameter is instantiated per
-# instance; the instance a reached call needs fails, as at the pin, rather
-# than trapping at run time.
+# A struct method's template is instantiated per reached instance; the
+# instance whose loop reads past a literal display fails, as at the pin,
+# rather than trapping at run time.
 struct S[n: Int]:
     def __init__(out self):
         pass

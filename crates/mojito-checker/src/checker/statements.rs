@@ -1742,7 +1742,7 @@ impl Checker {
                 }
                 if !self.source_validation
                     && type_params.is_empty()
-                    && self.bind_template_comptime(stmt, name, value)?
+                    && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
                 {
                     self.mark_compile_time_binding(name);
                     return Ok(());

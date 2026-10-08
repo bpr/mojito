@@ -375,6 +375,10 @@ struct Specializer<'a> {
     /// parameter. A snapshot of one never differs from the slot, so a
     /// direct call to a generic nested `def` may pass the slot itself.
     folded_slots: HashSet<u32>,
+    /// The parameter constants an unrolled iteration of the function being
+    /// specialized could not compute, by destination register: each fails
+    /// the instantiation once the instance is found to reach it.
+    unreached_failures: HashMap<u32, MonoError>,
 }
 
 mod availability;

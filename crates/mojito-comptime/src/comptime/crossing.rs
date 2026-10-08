@@ -94,7 +94,21 @@ impl Elab<'_> {
                 }
                 self.cross_expr(value, env, shadowed)
             }
-            // A compile-time binding's initializer was consumed by elaboration.
+            // A binding a template body keeps is a compile-time position: a
+            // named collection its value subscripts is its literal display
+            // there (`comptime q = xs[i]`), as in a loop header.
+            StmtKind::Comptime { value, .. } if self.in_template_body() => {
+                let mut subscripts = SubscriptedCollections {
+                    env,
+                    shadowed,
+                    folded: Ok(()),
+                };
+                mojito_ast::visit::MutVisitor::visit_expr_mut(&mut subscripts, value);
+                mojito_ast::visit::walk_expr_mut(&mut subscripts, value);
+                subscripts.folded
+            }
+            // Elsewhere, a compile-time binding's initializer was consumed by
+            // elaboration.
             StmtKind::Comptime { .. }
             | StmtKind::Return(None)
             | StmtKind::Pass

@@ -7,7 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::ParamArg;
+use mojito_ast::ast::{ParamArg, SourceType};
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
 /// A local `comptime` binding of a display the elaborator evaluates per
@@ -1361,6 +1361,7 @@ impl Checker {
         &mut self,
         stmt: &Stmt,
         name: &str,
+        annotation: Option<&SourceType>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
         let Some(level) = self.tparams.len().checked_sub(1) else {
@@ -1389,10 +1390,23 @@ impl Checker {
                 .insert(name.to_string(), display);
             return Ok(true);
         }
-        if let Some(expression) = self.comptime_value_expression(value)
-            && let Some(scope) = self.local_comptime_parameters.last_mut()
-        {
-            scope.insert(name.to_string(), (level, expression));
+        if let Some(expression) = self.comptime_value_expression(value) {
+            // An annotation names the parameter expression's own type: no
+            // conversion applies to one.
+            if let (Some(annotation), Some(found)) = (annotation, expression.meta().as_value()) {
+                let expected = self
+                    .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+                if &expected != found {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found: found.to_string(),
+                        context: format!("comptime '{name}'"),
+                    });
+                }
+            }
+            if let Some(scope) = self.local_comptime_parameters.last_mut() {
+                scope.insert(name.to_string(), (level, expression));
+            }
         }
         if let Some((element, ty, construction)) = self.evaluated_display_binding(value) {
             // The name is typed for the compile-time expressions that read
@@ -3315,7 +3329,7 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
 
 /// The element a display of `element`s binds: a string element binds as a
 /// `String` value parameter does.
-fn string_element_binder(element: Ty) -> Ty {
+pub(super) fn string_element_binder(element: Ty) -> Ty {
     match element {
         Ty::Struct(name, args)
             if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>

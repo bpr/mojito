@@ -115,6 +115,7 @@ assets/ok/comptime_local_over_binder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
+assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_availability.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sanitized

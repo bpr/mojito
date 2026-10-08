@@ -1538,22 +1538,27 @@ pub(super) fn comptime_for_is_template_served(
     };
     sequence
         && !block_has_statement(body, &|kind| match kind {
+            // An annotation naming the parameter expression's own type
+            // (`comptime m: Int = i * n`) leaves the binding the checker's to
+            // type; any other annotation converts, which no parameter
+            // expression does.
             StmtKind::Comptime {
                 name,
                 type_params,
-                ty: None,
+                ty: None | Some(Type::Int | Type::Bool),
                 where_clauses,
                 value,
             } => {
-                // An element of a named compile-time list at a parameter
-                // expression (`names[i]`, `types[i]`).
+                // An element of a named compile-time list, or of a literal
+                // display, at a parameter expression (`names[i]`, `[1, 2][i]`).
                 let element = matches!(&value.kind, ExprKind::Index { object, index }
-                    if matches!(object.kind, ExprKind::Identifier(_))
+                    if (matches!(object.kind, ExprKind::Identifier(_)) || literal_list(object))
                         && parameter_shaped(index, packs));
                 !(type_params.is_empty()
                     && where_clauses.is_empty()
                     && (literal_element(value)
                         || parameter_shaped(value, packs)
+                        || condition_shaped(value, packs)
                         || element
                         || names.displays.contains(name)
                         || display_read_shaped(value, packs, names.displays, names.scalars)))
@@ -1621,6 +1626,25 @@ fn parameter_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
             | InfixOp::Mod
             | InfixOp::Pow
             | InfixOp::Shl,
+            left,
+            right,
+        ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
+        _ => false,
+    }
+}
+
+/// Whether `expression` is spelled as a `Bool` parameter expression: a
+/// comparison of parameter expressions (`i > 0`), or a negation or
+/// conjunction of such.
+fn condition_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
+    match &expression.kind {
+        ExprKind::Bool(_) => true,
+        ExprKind::Prefix(PrefixOp::Not, inner) => condition_shaped(inner, packs),
+        ExprKind::Infix(InfixOp::And | InfixOp::Or, left, right) => {
+            condition_shaped(left, packs) && condition_shaped(right, packs)
+        }
+        ExprKind::Infix(
+            InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Gt | InfixOp::Le | InfixOp::Ge,
             left,
             right,
         ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),

@@ -307,6 +307,7 @@ impl Specializer<'_> {
             &iteration,
             tables.n_regs,
             tables.reg_types,
+            false,
         )?;
         self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
         Ok(())

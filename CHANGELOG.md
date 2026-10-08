@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic struct's method or a generic `def` whose `comptime for` body
+  binds an annotated `comptime` (`comptime m: Int = i * Self.n`,
+  `comptime b: Bool = i > 0`) or an element of a closed list at the index
+  (`comptime q = xs[i]`, `[1, 2][i]`), or whose `comptime if` reads a local
+  type alias of a binder (`comptime U = Self.T`), is now served by its
+  template, as at the pin, instead of cloned per instance. A named list
+  read in such a binding failed with "Undefined variable 'xs'" and the type
+  alias with "the instance does not decide"; both now run. A read past the
+  display fails the instance only where it reaches the read, and an
+  annotation that is not the value's type is rejected, as at the pin.
+
 - A template-served generic body's call over its own binder into an
   overload family that keeps a member the cloner specializes (`kind(a)` in
   `inferred[dt: DType]`, `kind[n](a)` in `by_value[n: Int]`) now runs, as at
@@ -991,6 +1002,11 @@ to evolve under the `0.x` compatibility rules.
   is in `docs/parametric-mir-plan.md` §P0.
 
 ### Fixed
+
+- A local `comptime` binding of one function no longer leaks into a later
+  function's body: `def g[n: Int]()` holding `comptime xs = ["a",
+  String(n)]` printed the closed `xs` of an earlier `def f` instead of its
+  own.
 
 - A local `comptime` `DType` binding (`comptime lane = DType.int8`) no
   longer stays visible after its block: a later, unrelated function naming

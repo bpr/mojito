@@ -1,6 +1,7 @@
-# A struct method whose instance would fail to instantiate is accepted while
-# no reachable call needs that instance: neither an uncalled method nor a
-# call inside an uncalled function instantiates it, as at the pin.
+# A struct method whose instance would fail to instantiate (a read past a
+# literal display) is accepted while no reachable call needs that instance:
+# neither an uncalled method nor a call inside an uncalled function
+# instantiates it from the template, as at the pin.
 struct S[n: Int]:
     def __init__(out self):
         pass

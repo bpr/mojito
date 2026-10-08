@@ -937,6 +937,16 @@ impl Checker {
             }
             ExprKind::TupleLit(values) => constant(CtValue::Tuple(aggregate(values)?)),
             ExprKind::ListLit(values) => constant(CtValue::List(aggregate(values)?)),
+            // An element of a literal display (`[1, 2][i]`): `param_list.get`
+            // over the closed list.
+            ExprKind::Index { object, index } if matches!(object.kind, ExprKind::ListLit(_)) => {
+                context
+                    .list_get(
+                        &self.compile_dependent_ct_expr(object)?,
+                        &self.compile_dependent_ct_expr(index)?,
+                    )
+                    .map_err(param_error)
+            }
             _ if let Some(read) = self.display_read(expr) => read,
             // The length of a pack that is still a parameter, which the
             // instance's elements fix.
@@ -1962,6 +1972,20 @@ impl Checker {
                 match expression.as_decl_ref() {
                     Some(reference) => ConstraintOperand::Param(reference.clone()),
                     None => ConstraintOperand::Expr(expression),
+                }
+            }
+            // A local type alias (`comptime U = Self.T`) is the binder or
+            // the type it names.
+            ExprKind::Identifier(name)
+                if let Some(ty) = self
+                    .local_type_aliases
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name)) =>
+            {
+                match ty {
+                    Ty::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
+                    ty => ConstraintOperand::Type(ty.clone()),
                 }
             }
             ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),

@@ -1006,8 +1006,11 @@ impl Elab<'_> {
         type_params: &[TypeParam],
         params: &[FnParam],
         body: &[Stmt],
-        env: &mut HashMap<String, CtValue>,
+        env: &HashMap<String, CtValue>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
+        // A body's local `comptime` bindings are its own: a later
+        // declaration never reads them.
+        let env = &mut env.clone();
         if struct_params.is_empty() && type_params.is_empty() {
             return self.block(body, env, true);
         }

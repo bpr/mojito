@@ -1177,7 +1177,12 @@ template has no erased body to fall back to, and the failure is the pin's
 `function instantiation failed`, reported only where the program reaches
 the instance. `native::mono` reports it per reached instance after branch
 selection (`discharge_instantiation_failures`, `mono/failure.rs`) as a
-`MonoErrorKind::Instantiation` error. A member of a vector- or struct-keyed
+`MonoErrorKind::Instantiation` error. A template-served body fails the
+same way where a parameter constant its instance reaches cannot be
+computed (`comptime q = [1, 2][i]` past the display): an unrolled
+iteration's failure waits in `unreached_failures` until branch selection
+has pruned the arms the instance never takes (`reached_failure`,
+`mono/failure.rs`). A member of a vector- or struct-keyed
 specialization that its template serves keeps its own binders and mints no
 clone, as a non-generic struct's method does.
 `specialize_method_clone` bakes

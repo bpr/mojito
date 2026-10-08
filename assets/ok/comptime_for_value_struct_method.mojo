@@ -1,5 +1,6 @@
-# A `comptime for` the template does not serve, in a method of a struct over
-# a value parameter: each instance mints its own clone of the method.
+# A `comptime for` over a struct's value parameter in its methods, whose
+# body binds an annotated `comptime` over the index: the method's template
+# decides the loop per instance, as at the pin.
 
 
 struct S[n: Int]:

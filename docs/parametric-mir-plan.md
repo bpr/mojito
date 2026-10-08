@@ -600,7 +600,10 @@ branch for the class is deleted, and so is its certificate class.
   or a `range` loop over `Self.T` or `Self.n` stays in the template, and
   `keyed.mojo`'s per-instantiation `comptime` row reads 0 (was 3; the
   cloned total 211). A local `comptime` binding over the struct's
-  parameters still keys a clone (R312). The same step made `rebind` a
+  parameters is served too since 2026-10-07 (an annotated one, an element
+  of a closed list at a loop index, a type alias keying a `comptime if`);
+  what still keys a clone is listed in `docs/features.md`'s Comptime row
+  (R365 among them). The same step made `rebind` a
   template form: MIR carries it as a value rebind (`MirInstr::Rebind`,
   schema 1.23) or a place retyped to its target, and the elaborator asserts
   the equality per instance after deciding its branches, as upstream's

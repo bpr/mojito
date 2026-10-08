@@ -2324,6 +2324,8 @@ impl Checker {
                     materialized: None,
                 },
             );
+            // A string element reads as a loop over the display binds it.
+            let element = super::comptime_validation::string_element_binder(element);
             self.expression_types
                 .borrow_mut()
                 .insert(expr.source_span(), element.clone());

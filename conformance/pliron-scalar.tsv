@@ -115,6 +115,7 @@ assets/ok/comptime_local_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_struct_string_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_template_body_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape

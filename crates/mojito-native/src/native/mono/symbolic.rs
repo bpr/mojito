@@ -13,74 +13,14 @@ use mojito_types::param_expr::{ParamError, ReflectQuery};
 /// (`field_index["z"]()` of a struct lacking `z`) fails the instantiation,
 /// as at the pin, as does a `DType` float query at a non-float dtype.
 pub(super) fn eval_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
-    let context = ParamContext::detached();
-    let replaced = context
-        .replace(expr, &ct_bindings(bindings))
-        .and_then(|replaced| {
-            context.answer_reflections(&replaced, &mut |subject, query| {
-                reflection_answer(subject, query, bindings)
-            })
-        })
-        .and_then(|answered| match &bindings.applications {
-            // A type binder among the arguments is the type the instance
-            // binds it to.
-            Some(applications) => context.answer_applications(&answered, &mut |function, args| {
-                let args: Option<Vec<ParamExpr>> = args
-                    .iter()
-                    .map(|arg| match arg.kind() {
-                        ParamKind::DeclRef(binder) => bindings
-                            .types
-                            .get(binder)
-                            .filter(|ty| !is_symbolic(ty))
-                            .and_then(|ty| {
-                                context.constant(CtValue::Type(Box::new(ty.clone()))).ok()
-                            }),
-                        _ => Some(arg.clone()),
-                    })
-                    .collect();
-                Ok(args.and_then(|args| applications.answer(function, &args)))
-            }),
-            None => Ok(answered),
-        })
-        .and_then(|answered| context.answer_builtin_applications(&answered))
-        .map_err(|error| MonoError {
-            kind: if matches!(error, ParamError::Reflect(_) | ParamError::Constraint(_)) {
-                MonoErrorKind::Instantiation
-            } else {
-                MonoErrorKind::Unsupported
-            },
-            function: None,
-            construct: error.to_string(),
-        })?;
-    // A layout application the instance's oracle answers under its target.
-    if let ParamKind::Apply {
-        function,
-        args,
-        evaluated: None,
-    } = replaced.kind()
-        && function == SIZE_OF_FUNCTION
-        && let Some(oracle) = &bindings.layout
-        && let [subject] = args.as_slice()
-    {
-        let ty = match subject.kind() {
-            ParamKind::TypeShape(ty) => Some(substitute_ty(ty, bindings)?),
-            ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
-            _ => None,
-        };
-        if let Some(ty) = ty
-            && !is_symbolic(&ty)
-        {
-            return oracle.size_of(&ty).map(CtValue::Int);
-        }
-    }
-    replaced.require_constant().map_err(|error| MonoError {
-        kind: MonoErrorKind::Unsupported,
-        function: None,
-        construct: replaced.free_parameters().first().map_or_else(
-            || error.to_string(),
-            |parameter| format!("unresolved value parameter `{}`", parameter.name),
-        ),
-    })
+    eval_ct_at(expr, bindings, false)
+}
+
+/// [`eval_ct`] of a value the instance reaches: one it cannot compute (an
+/// index past its list) fails the instantiation too, as at the pin. A
+/// substitution still meets the reads of arms the instance never takes.
+pub(super) fn eval_reached_ct(expr: &ParamExpr, bindings: &Bindings) -> Result<CtValue, MonoError> {
+    eval_ct_at(expr, bindings, true)
 }
 
 /// The instance's value solutions as parameter-expression bindings, each
@@ -352,4 +292,77 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
 }
 pub(super) fn nominal_template(name: &str) -> &str {
     name.split("$mono").next().unwrap_or(name)
+}
+
+fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<CtValue, MonoError> {
+    let context = ParamContext::detached();
+    let replaced = context
+        .replace(expr, &ct_bindings(bindings))
+        .and_then(|replaced| {
+            context.answer_reflections(&replaced, &mut |subject, query| {
+                reflection_answer(subject, query, bindings)
+            })
+        })
+        .and_then(|answered| match &bindings.applications {
+            // A type binder among the arguments is the type the instance
+            // binds it to.
+            Some(applications) => context.answer_applications(&answered, &mut |function, args| {
+                let args: Option<Vec<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| match arg.kind() {
+                        ParamKind::DeclRef(binder) => bindings
+                            .types
+                            .get(binder)
+                            .filter(|ty| !is_symbolic(ty))
+                            .and_then(|ty| {
+                                context.constant(CtValue::Type(Box::new(ty.clone()))).ok()
+                            }),
+                        _ => Some(arg.clone()),
+                    })
+                    .collect();
+                Ok(args.and_then(|args| applications.answer(function, &args)))
+            }),
+            None => Ok(answered),
+        })
+        .and_then(|answered| context.answer_builtin_applications(&answered))
+        .map_err(|error| MonoError {
+            kind: if matches!(error, ParamError::Reflect(_) | ParamError::Constraint(_))
+                || (reached && matches!(error, ParamError::Arithmetic(_)))
+            {
+                MonoErrorKind::Instantiation
+            } else {
+                MonoErrorKind::Unsupported
+            },
+            function: None,
+            construct: error.to_string(),
+        })?;
+    // A layout application the instance's oracle answers under its target.
+    if let ParamKind::Apply {
+        function,
+        args,
+        evaluated: None,
+    } = replaced.kind()
+        && function == SIZE_OF_FUNCTION
+        && let Some(oracle) = &bindings.layout
+        && let [subject] = args.as_slice()
+    {
+        let ty = match subject.kind() {
+            ParamKind::TypeShape(ty) => Some(substitute_ty(ty, bindings)?),
+            ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
+            _ => None,
+        };
+        if let Some(ty) = ty
+            && !is_symbolic(&ty)
+        {
+            return oracle.size_of(&ty).map(CtValue::Int);
+        }
+    }
+    replaced.require_constant().map_err(|error| MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct: replaced.free_parameters().first().map_or_else(
+            || error.to_string(),
+            |parameter| format!("unresolved value parameter `{}`", parameter.name),
+        ),
+    })
 }

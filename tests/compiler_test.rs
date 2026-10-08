@@ -1255,8 +1255,8 @@ fn instantiation_census_counts_each_cloned_class() {
     );
     assert_eq!(
         minted(CloneClass::InstanceMethodComptime),
-        1,
-        "Box[Int].kind"
+        0,
+        "the template serves Box[Int].kind"
     );
     for census in [&baseline, &classes] {
         assert_eq!(
@@ -1267,15 +1267,13 @@ fn instantiation_census_counts_each_cloned_class() {
     }
     let served = classes.erased_served.expect("main specializes");
     assert!(served.instances >= served.bodies);
-    // The bundled `Tuple` specializations keep their writer parameter: each
-    // is a clone, counted apart from the templates no clone replaces.
     for census in [&baseline, &classes] {
-        assert!(census.parametric_clones > 0);
         assert!(census.parametric_clones <= census.cloned.total());
     }
     assert_eq!(
-        classes.parametric_clones, baseline.parametric_clones,
-        "the clones of `pick`, `total`, and `Box.kind` keep no parameter"
+        classes.cloned.total(),
+        baseline.cloned.total(),
+        "the templates serve every body the program adds"
     );
     assert!(
         classes.erased_bodies > baseline.erased_bodies,

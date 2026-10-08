@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R484**.
+Next free ID: **R486**.
 
 ## Ordered Work
 
@@ -104,25 +104,6 @@ correctness fix to existing behavior is allowed.
     `comptime.rs`).
   - Found while landing R246 (2026-10-06).
   - Depends on R325, which needs the same runtime list.
-  - Model: Opus, Not Planned.
-
-- [ ] **R312 (P3) A generic struct's method that binds a local `comptime`
-  over its struct's parameters still clones per instance**
-
-  Problem: `comptime k = Self.n + 1` or `comptime U = Self.T` in a generic
-  struct's method, and a `comptime for` the template does not serve (over a
-  compile-time list or a reflection query), still stub the template and
-  mint a clone per instance, where a `comptime if` or a `range` loop over
-  `Self.T` or `Self.n` is served by the template.
-  - The elaborator walks the method with the struct's parameters open as
-    binders (`Elab::def_body`, `comptime/elab.rs`), but evaluates a local
-    `comptime` binding before the check, where the binder has no value; the
-    body then falls back to `unspecialized_method_stub`, and
-    `keyed_methods` (`comptime/specialize.rs`) clones it.
-  - This is the method case of R290 (a local `comptime` over a `def`'s
-    binder) and of R246 (an unserved `comptime for`); the fix is theirs.
-  - The census class `InstanceMethodComptime` counts what is left.
-  - Depends on R290 and R246.
   - Model: Opus, Not Planned.
 
 - [ ] **R328 (P3) A thunk condition cannot read a local `comptime` binding
@@ -3386,6 +3367,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R484 A trait's compile-time value member read through a type
+  parameter at run time fails**
+
+  Problem: `print(T.K)` in `def read[T: HasK]()`, where `HasK` declares
+  `comptime K: Int`, fails MIR verification with "place projects unknown
+  field 'K' of 'A'", and `print(Self.T.K)` in a method of `struct S[T:
+  HasK]` is rejected with "'Self.T' is not a type parameter of the
+  enclosing struct"; the pin prints `7` for both.
+  - A compile-time read already folds (`T.size` under CTFE,
+    `assets/ok/generic_ctfe_associated_value.mojo`), so only the runtime
+    read of the instance's member is missing.
+  - `comptime k = T.K + n` fails the same way.
+  - Probe: `conformance/probes/trait_value_member_through_type_param.mojo`.
+  - Found while landing R312 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R280 `comptime if conforms_to(T, X):` over a `def`'s parameter fails**
 
   Problem: `def tag[T: Movable](x: T)` holding `comptime if conforms_to(T,
@@ -3549,6 +3547,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The fix is a `UInt` constant that materializes as `UInt(3)` at a value
     use without changing how a `UInt` value parameter is spelled.
   - Found while closing the annotated-constant task (2026-10-03).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R485 An `Int`-annotated local `comptime` accepts a `Bool` value**
+
+  Problem: `comptime m: Int = 1 > 0` in a function prints `True`, where the
+  pin rejects it with "cannot implicitly convert 'Bool' value to 'Int'".
+  - The checker's `StmtKind::Comptime` arm (`checker/statements.rs`) drops
+    an `Int` annotation before typing the value, so the binding keeps the
+    value's own type.
+  - A template body's binding over its binders checks its annotation
+    (`bind_template_comptime`) and is rejected as at the pin.
+  - Same annotation-dropping family as R98.
+  - Probe: `conformance/probes/comptime_int_annotation_bool_value.mojo`.
+  - Found while landing R312 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

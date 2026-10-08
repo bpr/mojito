@@ -90,6 +90,7 @@ impl<'a> Specializer<'a> {
             closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
             folded_slots: HashSet::new(),
+            unreached_failures: HashMap::new(),
         }
     }
 
@@ -442,11 +443,13 @@ impl<'a> Specializer<'a> {
         // template is substituted again with its value.
         let (mut function, reified) = loop {
             self.applications.pending.borrow_mut().clear();
+            self.unreached_failures.clear();
             let substituted = self.substituted(&key.template, template, scope, bindings);
             if !self.answer_pending(&key.template, bindings)? {
                 break substituted?;
             }
         };
+        let unreached_failures = std::mem::take(&mut self.unreached_failures);
         retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
@@ -458,7 +461,9 @@ impl<'a> Specializer<'a> {
             bindings,
             &mut function.n_regs,
             &mut function.reg_types,
+            true,
         )
+        .and_then(|()| failure::reached_failure(&function.blocks, unreached_failures))
         .map_err(|mut error| {
             error.function.get_or_insert_with(|| key.template.clone());
             error
@@ -1086,7 +1091,10 @@ impl<'a> Specializer<'a> {
     /// answer (a reflection query of a field the struct lacks) fails the
     /// instantiation. A value owning a string is constructed at the read's
     /// register type instead ([`parameter_value_construction`]), minting its
-    /// parts' registers in `n_regs` and `reg_types`.
+    /// parts' registers in `n_regs` and `reg_types`. A failure in blocks
+    /// the instance has not yet `reached` (an unrolled iteration, before
+    /// its branches are decided) is held in `unreached_failures` and
+    /// reported only if the instance reaches the read.
     pub(super) fn answer_param_constants(
         &mut self,
         template: &str,
@@ -1094,6 +1102,7 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
         n_regs: &mut u32,
         reg_types: &mut HashMap<u32, Ty>,
+        reached: bool,
     ) -> Result<(), MonoError> {
         for block in blocks {
             let mut instrs = Vec::with_capacity(block.instrs.len());
@@ -1111,7 +1120,9 @@ impl<'a> Specializer<'a> {
                         .chain(orelse.iter_mut())
                         .chain(finalbody.iter_mut());
                     for region in regions {
-                        self.answer_param_constants(template, region, bindings, n_regs, reg_types)?;
+                        self.answer_param_constants(
+                            template, region, bindings, n_regs, reg_types, reached,
+                        )?;
                     }
                     instrs.push(instruction);
                     continue;
@@ -1135,7 +1146,16 @@ impl<'a> Specializer<'a> {
                 let dest = *dest;
                 let value = self.applied(template, value, bindings)?;
                 let ty = reg_types.get(&dest.0).cloned();
-                match self.param_constant(&value, bindings, ty.as_ref())? {
+                let constant = match self.param_constant(&value, bindings, ty.as_ref()) {
+                    // An unrolled iteration's arm may be one the instance
+                    // never takes: its failure waits for the branches.
+                    Err(error) if !reached && error.kind == MonoErrorKind::Instantiation => {
+                        self.unreached_failures.insert(dest.0, error);
+                        None
+                    }
+                    constant => constant?,
+                };
+                match constant {
                     // A value owning a string — a field `q.s` of a value
                     // parameter — is no constant: it is constructed where
                     // it is read, as upstream's `kgen.param.constant`
@@ -1204,7 +1224,7 @@ impl<'a> Specializer<'a> {
             Some(proposition) => Ok(self
                 .constraint_holds(&proposition, bindings, &mut HashSet::new())
                 .map(Const::Bool)),
-            None => match eval_ct(value, bindings) {
+            None => match symbolic::eval_reached_ct(value, bindings) {
                 // A value pack spread whole into a bracket (`f[*vs]()`) is
                 // its bound list, which the callee's instance keys.
                 Ok(list @ CtValue::Tuple(_))
