@@ -1021,8 +1021,14 @@ impl Elab<'_> {
         // declaration never reads them.
         let env = &mut env.clone();
         // A body that binds a request is a template over no binders, so
-        // what reads the binding stays for the check too.
-        if struct_params.is_empty() && type_params.is_empty() && !self.binds_request(body) {
+        // what reads the binding stays for the check too; so is one whose
+        // `comptime for` declares a nested `def` or lambda, a generator
+        // over the loop's index the elaborator instantiates per iteration.
+        if struct_params.is_empty()
+            && type_params.is_empty()
+            && !self.binds_request(body)
+            && !declares_in_comptime_for(body)
+        {
             return self.block(body, env, true);
         }
         // A pack's collector stands for the pack in a bound (`len(args)`),
@@ -1198,6 +1204,13 @@ impl Elab<'_> {
                 "a 'break' or 'continue' in a comptime for over '{var}' the elaborator unrolls; only a generic def's loop carries one"
             )));
         }
+        // A nested declaration reading the index is a generator over it,
+        // which only the loop MIR carries instantiates per iteration.
+        if nested_declaration_reads(body, var) {
+            return Err(ComptimeError::NotComptime(format!(
+                "a nested def or lambda in a comptime for over '{var}' the elaborator unrolls; only a loop kept for MIR declares one"
+            )));
+        }
         for v in self.eval_iter(iter, env)? {
             self.burn()?;
             let subs: Subs = &|n| (n == var).then(|| v.clone());
@@ -1346,6 +1359,81 @@ impl Elab<'_> {
         }
         finder.found
     }
+}
+
+/// Whether a `comptime for` of `body`, outside a nested declaration, holds a
+/// nested `def` or a lambda anywhere in its body.
+fn declares_in_comptime_for(body: &[Stmt]) -> bool {
+    struct Declarations(bool);
+
+    impl mojito_ast::visit::Visitor for Declarations {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            self.0 |= matches!(statement.kind, StmtKind::Def { .. });
+        }
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.0 |= matches!(expr.kind, ExprKind::Lambda { .. });
+        }
+    }
+
+    struct Loops(bool);
+
+    impl mojito_ast::visit::Visitor for Loops {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::ComptimeFor { body, .. } = &statement.kind {
+                let mut declarations = Declarations(false);
+                mojito_ast::visit::walk_block(&mut declarations, body);
+                self.0 |= declarations.0;
+            }
+        }
+    }
+
+    let mut loops = Loops(false);
+    for statement in body {
+        if !matches!(
+            statement.kind,
+            StmtKind::Def { .. } | StmtKind::Struct { .. }
+        ) {
+            mojito_ast::visit::walk_stmt(&mut loops, statement);
+        }
+    }
+    loops.0
+}
+
+/// Whether a nested `def` or a lambda in `body` names `var`.
+fn nested_declaration_reads(body: &[Stmt], var: &str) -> bool {
+    struct Names<'a> {
+        var: &'a str,
+        found: bool,
+    }
+
+    impl mojito_ast::visit::Visitor for Names<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.found |= matches!(&expr.kind, ExprKind::Identifier(name) if name == self.var);
+        }
+    }
+
+    struct Declarations<'a> {
+        names: Names<'a>,
+    }
+
+    impl mojito_ast::visit::Visitor for Declarations<'_> {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            if let StmtKind::Def { body, .. } = &statement.kind {
+                mojito_ast::visit::walk_block(&mut self.names, body);
+            }
+        }
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(expr.kind, ExprKind::Lambda { .. }) {
+                mojito_ast::visit::walk_expr(&mut self.names, expr);
+            }
+        }
+    }
+
+    let mut declarations = Declarations {
+        names: Names { var, found: false },
+    };
+    mojito_ast::visit::walk_block(&mut declarations, body);
+    declarations.names.found
 }
 
 /// Whether a compile-time condition asks a layout query (`size_of[T]()`).

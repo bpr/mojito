@@ -159,9 +159,15 @@ pub(super) fn lower_fn_nested(
 }
 
 /// Collect the declarations belonging to one lexical function scope (those in
-/// the body or its control-flow blocks), without descending into another
-/// declaration's body. Recursive lifting calls this once per lexical scope.
-fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+/// the body, its control-flow blocks, and its kept compile-time regions),
+/// without descending into another declaration's body, each with the
+/// `comptime for` statements of this scope enclosing it, outermost first.
+/// Recursive lifting calls this once per lexical scope.
+fn find_nested_defs<'a>(
+    body: &'a [Stmt],
+    loops: &mut Vec<&'a Stmt>,
+    out: &mut Vec<(&'a Stmt, Vec<&'a Stmt>)>,
+) {
     for s in body {
         // Lambda expressions anywhere in this statement's own expressions
         // (conditions, iterables, values, arguments) declare hidden nested
@@ -170,41 +176,46 @@ fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
         mojito_ast::ast::lambdas_in_stmt(s, &mut lambdas);
         for lambda in lambdas {
             if let mojito_ast::ast::ExprKind::Lambda { def } = &lambda.kind {
-                out.push(def);
+                out.push((def, loops.clone()));
             }
         }
         match &s.kind {
-            StmtKind::Def { .. } => out.push(s),
-            StmtKind::If { branches, orelse } => {
+            StmtKind::Def { .. } => out.push((s, loops.clone())),
+            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
                 for (_, b) in branches {
-                    find_nested_defs(b, out);
+                    find_nested_defs(b, loops, out);
                 }
                 if let Some(e) = orelse {
-                    find_nested_defs(e, out);
+                    find_nested_defs(e, loops, out);
                 }
             }
             StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                find_nested_defs(body, out);
+                find_nested_defs(body, loops, out);
                 if let Some(orelse) = orelse {
-                    find_nested_defs(orelse, out);
+                    find_nested_defs(orelse, loops, out);
                 }
             }
-            StmtKind::Scope(body) => find_nested_defs(body, out),
+            StmtKind::ComptimeFor { body, .. } => {
+                loops.push(s);
+                find_nested_defs(body, loops, out);
+                loops.pop();
+            }
+            StmtKind::Scope(body) => find_nested_defs(body, loops, out),
             StmtKind::Try {
                 body,
                 except,
                 orelse,
                 finalbody,
             } => {
-                find_nested_defs(body, out);
+                find_nested_defs(body, loops, out);
                 if let Some((_, b)) = except {
-                    find_nested_defs(b, out);
+                    find_nested_defs(b, loops, out);
                 }
                 if let Some(e) = orelse {
-                    find_nested_defs(e, out);
+                    find_nested_defs(e, loops, out);
                 }
                 if let Some(f) = finalbody {
-                    find_nested_defs(f, out);
+                    find_nested_defs(f, loops, out);
                 }
             }
             _ => {}
@@ -216,6 +227,10 @@ fn find_nested_defs<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
 /// include any ancestor forwarding required across intermediate functions.
 struct NestedNode<'a> {
     statement: &'a Stmt,
+    /// The indices of the `comptime for` loops of the parent's body that
+    /// enclose the declaration, outermost first: the binders of the regions
+    /// it is declared in.
+    loop_indices: Vec<LoopIndex>,
     binding: mojito_types::origin::OwnerId,
     source_name: String,
     mangled: String,
@@ -224,9 +239,20 @@ struct NestedNode<'a> {
     children: Vec<Self>,
 }
 
+impl NestedNode<'_> {
+    /// The binders of the regions the declaration is declared in.
+    fn region_binders(&self) -> Vec<ParamDecl> {
+        self.loop_indices
+            .iter()
+            .map(|index| index.declaration.clone())
+            .collect()
+    }
+}
+
 fn analyze_node<'a>(
     checked: &mojito_checked::checked::CheckedProgram,
     statement: &'a Stmt,
+    loops: &[&Stmt],
     parent_mangled: &str,
     duplicate_name: bool,
 ) -> NestedNode<'a> {
@@ -246,31 +272,14 @@ fn analyze_node<'a>(
     };
     let captures = analyze_captures(declaration);
 
-    let mut direct = Vec::new();
-    find_nested_defs(body, &mut direct);
-    let mut totals = HashMap::<String, usize>::new();
-    for declaration in &direct {
-        if let StmtKind::Def { name, .. } = &declaration.kind {
-            *totals.entry(name.clone()).or_default() += 1;
-        }
-    }
-    let children = direct
-        .into_iter()
-        .filter_map(|nested| {
-            let StmtKind::Def { name, .. } = &nested.kind else {
-                return None;
-            };
-            Some(analyze_node(
-                checked,
-                nested,
-                &mangled,
-                totals.get(name).copied().unwrap_or_default() > 1,
-            ))
-        })
-        .collect();
+    let children = analyze_root_children(checked, &mangled, &[], body);
 
     NestedNode {
         statement,
+        loop_indices: loops
+            .iter()
+            .filter_map(|statement| loop_index(checked, statement))
+            .collect(),
         binding,
         source_name: name.clone(),
         mangled,
@@ -398,7 +407,10 @@ fn lower_nested_node(
             .unwrap_or(&[])
             .to_vec();
         let value_parameter_locals = enclosing.frame_locals(&param_decls);
-        let enclosing_binders = &enclosing.binders.with(&param_decls);
+        let enclosing_binders = &enclosing
+            .binders
+            .with_loops(&node.loop_indices)
+            .with(&param_decls);
         names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
         let mut ptys = capture_types.clone();
         ptys.extend(caller_params.iter().map(|(param, p)| {
@@ -569,6 +581,7 @@ fn lower_nested_node(
                 .collect(),
             availability: Vec::new(),
             enclosing: Some(enclosing.name.to_string()),
+            region_binders: node.region_binders(),
         });
         let immutable_captures: HashSet<String> = captures
             .iter()
@@ -753,26 +766,54 @@ fn analyze_root_children<'a>(
     body: &'a [Stmt],
 ) -> Vec<NestedNode<'a>> {
     let mut direct = Vec::new();
-    find_nested_defs(body, &mut direct);
+    find_nested_defs(body, &mut Vec::new(), &mut direct);
     let mut totals = HashMap::<String, usize>::new();
-    for declaration in &direct {
+    for (declaration, _) in &direct {
         if let StmtKind::Def { name, .. } = &declaration.kind {
             *totals.entry(name.clone()).or_default() += 1;
         }
     }
     direct
         .into_iter()
-        .filter_map(|declaration| {
+        .filter_map(|(declaration, loops)| {
             let StmtKind::Def { name, .. } = &declaration.kind else {
                 return None;
             };
             let child = analyze_node(
                 checked,
                 declaration,
+                &loops,
                 parent_mangled,
                 totals.get(name).copied().unwrap_or_default() > 1,
             );
             Some(child)
         })
         .collect()
+}
+
+/// The index a `comptime for` statement binds, as the CFG of its body sees
+/// it ([`LoopIndex::of`]).
+fn loop_index(
+    checked: &mojito_checked::checked::CheckedProgram,
+    statement: &Stmt,
+) -> Option<LoopIndex> {
+    let StmtKind::ComptimeFor { iter, .. } = &statement.kind else {
+        return None;
+    };
+    let iteration = checked
+        .expression_ids_at(&iter.source_span())
+        .iter()
+        .filter_map(|id| checked.expression(*id))
+        .flat_map(|node| &node.adjustments)
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
+                Some(iteration)
+            }
+            _ => None,
+        })?;
+    let binding = checked
+        .tables()
+        .declaration_at(&statement.source_span())
+        .and_then(|declaration| declaration.binding);
+    Some(LoopIndex::of(iteration, binding))
 }

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.34
+# Mojito Textual MIR Format, Version 1.35
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.34 is implemented end to end for inspection and loading: canonical
+Version 1.35 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.34
+mojito-mir 1.35
 ```
 
-The writer emits 1.34. The reader accepts 1.0 through 1.34; *Schema 1.0*
+The writer emits 1.35. The reader accepts 1.0 through 1.35; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -233,6 +233,15 @@ the elaborator writes the closed type's default construction, so elaborated
 MIR has none. A 1.32 consumer rejects the instruction, which is the
 intended failure.
 
+Minor version 35 adds `region_binders` to a function declaration: the
+`param_decls`-shaped binders of the compile-time regions of the enclosing
+body that a nested function is declared in, today the index of each
+enclosing `comptime for`, outermost first. The nested body and signature
+may name them; the elaborator instantiates the body once per unrolled copy
+of the region, and concrete MIR records `[]`. A 1.34 consumer rejects the
+field, which is the intended failure. A 1.35 consumer reads an older
+declaration as declared in no region.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -389,8 +398,9 @@ mask have equal lengths. Variadic conventions are independent of the fixed
 parameter list. Indexes use runtime ABI slot numbering. Receiver presence and
 convention are separate because a plain receiver has an absent convention.
 A nested function's `enclosing` names the declaration it is nested in; the
-verifier's binder scope for its body is its own `param_decls`, then each
-enclosing declaration's, then the struct of the outermost method.
+verifier's binder scope for its body is its own `param_decls` and
+`region_binders`, then each enclosing declaration's, then the struct of the
+outermost method.
 
 Abstract erased-dispatch requirements have no concrete declaration record.
 Their complete `subscript_call`, `iterator_call`, or stored `func`/`generic_func`
@@ -757,7 +767,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.34
+mojito-mir 1.35
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

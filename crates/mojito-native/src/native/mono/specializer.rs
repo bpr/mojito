@@ -96,6 +96,7 @@ impl<'a> Specializer<'a> {
             enclosing: Bindings::default(),
             folded_slots: HashSet::new(),
             unreached_failures: HashMap::new(),
+            region_generators: HashMap::new(),
         }
     }
 
@@ -1582,7 +1583,7 @@ impl<'a> Specializer<'a> {
                             && declaration.param_decls.is_empty()
                     }) =>
                 {
-                    let (bindings, arguments) = self.nested_bindings(owner)?;
+                    let (bindings, arguments) = self.nested_bindings(target, &self.enclosing)?;
                     *target = self.enqueue(target, bindings, arguments)?;
                 }
                 MirInstr::Try {
@@ -1608,13 +1609,23 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// The bindings and instance arguments of a body nested in the instance
-    /// of `owner` being specialized: that instance's bindings, keyed by the
-    /// solution of each binder in `owner`'s scope.
-    fn nested_bindings(&self, owner: &str) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
-        let bindings = self.enclosing.clone();
-        let arguments = self
-            .binder_scope(owner)
+    /// The bindings and instance arguments of the nested body `target` under
+    /// `bindings`, those of the instance (or the unrolled region copy) it is
+    /// declared in: keyed by the solution of each binder of the scope it is
+    /// declared in, its enclosing declarations' and its regions'.
+    pub(super) fn nested_bindings(
+        &self,
+        target: &str,
+        bindings: &Bindings,
+    ) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
+        let bindings = bindings.clone();
+        let mut scope = self.binder_scope(target);
+        let own = self
+            .declarations
+            .get(target)
+            .map_or(0, |declaration| declaration.param_decls.len());
+        scope.truncate(scope.len().saturating_sub(own));
+        let arguments = scope
             .iter()
             .map(|decl| {
                 let binder = decl.binder();
@@ -1630,7 +1641,7 @@ impl<'a> Specializer<'a> {
                 };
                 argument.ok_or_else(|| {
                     self.error(
-                        Some(owner),
+                        Some(target),
                         format!("nested body reading unresolved parameter `{}`", binder.name),
                     )
                 })
@@ -2329,6 +2340,14 @@ impl<'a> Specializer<'a> {
                                     .collect();
                                 preludes.push((index, loads));
                             }
+                            // A generic body declared in an unrolled region
+                            // is named as its region copy's generator.
+                            let (target, region) = match self.region_generators.get(&target) {
+                                Some((template, bindings)) => {
+                                    (template.clone(), Some(bindings.clone()))
+                                }
+                                None => (target, None),
+                            };
                             // A closure over folded value parameters already
                             // names its lifted body's instance.
                             let concrete = if self.functions.contains_key(target.as_str()) {
@@ -2358,8 +2377,10 @@ impl<'a> Specializer<'a> {
                                 if self.declarations.get(target.as_str()).is_some_and(
                                     |declaration| declaration.enclosing.as_deref() == Some(owner),
                                 ) {
-                                    let (inherited, inherited_arguments) =
-                                        self.nested_bindings(owner)?;
+                                    let (inherited, inherited_arguments) = self.nested_bindings(
+                                        &target,
+                                        region.as_ref().unwrap_or(&self.enclosing),
+                                    )?;
                                     inherit_bindings(&mut bindings, inherited);
                                     arguments.splice(0..0, inherited_arguments);
                                 }

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A nested `def` or lambda declared in a `comptime for` body reads the
+  loop's index, as at the pin, in a generic `def`, a plain one, and a
+  method: each unrolled iteration declares its own, specialized to its
+  index, whether the nested `def` is plain, generic (`inner[5]()`),
+  `@parameter`, or capturing, and its signature may name the index. A
+  nested `def` in a kept `comptime if` arm of a generic `def`, which was
+  rejected, runs too. A lambda in a plain body's loop, which read the
+  first iteration's index in every iteration, now reads its own. MIR text
+  schema 1.35 adds a declaration's `region_binders`. The erased oracle
+  reads a `comptime for` index whatever spelling its slot took, so a
+  second loop reusing `i` decides its `comptime if`.
+
 - A method with compile-time parameters of its own is now always served by
   its template, as at the pin: the per-call clone path, the checker's
   retargeting to its clones, and the driver's method requests are deleted.

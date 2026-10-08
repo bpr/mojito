@@ -314,6 +314,12 @@ impl Decoder {
             .field(fields, "enclosing")
             .ok()
             .and_then(|value| self.option_symbol(value));
+        // Schema 1.35 declares the binders of the regions a nested function
+        // is declared in.
+        let region_binders = self
+            .field(fields, "region_binders")
+            .map(|value| self.param_decls(value))
+            .unwrap_or_default();
         for (label, length) in [
             ("param_types", param_types.len()),
             ("defaults", defaults.len()),
@@ -361,6 +367,7 @@ impl Decoder {
                 "param_writes",
                 "availability",
                 "enclosing",
+                "region_binders",
             ],
         );
         Some(MirFunctionDeclaration {
@@ -389,6 +396,7 @@ impl Decoder {
             param_writes,
             availability,
             enclosing,
+            region_binders,
         })
     }
 

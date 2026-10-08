@@ -843,7 +843,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
   `binder_scope`) instantiates a nested body under its enclosing instance;
   the erased VM carries the enclosing values on the closure
-  (`Value::Closure::parameters`, `Prog::inherited_parameters`).
+  (`Value::Closure::parameters`, `Prog::inherited_parameters`). A
+  declaration inside a kept `comptime for` also declares the loop indices
+  (`MirFunctionDeclaration::region_binders`, from `find_nested_defs`'s loop
+  stack and `nested.rs::loop_index`); `mono/unroll.rs`
+  (`instantiate_region_references`, `region_generator_slots`) points each
+  region copy's closure at its instance, a generic one at the copy's
+  generator (`Specializer::region_generators`). A plain body whose loop
+  declares one is a template (`comptime/elab.rs::declares_in_comptime_for`).
 
 ### VM and Comptime
 

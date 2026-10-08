@@ -302,6 +302,7 @@ assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_comprehensions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_copy_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_enclosing_binders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nested_def_reads_comptime_for_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_reads_enclosing_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_index_store.mojo	-	ineligible	no-scalar-entry-shape

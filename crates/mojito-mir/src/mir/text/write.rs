@@ -321,6 +321,10 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
                     "enclosing",
                     option(declaration.enclosing.as_ref().map(|v| symbol(v))),
                 ),
+                (
+                    "region_binders",
+                    list(declaration.region_binders.iter().map(param_decl)),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();

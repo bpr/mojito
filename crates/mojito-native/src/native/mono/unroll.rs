@@ -150,7 +150,7 @@ impl Specializer<'_> {
         let values = self.trip_elements(frame.template, &binder, &source, bindings)?;
         let members = loop_body(blocks, header, body, exit, frame.function_level);
         let width = members.len();
-        let indexed: BTreeSet<VarId> =
+        let mut indexed: BTreeSet<VarId> =
             addressed_slots(members.iter().map(|&member| &blocks[member]))
                 .into_iter()
                 .filter(|slot| {
@@ -160,6 +160,11 @@ impl Specializer<'_> {
                         .is_some_and(|ty| mojito_types::types::names_binder(ty, &binder))
                 })
                 .collect();
+        indexed.extend(self.region_generator_slots(
+            frame.template,
+            members.iter().map(|&member| &blocks[member]),
+            &binder,
+        ));
         tables.retired.extend(indexed.iter().copied());
         let entry = members
             .iter()
@@ -310,7 +315,119 @@ impl Specializer<'_> {
             false,
         )?;
         self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
+        self.instantiate_region_references(frame.template, &mut blocks[first..], &iteration)
+    }
+
+    /// Point each closure and function value of a region copy that names a
+    /// body nested in `template` inside the region at that body's instance
+    /// under the copy's `iteration`: the nested body is a generator over the
+    /// region's binders, as over its enclosing declaration's, so each clone
+    /// of the region declares its own. A generic nested body names the
+    /// copy's generator instead, whose calls instantiate it with their own
+    /// arguments beside the copy's. One inside a loop nested in this copy
+    /// was pointed at its instance when that loop's copies were.
+    fn instantiate_region_references(
+        &mut self,
+        template: &str,
+        blocks: &mut [MirBlock],
+        iteration: &Bindings,
+    ) -> Result<(), MonoError> {
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            match instruction {
+                MirInstr::MakeClosure {
+                    function: target, ..
+                }
+                | MirInstr::Const {
+                    k: Const::Function(target),
+                    ..
+                } => {
+                    let Some(generic) =
+                        self.declarations
+                            .get(target.as_str())
+                            .and_then(|declaration| {
+                                (declaration.enclosing.as_deref() == Some(template)
+                                    && !declaration.region_binders.is_empty()
+                                    && declaration
+                                        .region_binders
+                                        .iter()
+                                        .all(|decl| iteration.values.contains_key(&decl.binder())))
+                                .then_some(!declaration.param_decls.is_empty())
+                            })
+                    else {
+                        continue;
+                    };
+                    let (bindings, arguments) = self.nested_bindings(target, iteration)?;
+                    *target = if generic {
+                        let generator = mojito_symbol::symbol::instance_symbol(target, &arguments);
+                        self.region_generators
+                            .insert(generator.clone(), (target.clone(), bindings));
+                        generator
+                    } else {
+                        self.enqueue(target, bindings, arguments)?
+                    };
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    for blocks in std::iter::once(body)
+                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter_mut())
+                        .chain(finalbody.iter_mut())
+                    {
+                        self.instantiate_region_references(template, blocks, iteration)?;
+                    }
+                }
+                _ => {}
+            }
+        }
         Ok(())
+    }
+
+    /// The slots of a loop body that bind a closure or function value
+    /// naming a body nested in `template` over the loop's `binder`: each
+    /// copy binds the instance of its own iteration, so each copy's slot is
+    /// fresh, as a slot typed over the binder is.
+    fn region_generator_slots<'b>(
+        &self,
+        template: &str,
+        blocks: impl Iterator<Item = &'b MirBlock>,
+        binder: &ParamRef,
+    ) -> BTreeSet<VarId> {
+        let instructions: Vec<&MirInstr> = blocks
+            .flat_map(|block| nested_instructions(std::slice::from_ref(block)))
+            .collect();
+        let generators: HashSet<u32> = instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::MakeClosure { dest, function, .. }
+                | MirInstr::Const {
+                    dest,
+                    k: Const::Function(function),
+                } => self
+                    .declarations
+                    .get(function.as_str())
+                    .is_some_and(|declaration| {
+                        declaration.enclosing.as_deref() == Some(template)
+                            && declaration
+                                .region_binders
+                                .iter()
+                                .any(|decl| decl.binder() == *binder)
+                    })
+                    .then_some(dest.0),
+                _ => None,
+            })
+            .collect();
+        instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::DefVar { var, src, .. } if generators.contains(&src.0) => Some(*var),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The values the loop binds under the bindings, in order: the

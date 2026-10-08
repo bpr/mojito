@@ -811,7 +811,15 @@ regions. Later forms may bump it again (decision D5).
   bindings). The cloner's nested gate, the comptime nested-function pass
   (`comptime/nested.rs`), its `nested_def` census row, and the `NESTED_DEFS`
   certificate class are gone; the nested-def fixtures' 108 enclosing-body
-  clones read 0.
+  clones read 0. With R329 (2026-10-08) the regions a nested body is
+  declared in are binders of it too: one inside a kept `comptime for`
+  declares the loop's index (`MirFunctionDeclaration::region_binders`,
+  schema 1.35) and reads it as a parameter, and the elaborator's region
+  copy points each closure it copies at the body's instance under the
+  copy's iteration, so each unrolled iteration declares its own, as the
+  pin's region clone does. A generic one is named as the copy's generator
+  and instantiated at its calls. A plain body whose `comptime for` declares
+  one is a template over no binders, so its loop reaches MIR.
 - **D1. The VM runs only concrete MIR.** Recommended: yes, from P1, with the
   erased path kept as an oracle until P5. Upstream's interpreter never runs a
   generator.

@@ -351,7 +351,10 @@ policy or data-model responsibilities to focused children:
   its declaration names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`), whose binders the verifier's scope
   admits in its body, and `native::mono` instantiates it under each instance
-  of that declaration (`Specializer::instantiate_nested_bodies`).
+  of that declaration (`Specializer::instantiate_nested_bodies`). One
+  declared inside a kept `comptime for` is a generator over the loop's
+  index too (`MirFunctionDeclaration::region_binders`), instantiated once
+  per unrolled copy of the loop (`instantiate_region_references`).
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -2330,8 +2333,12 @@ captures, and names their binders in its types and compile-time control flow;
 the elaborator instantiates it under each enclosing instance, and a generic
 one once per call from the call's solved arguments
 (`MirInstr::CallIndirect::instantiated_args`), beside the inherited ones.
-The erased oracle passes the creating frame's parameter values through the
-closure value instead.
+A nested declaration inside a `comptime for` is a generator over the loop's
+index as well: each unrolled copy of the region points its closure at the
+body's instance under the copy's iteration, and a generic one carries the
+copy's bindings to its calls. The erased oracle passes the creating frame's
+parameter values, and the running loop's index, through the closure value
+instead.
 
 Pack forwarding first flattens the one known spread into a virtual positional
 type sequence and runs the shared call-slot matcher; only positional overflow

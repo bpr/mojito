@@ -1433,6 +1433,7 @@ fn declaration_metadata_reprints_byte_identically() {
             "needs a default".into(),
         )],
         enclosing: None,
+        region_binders: Vec::new(),
     };
     let other = MirFunctionDeclaration {
         lowered_name: "aaa_first".into(),
@@ -1471,7 +1472,17 @@ fn declaration_metadata_reprints_byte_identically() {
         ref_params: vec![false, false, false, false],
         param_writes: vec![false, false, false, false],
         availability: Vec::new(),
-        enclosing: None,
+        enclosing: Some("add".into()),
+        region_binders: vec![ParamDecl::Value {
+            id: ParamId::new("$comptime_for@main.mojo:10..20", 0),
+            name: "i".into(),
+            ty: Box::new(Ty::Int),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }],
     };
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     // Deliberately unsorted: the canonical writer sorts by name, so the

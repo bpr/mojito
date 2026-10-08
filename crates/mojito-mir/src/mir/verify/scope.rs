@@ -212,7 +212,8 @@ struct Scope {
 
 impl Scope {
     /// The binders of the function `name`, of each declaration it is nested
-    /// in, and of the struct whose method the outermost one is.
+    /// in, of the regions each is declared in, and of the struct whose
+    /// method the outermost one is.
     fn of_function(name: &str, declarations: &MirDeclarations) -> Self {
         let mut scope = Self {
             kinds: HashMap::new(),
@@ -225,7 +226,10 @@ impl Scope {
                 .functions
                 .iter()
                 .find(|declaration| declaration.lowered_name == current);
-            scope.declare(declaration.map_or(&[][..], |declaration| &declaration.param_decls));
+            if let Some(declaration) = declaration {
+                scope.declare(&declaration.param_decls);
+                scope.declare(&declaration.region_binders);
+            }
             link = declaration.and_then(|declaration| declaration.enclosing.as_deref());
         }
         let owner = root.split_once('.').and_then(|(owner, _)| {
@@ -847,6 +851,7 @@ mod tests {
                 param_writes: Vec::new(),
                 availability: Vec::new(),
                 enclosing: None,
+                region_binders: Vec::new(),
             }],
             traits: Vec::new(),
         }

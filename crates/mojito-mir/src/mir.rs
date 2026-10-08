@@ -230,6 +230,12 @@ pub struct MirFunctionDeclaration {
     /// declared in, whose binders (and its own enclosing declaration's) the
     /// nested body may name. `None` at top level and on a concrete instance.
     pub enclosing: Option<String>,
+    /// The binders of the compile-time regions of the enclosing body that a
+    /// nested function is declared in — the indices of its enclosing
+    /// `comptime for` loops, outermost first — which its body and signature
+    /// may name. The elaborator instantiates such a body once per unrolled
+    /// copy of the region. Empty at top level and on a concrete instance.
+    pub region_binders: Vec<ParamDecl>,
 }
 
 impl MirFunctionDeclaration {
@@ -246,8 +252,11 @@ impl MirFunctionDeclaration {
 }
 
 /// The compile-time parameters in scope of the body `name`: those of each
-/// declaration enclosing it, outermost first, then its own. A nested body is
-/// a generator over its enclosing declarations' binders.
+/// declaration enclosing it, outermost first, then its own.
+///
+/// A nested body is a generator over its enclosing declarations' binders
+/// and over the binders of the regions it is declared in, which come
+/// between them and its own.
 pub fn binder_scope<'a>(
     name: &str,
     lookup: impl Fn(&str) -> Option<&'a MirFunctionDeclaration>,
@@ -256,6 +265,7 @@ pub fn binder_scope<'a>(
     let mut link = lookup(name);
     while let Some(declaration) = link {
         chain.push(&declaration.param_decls);
+        chain.push(&declaration.region_binders);
         link = declaration.enclosing.as_deref().and_then(&lookup);
     }
     chain.into_iter().rev().flatten().collect()
@@ -546,6 +556,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     param_writes: effect.param_writes.clone(),
                     availability: Vec::new(),
                     enclosing: None,
+                    region_binders: Vec::new(),
                 });
                 lower_fn_nested(
                     FunctionLowering {
@@ -894,6 +905,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         param_writes: effect.param_writes.clone(),
                         availability: effect.availability.clone(),
                         enclosing: None,
+                        region_binders: Vec::new(),
                     });
                     // A method's receiver `self` is the implicit first parameter,
                     // followed by the declared params.
@@ -1216,6 +1228,7 @@ fn lower_expression_thunk(
         param_writes: Vec::new(),
         availability: Vec::new(),
         enclosing: None,
+        region_binders: Vec::new(),
     });
 }
 
@@ -1890,6 +1903,36 @@ struct LoopIndex {
     binding: Option<mojito_types::origin::OwnerId>,
 }
 
+impl LoopIndex {
+    /// The index of a loop the checker recorded `iteration` on, its
+    /// variable checked as `binding`: a value binder of the element's type.
+    fn of(
+        iteration: &mojito_checked::checked::ComptimeIteration,
+        binding: Option<mojito_types::origin::OwnerId>,
+    ) -> Self {
+        let binder = &iteration.binder;
+        let ty = iteration
+            .source
+            .binder_meta()
+            .as_value()
+            .cloned()
+            .unwrap_or(Ty::Int);
+        Self {
+            declaration: ParamDecl::Value {
+                id: binder.id.clone(),
+                name: binder.name.to_string(),
+                ty: Box::new(ty),
+                default: None,
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+            binding,
+        }
+    }
+}
+
 /// The `comptime for` indices in scope at each block of a CFG, outermost
 /// first: a loop's body blocks — those its body reaches without passing its
 /// header or exit — see the loop's `Int` binder as a value binder of the
@@ -1929,23 +1972,6 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
         let Some(iteration) = comptime_iteration(iter) else {
             continue;
         };
-        let binder = iteration.binder;
-        let ty = iteration
-            .source
-            .binder_meta()
-            .as_value()
-            .cloned()
-            .unwrap_or(Ty::Int);
-        let declaration = ParamDecl::Value {
-            id: binder.id.clone(),
-            name: binder.name.to_string(),
-            ty: Box::new(ty),
-            default: None,
-            callable_default: None,
-            infer_only: false,
-            variadic: false,
-            constraints: Vec::new(),
-        };
         let mut members = Vec::new();
         let mut pending = vec![*body];
         while let Some(block) = pending.pop() {
@@ -1955,13 +1981,7 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
             members.push(block);
             pending.extend(targets(g[block].term.as_ref()));
         }
-        loops.push((
-            members,
-            LoopIndex {
-                declaration,
-                binding: *binding,
-            },
-        ));
+        loops.push((members, LoopIndex::of(&iteration, *binding)));
     }
     // An enclosing loop's body holds the nested loop's, so the larger body
     // is the outer scope.

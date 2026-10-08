@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R503**.
+Next free ID: **R504**.
 
 ## Ordered Work
 
@@ -59,21 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R329 (P3e) A nested `def` inside a `comptime for` cannot read the
-  index**
-
-  Problem: `def inner(): print("in", i)` in a `comptime for i in range(n)`
-  body fails with "Undefined variable 'i'", in a generic `def` and in a
-  plain `main` alike, where the pin prints `in 0` and `in 1`.
-  - The index is a compile-time binder of the loop, which the nested body
-    neither captures nor declares.
-  - Unlike R110 the value is a loop index rather than a local `comptime`
-    binding, and unlike R6 and R288 its binder is the loop's, not the
-    enclosing `def`'s.
-  - Found while landing R248 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R488 (P3e) Some compile-time evaluations in a body still run on
   the AST route**
@@ -1525,6 +1510,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R503 A call through a callable local reads a same-spelled
+  sibling's slot**
+
+  Problem: two sibling `if c:` blocks binding `var l = one` and
+  `var l = two`, each followed by `print(l())`, print `1` and `1`, where
+  the pin prints `1` and `2`.
+  - In MIR the second `call.indirect`'s callee is `var.use` of the first
+    `l`'s slot, while its own `var.store` went to a fresh slot: the callee
+    slot is picked by spelling, not by the checked binding.
+  - The same two arms in a kept `comptime if n == 0` of a generic `def`
+    fail with "'None' is not callable", and in a `comptime for` with a
+    `comptime if i == 0` arm they print `1 1`.
+  - Found while landing R329 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R25 A user `Hasher` cannot spell `update` the way the pin requires**
 

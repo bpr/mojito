@@ -505,7 +505,7 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
     rebound
 }
 
-fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+pub(super) fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
     let mut instructions = Vec::new();
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         instructions.push(instruction);

@@ -393,6 +393,10 @@ struct Specializer<'a> {
     /// specialized could not compute, by destination register: each fails
     /// the instantiation once the instance is found to reach it.
     unreached_failures: HashMap<u32, MonoError>,
+    /// Each generic nested body declared in an unrolled region copy, under
+    /// the name the copy's closure value takes: the template and the copy's
+    /// bindings, which a call binding the body's own parameters extends.
+    region_generators: HashMap<String, (String, Bindings)>,
 }
 
 mod availability;

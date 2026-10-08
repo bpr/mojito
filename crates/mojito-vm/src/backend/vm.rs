@@ -726,7 +726,8 @@ pub(super) fn known_variant_index(
 /// reading, and each type pack of the signature by its collector's runtime
 /// arity — a tuple of as many placeholder elements, which answers the
 /// pack's length query and nothing else, since the frame carries no type
-/// argument.
+/// argument. The index of a `comptime for` inside its loop is its slot's
+/// value under the binder's name, whatever spelling the slot took.
 pub(super) fn erased_parameter_values(
     function: &MirFunction,
     variables: &[Value],
@@ -756,12 +757,31 @@ pub(super) fn erased_parameter_values(
         .iter()
         .zip(variables)
         .chain(comptime.iter().map(|(name, value)| (name, value)))
+        .map(|(name, value)| (name.trim_start_matches('*'), value))
+        .chain(live_loop_indices(function, variables))
         .filter_map(|(name, value)| {
-            runtime_value_as_ct(value)
-                .map(|value| (name.trim_start_matches('*').to_string(), value))
+            runtime_value_as_ct(value).map(|value| (name.to_string(), value))
         })
         .chain(packs)
         .collect()
+}
+
+/// The index of each `comptime for` of `function` whose loop is running,
+/// under its binder's name: its slot is cleared outside the loop.
+fn live_loop_indices<'a>(
+    function: &'a MirFunction,
+    variables: &'a [Value],
+) -> impl Iterator<Item = (&'a str, &'a Value)> {
+    function
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.term {
+            MirTerm::ComptimeFor { binder, slot, .. } => {
+                let value = variables.get(*slot as usize)?;
+                (!matches!(value, Value::None)).then_some((binder.name.as_ref(), value))
+            }
+            _ => None,
+        })
 }
 
 /// Bind a nested body's inherited enclosing binders beside the call's own
@@ -882,10 +902,12 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
-    /// The values of the enclosing declarations' value binders a body nested
-    /// in them reads, taken from the frame of `function` that builds a
-    /// closure over it: an erased nested body is not instantiated, so its
-    /// closure carries them.
+    /// The values of the binders of the regions a body nested in them is
+    /// declared in and of its enclosing declarations' value binders, which
+    /// it reads, taken from the frame of `function` that builds a closure
+    /// over it: an erased nested body is not instantiated, so its closure
+    /// carries them. A `comptime for` index is its slot's value in the
+    /// iteration the closure is built in.
     fn inherited_parameters(
         &self,
         target: &str,
@@ -894,52 +916,67 @@ impl Prog {
         comptime: &[(String, Value)],
     ) -> Vec<(String, Value)> {
         let mut parameters = Vec::new();
-        let mut link = self
-            .sigs
-            .get(target)
-            .and_then(|sig| sig.enclosing.as_deref());
-        while let Some(sig) = link.and_then(|name| self.sigs.get(name)) {
-            for decl in &sig.param_decls {
-                let name = match decl {
-                    ParamDecl::Value { name, .. }
-                    | ParamDecl::Type {
-                        name,
-                        variadic: true,
-                        ..
-                    } => name.trim_start_matches('*'),
-                    ParamDecl::Type { .. } => continue,
-                };
-                let pack = matches!(decl, ParamDecl::Type { .. })
-                    .then(|| erased_parameter_values(function, variables, comptime).remove(name))
-                    .flatten()
-                    .and_then(|pack| match pack {
-                        // Only the pack's length is read off an erased body.
-                        CtValue::Tuple(items) => {
-                            Some(Value::Tuple(vec![Value::Int(0); items.len()]))
-                        }
-                        _ => None,
-                    });
-                let value = pack.as_ref().or_else(|| {
-                    comptime
-                        .iter()
-                        .find(|(bound, _)| bound == name)
-                        .map(|(_, value)| value)
-                        .or_else(|| {
-                            function
-                                .var_names
-                                .iter()
-                                .position(|candidate| candidate == name)
-                                .and_then(|slot| variables.get(slot))
-                        })
-                        .filter(|value| !matches!(value, Value::None))
-                });
-                if let Some(value) = value
-                    && !parameters.iter().any(|(bound, _)| bound == name)
-                {
-                    parameters.push((name.to_string(), value.clone()));
-                }
+        let target = self.sigs.get(target);
+        // A region binder of the target is the index of a loop of
+        // `function`, whose slot holds the iteration's value.
+        for decl in target.map_or(&[][..], |sig| &sig.region_binders) {
+            let binder = decl.binder();
+            let value = function.blocks.iter().find_map(|block| match &block.term {
+                MirTerm::ComptimeFor {
+                    binder: index,
+                    slot,
+                    ..
+                } if index.id == binder.id => variables.get(*slot as usize),
+                _ => None,
+            });
+            if let Some(value) = value.filter(|value| !matches!(value, Value::None)) {
+                parameters.push((binder.name.to_string(), value.clone()));
             }
+        }
+        let mut scopes: Vec<&[ParamDecl]> = vec![target.map_or(&[][..], |sig| &sig.region_binders)];
+        let mut link = target.and_then(|sig| sig.enclosing.as_deref());
+        while let Some(sig) = link.and_then(|name| self.sigs.get(name)) {
+            scopes.push(&sig.param_decls);
+            scopes.push(&sig.region_binders);
             link = sig.enclosing.as_deref();
+        }
+        for decl in scopes.into_iter().flatten() {
+            let name = match decl {
+                ParamDecl::Value { name, .. }
+                | ParamDecl::Type {
+                    name,
+                    variadic: true,
+                    ..
+                } => name.trim_start_matches('*'),
+                ParamDecl::Type { .. } => continue,
+            };
+            let pack = matches!(decl, ParamDecl::Type { .. })
+                .then(|| erased_parameter_values(function, variables, comptime).remove(name))
+                .flatten()
+                .and_then(|pack| match pack {
+                    // Only the pack's length is read off an erased body.
+                    CtValue::Tuple(items) => Some(Value::Tuple(vec![Value::Int(0); items.len()])),
+                    _ => None,
+                });
+            let value = pack.as_ref().or_else(|| {
+                comptime
+                    .iter()
+                    .find(|(bound, _)| bound == name)
+                    .map(|(_, value)| value)
+                    .or_else(|| {
+                        function
+                            .var_names
+                            .iter()
+                            .position(|candidate| candidate == name)
+                            .and_then(|slot| variables.get(slot))
+                    })
+                    .filter(|value| !matches!(value, Value::None))
+            });
+            if let Some(value) = value
+                && !parameters.iter().any(|(bound, _)| bound == name)
+            {
+                parameters.push((name.to_string(), value.clone()));
+            }
         }
         parameters
     }
@@ -1145,6 +1182,9 @@ struct FnSig {
     /// The declaration a nested function is nested in, whose value binders
     /// its body reads.
     enclosing: Option<String>,
+    /// The binders of the regions a nested function is declared in, which
+    /// its body reads.
+    region_binders: Vec<ParamDecl>,
 }
 
 impl FnSig {
@@ -2530,6 +2570,7 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     keyword_only: declaration.keyword_only,
                     param_decls: declaration.param_decls.clone(),
                     enclosing: declaration.enclosing.clone(),
+                    region_binders: declaration.region_binders.clone(),
                 },
             )
         })
