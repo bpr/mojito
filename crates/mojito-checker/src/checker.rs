@@ -2446,8 +2446,14 @@ fn explicit_destroy_types(
                     name.clone(),
                     mojito_checked::checked::ExplicitDestroyInfo {
                         message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
-                            "value is not implicitly deletable and must be explicitly destroyed"
-                                .to_string()
+                            let shown = mojito_types::types::unqualified_type_name(&Ty::Struct(
+                                name.clone(),
+                                mojito_types::types::TyArgs::default(),
+                            ));
+                            format!(
+                                "type '{shown}' does not conform to 'Deinitable' and must be \
+                                 explicitly destroyed"
+                            )
                         }),
                         destructors: info.explicit_destructors.clone(),
                         fields: info
@@ -2480,16 +2486,23 @@ fn run_explicit_destroy(
     let binding_types = checker.binding_types.borrow();
     let comprehension_bindings = checker.comprehension_bindings.borrow();
     let deletability = checker.explicit_destroy_deletability.borrow();
-    // A call result typed by a non-`Deinitable` type parameter, in a position
-    // that takes no ownership of it, is a temporary the caller owns and cannot
-    // implicitly destroy.
+    // A non-`Deinitable` temporary in a position that takes no ownership of
+    // it is one the caller owns and cannot implicitly destroy, keyed by its
+    // struct's entry or, typed by a type parameter, the linear one.
     let unconsumed = checker.unconsumed_temporaries.borrow();
-    let linear_temporaries: HashSet<SourceSpan> = checker
+    let expression_types = checker.expression_types.borrow();
+    let linear_temporaries: HashMap<SourceSpan, String> = checker
         .linear_temporaries
         .borrow()
         .iter()
         .filter(|span| unconsumed.contains(span))
-        .cloned()
+        .map(|span| {
+            let key = match expression_types.get(span) {
+                Some(Ty::Struct(name, _)) if struct_types.contains_key(name) => name.clone(),
+                _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
+            };
+            (span.clone(), key)
+        })
         .collect();
     // A value typed by a non-`Deinitable` type parameter is linear with
     // upstream's message; the entry exists only for this pass, and only when
@@ -2497,7 +2510,9 @@ fn run_explicit_destroy(
     let mut types = struct_types.clone();
     if !deletability.linear_declarations.is_empty()
         || !deletability.linear_bindings.is_empty()
-        || !linear_temporaries.is_empty()
+        || linear_temporaries
+            .values()
+            .any(|key| key == crate::explicit_destroy::LINEAR_TYPE_PARAMETER)
     {
         types.insert(
             crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),

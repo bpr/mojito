@@ -171,6 +171,10 @@ struct _TakeDictEntryIter[
         self.src._reindex()
         return entry^
 
+@explicit_destroy(
+    "Use `deinit_with()` to explicitly destroy a `Dict` with"
+    " non-`Deinitable` keys or values"
+)
 struct Dict[
     K: Hashable & Equatable & Movable,
     V: Movable,

@@ -8,6 +8,11 @@ from std.memory.alloc import unsafe_alloc
 # pre-rename `take`). Deletion conformance is conditional on the pointee's,
 # so an `OwnedPointer` of a linear value is itself linear and must be
 # consumed through `into_inner`.
+@explicit_destroy(
+    "Use `into_inner()` (for a `Movable` `T`) or `unsafe_take_allocation()`"
+    " to consume an `OwnedPointer` whose element type is not"
+    " `Deinitable`"
+)
 struct OwnedPointer[T: AnyType](
     Movable,
     Deinitable where conforms_to(T, Deinitable),

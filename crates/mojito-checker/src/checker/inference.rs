@@ -1101,6 +1101,8 @@ impl Checker {
                 None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
             },
             ExprKind::Member { object, field } => {
+                // A field read out of a temporary destroys the rest of it.
+                self.record_unconsumed_temporary(object);
                 self.infer_member(expr.source_span(), object, field)
             }
             ExprKind::MethodCall {
@@ -2417,11 +2419,22 @@ impl Checker {
                     method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
                 },
             );
-        self.operation_adjustments.borrow_mut().insert(
+        // A re-inference of the same display keeps the owner a
+        // temporary-receiver materialization already minted on it.
+        let mut adjustments = self.operation_adjustments.borrow_mut();
+        let materialized = match adjustments.get(&span) {
+            Some(mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
+                materialized,
+                ..
+            }) => *materialized,
+            _ => None,
+        };
+        adjustments.insert(
             span,
             mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
                 target: target.clone(),
                 constructor,
+                materialized,
             },
         );
         Ok(())

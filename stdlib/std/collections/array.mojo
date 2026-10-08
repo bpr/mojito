@@ -78,6 +78,10 @@ struct _ArrayOwnedIter[T: AnyType](
             i += 1
         self.data.unsafe_free()
 
+@explicit_destroy(
+    "Use `deinit_with()` to explicitly destroy an `Array` of"
+    " non-`Deinitable` elements"
+)
 struct Array[T: AnyType, length: Int](
     Comparable where conforms_to(T, Comparable),
     Copyable where conforms_to(T, Copyable),

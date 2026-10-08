@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R511**.
+Next free ID: **R512**.
 
 ## Ordered Work
 
@@ -1033,18 +1033,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     agree.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R274 A subscript of a list literal stops at run time**
-
-  Problem: `print([1, 2][0])` prints `1` at the pin and stops in Mojito with
-  "reference binding to a non-place expression".
-  - `List.__getitem__` borrows its receiver, and a list literal is no place;
-    a call result (`make()[1]`) is materialized as a temporary and works.
-  - The reflection crossing folds `r.field_names()[i]` to its element, so
-    only a written literal reaches this.
-  - Probe: `conformance/probes/list_literal_subscript.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R406 A subscript of a call result handed to `print` stops at run
   time**
@@ -4797,6 +4785,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R421 (2026-10-06).
   - Depends on R213, R196.
   - Model: Fable, Not Planned.
+
+- [ ] **R511 A negative literal index into an `Array` traps at run time
+  where the pin rejects it at compile time**
+
+  Problem: `var a = [1, 2, 3]; print(a[-1])` fails to compile at the pin
+  ("constraint failed: negative indexing is not supported"), while Mojito
+  compiles it and traps with "Pointer access out of bounds".
+  - Upstream dispatches a subscript whose index is a compile-time constant
+    to `Array.__getitem_param__[idx]`, whose `comptime assert` rejects a
+    negative or out-of-range index.
+  - Mojito's bundled `Array` has no `__getitem_param__`, and the checker
+    never routes a constant subscript to one.
+  - Pinned by `conformance/probes/array_negative_literal_index.mojo`.
+  - Ledger name: `array-negative-literal-index`.
+  - Found while landing R274 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 

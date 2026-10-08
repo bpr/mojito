@@ -1139,6 +1139,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A subscript or `ref self` method call on a list display with no
+  contextual type (`print([1, 2][0])`, `[1, 2].__getitem__(0)`) now runs as
+  at the pin: the `Array` display is materialized as a temporary the
+  statement destroys, where it stopped with "reference binding to a
+  non-place expression". A temporary whose struct is not `Deinitable` —
+  a call result, a list or tuple display — borrowed as a receiver or read
+  through a field (`mk().id`, `[Res(1)][0].id`) is now rejected as
+  abandoned, as at the pin, with upstream's messages: the bundled `Array`,
+  `List`, `Tuple`, `Set`, `Dict`, and `OwnedPointer` carry their
+  `@explicit_destroy` text, and a struct without one reports "type 'Res'
+  does not conform to 'Deinitable' and must be explicitly destroyed".
+
 - A `comptime if` condition applying a function to a local `comptime`
   binding over a binder (`comptime m = n + 1` then `comptime if
   is_even(m):`), chained or read beside a `comptime for` index, now decides

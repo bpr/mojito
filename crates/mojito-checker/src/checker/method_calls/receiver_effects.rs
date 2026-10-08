@@ -248,6 +248,11 @@ impl Checker {
                 .borrow_mut()
                 .extend([object.source_span(), inner.source_span()]);
         }
+        // A temporary receiver the method only borrows is destroyed once the
+        // call returns.
+        if !resolved.consumes_receiver {
+            self.record_unconsumed_temporary(object);
+        }
         // A `deinit self` call always consumes its receiver. Mojo may satisfy
         // that consumption by implicitly copying an `ImplicitlyCopyable` place;
         // a merely movable (or explicitly-copy-only) place still requires `^`.

@@ -4105,7 +4105,7 @@ fn nightly_implicit_deletion_controls_linearity_independently_of_the_decorator()
     assert!(matches!(
         error,
         TypeError::Abandoned { message, .. }
-            if message.contains("not implicitly deletable")
+            if message == "type 'Linear' does not conform to 'Deinitable' and must be explicitly destroyed"
     ));
 }
 

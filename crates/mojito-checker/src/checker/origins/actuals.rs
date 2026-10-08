@@ -508,6 +508,10 @@ impl Checker {
                     materialized,
                     ..
                 }
+                | mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
+                    materialized,
+                    ..
+                }
                 | mojito_checked::checked::SemanticAdjustment::ParamValue { materialized, .. },
             ) => {
                 if let Some(owner) = materialized {

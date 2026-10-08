@@ -51,10 +51,11 @@ pub struct SpanFacts {
     /// Spans of `^` transfers the checker bound to a read parameter or
     /// receiver: they lend their place and consume nothing.
     pub lent: HashSet<SourceSpan>,
-    /// Call results the enclosing body owns but cannot destroy — their type is
-    /// one of its own type parameters, whose bounds do not prove `Deinitable`
-    /// — in a position that takes no ownership of them.
-    pub linear_temporaries: HashSet<SourceSpan>,
+    /// Temporaries the enclosing body owns but cannot destroy, in a position
+    /// that takes no ownership of them, each with its explicit-destroy type
+    /// name: its struct, or [`LINEAR_TYPE_PARAMETER`] when its type is one of
+    /// the body's own type parameters whose bounds do not prove `Deinitable`.
+    pub linear_temporaries: HashMap<SourceSpan, String>,
 }
 
 /// The synthetic explicit-destroy type name of a value typed by a
@@ -155,12 +156,15 @@ fn check_expr(
     >,
     types: &HashMap<String, ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    if env.spans.linear_temporaries.contains(&expr.source_span())
-        && let Some(info) = types.get(LINEAR_TYPE_PARAMETER)
+    if let Some(key) = env.spans.linear_temporaries.get(&expr.source_span())
+        && let Some(info) = types.get(key)
     {
-        return Err(TypeError::LinearAbandoned {
-            var: "(expression temporary)".to_string(),
-            message: info.message.clone(),
+        let var = "(expression temporary)".to_string();
+        let message = info.message.clone();
+        return Err(if key == LINEAR_TYPE_PARAMETER {
+            TypeError::LinearAbandoned { var, message }
+        } else {
+            TypeError::Abandoned { var, message }
         });
     }
     match &expr.kind {

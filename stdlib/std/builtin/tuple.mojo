@@ -6,6 +6,10 @@
 from std.reflection.type_info import _unqualified_type_name
 
 
+@explicit_destroy(
+    "Use `deinit_with()` to explicitly destroy a `Tuple` with"
+    " non-`Deinitable` elements"
+)
 struct Tuple[*Ts: Movable](
     Comparable where conforms_to(Ts.values, Comparable) and conforms_to(Ts.values, Equatable),
     Copyable where conforms_to(Ts.values, Copyable),

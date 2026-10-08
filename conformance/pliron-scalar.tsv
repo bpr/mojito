@@ -12,6 +12,7 @@ assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_comparable.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/array_display_temporary_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_element_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_fixed_size_core.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_struct_elements_and_fill.mojo	-	ineligible	no-scalar-entry-shape

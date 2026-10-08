@@ -40,6 +40,10 @@ struct _SetIter[
         self.index += 1
         return self.src[][r]
 
+@explicit_destroy(
+    "Use `deinit_with()` to explicitly destroy a `Set` with a"
+    " non-`Deinitable` element type"
+)
 struct Set[
     T: Hashable & Equatable & Movable, H: Hasher = default_hasher
 ](

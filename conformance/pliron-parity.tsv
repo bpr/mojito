@@ -12,6 +12,7 @@ assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
 assets/ok/arithmetic.mojo	main	exe-differential	sanitized
 assets/ok/array_comparable.mojo	main	exe-differential	sanitized
+assets/ok/array_display_temporary_subscript.mojo	main	exe-differential	sanitized
 assets/ok/array_element_assignment.mojo	main	exe-differential	sanitized
 assets/ok/array_fixed_size_core.mojo	main	exe-differential	sanitized
 assets/ok/array_struct_elements_and_fill.mojo	main	exe-differential	sanitized

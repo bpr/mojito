@@ -1008,6 +1008,10 @@ pub enum SemanticAdjustment {
     ConstructArrayLiteral {
         target: Ty,
         constructor: String,
+        /// The same display as a temporary receiver of a `ref self` method
+        /// (`[1, 2][0]`): it is also a materialized borrow source (see
+        /// `MaterializeBorrowSource`), and one span carries one adjustment.
+        materialized: Option<mojito_types::origin::OwnerId>,
     },
     /// Test the active runtime tag (`value.isa[T]()`).
     VariantIs {
@@ -3082,6 +3086,10 @@ pub fn materialized_borrow_mutability(adjustments: &[SemanticAdjustment]) -> boo
             | SemanticAdjustment::ConstructCollection {
                 materialized: Some(_),
                 ..
+            }
+            | SemanticAdjustment::ConstructArrayLiteral {
+                materialized: Some(_),
+                ..
             } => Some(true),
             SemanticAdjustment::ParamValue {
                 materialized: Some(_),
@@ -3111,6 +3119,10 @@ pub fn materialized_borrow_owner(
             ..
         }
         | SemanticAdjustment::ConstructCollection {
+            materialized: Some(owner),
+            ..
+        }
+        | SemanticAdjustment::ConstructArrayLiteral {
             materialized: Some(owner),
             ..
         }

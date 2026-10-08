@@ -94,20 +94,28 @@ impl Checker {
         self.record_unconsumed_temporary(expr);
     }
 
-    /// Record a call result the enclosing body owns but cannot destroy: its
-    /// type is one of that body's own type parameters, whose bounds do not
-    /// prove `Deinitable`. The parameter must be in scope here — the same
-    /// `Ty::Param` at a concrete call site is the erased-dispatch spelling of
-    /// a solved argument, not a linear value.
+    /// Record a temporary the enclosing body owns but cannot destroy — a
+    /// reference result is none: a call result or display whose struct type is not `Deinitable` under the
+    /// body's bounds, or a call result typed by one of the body's own type
+    /// parameters whose bounds do not prove `Deinitable`. The parameter must
+    /// be in scope here — the same `Ty::Param` at a concrete call site is the
+    /// erased-dispatch spelling of a solved argument, not a linear value.
     pub(super) fn record_linear_temporary(&self, expr: &Expr, ty: &Ty) {
-        let Ty::Param { binder, .. } = ty else {
-            return;
-        };
         let call = matches!(
             expr.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         );
-        if call && self.is_own_parameter(binder) && !self.is_deinitable(ty) {
+        let linear = match ty {
+            Ty::Param { binder, .. } => {
+                call && self.is_own_parameter(binder) && !self.is_deinitable(ty)
+            }
+            Ty::Struct(..) => {
+                (call || matches!(expr.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_)))
+                    && !self.is_deinitable(ty)
+            }
+            _ => false,
+        };
+        if linear && self.infer_reference_value(expr).is_none() {
             self.linear_temporaries
                 .borrow_mut()
                 .insert(expr.source_span());

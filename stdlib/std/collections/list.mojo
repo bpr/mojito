@@ -117,6 +117,10 @@ struct _ListOwnedIter[T: AnyType](
             i += 1
         self.data.unsafe_free()
 
+@explicit_destroy(
+    "Use `deinit_with()` to explicitly destroy a `List` of"
+    " non-`Deinitable` elements"
+)
 struct List[T: AnyType](
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),

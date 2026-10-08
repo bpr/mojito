@@ -233,6 +233,7 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
                     target,
                     constructor,
+                    ..
                 } => Some((target, constructor)),
                 _ => None,
             })
