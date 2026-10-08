@@ -23,6 +23,14 @@ use mojito_common::token::Span;
 /// renaming.
 pub const CONTEXTUAL_SENTINEL: &str = "$contextual";
 
+/// The derivation ordinal of a compiler-spelled value pack read.
+///
+/// The `ParameterList[...]()` construction the compiler spells in place of a
+/// value pack read at run time takes `SyntaxId::derived(read, this)`. The
+/// checker admits a bracket application of `ParameterList` only so spelled,
+/// or in its bundled module.
+pub const VALUE_PACK_READ_ORDINAL: u32 = u32::MAX;
+
 /// Whether a definition's decorators mark it as a parametric closure
 /// (`@__parameter`; the pre-rename `@parameter` still warns-and-runs upstream,
 /// so it stays accepted as a deprecation bridge).

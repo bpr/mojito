@@ -62,6 +62,54 @@ impl VmBackend {
     /// variables are still live. A handle rooted at borrowed storage outside
     /// the frame is unchanged; one rooted here is re-rooted at the storage it
     /// projects through, exactly like a directly returned handle.
+    /// A call result bound to a static-origin reference register
+    /// (`ref[ImmStaticOrigin]`). When it was reached through a heap pointer
+    /// held in a slot — a temporary `Span` over static elements, which the
+    /// body drops before it returns — it designates the heap element, never
+    /// that slot, so it is forwarded as the element's pointer.
+    pub(super) fn static_reference_result(
+        &self,
+        value: Value,
+        target: Option<&Ty>,
+        current: FrameId,
+        current_variables: &[Value],
+    ) -> Value {
+        let Value::Ref {
+            frame,
+            slot,
+            projection,
+        } = &value
+        else {
+            return value;
+        };
+        if !matches!(
+            target,
+            Some(Ty::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
+        ) {
+            return value;
+        }
+        let root = if *frame == current.0 {
+            current_variables.get(*slot)
+        } else {
+            self.frames
+                .iter()
+                .find(|candidate| candidate.id.0 == *frame)
+                .and_then(|candidate| candidate.variables.get(*slot))
+        };
+        match root.map(|root| self.reference_pointer_boundary(root, projection)) {
+            Some(Ok(Some(ReferencePointerBoundary {
+                allocation,
+                offset,
+                index,
+                suffix: [],
+            }))) => Value::Pointer {
+                allocation,
+                offset: offset + index as i64,
+            },
+            _ => value,
+        }
+    }
+
     pub(super) fn canonicalize_value_references(
         &self,
         current: FrameId,

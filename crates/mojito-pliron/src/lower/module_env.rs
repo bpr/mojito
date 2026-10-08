@@ -14,6 +14,7 @@ impl ModuleShared {
             strings: HashMap::new(),
             thunks: HashMap::new(),
             drop_thunks: HashMap::new(),
+            param_lists: HashMap::new(),
         }
     }
 
@@ -42,6 +43,34 @@ impl ModuleShared {
         global.set_attr_llvm_global_linkage(ctx, LinkageAttr::PrivateLinkage);
         self.module.append_operation(ctx, global.get_operation(), 0);
         self.strings.insert(bytes.to_vec(), name.clone());
+        name
+    }
+
+    /// Intern a closed parameter list's element bytes as a private constant
+    /// global `mjplist_<n>` aligned for its element, deduplicated by content
+    /// and numbered in first-interning order, and return its symbol.
+    pub(super) fn intern_param_list(
+        &mut self,
+        ctx: &mut Context,
+        bytes: &[u8],
+        align: u32,
+    ) -> Identifier {
+        let key = (bytes.to_vec(), align);
+        if let Some(name) = self.param_lists.get(&key) {
+            return name.clone();
+        }
+        let name: Identifier = format!("mjplist_{}", self.param_lists.len())
+            .try_into()
+            .expect("constant-pool names are identifier-safe");
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let array_ty: TypeHandle = ArrayType::get(ctx, i8_ty, bytes.len() as u64).into();
+        let global = GlobalOp::new(ctx, name.clone(), array_ty);
+        global.set_initializer_value(ctx, Box::new(BytesAttr::new(bytes.to_vec())));
+        global.set_attr_llvm_global_linkage(ctx, LinkageAttr::PrivateLinkage);
+        global.set_constant(ctx, true);
+        global.set_alignment(ctx, align);
+        self.module.append_operation(ctx, global.get_operation(), 0);
+        self.param_lists.insert(key, name.clone());
         name
     }
 

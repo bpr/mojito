@@ -441,6 +441,9 @@ impl Checker {
                     }
                 }
                 if let Some(info) = self.structs.get(name) {
+                    if name == super::comptime_validation::PARAMETER_LIST && !args.is_empty() {
+                        self.admit_parameter_list_brackets()?;
+                    }
                     let decls = info.decls.clone();
                     let source_params = info.source_params.clone();
                     let (_, tyargs) =

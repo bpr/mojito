@@ -780,7 +780,9 @@ impl VmBackend {
                         },
                     )?;
                 let returns_reference = prog.mir.functions[fidx].1.returns_reference;
-                if returns_reference && !matches!(ret, Value::Ref { .. }) {
+                // A static-origin reference may arrive as its heap
+                // element's pointer (`returned_value`).
+                if returns_reference && !matches!(ret, Value::Ref { .. } | Value::Pointer { .. }) {
                     return Err(RuntimeError::TypeError(format!(
                         "vm: reference-returning method '{fname}' produced {ret:?}"
                     )));

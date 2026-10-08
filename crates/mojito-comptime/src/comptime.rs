@@ -2379,9 +2379,8 @@ fn served_pack_defs(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> 
 /// a non-pack `def`'s template serves too ([`template_serves_binders`]), the
 /// pack among them and a scalar value beside it (`Int`, `UInt`, `Bool`,
 /// `Float64`, `StringLiteral`, or `DType`), which
-/// an explicit application binds from its brackets; every read of a value
-/// pack is its length or an element
-/// ([`value_packs_read_as_parameters`]); the collector is read
+/// an explicit application binds from its brackets (a value pack read at
+/// run time is the `ParameterList` the check spells); the collector is read
 /// or owned (`var *args`, destroyed last to first after its last element use;
 /// an element transferred out by subscript is rejected, as the pin rejects
 /// it, since the collector is a `VariadicPack`); every spread of the pack is
@@ -2403,81 +2402,8 @@ fn pack_def_shape_served(statement: &Stmt, scalars: &ScalarReads) -> Option<Vec<
     };
     let packs = def_pack_names(type_params, params);
     let shape = template_serves_binders(type_params, name)
-        && !def_body_keys_specialization(type_params, params, name, body, scalars)
-        && value_packs_read_as_parameters(type_params, name, body);
+        && !def_body_keys_specialization(type_params, params, name, body, scalars);
     shape.then(|| pack_spread_callees(body, &packs)).flatten()
-}
-
-/// Whether every read of a value pack (`*values: Int`) in a `def`'s body is
-/// one its template serves: its length (`len(values)`, `values.__len__()`)
-/// or an element (`values[i]`), which the check records as the parameter
-/// constant the elaborator folds per instance, or the iterable of a
-/// `comptime for`, which the loop header carries as its sequence. A read of
-/// the whole pack as a runtime value keeps the clone.
-fn value_packs_read_as_parameters(type_params: &[TypeParam], owner: &str, body: &[Stmt]) -> bool {
-    struct Reads {
-        packs: HashSet<String>,
-        uses: usize,
-        served: usize,
-    }
-
-    impl Reads {
-        fn names_pack(&self, expr: &Expr) -> bool {
-            matches!(&expr.kind, ExprKind::Identifier(name) if self.packs.contains(name))
-        }
-    }
-
-    impl mojito_ast::visit::Visitor for Reads {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            self.served += usize::from(
-                matches!(&statement.kind, StmtKind::ComptimeFor { iter, .. } if self.names_pack(iter)),
-            );
-        }
-
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.served += usize::from(match &expr.kind {
-                ExprKind::Identifier(_) => {
-                    self.uses += usize::from(self.names_pack(expr));
-                    false
-                }
-                ExprKind::Call {
-                    name,
-                    param_args,
-                    args,
-                    kwargs,
-                } => {
-                    name == "len"
-                        && param_args.is_empty()
-                        && kwargs.is_empty()
-                        && matches!(args.as_slice(), [pack] if self.names_pack(pack))
-                }
-                ExprKind::MethodCall {
-                    object,
-                    method,
-                    args,
-                    kwargs,
-                } => {
-                    method == "__len__"
-                        && args.is_empty()
-                        && kwargs.is_empty()
-                        && self.names_pack(object)
-                }
-                ExprKind::Index { object, .. } => self.names_pack(object),
-                _ => false,
-            });
-        }
-    }
-
-    let mut reads = Reads {
-        packs: def_value_pack_names(type_params, owner),
-        uses: 0,
-        served: 0,
-    };
-    if reads.packs.is_empty() {
-        return true;
-    }
-    mojito_ast::visit::walk_block(&mut reads, body);
-    reads.uses == reads.served
 }
 
 /// The callees a block spreads one of `packs` into as a call or method-call

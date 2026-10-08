@@ -798,6 +798,9 @@ impl Checker {
         if let Some(ty) = self.infer_reflection(expr)? {
             return Ok(ty);
         }
+        if self.value_pack_named(expr).is_some() {
+            return self.infer_value_pack_read(expr);
+        }
         match &expr.kind {
             ExprKind::Int(_) => Ok(Ty::IntLiteral),
             ExprKind::Float(_) => Ok(Ty::FloatLiteral),

@@ -1519,11 +1519,18 @@ impl ParamDecl {
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
             }),
-            Self::Value { ty, .. } => TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
-                self.id().clone(),
-                self.name().trim_start_matches('*'),
-                MetaTy::value((**ty).clone()),
-            ))),
+            Self::Value { ty, variadic, .. } => {
+                let element = MetaTy::value((**ty).clone());
+                TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
+                    self.id().clone(),
+                    self.name().trim_start_matches('*'),
+                    if *variadic {
+                        MetaTy::ParamList(Box::new(element))
+                    } else {
+                        element
+                    },
+                )))
+            }
         }
     }
 }

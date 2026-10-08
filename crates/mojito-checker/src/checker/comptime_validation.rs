@@ -10,6 +10,22 @@ use super::*;
 use mojito_ast::ast::{ParamArg, SourceType};
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
+/// The bundled `ParameterList`'s linked name, its implicit public identity.
+pub(super) const PARAMETER_LIST: &str = "ParameterList";
+
+/// The scope in which a compiler-spelled `ParameterList[...]` construction
+/// is checked: its brackets are admitted until the scope ends.
+pub(super) struct ParameterListBrackets<'a> {
+    checker: &'a Checker,
+    outer: bool,
+}
+
+impl Drop for ParameterListBrackets<'_> {
+    fn drop(&mut self) {
+        self.checker.parameter_list_brackets.set(self.outer);
+    }
+}
+
 /// A local `comptime` binding of a display the elaborator evaluates per
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
@@ -2185,6 +2201,93 @@ impl Checker {
         })
     }
 
+    /// A value pack read as a runtime value (`for v in values`, `var l =
+    /// values`, `values[i]` at a runtime index): the zero-sized
+    /// `ParameterList[*values]()` the pin types the read as, spelled in the
+    /// read's place and checked as any construction is.
+    pub(super) fn infer_value_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
+        if !self.structs.contains_key(PARAMETER_LIST) {
+            return Err(TypeError::Unsupported(format!(
+                "a value pack read at run time needs the bundled '{VARIADICS_MODULE}' module"
+            )));
+        }
+        let spread = match &expression.kind {
+            ExprKind::Member { field, .. } => SourceType::SelfParam(format!("*{field}")),
+            ExprKind::Identifier(name) => SourceType::Named(format!("*{name}"), Vec::new()),
+            _ => {
+                return Err(TypeError::InvariantViolation(
+                    "a value pack read names no pack".to_string(),
+                ));
+            }
+        };
+        let construction = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::VALUE_PACK_READ_ORDINAL,
+            ExprKind::Call {
+                name: PARAMETER_LIST.to_string(),
+                param_args: vec![ParamArg::Type(spread)],
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            expression.span,
+        );
+        let ty = self.infer(&construction)?;
+        self.record_spelled_construction(expression, construction, &ty);
+        Ok(ty)
+    }
+
+    /// Admit a bracket application of `ParameterList` where one is being
+    /// checked. The pin's `ParameterList` takes its list as one parameter
+    /// (`ParameterList[values.values]`), so only the construction the
+    /// compiler spells for a value pack read, and the bundled module's own,
+    /// apply it.
+    pub(super) fn admit_parameter_list_brackets(&self) -> Result<(), TypeError> {
+        if self.parameter_list_brackets.get() {
+            return Ok(());
+        }
+        Err(TypeError::Unsupported(
+            "'ParameterList' takes its list as one parameter at the pin \
+             ('ParameterList[values.values]'), which is not supported yet; a value pack \
+             read at run time is already its 'ParameterList'"
+                .to_string(),
+        ))
+    }
+
+    /// The scope a call `name[param_args](...)` at `span` is checked in: a
+    /// bracket application of `ParameterList` the compiler spelled admits
+    /// its brackets for the call's check, and any other is rejected.
+    pub(super) fn parameter_list_brackets_at(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        param_args: &[ParamArg],
+    ) -> Result<Option<ParameterListBrackets<'_>>, TypeError> {
+        if name != PARAMETER_LIST || param_args.is_empty() {
+            return Ok(None);
+        }
+        if !self.spells_parameter_list(span) {
+            self.admit_parameter_list_brackets()?;
+            return Ok(None);
+        }
+        Ok(Some(ParameterListBrackets {
+            checker: self,
+            outer: self.parameter_list_brackets.replace(true),
+        }))
+    }
+
+    /// Whether the `ParameterList[...]` construction at `span` may apply its
+    /// brackets: the compiler spelled it for a value pack read (in a
+    /// template, or in a clone the elaborator rewrote), or it is the bundled
+    /// module's own.
+    pub(super) fn spells_parameter_list(&self, span: &SourceSpan) -> bool {
+        super::overload_support::is_bundled_variadics_source(span.source.as_deref())
+            || span
+                .syntax
+                .map(|id| self.syntax_origins.origin(id))
+                .and_then(mojito_common::token::SyntaxId::derivation)
+                .is_some_and(|(_, ordinal)| ordinal == mojito_ast::ast::VALUE_PACK_READ_ORDINAL)
+    }
+
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
     /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
     pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
@@ -2903,6 +3006,19 @@ impl Checker {
             self.infer_range(args)?;
             return Ok(Ty::Int);
         }
+        // A value pack iterates its elements at compile time; only a
+        // runtime read is its `ParameterList`.
+        if let Some(pack) = self.value_pack_named(iter) {
+            return match pack.meta() {
+                mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "the value pack `{pack}` is not a parameter list of values"
+                ))
+            });
+        }
         let ty = self.infer(iter)?;
         let not_iterable = |elements: &[Ty]| {
             TypeError::Unsupported(format!(
@@ -3505,3 +3621,5 @@ fn names_read(expr: &Expr) -> Vec<String> {
 fn same_bounds(left: &[String], right: &[String]) -> bool {
     left.len() == right.len() && left.iter().all(|bound| right.contains(bound))
 }
+
+const VARIADICS_MODULE: &str = "std.builtin.variadics";

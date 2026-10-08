@@ -881,6 +881,12 @@ pub enum SemanticAdjustment {
     SizeOf {
         ty: Ty,
     },
+    /// `__param_list_address[*values]()` in the bundled `ParameterList`: the
+    /// static address of the parameter list `values`' elements, which MIR
+    /// keeps as `MirInstr::ParamListAddress` for the elaborator to close.
+    ParamListAddress {
+        values: mojito_types::param_expr::ParamExpr,
+    },
     /// `_unqualified_type_name[T]()` resolved to upstream's unqualified
     /// spelling of the checked type (`SIMD[DType.int, 1]`, `Optional[String]`);
     /// MIR lowers `text` to a string constant. The type itself is kept beside
@@ -2117,6 +2123,32 @@ fn build_checked_expressions(
             let mut children = Vec::new();
             let mut add = |this: &mut Self, child: &Expr| children.push(this.expr(child));
             match &expression.kind {
+                // A spelled sugar is its construction: the node built for
+                // the construction answers at the sugar's location too, so
+                // HIR lowers the construction where the sugar was written (an
+                // initializer list, a t-string, a value pack read as its
+                // `ParameterList`).
+                BraceLit(_) | TString { .. } | Identifier(_) | Member { .. }
+                    if let Some(SemanticAdjustment::SpelledConstruction { construction }) =
+                        self.operation_adjustments.get(&expression.source_span()) =>
+                {
+                    let node = self.expr(&construction.0);
+                    if self.scan.is_none() {
+                        self.index
+                            .entry(expression.source_span())
+                            .or_default()
+                            .push(node);
+                        // A `for` loop iterates the construction it spells.
+                        if let Some(protocol) =
+                            self.iteration_protocols.get(&expression.source_span())
+                        {
+                            self.nodes[node.0 as usize]
+                                .adjustments
+                                .push(SemanticAdjustment::Iterate(protocol.clone()));
+                        }
+                    }
+                    return node;
+                }
                 Prefix(_, value) | Transfer(value) | Spread(value) | Named { value, .. } => {
                     add(self, value);
                 }
@@ -2196,22 +2228,6 @@ fn build_checked_expressions(
                     for value in values {
                         add(self, value);
                     }
-                }
-                // A spelled sugar is its construction: the node built for
-                // the construction answers at the sugar's location too, so
-                // HIR lowers the construction where the sugar was written.
-                BraceLit(_) | TString { .. }
-                    if let Some(SemanticAdjustment::SpelledConstruction { construction }) =
-                        self.operation_adjustments.get(&expression.source_span()) =>
-                {
-                    let node = self.expr(&construction.0);
-                    if self.scan.is_none() {
-                        self.index
-                            .entry(expression.source_span())
-                            .or_default()
-                            .push(node);
-                    }
-                    return node;
                 }
                 BraceLit(values) => {
                     for (key, value) in values {

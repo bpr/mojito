@@ -191,6 +191,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::Const { dest, .. }
         | MirInstr::ConstructType { dest, .. }
         | MirInstr::SizeOf { dest, .. }
+        | MirInstr::ParamListAddress { dest, .. }
         | MirInstr::TypeName { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
@@ -975,6 +976,16 @@ pub enum MirInstr {
     SizeOf {
         dest: Reg,
         ty: Ty,
+    },
+    /// The static address of a parameter list's elements, laid out once for
+    /// the whole program as a constant array (upstream's `global_constant`
+    /// over `#pop.variadic_to_array`): `dest` is a `Pointer[E,
+    /// ImmStaticOrigin]` to the first element. A template holds the list as
+    /// the `Const::Param` it denotes; the elaborator closes it to the
+    /// `Const::Value` tuple of its elements.
+    ParamListAddress {
+        dest: Reg,
+        values: Const,
     },
     /// The unqualified spelling of one checker-resolved type that names a
     /// compile-time parameter. Only a template holds one: the elaborator

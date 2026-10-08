@@ -586,6 +586,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
             tag,
             &[("dest", reg_value(*dest)), ("value", const_value(k))],
         ),
+        MirInstr::ParamListAddress { dest, values } => record(
+            tag,
+            &[("dest", reg_value(*dest)), ("values", const_value(values))],
+        ),
         MirInstr::SizeOf { dest, ty }
         | MirInstr::TypeName { dest, ty }
         | MirInstr::ConstructType { dest, ty } => {

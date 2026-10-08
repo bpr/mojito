@@ -1064,8 +1064,9 @@ impl Lower {
         }
     }
 
-    /// Replace every spelled sugar in `syntax` (an initializer list or a
-    /// template string) by the construction the checker spelled for it, the
+    /// Replace every spelled sugar in `syntax` (an initializer list, a
+    /// template string, or a value pack read as its `ParameterList`) by the
+    /// construction the checker spelled for it, the
     /// node the checked arena answers at the sugar's location, so the CFG
     /// lowers the construction where the sugar was written and the sugar's
     /// own operands, cloned into it, keep their identities.
@@ -1076,7 +1077,13 @@ impl Lower {
 
         impl mojito_ast::visit::MutVisitor for Substitute<'_> {
             fn visit_expr_mut(&mut self, expr: &mut Expr) {
-                if !matches!(expr.kind, ExprKind::BraceLit(_) | ExprKind::TString { .. }) {
+                if !matches!(
+                    expr.kind,
+                    ExprKind::BraceLit(_)
+                        | ExprKind::TString { .. }
+                        | ExprKind::Identifier(_)
+                        | ExprKind::Member { .. }
+                ) {
                     return;
                 }
                 let Some(construction) = self

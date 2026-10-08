@@ -1876,6 +1876,48 @@ fn type_expression_constructions_round_trip() {
     ));
 }
 
+/// Schema 1.34 carries the static address of a parameter list's elements,
+/// the list a template's parameter or an instance's closed tuple.
+#[test]
+fn param_list_addresses_round_trip() {
+    let list = ParamContext::detached().decl_ref(
+        ParamId::new("f", 0),
+        "values",
+        MetaTy::ParamList(Box::new(MetaTy::int())),
+    );
+    let pointer = Ty::Pointer {
+        element: Box::new(Ty::Int),
+        origin: mojito_types::origin::PointerOrigin::Static,
+    };
+    for values in [
+        Const::Param(list),
+        Const::Value(mojito_types::ct::CtValue::Tuple(vec![
+            mojito_types::ct::CtValue::Int(4),
+            mojito_types::ct::CtValue::Int(5),
+        ])),
+    ] {
+        let program = program_with(vec![(
+            "main".into(),
+            function_with(
+                vec![pointer.clone()],
+                vec![MirInstr::ParamListAddress {
+                    dest: Reg(0),
+                    values: values.clone(),
+                }],
+            ),
+        )]);
+        assert_reprints(&program);
+        let text = write::program(&program);
+        assert!(text.contains("param_list.address { dest: %r0, values: "));
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        assert!(matches!(
+            &parsed.program.functions[0].1.blocks[0].instrs[0],
+            MirInstr::ParamListAddress { dest: Reg(0), values: read }
+                if format!("{read:?}") == format!("{values:?}")
+        ));
+    }
+}
+
 /// Schema 1.22 carries a method call's own solved compile-time arguments;
 /// an older artifact carries none.
 #[test]

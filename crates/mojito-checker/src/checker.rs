@@ -666,6 +666,11 @@ pub struct Checker {
     /// declarations may name compiler-private storage types (`__UninitStorage`)
     /// in sourceless type-annotation positions.
     bundled_stdlib_declaration: bool,
+    /// Set while checking a `ParameterList[...]` construction the compiler
+    /// spelled for a value pack read, or one in the bundled
+    /// `std/builtin/variadics.mojo`: the pin's `ParameterList` takes its list
+    /// as one parameter, so no other bracket spelling of it is admitted.
+    parameter_list_brackets: std::cell::Cell<bool>,
     /// Source-span to lowered callee for calls whose source name denotes an
     /// overload set. Interior mutability keeps expression inference usable from
     /// read-only helper methods while still recording resolution facts.
@@ -1064,6 +1069,7 @@ impl Checker {
             self_initializing: false,
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
+            parameter_list_brackets: std::cell::Cell::new(false),
             overload_targets: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: HashSet::new(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),

@@ -200,6 +200,27 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = value;
             }
+            MirInstr::ParamListAddress { dest, values } => {
+                let Value::Tuple(items) =
+                    const_value(values, &prog.mir.functions[function].1, vars, comptime)?
+                else {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "the parameter list `{values:?}` has no elements to address"
+                    )));
+                };
+                let Some(Ty::Pointer { element, .. }) =
+                    prog.mir.functions[function].1.reg_types.get(&dest.0)
+                else {
+                    return Err(RuntimeError::Unsupported(
+                        "a parameter list's address needs a pointer register".to_string(),
+                    ));
+                };
+                let allocation = self.static_param_list(prog, element, items)?;
+                regs[dest.0 as usize] = Value::Pointer {
+                    allocation,
+                    offset: 0,
+                };
+            }
             MirInstr::ConstructTypeParam {
                 dest,
                 param,
@@ -1203,6 +1224,7 @@ impl VmBackend {
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                    let result = self.static_reference_result(result, target, frame_id, vars);
                     regs[dest.0 as usize] =
                         self.materialize_checked_result(prog, result, target)?;
                 } else {

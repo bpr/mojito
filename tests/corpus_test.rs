@@ -296,6 +296,9 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
 /// entry that owns each. A listed trial passes while its fixture still
 /// differs and fails once it agrees, so a fix removes its row.
 const ERASED_VM_RESIDUE: &[&str] = &[
+    // R491, the erased oracle: `ParameterList.get_span` is a static method,
+    // whose erased frame has no receiver to read the struct's value pack.
+    "value_pack_runtime_read",
     // R315, the erased oracle: a struct's type parameter binds the
     // spelling of its type, which decides no conformance condition.
     "keyed_def_builds_loan_carrying_instance",

@@ -13,6 +13,9 @@ impl Checker {
         expr: &Expr,
     ) -> Result<mojito_types::origin::OriginPlace, TypeError> {
         use mojito_types::origin::{OriginPlace, OriginSeg};
+        if let Some(construction) = self.spelled_construction(expr) {
+            return self.origin_place(&construction);
+        }
         if let Some(interior) = self
             .interior_references
             .borrow()
@@ -476,6 +479,11 @@ impl Checker {
         expr: &Expr,
         mutable: bool,
     ) -> Result<mojito_types::origin::OwnerId, TypeError> {
+        // Sugar the checker spells as a construction (a value pack read as
+        // its `ParameterList`) materializes that construction.
+        if let Some(construction) = self.spelled_construction(expr) {
+            return self.materialize_borrow_owner(&construction, mutable);
+        }
         let mut adjustments = self.operation_adjustments.borrow_mut();
         match adjustments.get_mut(&expr.source_span()) {
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {

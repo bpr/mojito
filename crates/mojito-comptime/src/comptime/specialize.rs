@@ -718,6 +718,7 @@ impl Elab<'_> {
         let mut specialized_params = params.clone();
         let mut type_pack_expansions: HashMap<String, Vec<Type>> = HashMap::new();
         let mut type_pack_values: HashMap<String, Vec<CtValue>> = HashMap::new();
+        let mut value_pack_values: HashMap<String, Vec<CtValue>> = HashMap::new();
         let mut values = vals.iter();
         for tp in type_params {
             let Some(decl) = classify_ct_param(tp, type_params, &output_name) else {
@@ -739,7 +740,10 @@ impl Elab<'_> {
             }
             env.insert(binding.clone(), v.clone());
             match &decl {
-                ParamDecl::Value { name, .. } => {
+                ParamDecl::Value { name, variadic, .. } => {
+                    if *variadic && let CtValue::Tuple(elements) = v {
+                        value_pack_values.insert(binding.clone(), elements.clone());
+                    }
                     subs.insert(name.trim_start_matches('*').to_string(), v.clone());
                 }
                 ParamDecl::Type { variadic: true, .. } => {
@@ -802,7 +806,8 @@ impl Elab<'_> {
         let constraint_env = env.clone();
         // Elaborate the body with the parameters bound, so its comptime constructs
         // select/unroll against the concrete arguments.
-        let elaborated = self.block(body, &mut env, true)?;
+        let mut elaborated = self.block(body, &mut env, true)?;
+        spell_value_pack_reads(&mut elaborated, &value_pack_values);
         let mut final_body = materialize_block(
             elaborated,
             &subs,

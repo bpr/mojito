@@ -228,6 +228,10 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::Const {
             k: Const::Param(value),
             ..
+        }
+        | MirInstr::ParamListAddress {
+            values: Const::Param(value),
+            ..
         } => errors.push(format!(
             "{head} keeps the parameter constant `{value}` in elaborated MIR"
         )),

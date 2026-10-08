@@ -2872,6 +2872,7 @@ Representative instructions:
 ```rust
 Const
 SizeOf
+ParamListAddress
 TypeName
 Rebind
 UseVar
@@ -2905,6 +2906,14 @@ HasNext
 Next
 Unsupported
 ```
+
+`ParamListAddress` is the static address of a parameter list's elements,
+the bundled `ParameterList.get_span`'s stand-in for upstream's
+`global_constant`: a template names the list as a parameter constant, the
+elaborator closes it to a tuple, and each backend lays the list out once per
+program (a never-freed VM allocation, a private constant global natively).
+A value pack read at run time reaches it as the `ParameterList[*values]()`
+construction the checker spells in the read's place.
 
 Public collection displays and comprehensions use ordinary `Call` and
 `MethodCall` instructions. `MakeTuple` is reserved for the compiler-private

@@ -1330,11 +1330,12 @@ impl Checker {
         object: &Expr,
         index: &Expr,
     ) -> Result<Ty, TypeError> {
-        // Source validation types a local `comptime` index as the runtime
-        // value the elaborator later folds, so an index it cannot compile
-        // takes the runtime pack's typing.
+        // A compile-time index reads the element as the parameter constant
+        // the elaborator folds; any other index reads the runtime
+        // `ParameterList` the pack is. Source validation types a local
+        // `comptime` index as the runtime value the elaborator later folds.
         if let Some(pack) = self.value_pack_named(object)
-            && !(self.source_validation && self.compile_dependent_ct_expr(index).is_err())
+            && self.compile_dependent_ct_expr(index).is_ok()
         {
             return self.infer_value_pack_element(span, &pack, index);
         }

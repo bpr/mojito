@@ -125,6 +125,112 @@ pub(super) fn fold_pack_uses(body: &mut [Stmt], packs: &HashMap<String, Vec<CtVa
     }
 }
 
+/// Spell each runtime read of a value pack a clone binds (`for v in values`,
+/// `var l = values`, `values[i]`) as the `ParameterList[v0, v1, ...]()` the
+/// pin types it as. A compile-time read — inside a bracket argument, a
+/// spread, or a `comptime` binding or loop header — keeps the bound list.
+pub(super) fn spell_value_pack_reads(body: &mut [Stmt], packs: &HashMap<String, Vec<CtValue>>) {
+    use mojito_common::token::SyntaxId;
+    /// Every read of one of `packs` under a compile-time position.
+    struct CompileTime<'a> {
+        packs: &'a HashMap<String, Vec<CtValue>>,
+        kept: HashSet<SyntaxId>,
+    }
+    /// Every read of one of `packs` in the visited subtree.
+    struct Reads<'a, 'b>(&'b mut CompileTime<'a>);
+    impl mojito_ast::visit::Visitor for Reads<'_, '_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(&expr.kind, ExprKind::Identifier(name) if self.0.packs.contains_key(name)) {
+                self.0.kept.insert(expr.syntax_id);
+            }
+        }
+    }
+    impl CompileTime<'_> {
+        fn keep(&mut self, expr: &Expr) {
+            mojito_ast::visit::walk_expr(&mut Reads(self), expr);
+        }
+    }
+    impl mojito_ast::visit::Visitor for CompileTime<'_> {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            match &statement.kind {
+                StmtKind::Comptime { value, .. } => self.keep(value),
+                StmtKind::ComptimeFor { iter, .. } => self.keep(iter),
+                StmtKind::ComptimeIf { branches, .. } => {
+                    for (condition, _) in branches {
+                        self.keep(condition);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::Spread(inner) => self.keep(inner),
+                ExprKind::Call { param_args, .. }
+                | ExprKind::Invoke { param_args, .. }
+                | ExprKind::TypeApply {
+                    args: param_args, ..
+                } => {
+                    for argument in param_args {
+                        mojito_ast::visit::walk_param_arg(&mut Reads(self), argument);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    struct Spell<'a> {
+        packs: &'a HashMap<String, Vec<CtValue>>,
+        kept: HashSet<SyntaxId>,
+    }
+    impl mojito_ast::visit::MutVisitor for Spell<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            let ExprKind::Identifier(name) = &expr.kind else {
+                return;
+            };
+            let Some(values) = self.packs.get(name) else {
+                return;
+            };
+            if self.kept.contains(&expr.syntax_id) {
+                return;
+            }
+            let Some(param_args) = values
+                .iter()
+                .map(|value| value.materialize(expr.span).map(ParamArg::Value))
+                .collect::<Option<Vec<_>>>()
+            else {
+                return;
+            };
+            expr.kind = ExprKind::Call {
+                name: "ParameterList".to_string(),
+                param_args,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            };
+            expr.syntax_id = mojito_common::token::SyntaxId::derived(
+                expr.syntax_id,
+                mojito_ast::ast::VALUE_PACK_READ_ORDINAL,
+            );
+        }
+    }
+    if packs.is_empty() {
+        return;
+    }
+    let mut compile_time = CompileTime {
+        packs,
+        kept: HashSet::new(),
+    };
+    mojito_ast::visit::walk_block(&mut compile_time, body);
+    mojito_ast::visit::walk_block_mut(
+        &mut Spell {
+            packs,
+            kept: compile_time.kept,
+        },
+        body,
+    );
+}
+
 pub(super) fn materialize_expression(expr: &Expr, consts: &HashMap<String, CtValue>) -> Expr {
     let mut expr = expr.clone();
     let subs: Subs = &|name| consts.get(name).cloned();

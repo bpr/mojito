@@ -265,6 +265,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        let _brackets = self.parameter_list_brackets_at(&span, name, param_args)?;
         if name == "__RuntimeTuple"
             && (self.bundled_stdlib_declaration
                 || super::overload_support::is_bundled_module_source(span.source.as_deref()))
@@ -445,6 +446,16 @@ impl Checker {
                 // from the first parameter argument and the result type from
                 // the destination register.
                 "external_call" => return self.infer_external_call(param_args, args),
+                // The static address of a parameter list's elements, spelled
+                // only by the bundled `ParameterList` (upstream's
+                // `global_constant` over `#pop.variadic_to_array`).
+                PARAM_LIST_ADDRESS
+                    if super::overload_support::is_bundled_variadics_source(
+                        span.source.as_deref(),
+                    ) =>
+                {
+                    return self.infer_param_list_address(span, param_args, args);
+                }
                 "size_of" => {
                     let ty = self.size_of_operand(param_args, args)?;
                     self.operation_adjustments.borrow_mut().insert(
@@ -2253,6 +2264,42 @@ impl Checker {
             .map(mojito_types::origin::OriginParamId)
             .collect()
     }
+
+    /// `__param_list_address[*values]()`: a `Pointer[E, ImmStaticOrigin]` to
+    /// the first of the value pack's elements, laid out once per program.
+    fn infer_param_list_address(
+        &self,
+        span: SourceSpan,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        let values = match param_args {
+            [argument] if args.is_empty() => self.value_pack_spread(argument),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            TypeError::Unsupported(format!(
+                "'{PARAM_LIST_ADDRESS}' takes one value pack spread and no arguments"
+            ))
+        })?;
+        let element = match values.meta() {
+            mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            TypeError::InvariantViolation(format!(
+                "the value pack `{values}` is not a parameter list of values"
+            ))
+        })?;
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ParamListAddress { values },
+        );
+        Ok(Ty::Pointer {
+            element: Box::new(element),
+            origin: mojito_types::origin::PointerOrigin::Static,
+        })
+    }
 }
 
 /// The value parameters of `decls` that `param_args` leaves unsupplied, as
@@ -2349,6 +2396,8 @@ struct CalleeOriginArguments<'a> {
     args: &'a [Expr],
     kwargs: &'a [mojito_ast::ast::KwArg],
 }
+
+const PARAM_LIST_ADDRESS: &str = "__param_list_address";
 
 /// The declaration each bracket argument binds, one entry per argument, as
 /// the MIR generic ABI binds them: a named argument selects its declaration,

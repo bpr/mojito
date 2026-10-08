@@ -64,6 +64,7 @@ pub(super) fn verify_instruction(
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
         | MirInstr::SizeOf { .. }
+        | MirInstr::ParamListAddress { .. }
         | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
         | MirInstr::Rebind { .. }
@@ -433,6 +434,28 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             {
                 errors.push(format!(
                     "{prefix}: construction of the type {ty} has result type {found}"
+                ));
+            }
+        }
+        MirInstr::ParamListAddress { dest, values } => {
+            if !matches!(
+                cx.reg_ty(*dest),
+                None | Some(Ty::Pointer {
+                    origin: mojito_types::origin::PointerOrigin::Static,
+                    ..
+                })
+            ) {
+                errors.push(format!(
+                    "{prefix}: a parameter list's address must be a static pointer"
+                ));
+            }
+            if !matches!(
+                values,
+                crate::mir::Const::Param(_)
+                    | crate::mir::Const::Value(mojito_types::ct::CtValue::Tuple(_))
+            ) {
+                errors.push(format!(
+                    "{prefix}: a parameter list's address names no parameter list"
                 ));
             }
         }

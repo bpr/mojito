@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R490**.
+Next free ID: **R497**.
 
 ## Ordered Work
 
@@ -480,6 +480,21 @@ correctness fix to existing behavior is allowed.
     path is unaffected; entry R10 deletes the oracle and the question with
     it.
   - Found while landing R325's first stages (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R491 (P5) The erased oracle cannot read a struct's value pack in a
+  static method**
+
+  Problem: every runtime read of a value pack (`for v in values`,
+  `values[i]`, `ParameterList[1, 2]()[1]`) stops under `--erased` with "the
+  erased oracle cannot evaluate the parameter constant `values`", while
+  concrete MIR runs it.
+  - `ParameterList.get_span` is a `@staticmethod`, so its erased frame has
+    no receiver whose reified arguments hold `Self.values`.
+  - `assets/ok/value_pack_runtime_read.mojo` is in `ERASED_VM_RESIDUE`.
+  - Entry R10 deletes the oracle and the question with it.
+  - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -935,6 +950,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Reading `t[0]` without a transform prints.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R496 A reference returned through a temporary `Span` is stale on
+  the VM**
+
+  Problem: `def first(ref l: List[Int]) -> ref[l] Int: return Span(l)[0]`
+  stops on the VM with "stale reference to frame N", where the pin prints
+  the element.
+  - A VM reference handle is a frame slot plus a projection, so an element
+    reached through the temporary span's pointer stays rooted at the slot
+    the body drops before it returns.
+  - A result bound to a `ref[ImmStaticOrigin]` register is already
+    forwarded as the element's heap pointer
+    (`VmBackend::static_reference_result`), which serves
+    `ParameterList.__getitem__`.
+  - The general fix is a reference handle that designates heap storage
+    whenever its projection crosses a pointer.
+  - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R20 A value live after a region is never destroyed when the region
   raises out of the function**
@@ -2252,6 +2286,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R495 An initializer list at a struct type over a parameter is
+  rejected**
+
+  Problem: `return {0}` in a method returning `It[Self.T]` fails with
+  "cannot emit initializer list for 'It[T]': the type has no construction
+  to spell", where the pin constructs `It[Self.T](0)`.
+  - `checker/initializer_list.rs` spells the construction through
+    `ct::source_type`, which has no spelling for a type parameter or a
+    value-pack argument.
+  - The bundled `ParameterList.__iter__` spells
+    `_ParameterListIter[*Self.values](0)` where upstream writes `{0}`.
+  - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R344 `rebind` cannot change a `Pointer`'s origin**
 
   Problem: `rebind[Pointer[String, origin_of(a)]](Pointer(to=b))` stops
@@ -2854,29 +2903,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R325 A value pack read as a runtime value is rejected**
+- [ ] **R490 A call that leaves a value pack empty is rejected**
 
-  Problem: `for v in values:` and `values[i]` with a runtime `i`, over
-  `def f[*values: Int]`, fail with "type 'Tuple[Int, Int, Int]' has no
-  method '__iter__'" and "expected a compile-time Int index", where the pin
-  runs both over the pack's runtime `ParameterList`.
-  - At the pin a runtime read of the pack is a zero-sized
-    `ParameterList[values.values]` (`std/builtin/variadics.mojo`), whose
-    `__getitem__` reads a static constant array of the elements
-    (`global_constant`).
-  - The port's signature needs a value parameter typed by a type parameter
-    (R446).
-  - MIR also lacks the static address of a closed parameter list's
-    elements, which the VM and the native backend would each lay out once.
-  - Until then such a `def` keeps its clone
-    (`value_packs_read_as_parameters`), whose pack is a `Tuple`.
-  - A struct's own value pack already reads in its methods and spreads
-    whole into brackets (`Pack[*Self.values]`), which the port and the
-    checker's construction of `ParameterList[E, *values]` need.
-  - Plan: `R325-a-value-pack-read-as-a-plan.md` (slices 3 to 6 remain).
-  - Found while landing R318 (2026-10-05).
-  - Depends on R446.
-  - Model: Opus, Planned.
+  Problem: `total()` and `total[]()` over `def total[*values: Int]() ->
+  Int` fail with "cannot infer type parameter '*values' of 'total' from the
+  arguments" and "an empty subscript ('value[]') is the pointer
+  dereference", where the pin binds the empty list and prints `0`.
+  - The parser reads `total[]` as the pointer dereference `p[]`, so the
+    call must tell a generic callee's empty brackets from it.
+  - The checker's generic call binding has no empty list for an unsupplied
+    variadic value parameter.
+  - A clone of such a `def` would spell its runtime reads as
+    `ParameterList()`, whose infer-only `type` then has no value to solve
+    from (R449 covers the keyword form).
+  - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R452 A `comptime` alias of an applied generic function is rejected**
 
@@ -4718,6 +4760,36 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R246.
   - Model: Fable, Not Planned.
 
+- [ ] **R492 `ParameterList.get_span` addresses its elements through a
+  compiler-private stand-in**
+
+  Problem: the bundled `ParameterList` takes its elements' static address
+  from `__param_list_address[*Self.values]()` (`MirInstr::ParamListAddress`),
+  where upstream's body is `global_constant` over the list's
+  `#pop.variadic_to_array` and an `unsafe_bitcast` of the array's address.
+  - Porting upstream's body needs `std.builtin.globals` and an inline,
+    trivially copyable `Array`; the bundled `Array` keeps its elements
+    behind an `UnsafePointer`.
+  - The stand-in is admitted only in `std/builtin/variadics.mojo`.
+  - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R494 A compile-time read of a value pack is a checker rule, not a
+  `ParameterList` member**
+
+  Problem: `len(values)`, `values[i]` at a compile-time index, and `comptime
+  for v in values` are recorded by the checker as parameter constants,
+  where upstream answers them through `ParameterList.size` and
+  `__getitem_param__` on the same struct a runtime read constructs.
+  - Only a runtime read is the `ParameterList` construction today
+    (`Checker::infer_value_pack_read`).
+  - `ParameterList.size` waits on a readable struct `comptime` member over
+    the struct's own pack.
+  - Found while landing R325 (2026-10-08).
+  - Depends on R493.
+  - Model: Fable, Planned.
+
 - [ ] **R378 A function lifted for a compile-time expression evaluates
   again each local `comptime` binding it reads**
 
@@ -5128,6 +5200,24 @@ residue found inside a task moves to the task that owns its fix.
     instead of its `Copyable`-guarded copy.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R493 The bundled `ParameterList` lacks most of upstream's members**
+
+  Problem: `ParameterList.of[4, 5, 6]`, `ParameterList[values.values]`,
+  `args.size`, `print(args)`, and the list algebra are rejected, where the
+  pin's `std/builtin/variadics.mojo` declares them.
+  - The port's list is the variadic `*values: type` upstream's
+    `_ParameterListIter` spells, not upstream's single
+    `KGENParamListType[type]` parameter, so `values.values` and the `of`
+    and `empty_of` aliases have no spelling.
+  - Missing members: `size`, `__getitem_param__`, `of`, `empty_of`,
+    `tabulate`, `splat`, `_concat`, `reduce`, `any`, `all`, `contains`,
+    `map_to_type`, and the `Writable` conformance (`write_to`,
+    `write_repr_to`).
+  - The port reads `len(Self.values)` where upstream reads `Self.size`.
+  - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R201 A call inside an unstamped bundled body on a bundled struct's
   generic method keeps the erased path**

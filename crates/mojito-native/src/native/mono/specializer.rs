@@ -1272,6 +1272,30 @@ impl<'a> Specializer<'a> {
                         argument.expr = Some(self.applied(template, expr, bindings)?);
                     }
                 }
+                // A parameter list's static address names the list the
+                // instance binds.
+                if let MirInstr::ParamListAddress { dest, values } = &mut instruction
+                    && let Const::Param(list) = values
+                {
+                    let list = self.applied(template, list, bindings)?;
+                    match symbolic::eval_reached_ct(&list, bindings) {
+                        Ok(closed @ CtValue::Tuple(_)) => *values = Const::Value(closed),
+                        Ok(other) => {
+                            return Err(self.error(
+                                Some(template),
+                                format!(
+                                    "r{}: the parameter list `{list}` closes to `{other}`, not \
+                                     a list",
+                                    dest.0
+                                ),
+                            ));
+                        }
+                        Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                            return Err(error);
+                        }
+                        Err(_) => {}
+                    }
+                }
                 let MirInstr::Const {
                     dest,
                     k: Const::Param(value),

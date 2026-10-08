@@ -67,6 +67,14 @@ only from their authoritative `std` modules.
   public Tuple is nominal and is not a method-free runtime iterable. Its
   default initializer stores each element's default construction to that
   storage, available where every element is `Defaultable`.
+- `std/builtin/variadics.mojo` — upstream's `ParameterList[type: AnyType, //,
+  *values: type]`, the zero-sized value a homogeneous value pack is when read
+  at run time, and its `_ParameterListIter`. Its elements live in a constant
+  array laid out once per program; `get_span` addresses it through the
+  compiler-private `__param_list_address[*values]()`, admitted only in this
+  module, where upstream calls `global_constant`. Upstream's list is one
+  `KGENParamList` parameter, so only the compiler spells this port's
+  brackets.
 - `std/collections/optional.mojo` — a generic `Optional[T]` using zero-or-one value storage,
   including an empty constructor for generic absent values.
 - `std/iter.mojo` — minimal self-hosted `Iterator`, `Iterable`, and
@@ -131,7 +139,7 @@ only from their authoritative `std` modules.
   Mojo's `math` module and must be imported: `from std.math import floor`. Built-in `Int`/`Float64`
   supply the underlying dunders intrinsically.
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
-  T: Movable, origin: Origin[mut=mut]]`: a multi-element origin-bearing
+  T: AnyType, origin: Origin[mut=mut]]` (upstream's bound): a multi-element origin-bearing
   pointer (`Pointer[T, origin._get_owned_interior["element"]]`) plus a
   length, constructed from `ref [origin] list: List[T]` so the source stays
   lent while any copy of the view lives. Element access is a reference

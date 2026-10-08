@@ -237,6 +237,9 @@ impl FnLowering<'_> {
                 format!("layout query of `{ty}` after monomorphization"),
                 *dest,
             )),
+            MirInstr::ParamListAddress { dest, values } => {
+                self.lower_param_list_address(ctx, *dest, values)
+            }
             MirInstr::MaterializeLiteral {
                 dest,
                 value,

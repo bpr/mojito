@@ -174,6 +174,9 @@ pub struct ModuleShared {
     /// Interned capture-record teardown thunks (`mjdrop_<n>`), keyed like
     /// [`Self::thunks`] by (target, capture-mode string).
     drop_thunks: HashMap<(String, String), Identifier>,
+    /// Interned parameter-list element arrays (`mjplist_<n>`), keyed by
+    /// their bytes and alignment.
+    param_lists: HashMap<(Vec<u8>, u32), Identifier>,
 }
 
 mod abi;

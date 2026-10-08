@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A value pack read as a runtime value now runs, on the VM and natively, as
+  at the pin: `for v in values`, `values[i]` at a runtime index, and `var l
+  = values` over `def f[*values: Int]` (or `Bool`, `Float64`, `DType`, a
+  method's own pack, or a struct's `Self.values`) stopped with "type
+  'Tuple[Int, Int, Int]' has no method '__iter__'" or "expected a
+  compile-time Int index". Such a read is the bundled `ParameterList` the
+  pin types it as, now in `std/builtin/variadics.mojo` with its iterator,
+  whose elements live in a constant array laid out once per program (MIR
+  text schema 1.34 adds `param_list.address`). A `def` that reads its pack
+  this way is no longer cloned. `Span`'s element bound is upstream's
+  `AnyType`, and a struct whose own value pack appears in its `Self` type
+  (a method returning `Self`) no longer fails MIR verification. A bracket
+  spelling of `ParameterList` in user code is rejected: the pin takes the
+  list as one `values.values` parameter, which is not supported yet.
+
 - A compile-time evaluation in a function body is now requested from the
   elaborator's worklist, as at the pin: a local `comptime` binding, a
   `comptime if` condition, a `comptime for` range bound, or a

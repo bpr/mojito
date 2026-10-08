@@ -66,6 +66,64 @@ impl FnLowering<'_> {
         }
     }
 
+    /// The static address of a closed parameter list's elements: a private
+    /// constant global holding each element at its native layout.
+    pub(super) fn lower_param_list_address(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        values: &MirConst,
+    ) -> Result<(), PlironError> {
+        use mojito_types::ct::CtValue;
+        let MirConst::Value(CtValue::Tuple(elements)) = values else {
+            return Err(self.unsupported_reg(
+                format!("parameter list `{values:?}` reached native lowering unclosed"),
+                dest,
+            ));
+        };
+        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg(
+                "a parameter list's address needs a pointer register".to_string(),
+                dest,
+            ));
+        };
+        let mut bytes = Vec::new();
+        for value in elements {
+            let encoded = match (element.as_ref(), value) {
+                (Ty::Int, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
+                (Ty::Int, CtValue::IntLiteral(value)) => {
+                    value.to_i64().map(|v| v.to_le_bytes().to_vec())
+                }
+                (Ty::UInt, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
+                (Ty::UInt, CtValue::IntLiteral(value)) => {
+                    value.to_u64().map(|v| v.to_le_bytes().to_vec())
+                }
+                (Ty::Float64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
+                (Ty::Float64, CtValue::FloatLiteral(value)) => {
+                    value.to_f64().map(|v| v.to_bits().to_le_bytes().to_vec())
+                }
+                (Ty::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
+                (Ty::Dtype, CtValue::Dtype(dtype)) => Some(vec![dtype.code()]),
+                _ => None,
+            };
+            let Some(encoded) = encoded else {
+                return Err(self.unsupported_reg(
+                    format!("a static parameter list of `{element}` elements (`{value}`)"),
+                    dest,
+                ));
+            };
+            bytes.extend(encoded);
+        }
+        let align = match element.as_ref() {
+            Ty::Bool | Ty::Dtype => 1,
+            _ => 8,
+        };
+        let global = self.shared.intern_param_list(ctx, &bytes, align);
+        let address = self.global_address(ctx, &global, dest);
+        self.reg_values.insert(dest.0, address);
+        Ok(())
+    }
+
     /// A closed vector, struct, or tuple parameter value (`Self.key`,
     /// `Self.e`, a `comptime for` variable over pairs): a vector built lane
     /// by lane as its explicit construction is, an aggregate fieldwise into

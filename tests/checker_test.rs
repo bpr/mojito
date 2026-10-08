@@ -7646,6 +7646,40 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
 }
 
 #[test]
+fn param_list_address_outside_the_bundled_variadics_is_rejected() {
+    // The static address of a parameter list's elements is the bundled
+    // `ParameterList.get_span`'s private stand-in for upstream's
+    // `global_constant`; no user spelling reaches it.
+    let error = err_std(
+        "def f[*values: Int]() -> Int:\n    var p = __param_list_address[*values]()\n    return p[0]\n\n\ndef main():\n    print(f[1, 2]())\n",
+    );
+    assert!(
+        error.to_string().contains("'__param_list_address'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parameter_list_brackets_spelled_by_user_code_are_rejected() {
+    // The pin's `ParameterList` takes its list as one parameter
+    // (`ParameterList[values.values]`) and rejects `ParameterList[1, 2]`;
+    // only the construction the compiler spells for a value pack read applies
+    // the bundled port's variadic brackets.
+    for source in [
+        "def main():\n    var p = ParameterList[1, 2]()\n    print(len(p))\n",
+        "def f[*vs: Int]() -> Int:\n    var p = ParameterList[*vs]()\n    return len(p)\n\n\ndef main():\n    print(f[1, 2]())\n",
+    ] {
+        let error = err_std(source);
+        assert!(
+            error
+                .to_string()
+                .contains("'ParameterList' takes its list as one parameter"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn initializer_list_without_a_contextual_type_is_rejected() {
     let error = err("def main():\n    var d = {}\n    print(1)\n");
     assert!(

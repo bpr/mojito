@@ -400,6 +400,7 @@ pub fn derive_adjustment(
         | SemanticAdjustment::ExplicitDestroy
         | SemanticAdjustment::Iterate(..)
         | SemanticAdjustment::SizeOf { .. }
+        | SemanticAdjustment::ParamListAddress { .. }
         | SemanticAdjustment::ConstructVariant { .. }
         | SemanticAdjustment::ConstructVariantInitWith { .. }
         | SemanticAdjustment::ConstructArrayLiteral { .. }

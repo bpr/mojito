@@ -1611,11 +1611,34 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`annotations::value_parameter_expr`, `verify::declared_kind`):
   `Checker::value_pack_named` resolves it — a struct's own `Self.values`
   through `self_value_pack`, which `infer_member` types as the pack — and
-  `infer_value_pack_element` records `values[i]` as a `ListGet`, while
-  `infer_len`, the intrinsic `__len__` receiver, and `pack_length_binder`
-  record its length; `value_packs_read_as_parameters` (`comptime.rs`) keeps
-  the clone for any other read, and `LoopNames::value_packs` admits a
-  `comptime for` over `Self.values` to a method's template. A pack spread
+  `infer_value_pack_element` records `values[i]` at a compile-time index as
+  a `ListGet`, while `infer_len`, the intrinsic `__len__` receiver, and
+  `pack_length_binder` record its length, and `comptime_iteration_element`
+  types a `comptime for` over it; `LoopNames::value_packs` admits a
+  `comptime for` over `Self.values` to a method's template. Any other read
+  (`for v in values`, a runtime index, a whole binding) is the bundled
+  `ParameterList[*values]()` (`stdlib/std/builtin/variadics.mojo`, with
+  `_ParameterListIter`): `Checker::infer_value_pack_read` (top of
+  `infer_impl`) spells that construction as a `SpelledConstruction` whose
+  identity is derived at `ast::VALUE_PACK_READ_ORDINAL`, the checked arena
+  and HIR (`substitute_spelled_constructions`) lower it in the read's place,
+  and `origin_place` / `materialize_borrow_owner` treat the read as that
+  temporary. `spell_value_pack_reads` (`comptime/rewrite.rs`) spells a
+  clone's runtime reads as `ParameterList[v0, v1, ...]()` at the same
+  ordinal. `Checker::spells_parameter_list` and
+  `admit_parameter_list_brackets` admit `ParameterList`'s brackets only
+  there and in its bundled module, since upstream's list is one parameter.
+  `ParameterList.get_span` takes the elements' static address from the
+  module-private `__param_list_address[*values]()`
+  (`infer_param_list_address`, `call_inference.rs`;
+  `SemanticAdjustment::ParamListAddress`), which MIR lowers to
+  `MirInstr::ParamListAddress` (schema 1.34), mono closes in
+  `answer_param_constants`, the VM allocates once per list
+  (`VmBackend::static_param_list`), and the native backend interns as a
+  private constant global (`ModuleShared::intern_param_list`,
+  `lower_param_list_address`). A `ref[ImmStaticOrigin]` result the VM
+  reaches through such a temporary span is forwarded as its heap pointer
+  (`VmBackend::static_reference_result`). A pack spread
   whole into brackets (`Pack[*vs]`, `total[*vs]()`) binds the callee's pack
   to it (`Checker::value_pack_spread`, read by the bracket binding in
   `checker/declarations.rs`); MIR

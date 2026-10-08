@@ -571,6 +571,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::KeepAlive { .. } => "KeepAlive",
         MirInstr::Const { .. } => "Const",
         MirInstr::SizeOf { .. } => "SizeOf",
+        MirInstr::ParamListAddress { .. } => "ParamListAddress",
         MirInstr::TypeName { .. } => "TypeName",
         MirInstr::ConstructTypeParam { .. } => "ConstructTypeParam",
         MirInstr::ConstructType { .. } => "ConstructType",

@@ -46,6 +46,22 @@ impl Checker {
         );
     }
 
+    /// The construction the checker spelled for the sugar `expression`, when
+    /// it spelled one: the expression is that construction for places and
+    /// borrows as for lowering.
+    pub(super) fn spelled_construction(&self, expression: &Expr) -> Option<Expr> {
+        match self
+            .operation_adjustments
+            .borrow()
+            .get(&expression.source_span())
+        {
+            Some(mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
+                construction,
+            }) => Some(construction.0.as_ref().clone()),
+            _ => None,
+        }
+    }
+
     /// The construction `expected(entries...)` an initializer list stands
     /// for: a type parameter's own construction, a pack element's
     /// (`Self.Ts[i]()` / `Ts[i]()` over the element's pack and index), or the

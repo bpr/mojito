@@ -86,6 +86,16 @@ impl Flatten<'_> {
             self.emit(MirInstr::SizeOf { dest, ty });
             return dest;
         }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ParamListAddress { values }) =
+            self.checked_adjustments(e).into_iter().find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ParamListAddress { .. }
+                )
+            })
+        {
+            return self.param_list_address(e, values);
+        }
         if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) =
             self.checked_adjustments(e).into_iter().find(|adjustment| {
                 matches!(
@@ -914,5 +924,38 @@ impl Flatten<'_> {
             element,
         });
         Some(dest)
+    }
+
+    /// `__param_list_address[*values]()`: the static address of the
+    /// parameter list `values`' elements, a `Pointer[E, ImmStaticOrigin]`.
+    fn param_list_address(&mut self, e: &Expr, values: mojito_types::param_expr::ParamExpr) -> Reg {
+        let element = match values.meta() {
+            mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
+            _ => None,
+        };
+        let Some(element) = element else {
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::Unsupported(format!(
+                "the parameter list `{values}` is no list of values"
+            )));
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::None,
+            });
+            return dest;
+        };
+        let dest = self.fresh_typed(
+            span(e),
+            None,
+            Ty::Pointer {
+                element: Box::new(element),
+                origin: mojito_types::origin::PointerOrigin::Static,
+            },
+        );
+        self.emit(MirInstr::ParamListAddress {
+            dest,
+            values: Const::Param(values),
+        });
+        dest
     }
 }

@@ -935,6 +935,32 @@ impl VmBackend {
         Ok(allocation)
     }
 
+    /// The program-lifetime allocation holding a closed parameter list's
+    /// elements, each at `element`, allocated once per distinct list and
+    /// never freed.
+    pub(super) fn static_param_list(
+        &mut self,
+        prog: &Prog,
+        element: &Ty,
+        values: Vec<Value>,
+    ) -> Result<u64, RuntimeError> {
+        let key = format!("{element}{values:?}");
+        if let Some(allocation) = self.static_param_lists.get(&key) {
+            return Ok(*allocation);
+        }
+        let pointer = self.heap_alloc(values.len() as i64, 1)?;
+        let Value::Pointer { allocation, .. } = pointer else {
+            unreachable!("heap_alloc returns a pointer");
+        };
+        let region = (allocation - 1) as usize;
+        for (index, value) in values.into_iter().enumerate() {
+            let value = self.materialize_parameter_value(prog, value, Some(element))?;
+            self.heap_store(region, index, value);
+        }
+        self.static_param_lists.insert(key, allocation);
+        Ok(allocation)
+    }
+
     fn alloc_utf8_bytes(&mut self, bytes: &[u8]) -> Result<u64, RuntimeError> {
         let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
         let Value::Pointer { allocation, .. } = pointer else {

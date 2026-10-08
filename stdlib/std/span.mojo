@@ -49,7 +49,7 @@ def _check_span_slice_bounds(start: Int, end: Int, length: Int):
         _mojito_abort(message.text)
 
 
-struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
+struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     ImplicitlyCopyable, Iterable where conforms_to(T, Copyable), Movable
 ):
     comptime Element = Self.T
@@ -122,7 +122,7 @@ struct Span[mut: Bool, //, T: Movable, origin: Origin[mut=mut]](
 # (upstream's `IteratorType = Self`), so a stored iterator drives a loop.
 @fieldwise_init
 struct _SpanIter[
-    iterable_mut: Bool, //, T: Movable, iterable_origin: Origin[mut=iterable_mut]
+    iterable_mut: Bool, //, T: AnyType, iterable_origin: Origin[mut=iterable_mut]
 ](Copyable, Iterator where conforms_to(T, Copyable)):
     comptime Element = Self.T
     comptime IteratorType[
