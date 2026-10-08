@@ -3065,6 +3065,9 @@ mod places;
 
 mod comptime_validation;
 
+mod comptime_requests;
+pub use comptime_requests::{Callee, CalleeOracle, applies_callable, computes_value};
+
 mod reflection;
 
 mod rebind;

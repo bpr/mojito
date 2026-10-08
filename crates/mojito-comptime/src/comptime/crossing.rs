@@ -48,8 +48,9 @@ impl Elab<'_> {
         self.cross_block(body, env, &shadowed)
     }
 
-    /// Cross the body of a `def` or a method, a `generic` one as a template
-    /// body ([`Self::in_template_body`]).
+    /// Cross the body of a `def` or a method, a `generic` one — or one that
+    /// binds a request ([`Self::binds_request`]) — as a template body
+    /// ([`Self::in_template_body`]).
     fn cross_declaration_body(
         &self,
         generic: bool,
@@ -181,7 +182,10 @@ impl Elab<'_> {
                 params,
                 body,
                 ..
-            } => self.cross_declaration_body(!type_params.is_empty(), params, body, env, shadowed),
+            } => {
+                let template = !type_params.is_empty() || self.binds_request(body, env);
+                self.cross_declaration_body(template, params, body, env, shadowed)
+            }
             StmtKind::Struct {
                 type_params,
                 methods,
@@ -189,7 +193,9 @@ impl Elab<'_> {
             } => {
                 for method in methods {
                     self.cross_declaration_body(
-                        !type_params.is_empty() || !method.type_params.is_empty(),
+                        !type_params.is_empty()
+                            || !method.type_params.is_empty()
+                            || self.binds_request(&method.body, env),
                         &method.params,
                         &mut method.body,
                         env,
@@ -329,11 +335,19 @@ impl Elab<'_> {
                 && kwargs.is_empty() =>
             {
                 // An operand that applies a callable is a request the
-                // elaborator below MIR serves.
+                // elaborator below MIR serves, a value binding it calls a
+                // method of spelled by its literal form.
                 if self.applies_callable(&args[0]) {
                     return Ok(());
                 }
-                let value = match self.eval(&args[0], env) {
+                if let Some(spelled) = self
+                    .spelled_value_reads(&args[0], env)
+                    .filter(|spelled| self.applies_callable(spelled))
+                {
+                    args[0] = spelled;
+                    return Ok(());
+                }
+                let value = match self.eval_in_body(&args[0], env) {
                     Ok(value) => value,
                     // An operand over the binders of a generic body is the
                     // check's to type and the elaborator below MIR's to

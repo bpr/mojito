@@ -173,24 +173,22 @@ impl Elab<'_> {
                 if !in_fn && self.keep_layout_constant(stmt, name, env, out) {
                     return Ok(());
                 }
-                if self.keep_template_comptime_binding(stmt, value, in_fn, out) {
+                if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
                     return Ok(());
                 }
                 // A module constant that applies a callable waits for its
                 // first demand.
                 if !in_fn
-                    && self.defer_constant(
-                        name,
-                        ty.is_some(),
-                        !where_clauses.is_empty(),
-                        value,
-                        env,
-                    )
+                    && self.defer_constant(name, ty.as_ref(), !where_clauses.is_empty(), value, env)
                 {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let mut v = self.eval(value, env)?;
+                let mut v = if in_fn {
+                    self.eval_in_body(value, env)?
+                } else {
+                    self.eval(value, env)?
+                };
                 // A collection display takes the binding's annotation as its
                 // spelled type; an empty `{}` has no other typing.
                 if matches!(v, CtValue::Dict { .. } | CtValue::Set { .. }) {
@@ -877,55 +875,81 @@ impl Elab<'_> {
     }
 
     /// Whether `expression` applies a callable this elaborator does not
-    /// fold itself: a call of a module `def`, or of a static method of a
-    /// struct (`S.f(n)`). A compile-time evaluation of one in a body is a
-    /// request the elaborator below MIR serves from its worklist.
+    /// fold itself ([`mojito_checker::checker::applies_callable`]).
     pub(super) fn applies_callable(&self, expression: &Expr) -> bool {
-        struct Finder<'e, 'a> {
-            elab: &'e Elab<'a>,
-            found: bool,
+        mojito_checker::checker::applies_callable(expression, self)
+    }
+
+    /// `expression` with each value binding of `env` that a method call
+    /// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
+    /// binding a subscript reads (`M["a"]`), spelled by its literal form,
+    /// and a pending module constant a method call reads spelled by its
+    /// initializer, so that the request the elaborator below MIR serves
+    /// constructs the value itself, as the pin's parameter expression does.
+    /// `None` when it reads none.
+    pub(super) fn spelled_value_reads(
+        &self,
+        expression: &Expr,
+        env: &HashMap<String, CtValue>,
+    ) -> Option<Expr> {
+        struct Spell<'e> {
+            env: &'e HashMap<String, CtValue>,
+            pending: HashMap<String, Expr>,
+            spelled: bool,
         }
 
-        impl mojito_ast::visit::Visitor for Finder<'_, '_> {
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.found |= match &expr.kind {
-                    // A `def` generic over a type stays on the AST route
-                    // (roadmap R488).
-                    ExprKind::Call { name, .. } => {
-                        self.elab.fns.get(name.as_str()).is_some_and(|callee| {
-                            !callee
-                                .ct_params
-                                .iter()
-                                .any(|parameter| matches!(parameter, ParamDecl::Type { .. }))
-                        }) && !matches!(
-                            name.as_str(),
-                            "len" | "range" | "reflect" | "conforms_to" | "materialize"
-                        )
-                    }
-                    ExprKind::MethodCall { object, .. } => matches!(&object.kind,
-                        ExprKind::Identifier(owner) if self.elab.structs.contains_key(owner.as_str())),
-                    _ => false,
+        impl mojito_ast::visit::MutVisitor for Spell<'_> {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                let subscripted = matches!(expr.kind, ExprKind::Index { .. });
+                let (ExprKind::MethodCall { object, .. } | ExprKind::Index { object, .. }) =
+                    &mut expr.kind
+                else {
+                    return;
                 };
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return;
+                };
+                if let Some(value) = self.env.get(name)
+                    && spelled_receiver(value, subscripted)
+                    && let Some(mut display) = value.materialize(object.span)
+                {
+                    display.source.clone_from(&object.source);
+                    **object = display;
+                    self.spelled = true;
+                } else if !subscripted
+                    && !self.env.contains_key(name)
+                    && let Some(initializer) = self.pending.get(name)
+                {
+                    **object = super::requests::located(initializer.clone(), object);
+                    self.spelled = true;
+                }
             }
         }
 
-        // A display or a tuple is evaluated here, element by element.
-        if !matches!(
-            expression.kind,
-            ExprKind::Call { .. }
-                | ExprKind::MethodCall { .. }
-                | ExprKind::Infix(..)
-                | ExprKind::Prefix(..)
-                | ExprKind::Compare { .. }
-        ) {
-            return false;
-        }
-        let mut finder = Finder {
-            elab: self,
-            found: false,
+        let mut spelled = expression.clone();
+        let mut spell = Spell {
+            env,
+            pending: self.pending_expansions(),
+            spelled: false,
         };
-        mojito_ast::visit::walk_expr(&mut finder, expression);
-        finder.found
+        mojito_ast::visit::walk_expr_mut(&mut spell, &mut spelled);
+        spell.spelled.then_some(spelled)
+    }
+}
+
+impl mojito_checker::checker::CalleeOracle for Elab<'_> {
+    fn callee(&self, name: &str) -> mojito_checker::checker::Callee {
+        if self.fns.contains_key(name) {
+            mojito_checker::checker::Callee::Function
+        } else if self.structs.contains_key(name) {
+            mojito_checker::checker::Callee::Struct
+        } else {
+            mojito_checker::checker::Callee::Other
+        }
+    }
+
+    fn names_struct(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
     }
 }
 
@@ -943,7 +967,7 @@ impl Elab<'_> {
     /// A scalar under a SIMD-valued annotation other than `Int` takes the
     /// annotation's dtype, splatted across its width, so every materialized
     /// use carries the declared type. Any other value is returned as is.
-    fn typed_by_annotation(
+    pub(super) fn typed_by_annotation(
         &self,
         value: CtValue,
         annotation: &Type,
@@ -1026,7 +1050,7 @@ impl Elab<'_> {
         // over the loop's index the elaborator instantiates per iteration.
         if struct_params.is_empty()
             && type_params.is_empty()
-            && !self.binds_request(body)
+            && !self.binds_request(body, env)
             && !declares_in_comptime_for(body)
         {
             return self.block(body, env, true);
@@ -1096,7 +1120,9 @@ impl Elab<'_> {
 
     /// Keep a local `comptime` binding whose value names a binder of the
     /// generic `def` being elaborated as a template (`comptime m = N + 1`),
-    /// or applies a callable in any body (`comptime x = f(1)`): the check
+    /// or applies a callable in any body (`comptime x = f(1)`), once the
+    /// value bindings a method reads are spelled
+    /// ([`Self::spelled_value_reads`]): the check
     /// binds it with the binders symbolic, the elaborator below MIR
     /// evaluates an application on demand, and the binding is a binder of
     /// the rest of its block, so a `comptime if` over it stays too.
@@ -1105,17 +1131,45 @@ impl Elab<'_> {
         &self,
         stmt: &Stmt,
         value: &Expr,
+        env: &HashMap<String, CtValue>,
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> bool {
-        let StmtKind::Comptime { name, .. } = &stmt.kind else {
+        let StmtKind::Comptime {
+            name,
+            type_params,
+            ty,
+            where_clauses,
+            ..
+        } = &stmt.kind
+        else {
             return false;
         };
+        if !in_fn {
+            return false;
+        }
         let mut binders = self.template_binders.borrow_mut();
         let Some(binders) = binders.last_mut() else {
             return false;
         };
-        if !in_fn || !(expression_names_any(value, binders) || self.applies_callable(value)) {
+        // A value binding read by a method is spelled by its literal form
+        // in a request.
+        if let Some(spelled) = self
+            .spelled_value_reads(value, env)
+            .filter(|spelled| self.applies_callable(spelled))
+        {
+            binders.insert(name.clone());
+            let kind = StmtKind::Comptime {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                ty: ty.clone(),
+                where_clauses: where_clauses.clone(),
+                value: spelled,
+            };
+            out.push(rebuilt(stmt, kind));
+            return true;
+        }
+        if !(expression_names_any(value, binders) || self.applies_callable(value)) {
             return false;
         }
         binders.insert(name.clone());
@@ -1321,10 +1375,13 @@ impl Elab<'_> {
 
     /// Whether `body` holds a local `comptime` binding, a `comptime if`
     /// condition, or a `comptime for` range bound that applies a callable
-    /// ([`Self::applies_callable`]), outside a nested declaration.
-    fn binds_request(&self, body: &[Stmt]) -> bool {
+    /// ([`Self::applies_callable`]), outside a nested declaration; a
+    /// binding that calls a method of a value binding of `env` or of the
+    /// body does once spelled ([`Self::spelled_value_reads`]).
+    pub(super) fn binds_request(&self, body: &[Stmt], env: &HashMap<String, CtValue>) -> bool {
         struct Finder<'e, 'a> {
             elab: &'e Elab<'a>,
+            receivers: Receivers,
             found: bool,
         }
 
@@ -1333,7 +1390,10 @@ impl Elab<'_> {
                 self.found |= match &statement.kind {
                     StmtKind::Comptime {
                         type_params, value, ..
-                    } => type_params.is_empty() && self.elab.applies_callable(value),
+                    } => {
+                        type_params.is_empty()
+                            && (self.elab.applies_callable(value) || self.receivers.read_by(value))
+                    }
                     StmtKind::ComptimeIf { branches, .. } => branches
                         .iter()
                         .any(|(condition, _)| self.elab.applies_callable(condition)),
@@ -1345,8 +1405,43 @@ impl Elab<'_> {
             }
         }
 
+        // The value bindings a method or a subscript may read: the
+        // module's, its pending constants, and the body's own literals.
+        let mut receivers = Receivers::default();
+        for (name, value) in env {
+            if spelled_receiver(value, false) {
+                receivers.methods.insert(name.clone());
+            }
+            if spelled_receiver(value, true) {
+                receivers.subscripts.insert(name.clone());
+            }
+        }
+        receivers
+            .methods
+            .extend(self.pending_constants.borrow().keys().cloned());
+        for statement in body {
+            let StmtKind::Comptime { name, value, .. } = &statement.kind else {
+                continue;
+            };
+            if matches!(
+                value.kind,
+                ExprKind::Int(_)
+                    | ExprKind::Float(_)
+                    | ExprKind::Bool(_)
+                    | ExprKind::Str(_)
+                    | ExprKind::ListLit(_)
+                    | ExprKind::TupleLit(_)
+                    | ExprKind::BraceLit(_)
+            ) {
+                receivers.methods.insert(name.clone());
+            }
+            if matches!(value.kind, ExprKind::BraceLit(_)) {
+                receivers.subscripts.insert(name.clone());
+            }
+        }
         let mut finder = Finder {
             elab: self,
+            receivers,
             found: false,
         };
         for statement in body {
@@ -1646,4 +1741,61 @@ fn tuple_type_spelling(elements: &[CtValue]) -> String {
         })
         .collect();
     format!("Tuple[{}]", names.join(", "))
+}
+
+/// The bindings whose method call, or subscript, a request spells by
+/// value ([`Elab::spelled_value_reads`]).
+#[derive(Default)]
+struct Receivers {
+    methods: HashSet<String>,
+    subscripts: HashSet<String>,
+}
+
+impl Receivers {
+    /// Whether `expression` calls a method of, or subscripts, one of these
+    /// bindings.
+    fn read_by(&self, expression: &Expr) -> bool {
+        struct Finder<'r> {
+            receivers: &'r Receivers,
+            found: bool,
+        }
+
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                let (names, object) = match &expr.kind {
+                    ExprKind::MethodCall { object, .. } => (&self.receivers.methods, object),
+                    ExprKind::Index { object, .. } => (&self.receivers.subscripts, object),
+                    _ => return,
+                };
+                self.found |=
+                    matches!(&object.kind, ExprKind::Identifier(name) if names.contains(name));
+            }
+        }
+
+        let mut finder = Finder {
+            receivers: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, expression);
+        finder.found
+    }
+}
+
+/// Whether a method call (or, `subscripted`, a subscript) of a binding of
+/// `value` is spelled with the value's literal form in a request: any value
+/// with one, but a subscript only of a dictionary or a set, whose
+/// `__getitem__` raises; a list's is folded here.
+const fn spelled_receiver(value: &CtValue, subscripted: bool) -> bool {
+    if subscripted {
+        return matches!(value, CtValue::Dict { .. } | CtValue::Set { .. });
+    }
+    !matches!(
+        value,
+        CtValue::Type(_)
+            | CtValue::Reflected(_)
+            | CtValue::Expr(_)
+            | CtValue::Deferred(_)
+            | CtValue::Marker(_)
+            | CtValue::Dtype(_)
+    )
 }

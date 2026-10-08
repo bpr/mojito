@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	542
+# swept-count	544
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -194,6 +194,7 @@ assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	e
 assets/type_error/collection_display_default_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
+assets/type_error/comptime_annotated_constant_conversion.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' value to 'Float64'
 assets/type_error/comptime_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[1]' value to 'String'
 assets/type_error/comptime_application_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (n * Int(2))]' value to 'SIMD[.int32, h(n)]'
 assets/type_error/comptime_application_runtime_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
@@ -221,6 +222,7 @@ assets/type_error/comptime_list_runtime_use.mojo	compile-reject	agree	error: can
 assets/type_error/comptime_not_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'Flag[(n <= Int(9))]' value to 'Flag[not (n > Int(9)).__bool__()]'
 assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'missing'
 assets/type_error/comptime_template_binding_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
+assets/type_error/comptime_unread_constant_is_checked.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["x"]' to 'Int'
 assets/type_error/comptime_with_body_abandoned.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
 assets/type_error/contextual_member_no_context.mojo	compile-reject	agree	error: cannot resolve inferred member without a contextual type
 assets/type_error/contextual_member_nonstruct.mojo	compile-reject	agree	error: 'Int' value has no attribute 'red'

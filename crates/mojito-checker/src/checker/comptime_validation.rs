@@ -1560,11 +1560,36 @@ impl Checker {
                 "cannot use a dynamic value in comptime initializer".to_string(),
             ));
         }
+        // A raising operation anywhere in it (`{"a": 1}["a"]`) is the
+        // pin's rejection too.
+        self.raise_observation_frames
+            .borrow_mut()
+            .push((self.handled_raise_depth, false));
         let ty = {
             let _position = self.comptime_position();
-            self.infer(value)?
+            self.infer(value)
         };
-        let ty = mojito_types::types::default_literal(&ty);
+        let raised = self
+            .raise_observation_frames
+            .borrow_mut()
+            .pop()
+            .is_some_and(|(_, raised)| raised);
+        if raised {
+            return Err(TypeError::Unsupported(
+                "cannot call raising function in comptime initializer".to_string(),
+            ));
+        }
+        let ty = mojito_types::types::default_literal(&ty?);
+        // A dictionary or a set has no compile-time form to freeze
+        // (roadmap R196).
+        if matches!(&ty, Ty::Struct(name, _)
+            if matches!(name.rsplit('.').next(), Some("Dict" | "Set")))
+        {
+            return Err(TypeError::Unsupported(format!(
+                "a compile-time '{ty}' result cannot cross back from VM CTFE; bind a scalar, \
+                 Bool, String, tuple, fieldwise struct, or a display instead"
+            )));
+        }
         let Some(application) = self.named_application(value, &names_read(value), ty) else {
             return Ok(None);
         };
@@ -1574,58 +1599,10 @@ impl Checker {
         Ok(Some(application))
     }
 
-    /// Whether `value` applies a callable the elaborator does not fold
-    /// itself — a call of a module `def`, or of a static method of a struct
-    /// — under a root that computes one value (`f(1)`, `S.f(n) + 1`), as
+    /// Whether `value` applies a callable ([`super::applies_callable`]), as
     /// the elaborator keeps a binding of one for the check.
     fn applies_callable(&self, value: &Expr) -> bool {
-        struct Finder<'c> {
-            checker: &'c Checker,
-            found: bool,
-        }
-        impl mojito_ast::visit::Visitor for Finder<'_> {
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.found |= match &expr.kind {
-                    ExprKind::Call { name, .. } => {
-                        self.checker.binding_scope(name).is_none_or(|scope| scope == 0)
-                            && (self.checker.overload_sets.is_function(name)
-                                || matches!(
-                                    self.checker.lookup(name),
-                                    Some(Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_))
-                                ))
-                            // A `def` generic over a type stays the
-                            // elaborator's, as there.
-                            && !matches!(self.checker.lookup(name), Some(Ty::GenericFunc { decls, .. })
-                                if decls.iter().any(|decl| matches!(decl, ParamDecl::Type { .. })))
-                            && !matches!(
-                                name.as_str(),
-                                "len" | "range" | "reflect" | "conforms_to" | "materialize"
-                            )
-                    }
-                    ExprKind::MethodCall { object, .. } => matches!(&object.kind,
-                        ExprKind::Identifier(owner)
-                            if self.checker.binding_scope(owner).is_none()
-                                && self.checker.structs.contains_key(owner)),
-                    _ => false,
-                };
-            }
-        }
-        if !matches!(
-            value.kind,
-            ExprKind::Call { .. }
-                | ExprKind::MethodCall { .. }
-                | ExprKind::Infix(..)
-                | ExprKind::Prefix(..)
-                | ExprKind::Compare { .. }
-        ) {
-            return false;
-        }
-        let mut finder = Finder {
-            checker: self,
-            found: false,
-        };
-        mojito_ast::visit::walk_expr(&mut finder, value);
-        finder.found
+        super::applies_callable(value, self)
     }
 
     /// What the value of a local `comptime` binding over a template body's
@@ -1908,6 +1885,29 @@ impl Checker {
         let value = self.inline_local_comptime_values(value);
         if self.comptime_aliases.contains_key(name) {
             return Ok(true);
+        }
+        // A module constant that applies a callable waits for its first
+        // demand, which may never come: its initializer is typed here,
+        // against its annotation, as the pin types every declaration.
+        if self.function_bases.is_empty() && self.applies_callable(&value) {
+            match annotation
+                .filter(|annotation| !super::declarations::is_string_literal_annotation(annotation))
+            {
+                Some(annotation) => {
+                    let expected = self.ty_from_anno(annotation)?;
+                    let found = self.infer_with_expected(&value, &expected, true)?;
+                    if !self.record_implicit_conversion(&value, &found, &expected)? {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: found.to_string(),
+                            context: format!("comptime '{name}'"),
+                        });
+                    }
+                }
+                None => {
+                    self.infer(&value)?;
+                }
+            }
         }
         if let Some(annotation) = annotation
             && !super::declarations::is_string_literal_annotation(annotation)

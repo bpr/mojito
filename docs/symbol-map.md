@@ -1043,15 +1043,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its traced clones from: `TemplateCatalog::for_subprogram` over the
   driver's catalog that `elaborate_prepared` receives), and the effect walk (`vm_ctfe_safe_*`: deterministic bodies run, only
   `print`/`input` reject).
+- `checker/comptime_requests.rs` owns the line every compile-time request
+  is drawn by: `applies_callable`, over a phase's `CalleeOracle` (the
+  elaborator's `Elab`, `comptime/elab.rs`, and the `Checker`), so the two
+  phases agree on which bindings are requests by construction.
+  `Elab::spelled_keyed_reads` spells a dictionary or set binding a method
+  reads by its display first, and `Elab::eval_in_body` marks a body's
+  evaluation, which every AST-route entry (`comptime/ctfe.rs`) refuses.
 - `comptime/requests.rs` owns the module constants evaluated on demand
   (R7): `Elab::defer_constant` records one whose initializer applies a
-  callable (`Elab::applies_callable`, `comptime/elab.rs`, the line every
-  in-body request is drawn by, with its checker twin in
-  `comptime_validation.rs`), `Elab::force_constant` evaluates it for a
+  callable (`applies_callable`), annotated or not, which source validation
+  types where it is declared (`Checker::bind_local_comptime`);
+  `Elab::force_constant` evaluates it for a
   reader above the check (`Elab::eval`'s identifier fallback, and
   `Elab::pending_lookup` inside `materialize_block`), and
   `Elab::request_pending_reads` rewrites a body's value read to the request
-  `comptime(<initializer>)`, `Elab::restore_forced_constants` putting back
+  `comptime(<initializer>)` (under an annotation's conversion), a name the
+  body binds itself left alone, `Elab::restore_forced_constants` putting back
   only the declarations something forced.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become

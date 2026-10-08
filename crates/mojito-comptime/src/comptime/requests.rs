@@ -9,26 +9,27 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// A module constant awaiting its first demand: its initializer and the
-/// module environment it was declared in.
+/// A module constant awaiting its first demand: its initializer, its
+/// annotation, and the module environment it was declared in.
 pub(super) struct PendingConstant {
     value: Expr,
+    annotation: Option<Type>,
     env: HashMap<String, CtValue>,
 }
 
 impl Elab<'_> {
     /// Record the module constant `name` as pending when its initializer
-    /// applies a callable or reads a pending constant, unannotated and
-    /// unconstrained. Whether it was recorded.
+    /// applies a callable or reads a pending constant, and no `where`
+    /// clause constrains it. Whether it was recorded.
     pub(super) fn defer_constant(
         &self,
         name: &str,
-        annotated: bool,
+        annotation: Option<&Type>,
         constrained: bool,
         value: &Expr,
         env: &HashMap<String, CtValue>,
     ) -> bool {
-        if annotated || constrained {
+        if constrained {
             return false;
         }
         let reads_pending = {
@@ -36,13 +37,23 @@ impl Elab<'_> {
             let names: HashSet<String> = pending.keys().cloned().collect();
             !names.is_empty() && super::elab::expression_names_any(value, &names)
         };
-        if !reads_pending && !self.applies_callable(value) {
+        // A display or a subscript is folded here: a body's read of an
+        // element would subscript a written display at run time (R274).
+        let folded_root = matches!(
+            value.kind,
+            ExprKind::ListLit(_)
+                | ExprKind::TupleLit(_)
+                | ExprKind::BraceLit(_)
+                | ExprKind::Index { .. }
+        );
+        if folded_root || (!reads_pending && !self.applies_callable(value)) {
             return false;
         }
         self.pending_constants.borrow_mut().insert(
             name.to_string(),
             PendingConstant {
                 value: value.clone(),
+                annotation: annotation.cloned(),
                 env: env.clone(),
             },
         );
@@ -56,12 +67,14 @@ impl Elab<'_> {
         if let Some(value) = self.forced_constants.borrow().get(name) {
             return Ok(Some(value.clone()));
         }
-        let pending = self
-            .pending_constants
-            .borrow()
-            .get(name)
-            .map(|pending| (pending.value.clone(), pending.env.clone()));
-        let Some((value, env)) = pending else {
+        let pending = self.pending_constants.borrow().get(name).map(|pending| {
+            (
+                pending.value.clone(),
+                pending.annotation.clone(),
+                pending.env.clone(),
+            )
+        });
+        let Some((value, annotation, env)) = pending else {
             return Ok(None);
         };
         if !self.forcing_constants.borrow_mut().insert(name.to_string()) {
@@ -70,9 +83,15 @@ impl Elab<'_> {
                  the initializer of '{name}' reads '{name}'"
             )));
         }
+        // A body's demand of a module constant is a reader above the check.
+        let in_body = self.evaluating_body.replace(false);
         let forced = self.eval(&value, &env);
+        self.evaluating_body.set(in_body);
         self.forcing_constants.borrow_mut().remove(name);
-        let forced = forced?;
+        let forced = match &annotation {
+            Some(annotation) => self.typed_by_annotation(forced?, annotation, &env),
+            None => forced?,
+        };
         self.forced_constants
             .borrow_mut()
             .insert(name.to_string(), forced.clone());
@@ -110,14 +129,22 @@ impl Elab<'_> {
         }
         for statement in program.iter_mut() {
             match &mut statement.kind {
-                StmtKind::Def { params, body, .. } => {
-                    let shadowed: HashSet<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                StmtKind::Def {
+                    type_params,
+                    params,
+                    body,
+                    ..
+                } => {
+                    let shadowed = super::def_bound_names(type_params, params, body);
                     request_value_reads(body, &expansions, &shadowed, self);
                 }
                 StmtKind::Struct { methods, .. } => {
                     for method in methods {
-                        let shadowed: HashSet<&str> =
-                            method.params.iter().map(|p| p.name.as_str()).collect();
+                        let shadowed = super::def_bound_names(
+                            &method.type_params,
+                            &method.params,
+                            &method.body,
+                        );
                         request_value_reads(&mut method.body, &expansions, &shadowed, self);
                     }
                 }
@@ -180,7 +207,7 @@ impl Elab<'_> {
 
     /// Each pending constant's initializer with every pending constant it
     /// reads replaced by that one's own, so that it stands alone in a body.
-    fn pending_expansions(&self) -> HashMap<String, Expr> {
+    pub(super) fn pending_expansions(&self) -> HashMap<String, Expr> {
         let pending = self.pending_constants.borrow();
         let mut expansions: HashMap<String, Expr> = HashMap::new();
         let mut names: Vec<&String> = pending.keys().collect();
@@ -190,6 +217,14 @@ impl Elab<'_> {
         }
         expansions
     }
+}
+
+/// `expression` standing where `at` stood: its span, source, and identity.
+pub(super) fn located(mut expression: Expr, at: &Expr) -> Expr {
+    expression.span = at.span;
+    expression.source.clone_from(&at.source);
+    expression.syntax_id = at.syntax_id;
+    expression
 }
 
 /// The address of every expression a walk visits, which tells one
@@ -247,6 +282,21 @@ fn expand_constant(
         })
         .collect();
     replace_identifiers(&mut expansion, &replacements);
+    // An annotation other than `Int` or `Bool` converts the value, which
+    // the check proved implicit where the constant is declared.
+    if let Some(Type::Named(annotation, param_args)) = &constant.annotation
+        && !matches!(annotation.as_str(), "Int" | "Bool")
+    {
+        expansion = Expr {
+            kind: ExprKind::Call {
+                name: annotation.clone(),
+                param_args: param_args.clone(),
+                args: vec![expansion.clone()],
+                kwargs: Vec::new(),
+            },
+            ..expansion
+        };
+    }
     visiting.remove(name);
     expansions.insert(name.to_string(), expansion.clone());
     Some(expansion)
@@ -289,22 +339,14 @@ fn replace_identifiers(expression: &mut Expr, replacements: &HashMap<String, Exp
     mojito_ast::visit::walk_expr_mut(&mut Replace(replacements), expression);
 }
 
-/// `expression` standing where `at` stood: its span, source, and identity.
-fn located(mut expression: Expr, at: &Expr) -> Expr {
-    expression.span = at.span;
-    expression.source.clone_from(&at.source);
-    expression.syntax_id = at.syntax_id;
-    expression
-}
-
 /// Rewrite each value read of a pending constant in `body` to the request
 /// `comptime(<expansion>)`. A read in a type, a compile-time argument, or a
 /// compile-time statement is left for forcing, as is a name `shadowed` by a
-/// parameter.
+/// parameter or a local the body binds.
 fn request_value_reads(
     body: &mut [Stmt],
     expansions: &HashMap<String, Expr>,
-    shadowed: &HashSet<&str>,
+    shadowed: &HashSet<String>,
     elab: &Elab<'_>,
 ) {
     struct CompileTimeReads<'e, 'a> {
@@ -365,7 +407,7 @@ fn request_value_reads(
 
     struct Requests<'x> {
         expansions: &'x HashMap<String, Expr>,
-        shadowed: &'x HashSet<&'x str>,
+        shadowed: &'x HashSet<String>,
         skipped: HashSet<usize>,
     }
 

@@ -872,6 +872,7 @@ pub fn elaborate_prepared(
         pending_constants: RefCell::new(HashMap::new()),
         forced_constants: RefCell::new(HashMap::new()),
         forcing_constants: RefCell::new(HashSet::new()),
+        evaluating_body: Cell::new(false),
         generic_aliases: RefCell::new(HashMap::new()),
     };
     drop(indexes);
@@ -2794,6 +2795,11 @@ struct Elab<'a> {
     forced_constants: RefCell<HashMap<String, CtValue>>,
     /// The pending constants being forced, which a cycle demands again.
     forcing_constants: RefCell<HashSet<String>>,
+    /// Whether the expression being evaluated is a function body's: a local
+    /// `comptime` initializer or a `comptime(...)` operand. None reaches
+    /// the AST route ([`Self::ctfe_call`] and the other entries), which
+    /// serves readers above the check alone.
+    evaluating_body: Cell<bool>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the
     /// checker's alias registry, but an application inside a `comptime if`

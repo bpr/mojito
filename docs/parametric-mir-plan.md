@@ -750,7 +750,7 @@ branch for the class is deleted, and so is its certificate class.
   body, and a body's read of a module constant whose initializer applies a
   callable, is now a request the elaborator serves, its demand draining
   the thunk's reference closure alone (`docs/notes/ctfe-request-path.md`);
-  the in-body shapes still evaluated above the check are R488's.
+  since R488 (2026-10-08) no evaluation in a body reaches the AST route.
 
 One mixed-feature probe is carried through every P3 step, so migrations that
 pass alone also compose.

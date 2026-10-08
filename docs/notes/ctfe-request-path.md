@@ -13,14 +13,22 @@ end move it.
 Since roadmap R7 (2026-10-07), an evaluation whose consumer sits below the
 check takes the request path: a local `comptime` binding, a `comptime if`
 condition, a `comptime for` range bound, or a `comptime(...)` operand in a
-function body that applies a callable (`Elab::applies_callable`), and a
-body's value read of a module constant whose initializer applies one
-(`comptime/requests.rs`). The AST route below is entered only by a reader
-above the check — a type, a condition or bound the elaborator decides
-itself, another constant, a VM-CTFE subprogram's retained declaration —
-which forces a pending module constant once (`Elab::force_constant`), and
-by the in-body shapes roadmap R488 lists. A module constant nothing forces
-is never evaluated above MIR.
+function body that applies a callable, and a body's value read of a module
+constant whose initializer applies one, annotated or not
+(`comptime/requests.rs`). One predicate draws that line for the elaborator
+and the checker alike (`mojito_checker::checker::applies_callable`, over
+each phase's `CalleeOracle`): a call of a module `def`, generic over a type
+or not, a struct construction, a static method, or a method or subscript of
+a dictionary or set display, anywhere under a value root — a display, a
+tuple, and a subscript included. The elaborator spells a dictionary or set
+binding a method reads by its display (`Elab::spelled_keyed_reads`), so the
+request constructs the collection itself. The AST route below is entered
+only by a reader above the check — a type, a condition or bound the
+elaborator decides itself, another constant, a VM-CTFE subprogram's
+retained declaration — which forces a pending module constant once
+(`Elab::force_constant`); each entry refuses an evaluation of a body
+(`Elab::eval_in_body`). A module constant nothing forces is never
+evaluated above MIR, though source validation types its initializer.
 
 The AST route evaluates a compile-time call above the check, in
 `crates/mojito-comptime`, once per discovery round:

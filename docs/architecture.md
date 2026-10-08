@@ -1447,13 +1447,15 @@ expression path's typing probe sees it. This whole route is the one
 [`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) replaces. An
 evaluation in a function body that applies a callable — a local `comptime`
 binding, a `comptime if` condition, a `comptime for` range bound, a
-`comptime(e)` operand — is already kept for the check
-(`Elab::applies_callable`), lifted by MIR as a thunk, and served by the
+`comptime(e)` operand — is already kept for the check (`applies_callable`,
+one predicate the elaborator and the checker share), lifted by MIR as a
+thunk, and served by the
 elaborator below MIR, which runs the instance's reference closure as concrete
 MIR on the VM. A module constant whose initializer applies a callable is
 evaluated on demand (`comptime/requests.rs`): a body's value read of it is
 such a request, and only a reader above the check — a type, a condition the
-elaborator decides itself, another constant — forces it through this route.
+elaborator decides itself, another constant — forces it through this route;
+no evaluation in a body enters it (`Elab::eval_in_body`).
 Entry R9 deletes the route with those readers.
 
 For the accepted call graph, the elaborator clones the needed top-level `def`s.

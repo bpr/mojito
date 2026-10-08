@@ -400,6 +400,14 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     "comptime_call_callee_shapes",
     "comptime_call_signature",
     "ctfe_body_requests",
+    // R506, the erased oracle: an erased frame carries no type argument to
+    // read `T.size` from in a requested application of a `def` generic over
+    // a type, and evaluates no subscript of a module display whose index
+    // applies a function.
+    "ctfe_display_tuple_subscript_in_body",
+    "ctfe_type_generic_def_in_body",
+    "extensions::self_hosted_algorithms",
+    "generic_ctfe_associated_value",
     // R302: concrete MIR never frees the empty entries list a linear
     // `Dict.deinit_with` leaves, where the erased run destroys it.
     "dict_insert_linear_capable",

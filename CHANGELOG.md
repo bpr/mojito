@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- No compile-time evaluation in a function body runs on the AST route any
+  more, as at the pin: an application of a `def` generic over a type
+  (`comptime c = capacity[Buffer[8]]()`, whose instance reads `T.size`), a
+  struct construction (`comptime p = P(3)`), a display, a tuple, or a
+  subscript whose operands apply a callable (`comptime t = (f(3), 4)`),
+  and a method of a compile-time value (`M.get("a").value()`,
+  `S.byte_length()`, `E.get()` over a pending constant) are requests the
+  elaborator below MIR serves, the value spelled by its literal form so the
+  request constructs it. The elaborator and the checker now draw that line
+  with one shared predicate. An annotated module constant that applies a
+  callable waits for its first demand too, and every such constant is
+  typed where it is declared, read or not, so `comptime D: Float64 = f(2)`
+  and an unread `comptime W = f("x")` are rejected as at the pin. A
+  pending module constant's name no longer leaks into a body that binds a
+  local of the same name (an unread `comptime p = f(9)` failed every
+  program), a compile-time expression over a requested binding
+  (`comptime(a + 1)`) now evaluates, and a request whose result is a
+  `Dict` or a `Set` is rejected with the VM-CTFE crossing message. The
+  bundled `stdout`/`stderr` constructions are now pending constants, which
+  takes a debug build's `print(..., file=stderr)` from 36 to 7 seconds.
+
 - A type's compile-time value member reads at run time, as at the pin:
   through a bound type parameter (`print(T.K)`, `Self.T.K`, `comptime k =
   T.K + n`), on a struct by name (`A.K`, `B[4].K`, `V[A.K]()`), in a

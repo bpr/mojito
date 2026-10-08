@@ -14,6 +14,24 @@ const CTFE_PROBE: &str = "$ctfe$probe";
 const CTFE_PROBE_RESULT: &str = "$ctfe$result";
 
 impl Elab<'_> {
+    /// Evaluate `expression`, a function body's local `comptime`
+    /// initializer or `comptime(...)` operand, which the AST route never
+    /// serves when it computes a value ([`Self::refuse_body_evaluation`]):
+    /// a type it spells is a reader above the check.
+    pub(super) fn eval_in_body(
+        &self,
+        expression: &Expr,
+        env: &HashMap<String, CtValue>,
+    ) -> Result<CtValue, ComptimeError> {
+        if !mojito_checker::checker::computes_value(expression, self) {
+            return self.eval(expression, env);
+        }
+        let outer = self.evaluating_body.replace(true);
+        let value = self.eval(expression, env);
+        self.evaluating_body.set(outer);
+        value
+    }
+
     /// Specializability under this elaboration's served `def` sets.
     pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
         is_specializable_declaration(statement, &self.scalar_reads)
@@ -26,6 +44,7 @@ impl Elab<'_> {
         args: Vec<CtValue>,
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
+        self.refuse_body_evaluation("ctfe_call")?;
         let f = self.fns.get(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("'{name}' is not a compile-time-callable function"))
         })?;
@@ -246,6 +265,7 @@ impl Elab<'_> {
         literal_args: Vec<Expr>,
         span: Span,
     ) -> Result<CtValue, ComptimeError> {
+        self.refuse_body_evaluation("ctfe_struct_entry")?;
         self.burn()?;
         let mut visiting = HashSet::new();
         let mut needed = HashSet::new();
@@ -341,6 +361,7 @@ impl Elab<'_> {
         span: Span,
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
+        self.refuse_body_evaluation("ctfe_generic_def_entry")?;
         self.burn()?;
         let overloads: Vec<(&[TypeParam], &[Stmt], Option<&Type>)> = self
             .program
@@ -497,6 +518,7 @@ impl Elab<'_> {
         expr: &Expr,
         scope: &HashMap<String, CtValue>,
     ) -> Result<CtValue, ComptimeError> {
+        self.refuse_body_evaluation("ctfe_expr_entry")?;
         self.burn()?;
         let span = expr.span;
         let collections: RefCell<Vec<String>> = RefCell::new(Vec::new());
@@ -1579,4 +1601,18 @@ fn synthesized_entry(name: &str, ret: Option<Type>, body: Vec<Stmt>, span: Span)
         },
         span,
     )
+}
+
+impl Elab<'_> {
+    /// The AST route's guard: a function body's compile-time evaluation is a
+    /// request the elaborator below MIR serves, never an entry here.
+    fn refuse_body_evaluation(&self, entry: &str) -> Result<(), ComptimeError> {
+        if self.evaluating_body.get() {
+            return Err(ComptimeError::NotComptime(format!(
+                "internal: a compile-time evaluation in a function body reached `{entry}` \
+                 rather than a request"
+            )));
+        }
+        Ok(())
+    }
 }

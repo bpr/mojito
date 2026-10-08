@@ -128,9 +128,13 @@ assets/ok/copy_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copyable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copyable_iterator_reference_aggregate.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copyinit_moveinit.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_annotated_module_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_beside_comptime_if_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_body_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_construction_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_display_tuple_subscript_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_module_constant_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_converting_constructor.mojo	-	ineligible	no-scalar-entry-shape

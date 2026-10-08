@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R506**.
+Next free ID: **R511**.
 
 ## Ordered Work
 
@@ -60,27 +60,21 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R488 (P3e) Some compile-time evaluations in a body still run on
-  the AST route**
+- [ ] **R507 (P3e) A module constant whose initializer is a display or a
+  subscript is still evaluated where it is declared**
 
-  Problem: an in-body evaluation the elaborator does not see apply a
-  callable is still evaluated above the check, on the erased VM-CTFE
-  subprogram, rather than requested from the worklist.
-  - A collection display or a tuple whose elements apply a callable
-    (`comptime L = [f(1), 2]`), a construction that calls nothing else
-    (`comptime p = P(3)`), a method chain on a compile-time value
-    (`M.get("a").value()`), and a dictionary subscript.
-  - An annotated or constrained module constant (`comptime C: Int = f(1)`)
-    is evaluated where it is declared.
-  - An application of a `def` generic over a type (`capacity[Buffer[8]]()`)
-    stays there too, since its body may read an associated member through
-    the type (`T.size`), which MIR cannot yet (R484); a non-generic callee
-    that reaches such a body is requested and stops the same way.
-  - `Elab::applies_callable` (`comptime/elab.rs`) and its checker twin
-    (`comptime_validation.rs`) draw the line.
-  - Readers above the check that force a module constant are entry R9's.
-  - Depends on R484, for the application of a `def` generic over a type.
-  - Model: Fable, Not Planned.
+  Problem: `comptime QS = [Q(1, "x"), mk(7)]` at module scope is folded
+  above the check, on the AST route, though it applies a callable.
+  - Deferring it, as every other applied constant is, would spell a body's
+    read of an element (`QS[0].s`) as a subscript of the written display
+    at run time, which stops with "reference binding to a non-place
+    expression".
+  - `Elab::defer_constant` (`comptime/requests.rs`) refuses a display, a
+    tuple, or a subscript root for that reason.
+  - `assets/ok/comptime_struct_string_field.mojo` is the program that
+    stops if the refusal goes.
+  - Depends on R274.
+  - Model: Opus, Not Planned.
 
 - [ ] **R8 (P3) A method that reaches a compile-time construct still
   clones per instance**
@@ -438,6 +432,26 @@ correctness fix to existing behavior is allowed.
   - `assets/ok/comptime_for_display_over_binder.mojo` is the
     `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
   - Entry R10 deletes the oracle and this row with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R506 (P5) The erased oracle cannot run a body's request over a
+  type argument or a module display**
+
+  Problem: `comptime c = capacity[Buffer[8]]()` over `def capacity[T:
+  HasSize]() -> Int: return T.size + 1`, and `comptime v = L[f(1) - 1]`
+  over a module `comptime L = [10, 20, 30]`, print on concrete MIR and stop
+  under `--erased` with "the erased oracle cannot evaluate the parameter
+  constant".
+  - Both are requests the elaborator below MIR serves since R488, and an
+    erased frame carries no type argument to read `T.size` from, nor
+    evaluates a subscript of a display whose index applies a function.
+  - `assets/ok/ctfe_type_generic_def_in_body.mojo`,
+    `assets/ok/ctfe_display_tuple_subscript_in_body.mojo`,
+    `assets/ok/generic_ctfe_associated_value.mojo`, and
+    `assets/extensions/ok/self_hosted_algorithms.mojo` are the
+    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
+  - Entry R10 deletes the oracle and these rows with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1544,6 +1558,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R510 A user trait named like a prelude trait replaces it**
+
+  Problem: a module declaring `trait Sized: comptime size: Int` prints `1`
+  at the pin and stops in Mojito with "struct 'Tuple' declares conformance
+  to trait 'Sized' but is missing comptime member 'size'".
+  - The user declaration takes the name the bundled library's conformances
+    resolve to, where at the pin it shadows the prelude trait in its own
+    module alone.
+  - Probe: `conformance/probes/user_trait_named_like_prelude.mojo`.
+  - Found while planning R488 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R25 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires
@@ -2352,6 +2379,37 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `--erased` reports "the erased oracle cannot decide the comptime if
     condition", so the condition is not folded from the binder's value.
   - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R508 A body's requested `List` binding cannot be read at compile
+  time**
+
+  Problem: `comptime L = mk()` over `def mk() -> List[Int]`, then
+  `print(comptime(len(L)))`, prints `3` at the pin and stops in Mojito with
+  "vm backend does not support methods on None yet".
+  - The binding is a request the elaborator below MIR serves, and the
+    compile-time read of it is checked as an ordinary `len` of a value no
+    one demanded.
+  - A `comptime for` over the same binding works, since its header is the
+    demand.
+  - Probe: `conformance/probes/requested_list_read_at_compile_time.mojo`.
+  - Found while landing R488 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R509 An unread module constant constrained by an applied `where`
+  operand is rejected**
+
+  Problem: `comptime C: Int where (f(1) > 5, "big only") = f(1)` with
+  nothing reading `C` runs at the pin and stops in Mojito with "unsupported
+  generic constraint operand".
+  - At the pin a non-generic constrained constant is a generator type,
+    checked only where it is used.
+  - `Elab::defer_constant` keeps refusing a constrained constant, so it is
+    still evaluated where it is declared.
+  - Probe: `conformance/probes/constrained_module_constant_unread.mojo`.
+  - Found while landing R488 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
