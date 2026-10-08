@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R504**.
+Next free ID: **R506**.
 
 ## Ordered Work
 
@@ -521,6 +521,23 @@ correctness fix to existing behavior is allowed.
     storage is sized from the frame (`erased_list_length`, `backend/vm.rs`).
   - Its `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`) cite this entry.
   - Entry R10 deletes the oracle and these rows with it.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R504 (P5) The erased oracle cannot read a type's compile-time value
+  member through a type parameter**
+
+  Problem: `print(T.K)` in `def read[T: HasK]()` stops under `--erased`
+  with "the erased oracle cannot evaluate the parameter constant `T.K`",
+  where the elaborated run prints the member.
+  - The read is a `ParamKind::TypeMember` constant the elaborator answers
+    from `MirStructDeclaration::associated_values`; `const_value`
+    (`backend/vm.rs`) evaluates a parameter constant from the frame's
+    reified values only, and an erased frame reifies a type argument as a
+    name, not the instance whose binders a member like `Self.n + 1` reads.
+  - A read on a struct by name (`A.K`) folds in the checker and runs.
+  - Entry R10 deletes the oracle, and this gap with it.
+  - Found while landing R484 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3333,20 +3350,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R484 A trait's compile-time value member read through a type
-  parameter at run time fails**
+- [ ] **R505 A trait's compile-time value requirement cannot declare a
+  default**
 
-  Problem: `print(T.K)` in `def read[T: HasK]()`, where `HasK` declares
-  `comptime K: Int`, fails MIR verification with "place projects unknown
-  field 'K' of 'A'", and `print(Self.T.K)` in a method of `struct S[T:
-  HasK]` is rejected with "'Self.T' is not a type parameter of the
-  enclosing struct"; the pin prints `7` for both.
-  - A compile-time read already folds (`T.size` under CTFE,
-    `assets/ok/generic_ctfe_associated_value.mojo`), so only the runtime
-    read of the instance's member is missing.
-  - `comptime k = T.K + n` fails the same way.
-  - Probe: `conformance/probes/trait_value_member_through_type_param.mojo`.
-  - Found while landing R312 (2026-10-07).
+  Problem: `comptime K: Int = 3` in a trait body fails to parse ("Expected
+  newline, ';', or EOF at the end of statement"), where the pin accepts it
+  and a conformer that omits `K` reads `3` through a bound (`T.K`).
+  - The parser's trait `comptime` member takes no initializer; a struct's
+    annotated member (`comptime N: Int = 3`) parses.
+  - Conformance would then take the default for a witness that omits the
+    member, and `ConformanceFacts::associated_values` would carry it so the
+    elaborator answers `T.K` from it.
+  - Found while landing R484 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

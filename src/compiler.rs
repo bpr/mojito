@@ -1171,13 +1171,14 @@ fn tuple_specialization_ct_expr_is_closed(
             ParamKind::DeclRef(reference) => binders.ids.contains(&reference.id),
             ParamKind::PackQuery { pack, .. } => binders.ids.contains(&pack.id),
             // An element of a pack that is still a parameter, a reflection
-            // of a symbolic type, or an application the elaborator has yet
-            // to evaluate names no instance.
+            // or member read of a symbolic type, or an application the
+            // elaborator has yet to evaluate names no instance.
             ParamKind::Hole { .. }
             | ParamKind::ListGet { .. }
             | ParamKind::ListTabulate { .. }
             | ParamKind::ListConcat { .. }
             | ParamKind::Reflect { .. }
+            | ParamKind::TypeMember { .. }
             | ParamKind::Apply { .. } => false,
             // A signature slot is bound by the contract that holds it.
             ParamKind::IndexRef { .. }

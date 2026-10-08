@@ -194,6 +194,15 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                         )
                     })),
                 ),
+                (
+                    "associated_values",
+                    list(declaration.associated_values.iter().map(|(name, value)| {
+                        record(
+                            "associated_value",
+                            &[("name", symbol(name)), ("value", param_expr(value))],
+                        )
+                    })),
+                ),
             ],
         );
         write!(output, "    {value}").unwrap();
@@ -2096,6 +2105,14 @@ fn param_expr(value: &ParamExpr) -> String {
             &[
                 ("subject", param_expr(subject)),
                 ("query", symbol(&query.to_string())),
+            ],
+        ),
+        ParamKind::TypeMember { subject, name } => record(
+            "param_type_member",
+            &[
+                ("subject", param_expr(subject)),
+                ("name", symbol(name)),
+                meta,
             ],
         ),
         ParamKind::PackQuery { pack, query } => record(

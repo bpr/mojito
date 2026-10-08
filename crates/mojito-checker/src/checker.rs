@@ -2001,7 +2001,20 @@ impl Checker {
                     context: format!("numeric literal materialization of '{value}'"),
                 });
             }
-            self.operation_adjustments.borrow_mut().insert(
+            // A literal parameter value read (`A.K` of `comptime K = 7`)
+            // materializes as its constant.
+            let mut adjustments = self.operation_adjustments.borrow_mut();
+            if let Some(mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. }) =
+                adjustments.get_mut(&expression.source_span())
+                && let Some(materialized) = value
+                    .as_constant()
+                    .and_then(|constant| constant.clone().materialize_as(to))
+                    .and_then(|constant| self.param_context.constant(constant).ok())
+            {
+                *value = materialized;
+                return Ok(());
+            }
+            adjustments.insert(
                 expression.source_span(),
                 mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
             );

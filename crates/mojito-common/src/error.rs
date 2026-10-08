@@ -294,6 +294,12 @@ pub enum TypeError {
     /// `Self.T` used where `T` is not a type parameter of the enclosing struct
     /// (or outside any struct).
     UnknownSelfParam(String),
+    /// A member read (`T.Z`) through a type parameter whose bound requires
+    /// no member of that name.
+    NoTraitAttribute {
+        trait_name: String,
+        attribute: String,
+    },
     /// The enclosing struct's own parameter spelled bare (`T`, `n`) inside
     /// its body, where Mojo requires `Self.T` / `Self.n`.
     UnqualifiedStructParam(String),
@@ -770,6 +776,10 @@ impl fmt::Display for TypeError {
                     "type '{name}' expects {expected} type argument(s), got {got}"
                 )
             }
+            Self::NoTraitAttribute {
+                trait_name,
+                attribute,
+            } => write!(f, "'{trait_name}' value has no attribute '{attribute}'"),
             Self::UnknownSelfParam(name) => {
                 write!(
                     f,

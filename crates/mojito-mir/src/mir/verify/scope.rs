@@ -1022,6 +1022,7 @@ mod tests {
             explicit_destructors: HashMap::new(),
             conformances: Vec::new(),
             associated_types: Vec::new(),
+            associated_values: Vec::new(),
         });
         let mut errors = Vec::new();
         verify_scope("Bag.first", &function, &declarations, &mut errors);

@@ -827,6 +827,13 @@ impl Decoder {
                     self.unknown(fields, &["subject", "query"]);
                     Some(self.context.reflect_query(&subject, query))
                 }
+                "param_type_member" => {
+                    let subject = self.req(value, fields, "subject", Self::param_expr)?;
+                    let name = self.req(value, fields, "name", Self::symbol)?;
+                    let meta = self.req(value, fields, "type", Self::meta_ty)?;
+                    self.unknown(fields, &["subject", "name", "type"]);
+                    Some(self.context.type_member(&subject, &name, meta))
+                }
                 "param_apply" => {
                     let function = self.req(value, fields, "function", Self::string)?;
                     let meta = self.req(value, fields, "type", Self::meta_ty)?;

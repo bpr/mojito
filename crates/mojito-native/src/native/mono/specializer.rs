@@ -47,6 +47,7 @@ impl<'a> Specializer<'a> {
                             StructShape {
                                 param_decls: d.param_decls.clone(),
                                 members: d.associated_types.clone(),
+                                values: d.associated_values.clone(),
                                 fields: d.fields.clone(),
                             },
                         )
@@ -2730,6 +2731,7 @@ impl<'a> Specializer<'a> {
                         explicit_destructors: HashMap::default(),
                         conformances: Vec::new(),
                         associated_types: Vec::new(),
+                        associated_values: Vec::new(),
                     });
                 }
                 continue;
@@ -2790,6 +2792,7 @@ impl<'a> Specializer<'a> {
             declaration.name = name;
             declaration.param_decls.clear();
             declaration.associated_types.clear();
+            declaration.associated_values.clear();
             // Overload-qualified `mut self` entries name the template
             // (for example, a signature-qualified `List.pop`); respell them
             // under the instance so

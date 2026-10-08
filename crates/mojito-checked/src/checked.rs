@@ -1564,6 +1564,11 @@ pub struct ConformanceFacts {
     /// sorted by member, each over the struct's own binders. The elaborator
     /// solves `C.Element` from them once `C` is bound to an instance.
     pub associated: HashMap<String, Vec<(String, mojito_types::types::Ty)>>,
+    /// Each struct's compile-time value members (`K` of `comptime K = 7`),
+    /// sorted by member, each a parameter expression over the struct's own
+    /// binders (`Self.n + 1`). The elaborator answers `T.K` from them once
+    /// `T` is bound to an instance.
+    pub associated_values: HashMap<String, Vec<(String, mojito_types::param_expr::ParamExpr)>>,
 }
 
 /// One struct's conformance to one trait: it holds for the instances whose

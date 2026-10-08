@@ -889,8 +889,8 @@ impl Elab<'_> {
         impl mojito_ast::visit::Visitor for Finder<'_, '_> {
             fn visit_expr(&mut self, expr: &Expr) {
                 self.found |= match &expr.kind {
-                    // A `def` generic over a type may read an associated
-                    // member through it, which MIR cannot yet (R484).
+                    // A `def` generic over a type stays on the AST route
+                    // (roadmap R488).
                     ExprKind::Call { name, .. } => {
                         self.elab.fns.get(name.as_str()).is_some_and(|callee| {
                             !callee

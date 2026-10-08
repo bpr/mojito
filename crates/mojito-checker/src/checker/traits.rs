@@ -1616,9 +1616,13 @@ impl Checker {
         conformance_assumption: Option<&GenericConstraint>,
     ) -> bool {
         match req {
-            CtMemberReq::Value(expected) => self
-                .ct_value_ty(value, self_ty)
-                .is_some_and(|actual| coerces(&actual, expected)),
+            // A literal witnesses the type it materializes as (`comptime
+            // NAME = "a"` for `comptime NAME: String`).
+            CtMemberReq::Value(expected) => {
+                self.ct_value_ty(value, self_ty)
+                    .is_some_and(|actual| coerces(&actual, expected))
+                    || value.clone().materialize_as(expected).is_some()
+            }
             CtMemberReq::Type { bounds, .. } => {
                 let CtValue::Type(ty) = value else {
                     return false;
@@ -2036,10 +2040,29 @@ impl Checker {
             })
             .filter(|(_, members)| !members.is_empty())
             .collect();
+        let associated_values = self
+            .structs
+            .iter()
+            .map(|(name, info)| {
+                let mut members: Vec<(String, ParamExpr)> = info
+                    .associated
+                    .iter()
+                    .filter(|(_, value)| !matches!(value, CtValue::Type(_)))
+                    .filter_map(|(member, value)| {
+                        let value = self.param_context.constant(value.clone()).ok()?;
+                        Some((member.clone(), value))
+                    })
+                    .collect();
+                members.sort_by(|left, right| left.0.cmp(&right.0));
+                (name.clone(), members)
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
             associated,
+            associated_values,
         }
     }
 

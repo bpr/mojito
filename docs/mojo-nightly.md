@@ -509,8 +509,8 @@ is recorded as a divergence, not implemented here.
 
 Status 2026-08-26: DONE for the first slice (static-method calls with postfix
 chains in expected-type positions, via the `$contextual` sentinel resolved by
-the checker and substituted in HIR); bare value members, parametric statics,
-non-struct and generic expected types are recorded gaps.
+the checker and substituted in HIR), and bare value members (R484); parametric
+statics, non-struct and generic expected types are recorded gaps.
 
 A leading-dot form such as `.red` or `.hsb_to_rgb(120, 100, 50)` resolves
 against the expected type of the expression; without a contextual type it is an
@@ -519,10 +519,10 @@ parametric static methods, parentheses, attribute chains, and typed collection
 literals. Mojito's first slice: leading-dot **static method calls** (including
 postfix chains) in every position that already flows an expected type —
 annotated bindings and assignments, call arguments, return positions, and
-typed collection-literal elements. Bare `.red` value members require struct
-`comptime` associated value members, which Mojito does not have (pre-existing
-subset gap); parametric statics and generic expected types are likewise
-recorded as subset gaps rather than half-implemented.
+typed collection-literal elements. A bare `.red` value member reads the
+struct's `comptime` value member, as `Color.red` does; parametric statics and
+generic expected types are recorded as subset gaps rather than
+half-implemented.
 
 #### 3. Align in-subset library surfaces
 

@@ -798,8 +798,8 @@ Notes:
   spans preserved, and HIR substitutes the base name physically. Without a
   contextual type the form rejects with a targeted diagnostic. Implemented
   first slice: static-method calls with postfix chains in expected-type
-  positions. Recorded subset gaps: bare `.member` comptime value members
-  (Mojito lacks struct `comptime` associated values), parametric statics
+  positions, and bare `.member` comptime value members (`return .RED`, read
+  as the struct's `Color.RED`). Recorded subset gaps: parametric statics
   (`.make[4]()`), non-struct expected types (upstream resolves members on any
   expected type), generic expected types, and leading-dot in type positions.
 - **Parametric static receivers**: a compile-time application of a struct name

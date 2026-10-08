@@ -735,6 +735,22 @@ impl ParamContext {
         self.make(query.meta(), ParamKind::Reflect { subject, query })
     }
 
+    /// The compile-time value member `name` of a subject type (`T.K` for a
+    /// type parameter `T` whose bound requires `comptime K: Int`), typed by
+    /// `meta`, the member's declared value type. It folds nothing: the
+    /// checker answers a closed subject from its struct table, and the
+    /// elaborator answers one per instance.
+    pub fn type_member(&self, subject: &ParamExpr, name: &str, meta: MetaTy) -> ParamExpr {
+        let subject = self.intern(subject);
+        self.make(
+            meta,
+            ParamKind::TypeMember {
+                subject,
+                name: name.to_string(),
+            },
+        )
+    }
+
     /// A compile-time application, typed by the callee's declared result.
     /// The arguments keep their order; nothing folds, since only the
     /// elaborator evaluates an application.
@@ -874,6 +890,9 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.fold(subject)?, query.clone())
             }
+            ParamKind::TypeMember { subject, name } => {
+                self.type_member(&self.fold(subject)?, name, expr.meta().clone())
+            }
             ParamKind::Apply {
                 function,
                 args,
@@ -901,6 +920,27 @@ impl ParamContext {
     ) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
             ParamKind::Reflect { subject, query } => oracle(subject, query),
+            _ => Ok(None),
+        })
+    }
+
+    /// Rebuild `expr` with every type member read `oracle` answers replaced
+    /// by its answer at the read's declared type (a literal `7` read as the
+    /// `Int` a requirement declares), through the folding constructors, so
+    /// what sits above an answered read closes too (`T.K + 3` to `10`). A
+    /// read the oracle leaves (`Ok(None)`) is rebuilt as it is.
+    pub fn answer_type_members(
+        &self,
+        expr: &ParamExpr,
+        oracle: &mut TypeMemberOracle<'_>,
+    ) -> Result<ParamExpr, ParamError> {
+        self.answer_queries(expr, &mut |node| match node.kind() {
+            ParamKind::TypeMember { subject, name } => Ok(oracle(subject, name)?.map(|value| {
+                node.meta()
+                    .as_value()
+                    .and_then(|ty| value.clone().materialize_as(ty))
+                    .unwrap_or(value)
+            })),
             _ => Ok(None),
         })
     }
@@ -989,6 +1029,11 @@ impl ParamContext {
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.answer_queries(subject, answer)?, query.clone())
             }
+            ParamKind::TypeMember { subject, name } => self.type_member(
+                &self.answer_queries(subject, answer)?,
+                name,
+                expr.meta().clone(),
+            ),
             ParamKind::Op { op, operands } => {
                 let operands: Vec<ParamExpr> = operands
                     .iter()
@@ -1475,6 +1520,11 @@ impl ParamContext {
                 &self.replace_at(subject, bindings, depth, memo)?,
                 query.clone(),
             ),
+            ParamKind::TypeMember { subject, name } => self.type_member(
+                &self.replace_at(subject, bindings, depth, memo)?,
+                name,
+                expr.meta().clone(),
+            ),
             ParamKind::ListTabulate { count, element } => self.list_tabulate(
                 &self.replace_at(count, bindings, depth, memo)?,
                 &self.replace_at(element, bindings, depth + 1, memo)?,
@@ -1617,6 +1667,9 @@ impl ParamContext {
             }
             ParamKind::Reflect { subject, query } => {
                 self.reflect_query(&self.shift(subject, cutoff, by)?, query.clone())
+            }
+            ParamKind::TypeMember { subject, name } => {
+                self.type_member(&self.shift(subject, cutoff, by)?, name, expr.meta().clone())
             }
             ParamKind::Apply {
                 function,
@@ -1860,6 +1913,7 @@ impl ParamExpr {
             ParamKind::Conforms { subject, .. }
             | ParamKind::Trivial { subject, .. }
             | ParamKind::Reflect { subject, .. }
+            | ParamKind::TypeMember { subject, .. }
             | ParamKind::Field { base: subject, .. } => vec![subject],
             ParamKind::Select { index, .. } => vec![index],
             ParamKind::ListGet { list, index } => vec![list, index],
@@ -1914,6 +1968,7 @@ impl ParamExpr {
             ParamKind::Field { .. } => 14,
             ParamKind::ListTabulate { .. } => 15,
             ParamKind::ListConcat { .. } => 16,
+            ParamKind::TypeMember { .. } => 17,
         }
     }
 }
@@ -2052,6 +2107,11 @@ pub enum ParamKind {
         subject: ParamExpr,
         query: ReflectQuery,
     },
+    /// The compile-time value member `name` of a type that is still a
+    /// parameter (`T.K`, `Self.T.K`), typed by the member's declared value
+    /// type. The checker answers a closed subject from its struct table;
+    /// the elaborator answers one per instance from the struct's members.
+    TypeMember { subject: ParamExpr, name: String },
     /// A bound-pack query the checker's concrete pack logic resolves; the
     /// pack is named by its binder's identity.
     PackQuery { pack: ParamRef, query: PackQuery },
@@ -2671,6 +2731,12 @@ impl fmt::Display for ReflectQuery {
 /// `Ok(None)` leaves the query as it is.
 pub type ReflectOracle<'a> =
     dyn FnMut(&ParamExpr, &ReflectQuery) -> Result<Option<CtValue>, ParamError> + 'a;
+
+/// What answers a type member read over a subject at an instance: the
+/// subject and the member's name, to its value, or `None` to leave the
+/// read as it is.
+pub type TypeMemberOracle<'a> =
+    dyn FnMut(&ParamExpr, &str) -> Result<Option<CtValue>, ParamError> + 'a;
 
 /// What answers a compile-time application for
 /// [`ParamContext::answer_applications`]: the applied function and its
@@ -3449,6 +3515,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         ParamKind::ListGet { list, index } => write!(f, "{list}[{index}]"),
         ParamKind::Field { base, name } => write!(f, "{base}.{name}"),
         ParamKind::Reflect { subject, query } => write!(f, "reflect[{subject}].{query}"),
+        ParamKind::TypeMember { subject, name } => write!(f, "{subject}.{name}"),
         ParamKind::PackQuery { pack, query } => match query {
             PackQuery::Length => write!(f, "TypeList[{pack}.values]().length"),
             PackQuery::Conforms(trait_name) => {

@@ -1915,7 +1915,9 @@ impl Checker {
                     Ok((**ty).clone())
                 }
                 Some(ParamDecl::Value { .. }) => Ok(Ty::Int),
-                _ => Err(TypeError::UnknownSelfParam(field.to_string())),
+                _ => self
+                    .read_type_member(span, object, field)
+                    .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),
             };
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
@@ -1924,20 +1926,6 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
             );
             return Ok(Ty::Dtype);
-        }
-        // `T.size` where `T` is a generic type parameter and a bound trait
-        // requires `comptime size: Int`: expression-level access to an associated
-        // compile-time value. Type-valued associated members remain type-position
-        // only (`T.Element` in annotations).
-        if let ExprKind::Identifier(name) = &object.kind
-            && let Some(parameter) = self.lookup_tparam(name)
-            && let Ty::Param { bounds, .. } = &parameter
-            && let Some(ty) = self.lookup_trait_assoc_value_ty(bounds, field)
-        {
-            self.expression_types
-                .borrow_mut()
-                .insert(object.source_span(), parameter);
-            return Ok(ty);
         }
         // `Ts.length` of a pack that is still a parameter is an `Int` no
         // instance has fixed yet.
@@ -1961,6 +1949,9 @@ impl Checker {
                 },
             );
             return Ok(Ty::Int);
+        }
+        if let Some(read) = self.read_type_member(span.clone(), object, field) {
+            return read;
         }
         // A field of a compile-time binding (`q.a` in `def f[q: Q]()`) is
         // upstream's struct extract on the parameter attribute: a parameter
@@ -2045,6 +2036,37 @@ impl Checker {
             object_type: obj_ty.to_string(),
             field: field.to_string(),
         })
+    }
+
+    /// A type's compile-time value member read as a runtime value (`T.K`,
+    /// `Self.T.K`, `A.K`, `Self.K`): the parameter value
+    /// [`Self::type_member_value`] builds, recorded at `span` for MIR to
+    /// carry, typed by its value type. Type-valued members stay type-position
+    /// only (`T.Element` in annotations).
+    pub(super) fn read_type_member(
+        &self,
+        span: SourceSpan,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<Ty, TypeError>> {
+        let value = match self.type_member_value(object, field)? {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let ty = value.meta().as_value().cloned()?;
+        self.record_member_value(span, value);
+        Some(Ok(ty))
+    }
+
+    /// Record `value` as the type member value read at `span`.
+    pub(super) fn record_member_value(&self, span: SourceSpan, value: ParamExpr) {
+        self.operation_adjustments.borrow_mut().insert(
+            span,
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value,
+                materialized: None,
+            },
+        );
     }
 
     /// A dtype constant read as a value: the `dtype` of a `SIMD` type operand

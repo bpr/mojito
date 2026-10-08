@@ -79,6 +79,43 @@ fn reflection_answer(
     answer.map(Some).map_err(ParamError::Reflect)
 }
 
+/// The value of the compile-time member `name` of `subject` at the
+/// instance: the source struct's member, evaluated under the struct
+/// instance's own bindings (`Self.n + 1` of `B[4]` to `5`). A subject the
+/// bindings leave symbolic keeps the read.
+fn type_member_answer(
+    subject: &ParamExpr,
+    name: &str,
+    bindings: &Bindings,
+) -> Result<Option<CtValue>, ParamError> {
+    let subject = match subject.kind() {
+        ParamKind::TypeShape(ty) => match substitute_ty(ty, bindings) {
+            Ok(ty) => ty,
+            Err(_) => return Ok(None),
+        },
+        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        _ => return Ok(None),
+    };
+    if is_symbolic(&subject) {
+        return Ok(None);
+    }
+    let unsupported = |error: MonoError| ParamError::Unsupported(error.construct);
+    let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
+        return Ok(None);
+    };
+    let (_, value) = instance
+        .shape
+        .values
+        .iter()
+        .find(|(member, _)| member == name)
+        .ok_or_else(|| {
+            ParamError::Unsupported(format!("`{subject}` has no compile-time member `{name}`"))
+        })?;
+    eval_ct(value, &instance.bindings)
+        .map(Some)
+        .map_err(unsupported)
+}
+
 pub(super) fn is_symbolic(ty: &Ty) -> bool {
     match ty {
         Ty::Infer
@@ -301,6 +338,11 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
         .and_then(|replaced| {
             context.answer_reflections(&replaced, &mut |subject, query| {
                 reflection_answer(subject, query, bindings)
+            })
+        })
+        .and_then(|answered| {
+            context.answer_type_members(&answered, &mut |subject, name| {
+                type_member_answer(subject, name, bindings)
             })
         })
         .and_then(|answered| match &bindings.applications {

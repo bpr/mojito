@@ -681,6 +681,7 @@ assets/ok/struct_generator_vector_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_instance_clone_unreached.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_value_member_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape
@@ -844,6 +845,7 @@ assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_constant_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_value_member_through_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_witness_renames_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transfer_into_read_parameter_borrows.mojo	-	ineligible	no-scalar-entry-shape

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.35
+# Mojito Textual MIR Format, Version 1.36
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.35 is implemented end to end for inspection and loading: canonical
+Version 1.36 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.35
+mojito-mir 1.36
 ```
 
-The writer emits 1.35. The reader accepts 1.0 through 1.35; *Schema 1.0*
+The writer emits 1.36. The reader accepts 1.0 through 1.36; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -242,6 +242,17 @@ of the region, and concrete MIR records `[]`. A 1.34 consumer rejects the
 field, which is the intended failure. A 1.35 consumer reads an older
 declaration as declared in no region.
 
+Minor version 36 carries a struct's compile-time value members
+(`associated_values` on a `struct` record): a list of
+`associated_value { name, value }`, sorted by name, each value a parameter
+expression over the struct's own binders (`7`, `Self.n + 1`), and adds the
+parameter-expression node `param_type_member { subject, name, type }`, the
+value member `name` of a subject type that is still a parameter (`T.K`),
+typed by the member's declared value type. The elaborator answers the node
+from the bound instance's `associated_values`, so elaborated MIR carries
+neither. A 1.35 consumer rejects the node, which is the intended failure; a
+1.36 consumer reads an older struct as carrying no value members.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -355,13 +366,16 @@ struct {
   explicit_destroy_message: absent,
   explicit_destructors: [],
   conformances: [],
-  associated_types: []
+  associated_types: [],
+  associated_values: []
 }
 ```
 
 `explicit_destructors` contains `destructor { name: symbol, raises: bool }`
 records sorted by name. `associated_types` contains
-`associated_type { name: symbol, type: type }` records sorted by name.
+`associated_type { name: symbol, type: type }` records sorted by name, and
+`associated_values` contains `associated_value { name: symbol, value:
+param-expr }` records sorted by name.
 
 ### Function declarations
 
@@ -502,6 +516,7 @@ param_list_tabulate { count, element }
 param_list_concat { lists: [param-expr...] }
 param_field     { base, name: symbol, type: meta }
 param_reflect   { subject, query }
+param_type_member { subject, name: symbol, type: meta }
 param_pack_query { pack, query }
 param_apply     { function: "symbol", type: meta, args: [param-expr...], evaluated: option<ct-value> }
 ```
@@ -519,7 +534,9 @@ of a struct type that spreads it (`Tuple[*Ts.reverse()]`), a
 `meta_param_list(meta_type)`. `param_field` is a field of a struct-typed parameter value
 that is still a parameter (schema 1.27), `param_reflect` a reflection query over a symbolic subject
 (`is_struct()`, `field_count()`, `field_names()`, `field_types()`,
-`field_index["name"]()`, `field["name"].T`), and `param_apply` a compile-time
+`field_index["name"]()`, `field["name"].T`), `param_type_member` a
+compile-time value member of a symbolic subject type (`T.K`, schema 1.36),
+and `param_apply` a compile-time
 application of a callable symbol, never folded, whose `evaluated` holds the
 value the compile-time route established for it when one has (schema 1.14;
 `docs/notes/param-expr-attributes.md` §Register types).
@@ -767,7 +784,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.35
+mojito-mir 1.36
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

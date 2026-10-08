@@ -172,6 +172,11 @@ pub struct MirStructDeclaration {
     /// solves `C.Element` from them once `C` is bound to an instance, so
     /// elaborated MIR carries none.
     pub associated_types: Vec<(String, Ty)>,
+    /// The struct's compile-time value members (`K` of `comptime K = 7`),
+    /// sorted by member, each a parameter expression over the struct's own
+    /// binders: the elaborator answers `T.K` from them once `T` is bound to
+    /// an instance, so elaborated MIR carries none.
+    pub associated_values: Vec<(String, ParamExpr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -664,6 +669,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     associated_types: checked
                         .conformances()
                         .associated
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    associated_values: checked
+                        .conformances()
+                        .associated_values
                         .get(name)
                         .cloned()
                         .unwrap_or_default(),

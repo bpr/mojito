@@ -209,6 +209,24 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.36 carries the value members; an older artifact has none.
+        let associated_values = self
+            .field(fields, "associated_values")
+            .ok()
+            .and_then(|members| self.list(members).ok())
+            .map(|members| {
+                members
+                    .iter()
+                    .filter_map(|member| {
+                        let member_fields = self.record(member, "associated_value").ok()?;
+                        let name = self.req(member, member_fields, "name", Self::symbol);
+                        let value = self.req(member, member_fields, "value", Self::param_expr);
+                        self.unknown(member_fields, &["name", "value"]);
+                        Some((name?, value?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -221,6 +239,7 @@ impl Decoder {
                 "explicit_destructors",
                 "conformances",
                 "associated_types",
+                "associated_values",
             ],
         );
         Some(MirStructDeclaration {
@@ -233,6 +252,7 @@ impl Decoder {
             explicit_destructors,
             conformances,
             associated_types,
+            associated_values,
         })
     }
 

@@ -2790,6 +2790,20 @@ elaborator unifies a signature's `C.Element` against a call's types first
 the struct `C` is bound to (`declared_associated_type`,
 `mono/substitute.rs`). Elaborated MIR carries no associated types.
 
+A struct's compile-time value members ride beside them:
+`MirStructDeclaration.associated_values` holds each member's value as a
+parameter expression over the struct's own binders
+(`ConformanceFacts::associated_values`, text schema 1.36). A read of a
+member through a type that is still a parameter (`T.K`, `Self.T.K`) is a
+`ParamKind::TypeMember` node, upstream's member lookup on a type the
+elaborator binds; the checker records it as `SemanticAdjustment::ParamValue`
+(`Checker::read_type_member`, `type_member_value`), MIR carries it as
+`Const::Param`, and `native::mono` answers it per instance
+(`ParamContext::answer_type_members` with `type_member_answer`,
+`mono/symbolic.rs`), evaluating the member under the bound instance's own
+bindings. A read on a closed type (`A.K`, `B[4].K`, `Self.K`) folds in the
+checker. Elaborated MIR carries no value members.
+
 A generic `def` call carries the compile-time arguments the checker solved,
 in declaration order and in the caller's binder scope
 (`MirInstr::Call::instantiated_args`, text schema 1.13, from

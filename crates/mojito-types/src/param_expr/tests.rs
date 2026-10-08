@@ -726,3 +726,36 @@ fn answered_reflection_closes_its_enclosing_expression() {
         .expect("rebuilds");
     assert_eq!(kept, two);
 }
+
+/// A type member read the elaborator's oracle answers closes what sits
+/// above it at the read's declared type; one the oracle leaves stays a
+/// node, and replacing the subject's binder keeps the read until answered.
+#[test]
+fn answered_type_member_closes_its_enclosing_expression() {
+    let context = ParamContext::new();
+    let subject = context.register(ParamId::new("read", 0), "T", MetaTy::Type);
+    let member = context.type_member(&subject, "K", MetaTy::int());
+    let sum = infix(&context, InfixOp::Add, &member, &literal(&context, 3));
+    assert_eq!(sum.to_string(), "T.K + 3");
+
+    let answered = context
+        .answer_type_members(&sum, &mut |_, name| {
+            assert_eq!(name, "K");
+            Ok(Some(CtValue::IntLiteral(IntLiteral::from(7))))
+        })
+        .expect("answers");
+    assert_eq!(answered.as_constant(), Some(&CtValue::Int(10)));
+
+    let kept = context
+        .answer_type_members(&sum, &mut |_, _| Ok(None))
+        .expect("rebuilds");
+    assert_eq!(kept, sum);
+
+    let mut bindings = ParamBindings::new();
+    bindings.bind_type(
+        ParamId::new("read", 0),
+        Ty::Struct("A".to_string(), Vec::new().into()),
+    );
+    let replaced = context.replace(&member, &bindings).expect("replaces");
+    assert!(matches!(replaced.kind(), ParamKind::TypeMember { name, .. } if name == "K"));
+}

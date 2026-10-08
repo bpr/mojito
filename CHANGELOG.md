@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type's compile-time value member reads at run time, as at the pin:
+  through a bound type parameter (`print(T.K)`, `Self.T.K`, `comptime k =
+  T.K + n`), on a struct by name (`A.K`, `B[4].K`, `V[A.K]()`), in a
+  struct's method (`Self.K`), and by the leading-dot form (`return .RED`).
+  A read through a type parameter is a new parameter-expression node the
+  elaborator answers per instance from each struct's checked value
+  members, so a member computed from the instance's own parameters
+  (`comptime K = Self.n + 1`) reads its instance's value, on the VM and
+  natively. A string literal now witnesses a `comptime NAME: String`
+  requirement, and a read of a member the bound does not require is the
+  pin's "'HasK' value has no attribute 'Z'". MIR text schema 1.36 adds a
+  struct declaration's `associated_values` and the `param_type_member`
+  node.
+
 - A nested `def` or lambda declared in a `comptime for` body reads the
   loop's index, as at the pin, in a generic `def`, a plain one, and a
   method: each unrolled iteration declares its own, specialized to its

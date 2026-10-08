@@ -453,6 +453,13 @@ impl Checker {
                 if let Some(projection) = self.struct_value_field(object, field) {
                     return projection.map(ParamExpr::into_value);
                 }
+                // A type's value member (`T.K`, `A.K`, `B[4].K`), recorded
+                // for a bracket argument MIR reads as a value.
+                if let Some(member) = self.type_member_value(object, field) {
+                    let member = member?;
+                    self.record_member_value(expr.source_span(), member.clone());
+                    return Ok(member.into_value());
+                }
                 Err(TypeError::NotComptime(
                     "unsupported associated comptime member access".to_string(),
                 ))
@@ -1089,6 +1096,59 @@ impl Checker {
                 )
                 .map_err(param_error),
         )
+    }
+
+    /// The compile-time value member `field` of the type `object` names:
+    /// upstream's member lookup on a type. Through a type parameter (`T.K`,
+    /// `Self.T.K`) it is the member read the elaborator answers per instance,
+    /// typed by the bound's requirement; on a struct (`A.K`, `B[4].K`,
+    /// `Self.K`) it is the struct's member at the application's arguments,
+    /// folded when they are closed. `None` when `object` names no type, or
+    /// the member is not a value (an associated type, a method).
+    pub(super) fn type_member_value(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let subject = self.member_subject(object)?;
+        match &subject {
+            Ty::Param { bounds, .. } => {
+                if let Some(ty) = self.lookup_trait_assoc_value_ty(bounds, field) {
+                    let subject = self.param_context.type_shape(subject.clone());
+                    return Some(Ok(self.param_context.type_member(
+                        &subject,
+                        field,
+                        mojito_types::param_expr::MetaTy::value(ty),
+                    )));
+                }
+                let declared = bounds
+                    .iter()
+                    .filter_map(|b| self.traits.get(b))
+                    .any(|info| {
+                        info.comptime_members.contains_key(field)
+                            || info.methods.contains_key(field)
+                    });
+                (!declared).then(|| {
+                    Err(TypeError::NoTraitAttribute {
+                        trait_name: if bounds.is_empty() {
+                            "AnyType".to_string()
+                        } else {
+                            bounds.join(" & ")
+                        },
+                        attribute: field.to_string(),
+                    })
+                })
+            }
+            Ty::Struct(name, arguments) => {
+                let info = self.structs.get(name)?;
+                let value = info
+                    .associated
+                    .get(field)
+                    .filter(|value| !matches!(value, CtValue::Type(_)))?;
+                Some(self.struct_member_at(info, arguments, value))
+            }
+            _ => None,
+        }
     }
 
     /// The length query of a pack that is still a parameter, when `expr`
@@ -2493,6 +2553,57 @@ impl Checker {
                 _ => self.compile_generic_constraint(expr)?,
             },
         })
+    }
+
+    /// The type `object` names as the subject of a member read: `Self`, a
+    /// type parameter (`T`, `Self.T`), or a struct application (`A`,
+    /// `B[4]`); `None` for an expression that names a value.
+    fn member_subject(&self, object: &Expr) -> Option<Ty> {
+        match &object.kind {
+            ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone(),
+            ExprKind::Identifier(name) if self.lookup(name).is_some() => None,
+            ExprKind::Identifier(name) if let Some(parameter) = self.lookup_tparam(name) => {
+                Some(parameter)
+            }
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                match self.self_param_ct_value(field)? {
+                    CtValue::Type(ty) => Some(*ty),
+                    _ => None,
+                }
+            }
+            _ => self.member_type_operand(object),
+        }
+    }
+
+    /// A struct's value member at the application's arguments: its binders
+    /// replaced, so a closed application folds (`Self.n + 1` at `n = 4`).
+    fn struct_member_at(
+        &self,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        value: &CtValue,
+    ) -> Result<ParamExpr, TypeError> {
+        let context = &self.param_context;
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        for (decl, argument) in info.decls.iter().zip(arguments) {
+            match (decl, argument) {
+                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
+                    bindings.bind_type(id.clone(), ty.clone());
+                }
+                (ParamDecl::Value { id, .. }, TyArg::Val(value)) => {
+                    bindings.bind(
+                        id.clone(),
+                        context.constant(value.clone()).map_err(param_error)?,
+                    );
+                }
+                _ => {}
+            }
+        }
+        let value = context.constant(value.clone()).map_err(param_error)?;
+        context
+            .replace(&value, &bindings)
+            .and_then(|replaced| context.fold(&replaced))
+            .map_err(param_error)
     }
 }
 

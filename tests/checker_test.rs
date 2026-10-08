@@ -1653,6 +1653,36 @@ fn rejects_associated_value_in_type_position() {
 }
 
 #[test]
+fn reads_value_members_of_types_at_run_time() {
+    let has_k = "trait HasK:\n    comptime K: Int\n\n@fieldwise_init\nstruct A(HasK):\n    comptime K = 7\n\n";
+    ok(&format!(
+        "{has_k}def read[T: HasK]() -> Int:\n    return T.K\n"
+    ));
+    ok(&format!(
+        "{has_k}struct S[T: HasK]:\n    def __init__(out self):\n        pass\n\n    def f(self) -> Int:\n        return Self.T.K\n"
+    ));
+    ok(&format!(
+        "{has_k}def main():\n    var x: Int = A.K\n    print(x)\n"
+    ));
+    ok(
+        "struct S[n: Int]:\n    comptime K = Self.n * 2\n\n    def __init__(out self):\n        pass\n\n    def f(self) -> Int:\n        return Self.K\n",
+    );
+}
+
+#[test]
+fn rejects_value_member_the_bound_does_not_require() {
+    let e = err("trait HasK:\n    comptime K: Int\n\ndef read[T: HasK]():\n    print(T.Z)\n");
+    assert!(
+        matches!(
+            &e,
+            TypeError::NoTraitAttribute { trait_name, attribute }
+                if trait_name == "HasK" && attribute == "Z"
+        ),
+        "got {e:?}"
+    );
+}
+
+#[test]
 fn composes_inherited_associated_type_bounds() {
     ok(
         "trait HasElement:\n    comptime Element: AnyType\n\ntrait HasCopyableElement:\n    comptime Element: Copyable\n\ntrait Collection(HasElement, HasCopyableElement):\n    def size(self) -> Int: ...\n\n@fieldwise_init\nstruct IntCollection(Collection):\n    comptime Element = Int\n    var value: Int\n    def size(self) -> Int:\n        return 1\n",

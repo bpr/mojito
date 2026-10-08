@@ -1574,6 +1574,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declarations `binder_scope` walks, which `Specializer::binder_scope`
   shares), both excluded by `elaborate_drops` and
   `RegionDropCtx::droppable`.
+- A type's compile-time value member (`T.K`, `Self.T.K`, `A.K`, `B[4].K`,
+  `Self.K`) is `Checker::type_member_value` (`checker/constraints.rs`, over
+  `member_subject` and `struct_member_at`): a `ParamKind::TypeMember`
+  node (`ParamContext::type_member`, text `param_type_member`) through a
+  type parameter, typed by the bound's requirement, and the struct's member
+  at the application's arguments on a struct; a member no bound requires is
+  `TypeError::NoTraitAttribute`. `infer_member` (`indexing.rs`) records a
+  runtime read through `read_type_member` as `SemanticAdjustment::ParamValue`,
+  and `eval_associated_ct` reads one in a compile-time position. Each
+  struct's value members cross the waist as
+  `ConformanceFacts::associated_values` → `MirStructDeclaration::associated_values`
+  (`Checker::conformance_facts`, `traits.rs`), and `native::mono` answers
+  the node per instance (`type_member_answer`, `mono/symbolic.rs`, over
+  `StructShape::values`).
 - `Self.e.rows` in a compile-time position is `ParamKind::Field { base, name }`
   (`mojito-types/src/param_expr.rs`, `ParamContext::field`, text
   `param_field`), built by `Checker::struct_value_field`

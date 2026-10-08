@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	541
+# swept-count	542
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -517,6 +517,7 @@ assets/type_error/template_where_instance_violated.mojo	compile-reject	agree	err
 assets/type_error/trait_comptime_member.mojo	compile-reject	agree	error: 'Box[T]' does not implement all requirements for 'HasElement'
 assets/type_error/trait_requirement_collector_convention.mojo	compile-reject	agree	error: 'C' does not implement all requirements for 'Eater'
 assets/type_error/trait_requirement_collector_missing.mojo	compile-reject	agree	error: 'Bad' does not implement all requirements for 'Taker'
+assets/type_error/trait_value_member_not_required.mojo	compile-reject	agree	error: 'HasK' value has no attribute 'Z'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
 assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[Int]' value to 'String'
 assets/type_error/tstring_concat.mojo	compile-reject	agree	error: 'TString' does not implement the '__add__' method

@@ -306,10 +306,12 @@ impl LayoutOracle {
     }
 }
 
-/// A struct's own parameters, and its associated types and fields over them.
+/// A struct's own parameters, and its associated types, compile-time value
+/// members, and fields over them.
 struct StructShape {
     param_decls: Vec<ParamDecl>,
     members: Vec<(String, Ty)>,
+    values: Vec<(String, ParamExpr)>,
     fields: Vec<(String, Ty)>,
 }
 

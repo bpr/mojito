@@ -681,6 +681,7 @@ assets/ok/struct_generator_vector_value.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_instance_clone_unreached.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
+assets/ok/struct_value_member_runtime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_pack_method_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
@@ -844,6 +845,7 @@ assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
+assets/ok/trait_value_member_through_type_param.mojo	main	exe-differential	sanitized
 assets/ok/trait_witness_renames_parameter.mojo	main	exe-differential	sanitized
 assets/ok/traits.mojo	main	exe-differential	sanitized
 assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	sanitized
