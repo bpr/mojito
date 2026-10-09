@@ -84,84 +84,6 @@ pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedP
     )
 }
 
-/// Validate every compile-time control-flow construct of a prepared source
-/// program before elaboration selects an arm or unrolls a loop.
-///
-/// Each function or method body containing a `comptime if`/`comptime for`
-/// is checked once with its declaration's parameters left symbolic: every
-/// condition must be a compile-time `Bool`, every arm and loop body is
-/// checked in its own scope, and no arm is ever dropped unchecked. A body
-/// holding a `rebind` is checked the same way: its target is taken on faith
-/// here, and asserted per instance by the elaborator, or on each clone of a
-/// body still stubbed (`rebind::rebind_keyed_bodies`, scanned before the
-/// erasure removes the calls). Every method body of a struct keyed on a
-/// vector value (`AHasher[key]`) is checked too, since each
-/// per-instantiation clone of its keyed members derives from the verdict
-/// given here; one this check cannot type gets no verdict, and its clones
-/// keep their own check. Other bodies are declared (so the
-/// validated bodies can call them) but not checked here — the executable
-/// check covers them.
-///
-/// Validation runs the abstract destruction check over the bodies it checked
-/// (`explicit_destroy::DestroyScope::ValidatedTemplates`): a compile-time-keyed
-/// template is replaced by a trapping stub before the executable check, so this
-/// is the only place its abandoned values are seen with `T` symbolic.
-///
-/// Validation produces no other checked facts: the checker it runs is
-/// discarded, so nothing recorded for an untaken arm can reach lowering. A body
-/// reading a reflection handle keeps its per-instantiation check.
-///
-/// A body keyed on a variadic pack, or reading `reflect[T]` over a
-/// parameter, is validated with the element at a symbolic index opaque
-/// (`Checker::opaque_element`). Where that has no rule — a pack forwarded to
-/// another callee — the one body gets no verdict
-/// (`Checker::symbolic_verdict`) and the run goes on.
-pub fn validate_comptime_templates(stmts: &[Stmt]) -> Result<(), TypeError> {
-    validate_comptime_templates_into(
-        stmts,
-        &mut mojito_checked::templates::TemplateCatalog::new(false),
-    )
-}
-
-/// [`validate_comptime_templates`] over a compilation's template catalog,
-/// which keeps the run's verdict for the elaborator.
-pub fn validate_comptime_templates_into(
-    stmts: &[Stmt],
-    catalog: &mut mojito_checked::templates::TemplateCatalog,
-) -> Result<(), TypeError> {
-    let _validate = timing::span("comptime_validation");
-    let mut expanded = expand_trait_defaults(stmts)?;
-    let syntax_origins = mojito_ast::ast::rekey_syntax(&mut expanded);
-    let rebind_keyed = rebind::rebind_keyed_bodies(&expanded);
-    count_template_classes(&expanded, &rebind_keyed);
-    let rebind_targets = erase_rebinds(&mut expanded);
-    let mut checker = Checker::new();
-    checker.source_validation = true;
-    checker.rebind_targets = rebind_targets;
-    checker.rebind_keyed_bodies = rebind_keyed;
-    checker.syntax_origins = syntax_origins;
-    checker.param_context = catalog.param_context().clone();
-    checker.template_catalog.replace(std::mem::take(catalog));
-    let body_check = checker.check_program(&expanded);
-    checker
-        .template_catalog
-        .borrow_mut()
-        .set_applied_constants(checker.comptime_applied.clone());
-    *catalog = checker.template_catalog.take();
-    body_check.and_then(|()| {
-        with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
-        run_explicit_destroy(
-            &checker,
-            &expanded,
-            &explicit_destroy_types(&checker),
-            crate::explicit_destroy::DestroyScope::ValidatedTemplates {
-                rebind_keyed: &checker.rebind_keyed_bodies,
-                no_verdict: &checker.no_verdict_bodies,
-            },
-        )
-    })
-}
-
 /// [`check_program`] over a template catalog.
 ///
 /// A generic body this check infers is retained there, and a clone the
@@ -315,32 +237,11 @@ fn check_program_carrying(
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
         let explicit_destroy_types = explicit_destroy_types(&checker);
-        run_explicit_destroy(
-            &checker,
-            &expanded,
-            &explicit_destroy_types,
-            crate::explicit_destroy::DestroyScope::Program,
-        )?;
+        run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?;
         explicit_destroy_types
     };
     let conformances = checker.conformance_facts();
     Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
-}
-
-/// The source-validation body gate, which `explicit_destroy` reuses to walk
-/// exactly the bodies a validation run checked.
-pub(crate) fn validates_comptime_body(
-    enclosing: &[mojito_ast::ast::TypeParam],
-    type_params: &[mojito_ast::ast::TypeParam],
-    body: &[Stmt],
-    rebind_keyed: &HashSet<SourceSpan>,
-) -> bool {
-    comptime_validation::validates_body(
-        enclosing,
-        type_params,
-        body,
-        rebind::body_keys_rebind(body, rebind_keyed),
-    )
 }
 
 /// A declaration-only view of the checker's conformance registry for phases
@@ -485,6 +386,13 @@ pub struct Checker {
     /// source-order walk removes each entry and runs only the completion phase
     /// (conformance verification and method bodies).
     predeclared_structs: HashSet<String>,
+    /// The module constants the declaration pass bound ahead of their
+    /// statements, which a body before the statement reads; the statement's
+    /// own binding replaces the pre-bound one.
+    predeclared_constants: HashSet<String>,
+    /// The object of the field read being inferred: a compile-time value
+    /// read there is projected, never materialized whole.
+    projected_object: RefCell<Option<SourceSpan>>,
     /// Top-level traits registered by `check_program`'s pre-pass; the walk
     /// removes each entry instead of re-registering.
     predeclared_traits: HashSet<String>,
@@ -526,7 +434,6 @@ pub struct Checker {
     /// control flow is checked with every arm visited and the declaration's
     /// parameters symbolic, and a module-level function or method body
     /// without such a construct is declared but not checked.
-    source_validation: bool,
     /// Per-scope function-local `comptime NAME = <type>` aliases bound while
     /// validating a body (the elaborator substitutes them before the
     /// executable check ever runs). Consulted ahead of `tparams`.
@@ -575,10 +482,8 @@ pub struct Checker {
     /// calls. Source validation checks exactly these beside the
     /// compile-time-keyed ones; empty in the executable check, which sees
     /// only clones.
-    rebind_keyed_bodies: HashSet<SourceSpan>,
     /// The bodies this validation run reached no verdict on
     /// (`symbolic_verdict`), keyed at the body's first statement.
-    no_verdict_bodies: FactSet<SourceSpan>,
     /// The positional collectors declared `var *args`: forwarding one as a
     /// whole needs the `^`, and a read one cannot be transferred.
     owned_packs: HashSet<mojito_types::origin::OwnerId>,
@@ -1018,6 +923,8 @@ impl Checker {
             overload_sets: mojito_symbol::symbol::OverloadSets::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
+            predeclared_constants: HashSet::new(),
+            projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
             traits: HashMap::new(),
             tparams: Vec::new(),
@@ -1028,7 +935,6 @@ impl Checker {
             self_decls: Vec::new(),
             assumed_conformances: Vec::new(),
             assumed_propositions: Vec::new(),
-            source_validation: false,
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             local_comptime_parameters: vec![HashMap::new()],
@@ -1039,8 +945,6 @@ impl Checker {
             lifted_applications: RefCell::new(Vec::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),
-            rebind_keyed_bodies: HashSet::new(),
-            no_verdict_bodies: FactSet::default(),
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
             owned_collectors: HashMap::new(),
@@ -2442,14 +2346,11 @@ fn explicit_destroy_types(
 }
 
 /// Run the explicit-destruction analysis over `program` with the facts
-/// `checker` recorded for it. The two callers differ only in scope: the
-/// executable check walks the whole elaborated program, source validation
-/// walks the template bodies it checked symbolically.
+/// `checker` recorded for it.
 fn run_explicit_destroy(
     checker: &Checker,
     program: &[Stmt],
     struct_types: &HashMap<String, mojito_checked::checked::ExplicitDestroyInfo>,
-    scope: crate::explicit_destroy::DestroyScope<'_>,
 ) -> Result<(), TypeError> {
     let binding_types = checker.binding_types.borrow();
     let comprehension_bindings = checker.comprehension_bindings.borrow();
@@ -2501,7 +2402,6 @@ fn run_explicit_destroy(
             lent: (**checker.borrowed_read_call_places.borrow()).clone(),
             linear_temporaries,
         },
-        scope,
     )
 }
 

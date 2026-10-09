@@ -756,11 +756,16 @@ regions. Later forms may bump it again (decision D5).
 
 ### P4 — Check once, then elaborate
 
-Landed in part on 2026-10-08: the driver runs one elaboration and one
-check, the discovery rounds, their request plumbing, and the clone census
-are deleted, and a checker-selected scalar `range` is spelled as its
-construction in the same check. The bullets below that are still open are
-R9's remainder on the roadmap.
+Landed on 2026-10-08 and 2026-10-09 (roadmap R9): the driver runs one
+elaboration and one check, the discovery rounds, their request plumbing,
+and the clone census are deleted, a checker-selected scalar `range` is
+spelled as its construction in the same check, source validation is merged
+into the one check, every function body keeps its compile-time regions to
+MIR, module constants are parameter expressions, and the AST CTFE route is
+deleted with the `mojito-vm → mojito-checker` and `mojito-comptime →
+mojito-vm` edges. What the bullets below describe is how the code stands;
+R516 and R517 name the residues (dictionary and set display constants,
+non-scalar closed constants).
 
 - With no clone left to check, the executable check runs once on the linked
   source, and source validation and the executable check become one process.

@@ -350,6 +350,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     };
     let mut invariant_errors = Vec::new();
     let mut toplevel: Vec<Stmt> = Vec::new();
+    let mut constants: Vec<Stmt> = Vec::new();
     let overloads = {
         let _scan = timing::span("overloads.scan");
         mojito_symbol::symbol::OverloadSets::scan(program)
@@ -992,9 +993,11 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             }
             // A `trait`'s requirements have no body (`...`); nothing to lower yet.
             StmtKind::Trait { .. } => {}
-            // A generic comptime alias is a pure type declaration the checker
-            // consumed; like a struct or trait it has no runtime form.
-            StmtKind::Comptime { type_params, .. } if !type_params.is_empty() => {}
+            // A module `comptime` declaration has no runtime form, as
+            // upstream's `lit.alias.decl` has none: a body's read of it is
+            // the parameter value the check recorded, and an application it
+            // makes is lifted from the toplevel below.
+            StmtKind::Comptime { .. } => constants.push(s.clone()),
             _ => toplevel.push(s.clone()),
         }
     }
@@ -1017,6 +1020,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
             &mut thunks,
         );
         thunks.request_applications(checked, &toplevel);
+        thunks.request_applications(checked, &constants);
         thunks.lower(checked, &overloads, &mut functions, &mut declarations);
         function
     };
@@ -1525,7 +1529,15 @@ impl ComptimeThunks {
             {
                 continue;
             }
-            let Some(ty) = application.meta().as_value().cloned() else {
+            // A display constant's function returns the display at its own
+            // type, whatever list the application denotes.
+            let Some(ty) = application.meta().as_value().cloned().or_else(|| {
+                checked
+                    .expression_ids_at(&expression.source_span())
+                    .iter()
+                    .filter_map(|id| checked.expression(*id))
+                    .find_map(|node| node.ty.clone())
+            }) else {
                 continue;
             };
             let declared = |scope: &EnclosingBinders| {
@@ -2464,14 +2476,21 @@ impl Flatten<'_> {
         // A materialized borrow-source temporary: store it in its hidden owned
         // slot (registered under the checker-minted owner) and hand back a
         // fresh handle to that slot — the auto-borrow a `ref` binding of the
-        // temporary would produce.
-        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
+        // temporary would produce. A module constant read as a receiver is
+        // materialized the same way, under the constant's owner.
+        let constant = self.constant_param_value(expression);
+        let owner = mojito_checked::checked::materialized_borrow_owner(
             &self.checked_adjustments(expression),
-        ) {
+        )
+        .or_else(|| constant.then(|| self.checked_owner(expression)).flatten());
+        if let Some(owner) = owner {
             let variable = if let Some(variable) = self.owner_vars.get(&owner).copied() {
                 variable
             } else {
-                let value = self.expr_unconverted(expression);
+                let value = match self.param_value(expression).filter(|_| constant) {
+                    Some(value) => self.param_value_register(expression, value),
+                    None => self.expr_unconverted(expression),
+                };
                 let ty = self
                     .f
                     .reg_types
@@ -2787,6 +2806,17 @@ impl Flatten<'_> {
     fn expression_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
         if let Some(place) = self.materialized_parameter_place(expression) {
             return place;
+        }
+        // A module constant read where a place is needed (a method's
+        // receiver) is materialized into a hidden slot of its own.
+        if self.constant_param_value(expression)
+            && let Some(value) = self.param_value(expression)
+            && let Some(owner) = self.checked_owner(expression)
+        {
+            let value = self.param_value_register(expression, value);
+            if let (_, Some(place)) = self.materialize_borrow_slot(expression, owner, value) {
+                return place;
+            }
         }
         let checked_var = self
             .checked_owner(expression)

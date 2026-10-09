@@ -10,116 +10,53 @@ end move it.
 
 ## Today
 
-Since roadmap R7 (2026-10-07), an evaluation whose consumer sits below the
-check takes the request path: a local `comptime` binding, a `comptime if`
-condition, a `comptime for` range bound, or a `comptime(...)` operand in a
-function body that applies a callable, and a body's value read of a module
-constant whose initializer applies one, annotated or not
-(`comptime/requests.rs`). One predicate draws that line for the elaborator
-and the checker alike (`mojito_checker::checker::applies_callable`, over
-each phase's `CalleeOracle`): a call of a module `def`, generic over a type
-or not, a struct construction, a static method, or a method or subscript of
-a dictionary or set display, anywhere under a value root — a display, a
-tuple, and a subscript included. The elaborator spells a dictionary or set
-binding a method reads by its display (`Elab::spelled_keyed_reads`), so the
-request constructs the collection itself. The AST route below is entered
-only by a reader above the check — a type, a condition or bound the
-elaborator decides itself, another constant, a VM-CTFE subprogram's
-retained declaration — which forces a pending module constant once
-(`Elab::force_constant`); each entry refuses an evaluation of a body
-(`Elab::eval_in_body`). A module constant nothing forces is never
-evaluated above MIR, though source validation types its initializer.
+Since roadmap R9 (2026-10-09) there is one path: every compile-time call is
+bound by the one check and evaluated by the elaborator below MIR. An
+evaluation whose consumer sits below the check — a local `comptime`
+binding, a `comptime if` condition, a `comptime for` range bound or
+sequence, a `comptime(...)` or `materialize[...]()` operand in any function
+body, plain or generic — is a request: one predicate draws that line for
+the elaborator and the checker alike
+(`mojito_checker::checker::applies_callable`, over each phase's
+`CalleeOracle`): a call of a module `def`, generic over a type or not, a
+struct construction, a static method, or a method or subscript of a
+dictionary or set display, anywhere under a value root. The check binds
+the request as a parameter expression (`ParamKind::Apply`, or the
+application of a thunk MIR lifts for an expression that is not a bare
+call), and `native::mono` evaluates it on first demand
+(`Specializer::demand_application`), running the instance's reference
+closure as concrete MIR on the VM under one fuel budget per compilation
+(`Specializer.fuel`).
 
-Since roadmap R507 (2026-10-08) a module constant's initializer root does
-not matter: a display, a tuple, or a subscript that applies a callable is
-deferred like a call (`Elab::defer_constant`). The rewrite of a body's
-read extends the request over the read's `Member` chain, so `q0.s` is
-`comptime(<q0>.s)`, a compile-time projection as at the pin; a subscript,
-a method call, or a whole-value read stays outside and materializes the
-value. The checker rejects a `comptime(...)` whose value is not
-`ImplicitlyCopyable` with the pin's crossing message
-(`Checker::infer_template_comptime`). The lifted thunk returns its
-initializer as a `return` operand: a projection or a reference result of a
-`Copyable` value is copied out of the temporaries the thunk drops
-(`Checker::copy_compile_time_result`). A local `comptime` binding that
-subscripts or calls a method of a pending constant spells it by its
-initializer (`Elab::spelled_value_reads`).
+A module constant follows D3 below: the elaborator folds a closed
+initializer, marks one that applies a callable, asks a layout, or reads
+such a constant (`CtMarker::Applied`) and keeps its declaration as written,
+and the check classifies it in its declaration pass — a folded `Int`
+(`Checker.comptimes`), an application (`Checker::applied_constant_expr`,
+`comptime_applied`, now with the callee's declared result type), a literal
+(`comptime_literals`) — or lifts its initializer as the function
+`$comptime$<name>$module`, the same name in every pass
+(`Checker::module_lifted_application`; a list or tuple display's
+application is typed as a parameter list, so `XS[0]` is a `ListGet` over
+it). A body's read of the constant is a `SemanticAdjustment::ParamValue`
+fact (`Checker::module_constant_value`) lowered as `Const::Param`
+(`identifier_read`; a receiver or place position materializes it into a
+hidden slot, `expression_place_root`, `reference_handle`,
+`lower_call_receiver`), the toplevel lowers no `comptime` declaration, and
+`ComptimeThunks::request_applications` lifts the module-scope thunks from
+the declarations alone. A dictionary or set display constant has no
+parameter-expression form yet (R516): the elaborator spells its display
+where a body reads it (`Elab::spell_applied_displays`,
+`comptime/requests.rs`, `comptime(<display>)` for a runtime value read).
 
-The AST route evaluates a compile-time call above the check, in
-`crates/mojito-comptime`, in the one elaboration of a compilation (since
-2026-10-08 the driver elaborates and checks once; no check feeds a second
-elaboration):
-
-```text
-src/compiler.rs  compile_linked
-  prepare -> validate_comptime_templates -> elaborate_prepared
-  -> check_program_with_templates
-  -> lower to MIR -> ownership -> drops -> native::mono::specialize -> VM
-
-comptime/elab.rs  Elab::stmt / comptime if / comptime for / resolve_ct_arg / …
-  -> comptime/eval.rs  Elab::eval
-     -> comptime/ctfe.rs  ctfe_call | ctfe_struct_entry | ctfe_generic_def_entry | ctfe_expr_entry
-        1. vm_ctfe_safe_fn        effect walk over the AST (print/input reject)
-        2. vm_ctfe_declaration_closure, vm_ctfe_subprogram
-                                  clone the needed defs, structs, traits, literal
-                                  constants from the prepared program; stub
-                                  compile-time-keyed methods; mint hasher leaves
-        3. [expr entry] check_program_with_templates on a `$ctfe$probe` whose
-                                  body binds the expression, read its type,
-                                  source_type_from_ty to spell it back
-        4. VmBackend::run_function_value(&[Stmt], …)   crates/mojito-vm/src/backend/vm.rs
-                                  check_program_with_templates again
-                                  -> mir::lower_checked_program -> elaborate_drops_program
-                                  -> verify -> call_function on the ERASED body
-        5. freeze_vm_result -> VmBackend::freeze            Value -> CtValue
-```
-
-What that costs, beyond the checker run inside the elaborator that P4
-cannot keep:
-
-- The subprogram is checked twice on the expression path and once on the
-  others. Nothing is cached.
-- The VM runs the erased body. A value parameter is reified into the frame
-  (`value_params`), so `rep[n - 1]()` under a runtime `if` *runs* where the
-  pin expands without end (`conformance/probes/ctfe_plain_keyed_recursion.mojo`).
-- The subprogram cannot mint an instance: every compile-time-keyed `def` is
-  excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap R132)
-  and a keyed method is a trap stub
-  (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, R131).
-- Fuel is `const FUEL: usize = 100_000` in `comptime.rs`, one counter per
-  elaboration beside the elaborator's own per-compilation counter, burned
-  by `Elab::burn` per entry and per `comptime for` iteration and by the VM
-  per instruction, frame, and block (`burn_ctfe`).
-- The effect rule is `vm_ctfe_effectful_builtin`: `print` and `input`, plus
-  a nested `struct`, `trait`, or `import`. Raising is caught only by the
-  probe's non-raising signature, and only on the expression path.
-- Crossing: `ct_to_vm` (`comptime.rs`) admits scalars, literals, `Bool`,
-  `Str`, tuples, compile-time lists, fieldwise structs, SIMD values, and
-  `DType`; `vm_to_ct` and `freeze_vm_result` (`ctfe.rs`) bring the same set
-  back, a nominal `String` as `Str`, and reject pointer-backed values.
-
-The crate graph the route runs on:
-
-```text
-mojito-vm ────────── mojito-checker, mojito-mir, mojito-analysis   (re-checks; lowers)
-    ▲
-mojito-native ────── mojito-mir, mojito-checked                     (no VM, no checker)
-mojito-comptime ──── mojito-vm, mojito-checker                      (CTFE runs VmBackend)
-    ▲
-mojito (root) ────── everything; calls native::mono for both backends
-```
-
-`mojito-native` and `mojito-vm` do not depend on each other.
-`native::mono::Specializer` (`crates/mojito-native/src/native/mono.rs`)
-holds the only worklist: `queue: VecDeque<(InstanceKey, Bindings)>`,
-`instances: Vec<(InstanceKey, String)>`, `output_functions`. Its identity is
-`InstanceKey { template, arguments: Vec<InstanceArg>, owner }` with origins
-erased, named by `instance_symbol`. Its one bound is `output_functions.len()
->= 4096` ("polymorphic recursion exceeded the 4096-instance budget"). It has
-no state enum (a key is pending while queued, done when output), no VM, no
-compile-time entry, and `ParamKind` has no node for a call: a parameter
-expression that applies a function is folded by the AST elaborator before
-MIR exists.
+The elaborator above the check (`crates/mojito-comptime`) folds closed
+values only — literals, operators, displays, type and reflection facts, a
+generic alias body that applies no callable — and refuses every call
+(`eval.rs:not_evaluated_here`). The AST route, `VmBackend::run_function_value`,
+the pending/forced constants, and the `mojito-vm → mojito-checker` and
+`mojito-comptime → mojito-vm` edges are gone. A generic `comptime` alias
+body that applies a callable is the one shape the pin evaluates that
+Mojito now refuses (R518).
 
 ## Upstream
 
@@ -316,19 +253,14 @@ The boundary:
   that type; its value is `Apply(thunk)`, symbolic, equal by structure, so
   `SIMD[DType.float32, C]` matches itself and not `SIMD[DType.float32, 8]`,
   as at the pin. The elaborator evaluates it on first demand. Landed
-  2026-10-03 with the register types over parameter expressions: source
-  validation builds the application (`Checker::applied_constant_expr`), the
-  catalog carries it to the executable check, which keeps it as the
-  constant's identity with the folded value on the node
-  (`ParamKind::Apply::evaluated`), and the AST elaborator keeps the
-  constant's name in every type argument (`CtMarker::Applied`).
-- Today's early folding of applied constants by the AST elaborator stays as
-  an implementation until the P4 entry deletes the route. The folded value
-  rides on the application node, so a type over the constant is still the
-  application: `SIMD[DType.float32, 8]` does not convert to
-  `SIMD[DType.float32, f(7)]` (`assets/type_error/comptime_applied_constant_mismatch.mojo`).
-  What the AST route cannot evaluate — a layout query in a constant — waits
-  for the request path.
+  2026-10-09 (R9): the one check builds the application
+  (`Checker::applied_constant_expr`, any declared result type; a display or
+  a method chain as a lifted `$comptime$<name>$module`), the elaborator
+  above the check marks the constant (`CtMarker::Applied`) and keeps its
+  name everywhere, and a body's read is a `ParamValue` fact. Nothing is
+  folded early any more: `comptime D = g(A) * h(A)` is `g(2) * h(2)` in a
+  type (the R139 case), and a layout query is `Apply(size_of, T)` answered
+  under the target.
 - A struct's associated `comptime` member is not a module constant; it is
   a member of the generator, evaluated under the instance's bindings as
   today.
@@ -346,7 +278,7 @@ The boundary:
   (`ComptimeThunks`, `lower_expression_thunk`, shared with `lower_default`),
   with a `comptime if` condition that applies a function as the first
   consumer (`Specializer::demand_application`). A layout query in a module
-  constant stays symbolic through elaboration (`CtMarker::Layout`) and is
+  constant stays symbolic through elaboration (`CtMarker::Applied`) and is
   answered by `Bindings::layout` (`LayoutOracle`) in `eval_ct`. `Apply`
   crosses MIR text since schema 1.14, the branch since 1.15.
 - **Roadmap R7 landed (2026-10-07).** A demand materializes the thunk's
@@ -363,11 +295,10 @@ The boundary:
   instance-budget stop of R162 hold on the request path; the erased oracle
   evaluates an application constant by calling the function
   (`VmBackend::erased_application`).
-- **Roadmap R9** (P4) landed its driver half on 2026-10-08: one
+- **Roadmap R9** (P4) landed on 2026-10-08 and 2026-10-09: one
   elaboration and one check per compilation, no discovery rounds and no
-  per-round fuel reset. What remains of it is filed again under R9: the AST
-  route's deletion (`run_function_value` goes with it), module constants as
-  parameter expressions (D3, the early folding of applied constants), and
-  plain-body compile-time regions kept to MIR, each of which the one-pass
-  check needs before source validation and the executable check can merge.
-  The instance budget is reachable without exhausting memory (2026-10-03).
+  per-round fuel reset; then plain-body compile-time regions kept to MIR,
+  module constants as parameter expressions (D3), source validation merged
+  into the one check, and the AST route deleted with
+  `run_function_value`. The instance budget is reachable without
+  exhausting memory (2026-10-03). Residues: R516, R517, R518, R519.

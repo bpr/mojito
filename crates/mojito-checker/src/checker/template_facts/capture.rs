@@ -123,11 +123,7 @@ impl Checker {
             );
         self.template_catalog.borrow_mut().record(CheckedTemplate {
             id: site.template_id.clone(),
-            producer: if self.source_validation {
-                TemplateProducer::SourceValidation
-            } else {
-                TemplateProducer::ExecutableCheck
-            },
+            producer: TemplateProducer::ExecutableCheck,
             param_decls: site.decls.to_vec(),
             facts,
             coverage,

@@ -84,7 +84,6 @@ impl Elab<'_> {
             program: out,
             def_traces: Vec::new(),
             generated: super::GeneratedDeclarations::default(),
-            ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
         })
     }
 
@@ -110,13 +109,6 @@ impl Elab<'_> {
         consts: &HashMap<String, CtValue>,
     ) -> Result<(), ComptimeError> {
         while let Some(job) = mono.queue.pop_front() {
-            self.burn().map_err(|_| {
-                ComptimeError::NotComptime(format!(
-                    "specialization quota exceeded while instantiating '{}' requested at {}; possible unbounded generic recursion",
-                    mangle(&job.orig, &job.vals).unwrap_or_else(|_| job.orig.clone()),
-                    job.site
-                ))
-            })?;
             let template = self.specializable[job.orig.as_str()];
             let mut spec =
                 self.generate_def_spec(template, &job.orig, job.output_name.clone(), &job.vals)?;
@@ -293,13 +285,7 @@ impl Elab<'_> {
         // select/unroll against the concrete arguments.
         let mut elaborated = self.block(body, &mut env, true)?;
         spell_value_pack_reads(&mut elaborated, &value_pack_values);
-        let mut final_body = materialize_block(
-            elaborated,
-            &subs,
-            &self.struct_names,
-            &self.applied_constants(),
-            &|_| None,
-        );
+        let mut final_body = materialize_block(elaborated, &subs, &self.struct_names);
         fold_pack_uses(&mut final_body, &type_pack_values);
         for parameter in &mut specialized_params {
             if let Some(default) = &mut parameter.default {

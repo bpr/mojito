@@ -130,10 +130,13 @@ impl Checker {
         mutable: bool,
     ) -> Result<(), TypeError> {
         let nested_scope = self.scopes.len() > 1;
+        let predeclared = !nested_scope && self.predeclared_constants.remove(name);
         let scope = self.scopes.last_mut().ok_or_else(|| {
             TypeError::InvariantViolation("checker scope stack is empty".to_string())
         })?;
-        if let Some(existing) = scope.get_mut(name) {
+        if let Some(existing) = scope.get_mut(name)
+            && !predeclared
+        {
             if let Some(mut candidates) = overload_candidates(existing, &ty) {
                 if nested_scope {
                     return Err(TypeError::Unsupported("overloaded nested def".to_string()));
@@ -238,18 +241,7 @@ impl Checker {
     /// cross to runtime: the executable check, outside every compile-time
     /// position. Source validation leaves the crossing to the elaborator.
     pub(super) fn crosses_to_runtime(&self) -> bool {
-        !self.source_validation && self.comptime_positions.get() == 0
-    }
-
-    /// Record, under source validation, that the innermost scope's `name` is
-    /// a compile-time binding: the elaborator folds its uses before the
-    /// executable check.
-    pub(super) fn mark_compile_time_binding(&mut self, name: &str) {
-        if self.source_validation
-            && let Some(bindings) = self.compile_time_bindings.last_mut()
-        {
-            bindings.insert(name.to_string());
-        }
+        self.comptime_positions.get() == 0
     }
 
     pub(super) fn is_binding_mutable(&self, name: &str) -> bool {

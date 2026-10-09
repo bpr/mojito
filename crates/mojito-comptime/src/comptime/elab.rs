@@ -4,16 +4,6 @@
 use super::*;
 
 impl Elab<'_> {
-    pub(super) fn burn(&self) -> Result<(), ComptimeError> {
-        let f = self
-            .fuel
-            .get()
-            .checked_sub(1)
-            .ok_or(ComptimeError::QuotaExceeded)?;
-        self.fuel.set(f);
-        Ok(())
-    }
-
     /// Elaborate a block, resolving `comptime` constructs. `in_fn` is true inside a
     /// function/method body (so a comptime constant there is *not* module-level).
     pub(super) fn block(
@@ -111,36 +101,6 @@ impl Elab<'_> {
         })
     }
 
-    /// The module constants whose initializer applies a function, as source
-    /// validation classified them: each keeps its name in a type argument
-    /// of the elaborated program and folds everywhere else.
-    pub(super) fn applied_constants(&self) -> HashSet<String> {
-        self.templates.applied_constants().keys().cloned().collect()
-    }
-
-    /// The type a module constant's recorded initializer asks the layout of
-    /// (`comptime S = size_of[Pair]()`), which only the elaborator answers.
-    fn applied_layout(&self, name: &str) -> Option<Ty> {
-        let applied = self.templates.applied_constants().get(name)?;
-        let mojito_types::param_expr::ParamKind::Apply { function, args, .. } = applied.kind()
-        else {
-            return None;
-        };
-        if function != mojito_types::param_expr::SIZE_OF_FUNCTION {
-            return None;
-        }
-        match args.as_slice() {
-            [subject] => match subject.kind() {
-                mojito_types::param_expr::ParamKind::TypeShape(ty) => Some((**ty).clone()),
-                mojito_types::param_expr::ParamKind::Constant(CtValue::Type(ty)) => {
-                    Some((**ty).clone())
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
     pub(super) fn stmt(
         &self,
         stmt: &Stmt,
@@ -170,25 +130,44 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                if !in_fn && self.keep_layout_constant(stmt, name, env, out) {
-                    return Ok(());
-                }
                 if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
                     return Ok(());
                 }
-                // A module constant that applies a callable waits for its
-                // first demand.
-                if !in_fn
-                    && self.defer_constant(name, ty.as_ref(), !where_clauses.is_empty(), value, env)
-                {
-                    out.push(stmt.clone());
+                // A module constant whose initializer applies a callable,
+                // asks a layout, or reads such a constant is the parameter
+                // expression the check binds (decision D3): it has no value
+                // here, and the elaborator below MIR evaluates it on first
+                // demand.
+                if !in_fn && self.applied_initializer(value, env) {
+                    let marker = CtValue::Marker(CtMarker::Applied);
+                    self.top_consts
+                        .borrow_mut()
+                        .insert(name.clone(), marker.clone());
+                    env.insert(name.clone(), marker);
+                    // A display is spelled where it is read, an applied
+                    // display it reads spelled inside it.
+                    let value = self.spell_applied_displays(value);
+                    if matches!(
+                        value.kind,
+                        ExprKind::ListLit(_) | ExprKind::TupleLit(_) | ExprKind::BraceLit(_)
+                    ) {
+                        self.applied_displays
+                            .borrow_mut()
+                            .insert(name.clone(), value.clone());
+                    }
+                    out.push(rebuilt(
+                        stmt,
+                        StmtKind::Comptime {
+                            name: name.clone(),
+                            type_params: type_params.clone(),
+                            ty: ty.clone(),
+                            where_clauses: where_clauses.clone(),
+                            value,
+                        },
+                    ));
                     return Ok(());
                 }
-                let mut v = if in_fn {
-                    self.eval_in_body(value, env)?
-                } else {
-                    self.eval(value, env)?
-                };
+                let mut v = self.eval(value, env)?;
                 // A collection display takes the binding's annotation as its
                 // spelled type; an empty `{}` has no other typing.
                 if matches!(v, CtValue::Dict { .. } | CtValue::Set { .. }) {
@@ -223,6 +202,13 @@ impl Elab<'_> {
                 // checker's own folder can't evaluate, becomes usable as a value
                 // parameter and materializes cleanly).
                 env.insert(name.clone(), v);
+                // A `TypeList` value has no literal form: the binding stays
+                // for the check, which reads a kept condition's proposition
+                // over it (`tl.contains[Int]()`) from its initializer.
+                if in_fn && env[name].typelist_elements().is_some() {
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 // Type and reflection handles have no runtime representation,
                 // and a collection is not implicitly copyable (it crosses only
                 // through `materialize[...]()`). Keep those only in the
@@ -243,23 +229,17 @@ impl Elab<'_> {
                     ));
                 }
             }
-            StmtKind::ComptimeIf { branches, orelse } => {
-                if self.keep_template_comptime_if(stmt, env, in_fn, out)? {
-                    return Ok(());
-                }
-                for (cond, body) in branches {
-                    if self.eval(cond, env)?.as_bool("comptime if condition")? {
-                        splice_selected_block(stmt, self.block(body, env, in_fn)?, out);
-                        return Ok(());
-                    }
-                }
-                if let Some(body) = orelse {
-                    splice_selected_block(stmt, self.block(body, env, in_fn)?, out);
+            // A module-scope `comptime if` or `comptime for` has no
+            // declaration form: it passes through for `validate_module_scope`
+            // to reject.
+            StmtKind::ComptimeIf { .. } => {
+                if !self.keep_template_comptime_if(stmt, env, in_fn, out)? {
+                    out.push(stmt.clone());
                 }
             }
-            StmtKind::ComptimeFor { var, iter, body } => {
+            StmtKind::ComptimeFor { .. } => {
                 if !self.keep_template_comptime_for(stmt, env, in_fn, out)? {
-                    self.unroll_comptime_for(stmt, var, iter, body, env, in_fn, out)?;
+                    out.push(stmt.clone());
                 }
             }
             StmtKind::VarDecl { name, ty, value } => {
@@ -869,6 +849,20 @@ impl Elab<'_> {
         mojito_checker::checker::applies_callable(expression, self)
     }
 
+    /// Whether a module constant's initializer is an application the check
+    /// binds ([`CtMarker::Applied`]): it applies a callable, asks a layout
+    /// (`size_of[T]()`), or reads an applied constant.
+    fn applied_initializer(&self, expression: &Expr, env: &HashMap<String, CtValue>) -> bool {
+        let applied: HashSet<String> = env
+            .iter()
+            .filter(|(_, value)| matches!(value, CtValue::Marker(CtMarker::Applied)))
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.applies_callable(expression)
+            || asks_layout(expression)
+            || (!applied.is_empty() && expression_names_any(expression, &applied))
+    }
+
     /// `expression` with each value binding of `env` that a method call
     /// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
     /// binding a subscript reads (`M["a"]`), spelled by its literal form,
@@ -883,7 +877,7 @@ impl Elab<'_> {
     ) -> Option<Expr> {
         struct Spell<'e> {
             env: &'e HashMap<String, CtValue>,
-            pending: HashMap<String, Expr>,
+            displays: &'e HashMap<String, Expr>,
             spelled: bool,
         }
 
@@ -905,19 +899,18 @@ impl Elab<'_> {
                     display.source.clone_from(&object.source);
                     **object = display;
                     self.spelled = true;
-                } else if !self.env.contains_key(name)
-                    && let Some(initializer) = self.pending.get(name)
-                {
-                    **object = super::requests::located(initializer.clone(), object);
+                } else if let Some(display) = self.displays.get(name) {
+                    **object = super::requests::located(display.clone(), object);
                     self.spelled = true;
                 }
             }
         }
 
         let mut spelled = expression.clone();
+        let displays = self.applied_displays.borrow();
         let mut spell = Spell {
             env,
-            pending: self.pending_expansions(),
+            displays: &displays,
             spelled: false,
         };
         mojito_ast::visit::walk_expr_mut(&mut spell, &mut spelled);
@@ -927,7 +920,7 @@ impl Elab<'_> {
 
 impl mojito_checker::checker::CalleeOracle for Elab<'_> {
     fn callee(&self, name: &str) -> mojito_checker::checker::Callee {
-        if self.fns.contains_key(name) {
+        if self.fns.contains(name) {
             mojito_checker::checker::Callee::Function
         } else if self.structs.contains_key(name) {
             mojito_checker::checker::Callee::Struct
@@ -1010,14 +1003,11 @@ fn fold_default_bindings(
         .collect()
 }
 
-/// Append the block elaboration kept of a compile-time statement — the arm a
-/// `comptime if` selected, or one unrolled copy of a `comptime for` body — to
-/// `out`. Each is a scope of its own, so a block that declares a binding is
-/// wrapped in one; a block that declares nothing is spliced as it is.
 impl Elab<'_> {
-    /// Elaborate a `def`'s or a method's body. A generic body is a template:
-    /// its binders are in scope for [`Self::keep_template_comptime_if`], so
-    /// a `comptime if` over them stays for the check and the elaborator. A
+    /// Elaborate a `def`'s or a method's body. Every body is a template over
+    /// its binders, a plain body over none: its binders are in scope for
+    /// [`Self::keep_template_comptime_binding`], and every `comptime if` and
+    /// `comptime for` stays for the check and the elaborator below MIR. A
     /// method's struct parameters (`struct_params`) are binders of its body
     /// as `Self.`-qualified names only, which is how a method reads them; a
     /// bare name equal to one is a module constant or a local.
@@ -1032,17 +1022,6 @@ impl Elab<'_> {
         // A body's local `comptime` bindings are its own: a later
         // declaration never reads them.
         let env = &mut env.clone();
-        // A body that binds a request is a template over no binders, so
-        // what reads the binding stays for the check too; so is one whose
-        // `comptime for` declares a nested `def` or lambda, a generator
-        // over the loop's index the elaborator instantiates per iteration.
-        if struct_params.is_empty()
-            && type_params.is_empty()
-            && !self.binds_request(body, env)
-            && !declares_in_comptime_for(body)
-        {
-            return self.block(body, env, true);
-        }
         // A pack's collector stands for the pack in a bound (`len(args)`),
         // so it is a binder of the body too.
         // A type pack is a binder under both spellings: `Ts` as the body
@@ -1067,28 +1046,6 @@ impl Elab<'_> {
         let body = self.block(body, env, true);
         self.template_binders.borrow_mut().pop();
         body
-    }
-
-    /// Keep a module constant whose initializer is a layout application
-    /// symbolic (`CtMarker::Layout`): the elaborator answers it under its
-    /// target, where the AST route cannot. Whether the statement was kept.
-    fn keep_layout_constant(
-        &self,
-        stmt: &Stmt,
-        name: &str,
-        env: &mut HashMap<String, CtValue>,
-        out: &mut Vec<Stmt>,
-    ) -> bool {
-        let Some(subject) = self.applied_layout(name) else {
-            return false;
-        };
-        let marker = CtValue::Marker(CtMarker::Layout(Box::new(subject)));
-        self.top_consts
-            .borrow_mut()
-            .insert(name.to_string(), marker.clone());
-        env.insert(name.to_string(), marker);
-        out.push(stmt.clone());
-        true
     }
 
     /// Keep a local `comptime` binding whose value names a binder of the
@@ -1142,7 +1099,7 @@ impl Elab<'_> {
             out.push(rebuilt(stmt, kind));
             return true;
         }
-        if !(expression_names_any(value, binders) || self.applies_callable(value)) {
+        if !(expression_names_any(value, binders) || self.applied_initializer(value, env)) {
             return false;
         }
         binders.insert(name.clone());
@@ -1150,15 +1107,12 @@ impl Elab<'_> {
         true
     }
 
-    /// Keep a `comptime if` whose condition names a binder of the generic
-    /// `def` being elaborated as a template, or asks a layout query
-    /// (`size_of[Self.T]()`, `size_of[Int]()`) only the elaborator below MIR
-    /// answers under its target: every arm is elaborated in the block's
-    /// environment (a binding an arm declares stays the arm's), and the
-    /// statement is rebuilt for the check, which types every arm with the
-    /// binders symbolic and records the condition for the MIR branch that
-    /// elaborator decides. Returns `false`, emitting nothing, for any other
-    /// condition, which is selected here.
+    /// Keep every `comptime if` of a function body, as upstream keeps its
+    /// `kgen.param.if`: every arm is elaborated in the block's environment
+    /// (a binding an arm declares stays the arm's), and the statement is
+    /// rebuilt for the check, which types every arm with the binders
+    /// symbolic and records the condition for the MIR branch the elaborator
+    /// below MIR decides. Returns `false`, emitting nothing, at module scope.
     fn keep_template_comptime_if(
         &self,
         stmt: &Stmt,
@@ -1169,16 +1123,7 @@ impl Elab<'_> {
         let StmtKind::ComptimeIf { branches, orelse } = &stmt.kind else {
             return Ok(false);
         };
-        let binders = self.template_binders.borrow().last().cloned();
-        let symbolic = in_fn
-            && branches.iter().any(|(cond, _)| {
-                asks_layout(cond)
-                    || self.applies_callable(cond)
-                    || binders
-                        .as_ref()
-                        .is_some_and(|binders| expression_names_any(cond, binders))
-            });
-        if !symbolic {
+        if !in_fn {
             return Ok(false);
         }
         // An arm whose closed arithmetic fails to evaluate keeps its source:
@@ -1196,100 +1141,14 @@ impl Elab<'_> {
         Ok(true)
     }
 
-    /// Unroll a `comptime for` here, one copy of the body per element of the
-    /// iterable with the loop variable substituted, each copy spliced into
-    /// the enclosing block as a scope of its own. A compile-time `break` or
-    /// `continue` would leave the wrong loop from a spliced copy, so only
-    /// the loop MIR carries — a generic `def`'s — honors one.
-    #[allow(clippy::too_many_arguments, reason = "one statement's parts")]
-    fn unroll_comptime_for(
-        &self,
-        stmt: &Stmt,
-        var: &str,
-        iter: &Expr,
-        body: &[Stmt],
-        env: &mut HashMap<String, CtValue>,
-        in_fn: bool,
-        out: &mut Vec<Stmt>,
-    ) -> Result<(), ComptimeError> {
-        let is_pack = matches!(&iter.kind, ExprKind::Identifier(name)
-            if env.contains_key(&pack_binding_marker(name)));
-        // A reflected field-name list is a list of strings, which this
-        // evaluator holds as a tuple.
-        let reflected = matches!(&iter.kind, ExprKind::MethodCall { method, .. }
-            if method == "field_names")
-            && super::crossing::reflection_query(iter, &|name| env.get(name)).is_some();
-        if !is_pack
-            && !reflected
-            && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
-            && let CtValue::Tuple(elements) = self.eval(iter, env)?
-        {
-            return Err(ComptimeError::NotIterable(tuple_type_spelling(&elements)));
-        }
-        if body_leaves_loop(body) {
-            return Err(ComptimeError::NotComptime(format!(
-                "a 'break' or 'continue' in a comptime for over '{var}' the elaborator unrolls; only a generic def's loop carries one"
-            )));
-        }
-        // A nested declaration reading the index is a generator over it,
-        // which only the loop MIR carries instantiates per iteration.
-        if nested_declaration_reads(body, var) {
-            return Err(ComptimeError::NotComptime(format!(
-                "a nested def or lambda in a comptime for over '{var}' the elaborator unrolls; only a loop kept for MIR declares one"
-            )));
-        }
-        for v in self.eval_iter(iter, env)? {
-            self.burn()?;
-            let subs: Subs = &|n| (n == var).then(|| v.clone());
-            let mut substituted: Vec<Stmt> = body
-                .iter()
-                .map(|s| rewrite_stmt_cloned(s, subs, false))
-                .collect();
-            self.fold_comptime_indices(&mut substituted, env);
-            splice_selected_block(stmt, self.block(&substituted, env, in_fn)?, out);
-        }
-        Ok(())
-    }
-
-    /// Fold each subscript index of an unrolled loop copy that is an
-    /// arithmetic expression over compile-time bindings (`storage[n - 1 -
-    /// i]` at `i = 0`) to its literal, so the copy names one element as a
-    /// literal index does.
-    fn fold_comptime_indices(&self, stmts: &mut [Stmt], env: &HashMap<String, CtValue>) {
-        struct Indices<'a, 'e> {
-            elab: &'a Elab<'e>,
-            env: &'a HashMap<String, CtValue>,
-        }
-        impl mojito_ast::visit::MutVisitor for Indices<'_, '_> {
-            fn visit_expr_mut(&mut self, expr: &mut Expr) {
-                let ExprKind::Index { index, .. } = &mut expr.kind else {
-                    return;
-                };
-                if !matches!(index.kind, ExprKind::Infix(..)) {
-                    return;
-                }
-                if let Ok(value @ CtValue::Int(_)) = self.elab.eval(index, self.env)
-                    && let Some(mut literal) = value.materialize(index.span)
-                {
-                    literal.source.clone_from(&index.source);
-                    literal.syntax_id = index.syntax_id;
-                    **index = literal;
-                }
-            }
-        }
-        mojito_ast::visit::walk_block_mut(&mut Indices { elab: self, env }, stmts);
-    }
-
-    /// Keep every `comptime for` in the body of a generic `def` or method
-    /// being elaborated as a template, as upstream keeps its parameter `for`:
-    /// the body is elaborated with the loop variable a binder too, so a
-    /// `comptime if` or a loop over it stays, and the statement is rebuilt
-    /// for the check, which types the body once with the index symbolic and
-    /// records the sequence for the MIR loop header the elaborator below MIR
-    /// unrolls — a compile-time `break` and `continue` are that loop's. A
-    /// pending module constant the loop iterates is forced here, a loop
-    /// header being a reader above the check. Returns `false`, emitting
-    /// nothing, outside a template body, where the loop is unrolled here.
+    /// Keep every `comptime for` of a function body, as upstream keeps its
+    /// `kgen.param.for`: the body is elaborated with the loop variable a
+    /// binder too, so a `comptime if` or a loop over it stays, and the
+    /// statement is rebuilt for the check, which types the body once with
+    /// the index symbolic and records the sequence for the MIR loop header
+    /// the elaborator below MIR unrolls — a compile-time `break` and
+    /// `continue` are that loop's. Returns `false`, emitting nothing, at
+    /// module scope.
     fn keep_template_comptime_for(
         &self,
         stmt: &Stmt,
@@ -1306,12 +1165,6 @@ impl Elab<'_> {
         let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
             return Ok(false);
         };
-        if let ExprKind::Identifier(name) = &iter.kind
-            && !binders.contains(name)
-            && !env.contains_key(name)
-        {
-            self.force_constant(name)?;
-        }
         binders.insert(var.clone());
         self.template_binders.borrow_mut().push(binders);
         // The index shadows a module constant of its name in the body.
@@ -1329,167 +1182,9 @@ impl Elab<'_> {
         ));
         Ok(true)
     }
-
-    /// Whether `body` holds a local `comptime` binding, a `comptime if`
-    /// condition, or a `comptime for` range bound that applies a callable
-    /// ([`Self::applies_callable`]), outside a nested declaration; a
-    /// binding that calls a method of a value binding of `env` or of the
-    /// body does once spelled ([`Self::spelled_value_reads`]).
-    pub(super) fn binds_request(&self, body: &[Stmt], env: &HashMap<String, CtValue>) -> bool {
-        struct Finder<'e, 'a> {
-            elab: &'e Elab<'a>,
-            receivers: Receivers,
-            found: bool,
-        }
-
-        impl mojito_ast::visit::Visitor for Finder<'_, '_> {
-            fn visit_stmt(&mut self, statement: &Stmt) {
-                self.found |= match &statement.kind {
-                    StmtKind::Comptime {
-                        type_params, value, ..
-                    } => {
-                        type_params.is_empty()
-                            && (self.elab.applies_callable(value) || self.receivers.read_by(value))
-                    }
-                    StmtKind::ComptimeIf { branches, .. } => branches
-                        .iter()
-                        .any(|(condition, _)| self.elab.applies_callable(condition)),
-                    StmtKind::ComptimeFor { iter, .. } => matches!(&iter.kind,
-                        ExprKind::Call { name, args, .. } if name == "range"
-                            && args.iter().any(|bound| self.elab.applies_callable(bound))),
-                    _ => false,
-                };
-            }
-        }
-
-        // The value bindings a method or a subscript may read: the
-        // module's, its pending constants, and the body's own literals.
-        let mut receivers = Receivers::default();
-        for (name, value) in env {
-            if spelled_receiver(value, false) {
-                receivers.methods.insert(name.clone());
-            }
-            if spelled_receiver(value, true) {
-                receivers.subscripts.insert(name.clone());
-            }
-        }
-        for name in self.pending_constants.borrow().keys() {
-            receivers.methods.insert(name.clone());
-            receivers.subscripts.insert(name.clone());
-        }
-        for statement in body {
-            let StmtKind::Comptime { name, value, .. } = &statement.kind else {
-                continue;
-            };
-            if matches!(
-                value.kind,
-                ExprKind::Int(_)
-                    | ExprKind::Float(_)
-                    | ExprKind::Bool(_)
-                    | ExprKind::Str(_)
-                    | ExprKind::ListLit(_)
-                    | ExprKind::TupleLit(_)
-                    | ExprKind::BraceLit(_)
-            ) {
-                receivers.methods.insert(name.clone());
-            }
-            if matches!(value.kind, ExprKind::BraceLit(_)) {
-                receivers.subscripts.insert(name.clone());
-            }
-        }
-        let mut finder = Finder {
-            elab: self,
-            receivers,
-            found: false,
-        };
-        for statement in body {
-            if !matches!(
-                statement.kind,
-                StmtKind::Def { .. } | StmtKind::Struct { .. }
-            ) {
-                mojito_ast::visit::walk_stmt(&mut finder, statement);
-            }
-        }
-        finder.found
-    }
 }
 
-/// Whether a `comptime for` of `body`, outside a nested declaration, holds a
-/// nested `def` or a lambda anywhere in its body.
-fn declares_in_comptime_for(body: &[Stmt]) -> bool {
-    struct Declarations(bool);
-
-    impl mojito_ast::visit::Visitor for Declarations {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            self.0 |= matches!(statement.kind, StmtKind::Def { .. });
-        }
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.0 |= matches!(expr.kind, ExprKind::Lambda { .. });
-        }
-    }
-
-    struct Loops(bool);
-
-    impl mojito_ast::visit::Visitor for Loops {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            if let StmtKind::ComptimeFor { body, .. } = &statement.kind {
-                let mut declarations = Declarations(false);
-                mojito_ast::visit::walk_block(&mut declarations, body);
-                self.0 |= declarations.0;
-            }
-        }
-    }
-
-    let mut loops = Loops(false);
-    for statement in body {
-        if !matches!(
-            statement.kind,
-            StmtKind::Def { .. } | StmtKind::Struct { .. }
-        ) {
-            mojito_ast::visit::walk_stmt(&mut loops, statement);
-        }
-    }
-    loops.0
-}
-
-/// Whether a nested `def` or a lambda in `body` names `var`.
-fn nested_declaration_reads(body: &[Stmt], var: &str) -> bool {
-    struct Names<'a> {
-        var: &'a str,
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Names<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            self.found |= matches!(&expr.kind, ExprKind::Identifier(name) if name == self.var);
-        }
-    }
-
-    struct Declarations<'a> {
-        names: Names<'a>,
-    }
-
-    impl mojito_ast::visit::Visitor for Declarations<'_> {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            if let StmtKind::Def { body, .. } = &statement.kind {
-                mojito_ast::visit::walk_block(&mut self.names, body);
-            }
-        }
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(expr.kind, ExprKind::Lambda { .. }) {
-                mojito_ast::visit::walk_expr(&mut self.names, expr);
-            }
-        }
-    }
-
-    let mut declarations = Declarations {
-        names: Names { var, found: false },
-    };
-    mojito_ast::visit::walk_block(&mut declarations, body);
-    declarations.names.found
-}
-
-/// Whether a compile-time condition asks a layout query (`size_of[T]()`).
+/// Whether an initializer asks a layout query (`size_of[T]()`).
 fn asks_layout(expression: &Expr) -> bool {
     struct Finder(bool);
 
@@ -1585,55 +1280,6 @@ fn self_qualified(name: &str) -> String {
     format!("Self.{}", name.trim_start_matches('*'))
 }
 
-/// Whether a loop body holds a `break` or `continue` of its own: one at its
-/// level or in an arm or `try` region there, not one inside a loop of its
-/// own nested in it.
-fn body_leaves_loop(body: &[Stmt]) -> bool {
-    body.iter().any(|statement| match &statement.kind {
-        StmtKind::Break | StmtKind::Continue => true,
-        StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-            branches.iter().any(|(_, arm)| body_leaves_loop(arm))
-                || orelse.as_deref().is_some_and(body_leaves_loop)
-        }
-        StmtKind::Scope(body) | StmtKind::With { body, .. } => body_leaves_loop(body),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            body_leaves_loop(body)
-                || except
-                    .as_ref()
-                    .is_some_and(|(_, handler)| body_leaves_loop(handler))
-                || orelse.as_deref().is_some_and(body_leaves_loop)
-                || finalbody.as_deref().is_some_and(body_leaves_loop)
-        }
-        _ => false,
-    })
-}
-
-fn splice_selected_block(source: &Stmt, block: Vec<Stmt>, out: &mut Vec<Stmt>) {
-    if block.iter().any(declares_binding) {
-        out.push(rebuilt(source, StmtKind::Scope(block)));
-    } else {
-        out.extend(block);
-    }
-}
-
-/// Whether an elaborated statement declares a name in the block it sits in.
-const fn declares_binding(statement: &Stmt) -> bool {
-    matches!(
-        statement.kind,
-        StmtKind::VarDecl { .. }
-            | StmtKind::RefDecl { .. }
-            | StmtKind::Unpack { declares: true, .. }
-            | StmtKind::Comptime { .. }
-            | StmtKind::Def { .. }
-            | StmtKind::Struct { .. }
-    )
-}
-
 /// Whether an elaboration error names the enclosing struct's `Self` or one
 /// of its compile-time parameters — a body that needs the parameters bound.
 fn names_struct_parameter(error: &ComptimeError, type_params: &[TypeParam]) -> bool {
@@ -1680,63 +1326,6 @@ fn struct_pack_collectors<'a>(
                             && struct_params.iter().any(|binder| binder.name == *spread))
         })
         .map(|parameter| parameter.name.clone())
-}
-
-/// Upstream's spelling of a compile-time tuple's type (`Tuple[Int, String]`).
-fn tuple_type_spelling(elements: &[CtValue]) -> String {
-    let names: Vec<&str> = elements
-        .iter()
-        .map(|element| match element {
-            CtValue::Int(_) | CtValue::IntLiteral(_) => "Int",
-            CtValue::UInt(_) => "UInt",
-            CtValue::Float(_) | CtValue::FloatLiteral(_) => "Float64",
-            CtValue::Bool(_) => "Bool",
-            CtValue::Str(_) => "String",
-            CtValue::Tuple(_) => "Tuple",
-            CtValue::List(_) => "List",
-            CtValue::Struct { name, .. } => name.as_str(),
-            _ => "AnyType",
-        })
-        .collect();
-    format!("Tuple[{}]", names.join(", "))
-}
-
-/// The bindings whose method call, or subscript, a request spells by
-/// value ([`Elab::spelled_value_reads`]).
-#[derive(Default)]
-struct Receivers {
-    methods: HashSet<String>,
-    subscripts: HashSet<String>,
-}
-
-impl Receivers {
-    /// Whether `expression` calls a method of, or subscripts, one of these
-    /// bindings.
-    fn read_by(&self, expression: &Expr) -> bool {
-        struct Finder<'r> {
-            receivers: &'r Receivers,
-            found: bool,
-        }
-
-        impl mojito_ast::visit::Visitor for Finder<'_> {
-            fn visit_expr(&mut self, expr: &Expr) {
-                let (names, object) = match &expr.kind {
-                    ExprKind::MethodCall { object, .. } => (&self.receivers.methods, object),
-                    ExprKind::Index { object, .. } => (&self.receivers.subscripts, object),
-                    _ => return,
-                };
-                self.found |=
-                    matches!(&object.kind, ExprKind::Identifier(name) if names.contains(name));
-            }
-        }
-
-        let mut finder = Finder {
-            receivers: self,
-            found: false,
-        };
-        mojito_ast::visit::walk_expr(&mut finder, expression);
-        finder.found
-    }
 }
 
 /// Whether a method call (or, `subscripted`, a subscript) of a binding of

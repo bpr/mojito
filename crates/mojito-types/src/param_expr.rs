@@ -755,35 +755,12 @@ impl ParamContext {
     /// The arguments keep their order; nothing folds, since only the
     /// elaborator evaluates an application.
     pub fn apply(&self, function: &str, args: &[ParamExpr], meta: MetaTy) -> ParamExpr {
-        self.apply_with(function, args, meta, None)
-    }
-
-    /// [`Self::apply`] carrying the value a compile-time route established
-    /// for the application; see [`ParamKind::Apply`].
-    pub fn apply_evaluated(
-        &self,
-        function: &str,
-        args: &[ParamExpr],
-        meta: MetaTy,
-        evaluated: CtValue,
-    ) -> ParamExpr {
-        self.apply_with(function, args, meta, Some(evaluated))
-    }
-
-    fn apply_with(
-        &self,
-        function: &str,
-        args: &[ParamExpr],
-        meta: MetaTy,
-        evaluated: Option<CtValue>,
-    ) -> ParamExpr {
         let args = args.iter().map(|arg| self.intern(arg)).collect();
         self.make(
             meta,
             ParamKind::Apply {
                 function: function.to_string(),
                 args,
-                evaluated,
             },
         )
     }
@@ -893,16 +870,12 @@ impl ParamContext {
             ParamKind::TypeMember { subject, name } => {
                 self.type_member(&self.fold(subject)?, name, expr.meta().clone())
             }
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated,
-            } => {
+            ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
                     .iter()
                     .map(|arg| self.fold(arg))
                     .collect::<Result<_, _>>()?;
-                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+                self.apply(function, &args, expr.meta().clone())
             }
             _ => expr.clone(),
         })
@@ -952,11 +925,9 @@ impl ParamContext {
     /// type, as at the pin.
     pub fn answer_builtin_applications(&self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated: None,
-            } => builtin_application_value(function, args).transpose(),
+            ParamKind::Apply { function, args } => {
+                builtin_application_value(function, args).transpose()
+            }
             _ => Ok(None),
         })
     }
@@ -972,11 +943,7 @@ impl ParamContext {
         oracle: &mut ApplicationOracle<'_>,
     ) -> Result<ParamExpr, ParamError> {
         self.answer_queries(expr, &mut |node| match node.kind() {
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated: None,
-            } => oracle(function, args),
+            ParamKind::Apply { function, args } => oracle(function, args),
             _ => Ok(None),
         })
     }
@@ -1076,16 +1043,12 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 return self.list_concat(&lists);
             }
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated,
-            } => {
+            ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
                     .iter()
                     .map(|arg| self.answer_queries(arg, answer))
                     .collect::<Result<_, _>>()?;
-                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+                self.apply(function, &args, expr.meta().clone())
             }
             _ => return Ok(expr.clone()),
         };
@@ -1570,16 +1533,12 @@ impl ParamContext {
                 };
                 self.pack_query(pack, query)
             }
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated,
-            } => {
+            ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
                     .iter()
                     .map(|arg| self.replace_at(arg, bindings, depth, memo))
                     .collect::<Result<_, _>>()?;
-                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+                self.apply(function, &args, expr.meta().clone())
             }
         };
         memo.insert(key, replaced.clone());
@@ -1671,16 +1630,12 @@ impl ParamContext {
             ParamKind::TypeMember { subject, name } => {
                 self.type_member(&self.shift(subject, cutoff, by)?, name, expr.meta().clone())
             }
-            ParamKind::Apply {
-                function,
-                args,
-                evaluated,
-            } => {
+            ParamKind::Apply { function, args } => {
                 let args: Vec<ParamExpr> = args
                     .iter()
                     .map(|arg| self.shift(arg, cutoff, by))
                     .collect::<Result<_, _>>()?;
-                self.apply_with(function, &args, expr.meta().clone(), evaluated.clone())
+                self.apply(function, &args, expr.meta().clone())
             }
             _ => expr.clone(),
         })
@@ -1793,10 +1748,6 @@ impl ParamExpr {
                     .collect::<Result<Vec<_>, _>>()?;
                 fold_primitive(*op, &constants.iter().collect::<Vec<_>>())
             }
-            ParamKind::Apply {
-                evaluated: Some(value),
-                ..
-            } => Ok(value.clone()),
             _ => Err(ParamError::NotConstant(self.to_string())),
         }
     }
@@ -1808,15 +1759,6 @@ impl ParamExpr {
             .as_ref()
             .and_then(fold::integer_value)
             .and_then(|value| value.to_i64())
-    }
-
-    /// The value established for this application, when it is an evaluated
-    /// one ([`ParamKind::Apply`]).
-    pub fn evaluated(&self) -> Option<&CtValue> {
-        match self.kind() {
-            ParamKind::Apply { evaluated, .. } => evaluated.as_ref(),
-            _ => None,
-        }
     }
 
     /// The value under a declaration's own name → value map: replacement
@@ -2119,16 +2061,11 @@ pub enum ParamKind {
     /// `args`, in argument order. It is never folded: two applications are
     /// one node by structure, as the pin keeps `f(Int(7))` symbolic through
     /// the check, so a type over one never matches the folded value. A
-    /// layout query is the application of `size_of` to one type.
-    ///
-    /// `evaluated` is the value the compile-time route established for the
-    /// application, carried so a concrete use (a lane count, a layout) reads
-    /// it while type identity does not; an application nothing has evaluated
-    /// yet carries none.
+    /// layout query is the application of `size_of` to one type. Only the
+    /// elaborator below MIR evaluates one, on first demand.
     Apply {
         function: String,
         args: Vec<ParamExpr>,
-        evaluated: Option<CtValue>,
     },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     Hole { kind: HoleKind, token: u64 },

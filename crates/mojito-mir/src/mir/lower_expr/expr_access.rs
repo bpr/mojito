@@ -21,6 +21,21 @@ impl Flatten<'_> {
             })
     }
 
+    /// Whether `e` reads a parameter value the check recorded with no
+    /// materialized borrow source of its own (a module constant), which
+    /// lowers as a value wherever it stands.
+    pub(in crate::mir) fn constant_param_value(&self, e: &Expr) -> bool {
+        self.checked_adjustments(e).into_iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    materialized: None,
+                    ..
+                }
+            )
+        })
+    }
+
     /// The runtime value of a compile-time `operand` crossing explicitly
     /// (`materialize[X]()`, `comptime(e)`): a local display binding is built
     /// here, where it crosses; an `Int` or a `Bool` read off one is the
@@ -58,6 +73,12 @@ impl Flatten<'_> {
             mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Str(s)) => {
                 Const::Str(s.clone())
             }
+            mojito_types::param_expr::ParamKind::Constant(mojito_types::ct::CtValue::Float(
+                bits,
+            )) => Const::Float(f64::from_bits(*bits)),
+            mojito_types::param_expr::ParamKind::Constant(
+                mojito_types::ct::CtValue::FloatLiteral(value),
+            ) => Const::FloatLiteral(value.clone()),
             _ => Const::Param(value),
         };
         self.constant(e, k)

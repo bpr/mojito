@@ -798,3 +798,26 @@ no more than the old initial check, concrete-MIR instance counts are
 unchanged, and peak RSS is not above the baseline on any row. The
 remaining frontend is the initial check of the bundled library (R11) and
 MIR lowering.
+## P4: one check, regions kept, constants bound (2026-10-09)
+
+**Environment.** Baseline `target/release/mojito` built at `1200b270`
+(the driver half of R9) against the same tree with the rest of R9 (slices
+3–6: plain-body regions kept to MIR, module constants as parameter
+expressions, validation merged into the one check, the AST CTFE route
+deleted); rustc 1.96.1; the machine of the sections above; VM backend;
+`--timings` rows in microseconds, 3 interleaved runs per binary (the
+middle run; `/usr/bin/time -f %M` for peak RSS). `check` includes the
+arena build in both columns.
+
+| Program | compile (base → new) | validation | elaborate | check | arena | mir.lower | mono elaborate | concrete fns | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| hello | 935 → 911 (−2.5%) | 50 → 0 | 38 → 38 | 597 → 621 | 71 → 75 | 196 → 200 | 144 → 144 | 5 → 5 | 199 → 197 |
+| generic | 942 → 901 (−4.4%) | 50 → 0 | 37 → 37 | 604 → 615 | 74 → 74 | 200 → 198 | 143 → 141 | 25 → 25 | 201 → 199 |
+| keyed | 972 → 918 (−5.5%) | 52 → 0 | 39 → 38 | 624 → 621 | 79 → 75 | 206 → 206 | 144 → 144 | 58 → 58 | 206 → 204 |
+| stdlib_heavy | 953 → 905 (−5.0%) | 52 → 0 | 39 → 38 | 610 → 614 | 74 → 77 | 201 → 202 | 145 → 146 | 165 → 165 | 221 → 219 |
+
+The validation pass is gone, the one check costs at most 4% more than
+before (every plain body's `comptime if` and `comptime for` is now typed
+once and every module constant read is a checked fact), concrete-MIR
+instance counts are unchanged, and peak RSS is below the baseline on
+every row; D4's 1.20× alarm is not approached.

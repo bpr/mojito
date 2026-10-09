@@ -1884,6 +1884,9 @@ impl Flatten<'_> {
 
     fn simple_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
         match &e.kind {
+            // A module constant read is the parameter value the check
+            // recorded: a value, never a place.
+            ExprKind::Identifier(_) if self.constant_param_value(e) => None,
             ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
             ExprKind::Index { object, .. } if self.variant_projection_index(e).is_some() => {
                 let index = self.variant_projection_index(e)?;

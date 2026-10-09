@@ -2120,17 +2120,12 @@ fn param_expr(value: &ParamExpr) -> String {
             "param_pack_query",
             &[("pack", binder_ref(pack)), ("query", pack_query(query))],
         ),
-        ParamKind::Apply {
-            function,
-            args,
-            evaluated,
-        } => record(
+        ParamKind::Apply { function, args } => record(
             "param_apply",
             &[
                 ("function", quote(function)),
                 meta,
                 ("args", list(args.iter().map(param_expr))),
-                ("evaluated", option(evaluated.as_ref().map(ct_value))),
             ],
         ),
         // A hole never crosses into MIR: the parser rejects the form, and the
@@ -2272,8 +2267,7 @@ fn ct_marker(value: &CtMarker) -> String {
                 ("mutability", mutability_value(*mutability)),
             ],
         ),
-        CtMarker::Applied(value) => positional("marker_applied", &value.to_string()),
-        CtMarker::Layout(ty) => positional("marker_layout", &ty_value(ty)),
+        CtMarker::Applied => "marker_applied".into(),
     }
 }
 

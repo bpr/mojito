@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.37
+# Mojito Textual MIR Format, Version 1.38
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.37 is implemented end to end for inspection and loading: canonical
+Version 1.38 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.37
+mojito-mir 1.38
 ```
 
-The writer emits 1.37. The reader accepts 1.0 through 1.37; *Schema 1.0*
+The writer emits 1.38. The reader accepts 1.0 through 1.38; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -499,8 +499,10 @@ rational; reprinting reduces it.
 parameter the VM reifies) and which is no part of generic identity, or
 `ct_marker(marker)` for an elaborator classification of a name that is no
 parameter: `marker_local`, `marker_type`,
-`marker_tuple_origin { id, mutability }`, or `marker_applied(int)`, the
-folded value of a module constant whose initializer applies a function. A deferred slot names the binder
+`marker_tuple_origin { id, mutability }`, or `marker_applied`, a module
+constant whose initializer applies a callable, which the check binds as its
+application (schema 1.38; a 1.37 artifact's `marker_applied(int)` and
+`marker_layout(type)` read as the same marker). A deferred slot names the binder
 whose slot it fills by a `binder { owner, slot, name }` record.
 
 ### Parameter expressions
@@ -527,7 +529,7 @@ param_field     { base, name: symbol, type: meta }
 param_reflect   { subject, query }
 param_type_member { subject, name: symbol, type: meta }
 param_pack_query { pack, query }
-param_apply     { function: "symbol", type: meta, args: [param-expr...], evaluated: option<ct-value> }
+param_apply     { function: "symbol", type: meta, args: [param-expr...] }
 ```
 
 `param_list_get` is an element of a parameter list that is still a parameter
@@ -546,9 +548,10 @@ that is still a parameter (schema 1.27), `param_reflect` a reflection query over
 `field_index["name"]()`, `field["name"].T`), `param_type_member` a
 compile-time value member of a symbolic subject type (`T.K`, schema 1.36),
 and `param_apply` a compile-time
-application of a callable symbol, never folded, whose `evaluated` holds the
-value the compile-time route established for it when one has (schema 1.14;
-`docs/notes/param-expr-attributes.md` §Register types).
+application of a callable symbol, never folded (schema 1.14;
+`docs/notes/param-expr-attributes.md` §Register types). Only the elaborator
+below MIR evaluates one; a 1.37 artifact's `evaluated` field is read and
+dropped (schema 1.38).
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
@@ -794,7 +797,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.37
+mojito-mir 1.38
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

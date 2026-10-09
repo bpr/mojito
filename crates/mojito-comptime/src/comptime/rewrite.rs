@@ -17,18 +17,10 @@ use mojito_checked::templates::PackElementNode;
 pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 
 /// Materialize module-level comptime constants throughout a program.
-///
-/// `applied` names the constants whose initializer applies a function: each
-/// folds to its value in a value position and keeps its name in a type
-/// argument, where the checker reads its identity as the application.
-/// `pending` forces a module constant evaluated on demand that a position
-/// reads.
 pub(super) fn materialize_block(
     stmts: Vec<Stmt>,
     consts: &HashMap<String, CtValue>,
     type_names: &HashSet<String>,
-    applied: &HashSet<String>,
-    pending: &dyn Fn(&str) -> Option<CtValue>,
 ) -> Vec<Stmt> {
     // Declared struct names are marked so a subscript-shaped projection on a
     // runtime local (`v[String]`) can be told from ordinary indexing.
@@ -37,16 +29,8 @@ pub(super) fn materialize_block(
     let subs: Subs = &|n| {
         consts
             .get(n)
-            .map(std::borrow::Cow::Borrowed)
-            .or_else(|| pending(n).map(std::borrow::Cow::Owned))
-            .as_deref()
             .filter(|value| !value.is_runtime_collection())
-            .map(|value| match value {
-                CtValue::Int(folded) if applied.contains(n) => {
-                    CtValue::Marker(CtMarker::Applied(*folded))
-                }
-                value => value.clone(),
-            })
+            .cloned()
             .or_else(|| type_names.contains(n).then(type_name_marker))
     };
     stmts
@@ -330,18 +314,6 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                     && let Some(ty) = source_type_from_ty(ty)
                 {
                     e.kind = ExprKind::TypeValue(ty);
-                } else if let CtValue::Marker(CtMarker::Layout(ty)) = &value
-                    && let Some(ty) = source_type_from_ty(ty)
-                {
-                    // A value read of a layout constant is the layout query
-                    // itself, which the checker lowers and the elaborator
-                    // answers.
-                    e.kind = ExprKind::Call {
-                        name: mojito_types::param_expr::SIZE_OF_FUNCTION.to_string(),
-                        param_args: vec![mojito_ast::ast::ParamArg::Type(ty)],
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
-                    };
                 } else if let Some(mut materialized) = value.materialize(e.span) {
                     // A folded loop variable keeps the identifier's identity:
                     // that is the occurrence-level trace a checked template's
@@ -1976,16 +1948,7 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
                 *a = mojito_ast::ast::ParamArg::Value(materialized);
             }
             mojito_ast::ast::ParamArg::Type(ty) => rewrite_type(ty, subs),
-            // An applied module constant keeps its name in a type argument.
             mojito_ast::ast::ParamArg::Value(e) => {
-                let subs: Subs = &|name| {
-                    subs(name).filter(|value| {
-                        !matches!(
-                            value,
-                            CtValue::Marker(CtMarker::Applied(_) | CtMarker::Layout(_))
-                        )
-                    })
-                };
                 rewrite_expr(e, subs);
                 if let ExprKind::TypeValue(ty) = &e.kind {
                     *a = mojito_ast::ast::ParamArg::Type(ty.clone());

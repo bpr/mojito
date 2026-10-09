@@ -48,26 +48,24 @@ impl Elab<'_> {
         self.cross_block(body, env, &shadowed)
     }
 
-    /// Cross the body of a `def` or a method, a `generic` one — or one that
-    /// binds a request ([`Self::binds_request`]) — as a template body
+    /// Cross the body of a `def` or a method, every one a template body
     /// ([`Self::in_template_body`]).
     fn cross_declaration_body(
         &self,
-        generic: bool,
         params: &[FnParam],
         body: &mut [Stmt],
         env: &HashMap<String, CtValue>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         let depth = self.crossing_templates.get();
-        self.crossing_templates.set(depth + usize::from(generic));
+        self.crossing_templates.set(depth + 1);
         let crossed = self.cross_body(params, body, env, shadowed);
         self.crossing_templates.set(depth);
         crossed
     }
 
-    /// Whether the statement being crossed sits in a generic body: one being
-    /// elaborated as a template, or one this pass has descended into.
+    /// Whether the statement being crossed sits in a function body: one
+    /// being elaborated as a template, or one this pass has descended into.
     fn in_template_body(&self) -> bool {
         self.crossing_templates.get() > 0 || !self.template_binders.borrow().is_empty()
     }
@@ -118,8 +116,26 @@ impl Elab<'_> {
             | StmtKind::Import { .. }
             | StmtKind::FromImport { .. }
             | StmtKind::Trait { .. } => Ok(()),
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+            StmtKind::If { branches, orelse } => {
                 for (cond, body) in branches {
+                    self.cross_expr(cond, env, shadowed)?;
+                    self.cross_block(body, env, shadowed)?;
+                }
+                self.cross_opt_block(orelse, env, shadowed)
+            }
+            // A condition is a compile-time position: a named collection it
+            // reads (`XS[0] == 1`, `3 in L`) is its literal display there,
+            // which the check closes.
+            StmtKind::ComptimeIf { branches, orelse } => {
+                for (cond, body) in branches {
+                    let mut collections = NamedCollections {
+                        env,
+                        shadowed,
+                        folded: Ok(()),
+                    };
+                    mojito_ast::visit::MutVisitor::visit_expr_mut(&mut collections, cond);
+                    mojito_ast::visit::walk_expr_mut(&mut collections, cond);
+                    collections.folded?;
                     self.cross_expr(cond, env, shadowed)?;
                     self.cross_block(body, env, shadowed)?;
                 }
@@ -142,6 +158,7 @@ impl Elab<'_> {
             // loop header's sequence, as is one a display's element
             // subscripts (`[L[n], n]`).
             StmtKind::ComptimeFor { iter, body, .. } => {
+                *iter = self.spell_applied_displays(iter);
                 if matches!(iter.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)) {
                     let mut subscripts = SubscriptedCollections {
                         env,
@@ -177,30 +194,12 @@ impl Elab<'_> {
                 }
                 self.cross_block(body, env, shadowed)
             }
-            StmtKind::Def {
-                type_params,
-                params,
-                body,
-                ..
-            } => {
-                let template = !type_params.is_empty() || self.binds_request(body, env);
-                self.cross_declaration_body(template, params, body, env, shadowed)
+            StmtKind::Def { params, body, .. } => {
+                self.cross_declaration_body(params, body, env, shadowed)
             }
-            StmtKind::Struct {
-                type_params,
-                methods,
-                ..
-            } => {
+            StmtKind::Struct { methods, .. } => {
                 for method in methods {
-                    self.cross_declaration_body(
-                        !type_params.is_empty()
-                            || !method.type_params.is_empty()
-                            || self.binds_request(&method.body, env),
-                        &method.params,
-                        &mut method.body,
-                        env,
-                        shadowed,
-                    )?;
+                    self.cross_declaration_body(&method.params, &mut method.body, env, shadowed)?;
                 }
                 Ok(())
             }
@@ -311,14 +310,20 @@ impl Elab<'_> {
                 args,
                 kwargs,
             } if name == "materialize" && args.is_empty() && kwargs.is_empty() => {
-                let [ParamArg::Value(argument)] = param_args.as_slice() else {
+                let [ParamArg::Value(argument)] = param_args.as_mut_slice() else {
                     return Ok(());
                 };
+                // An applied display constant is its display here; any other
+                // applied constant is the check's to bind.
+                *argument = self.spell_applied_displays(argument);
                 let value = match &argument.kind {
                     ExprKind::Identifier(bound) => binding(bound).cloned(),
+                    // An operand that applies a callable is the check's to
+                    // lift and the elaborator below MIR's to evaluate.
+                    _ if self.applies_callable(argument) => None,
                     _ => self.eval(argument, env).ok(),
                 };
-                if let Some(value) = value {
+                if let Some(value) = value.filter(|value| !matches!(value, CtValue::Marker(_))) {
                     *expr = lit_result(&value, expr.span)?;
                 }
                 Ok(())
@@ -337,6 +342,7 @@ impl Elab<'_> {
                 // An operand that applies a callable is a request the
                 // elaborator below MIR serves, a value binding it calls a
                 // method of spelled by its literal form.
+                args[0] = self.spell_applied_displays(&args[0]);
                 if self.applies_callable(&args[0]) {
                     return Ok(());
                 }
@@ -347,7 +353,7 @@ impl Elab<'_> {
                     args[0] = spelled;
                     return Ok(());
                 }
-                let value = match self.eval_in_body(&args[0], env) {
+                let value = match self.eval(&args[0], env) {
                     Ok(value) => value,
                     // An operand over the binders of a generic body is the
                     // check's to type and the elaborator below MIR's to
@@ -572,6 +578,25 @@ impl mojito_ast::visit::MutVisitor for SubscriptedCollections<'_> {
         if let Some(value) = named_collection(object, self.env, self.shadowed) {
             match collection_literal(value, object) {
                 Ok(literal) => **object = literal,
+                Err(error) => self.folded = Err(error),
+            }
+        }
+    }
+}
+
+/// Folds each closed collection a compile-time condition names to its
+/// literal display.
+struct NamedCollections<'a> {
+    env: &'a HashMap<String, CtValue>,
+    shadowed: &'a HashSet<String>,
+    folded: Result<(), ComptimeError>,
+}
+
+impl mojito_ast::visit::MutVisitor for NamedCollections<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let Some(value) = named_collection(expr, self.env, self.shadowed) {
+            match collection_literal(value, expr) {
+                Ok(literal) => *expr = literal,
                 Err(error) => self.folded = Err(error),
             }
         }

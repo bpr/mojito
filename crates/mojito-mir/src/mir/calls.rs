@@ -934,16 +934,17 @@ impl Flatten<'_> {
         }
         // A value binder of the enclosing declaration (`dt.is_integral()` in
         // a `DType`-keyed body), an enclosing `comptime for` variable under
-        // any shadow spelling, or, in a lifted thunk, a local `comptime`
-        // binding of a parameter expression (`lane` of `comptime lane =
-        // dt`), is a value the elaborator folds, not a place: the receiver
-        // is read as such and no place is retained.
+        // any shadow spelling, a module constant, or, in a lifted thunk, a
+        // local `comptime` binding of a parameter expression (`lane` of
+        // `comptime lane = dt`), is a value the elaborator folds, not a
+        // place: the receiver is read as such and no place is retained.
         if let ExprKind::Identifier(name) = &expression.kind
-            && (self
-                .enclosing_binders
-                .values
-                .iter()
-                .any(|(binder, _)| binder.name.as_ref() == name.as_str())
+            && (self.constant_param_value(expression)
+                || self
+                    .enclosing_binders
+                    .values
+                    .iter()
+                    .any(|(binder, _)| binder.name.as_ref() == name.as_str())
                 || self.checked_owner(expression).is_some_and(|owner| {
                     self.enclosing_binders
                         .loop_bindings
@@ -1640,9 +1641,11 @@ impl Flatten<'_> {
         let ExprKind::Identifier(name) = &expression.kind else {
             return None;
         };
+        // A module constant read is a value with no slot of its own.
         if self.resolved_callable(expression).is_some()
             || self.nested_info(expression).is_some()
             || self.is_origin_bearing_pointer(expression)
+            || self.constant_param_value(expression)
             || (!self.vars.iter().any(|candidate| candidate == name)
                 && self.overloads.is_function(name))
         {

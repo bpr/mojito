@@ -1907,17 +1907,13 @@ impl Checker {
                         }
                         Err(error) => match open() {
                             Some(expression) => CtValue::Expr(expression),
-                            None if self.source_validation => {
-                                return Ok(TyArg::Val(CtValue::Deferred(decl.binder())));
-                            }
                             None => return Err(error),
                         },
                     };
                     // A struct over an applied module constant is its own
                     // type at the pin (`Buf[f(7)]` is not `Buf[8]`), which no
                     // instance below the waist can be named by yet.
-                    if !self.source_validation
-                        && self.structs.contains_key(decl.id().owner.as_ref())
+                    if self.structs.contains_key(decl.id().owner.as_ref())
                         && let CtValue::Expr(applied) = &value
                         && applied.as_constant().is_none()
                         && applied.require_constant().is_ok()

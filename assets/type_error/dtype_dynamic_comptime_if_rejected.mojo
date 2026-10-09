@@ -1,4 +1,4 @@
-# expect: 'y' is not a compile-time type
+# expect: cannot use a dynamic value in 'comptime if' condition
 # A runtime `DType` value cannot decide a `comptime if`.
 def main():
     var y = DType.int8

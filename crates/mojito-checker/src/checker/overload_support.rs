@@ -622,13 +622,6 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
     })
 }
 
-/// Whether a struct declares a variadic parameter pack (`struct S[*Ts]`).
-pub(super) fn is_variadic_template(type_params: &[mojito_ast::ast::TypeParam]) -> bool {
-    type_params
-        .iter()
-        .any(|parameter| parameter.name.starts_with('*'))
-}
-
 /// Merge a callable's committed transfer effects into a function type taken
 /// as a value, so an indirect call replays them from the type itself. Union,
 /// never replacement: a rebake after the entry grew keeps earlier effects.

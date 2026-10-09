@@ -628,6 +628,39 @@ impl Checker {
         }))
     }
 
+    /// The parameter expression the module constant `name` denotes where a
+    /// body reads it, unless a local shadows the name: a folded `Int` is its
+    /// literal, an applied constant its application, and a literal its
+    /// value. `None` for a constant the elaborator spells by its literal
+    /// form.
+    pub(super) fn module_constant_value(&self, name: &str) -> Option<ParamExpr> {
+        if self.binding_scope(name)? != 0 {
+            return None;
+        }
+        if let Some(applied) = self.comptime_applied.get(name) {
+            return Some(applied.clone());
+        }
+        // A constant whose initializer the check lifted (a display that
+        // constructs, a call of a method) is the lifted function's
+        // application, bound at the module scope; a local of the name would
+        // have shadowed the constant above.
+        if let Some((_, lifted)) = self
+            .local_comptime_parameters
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+        {
+            return Some(lifted.clone());
+        }
+        let context = &self.param_context;
+        if let Some(n) = self.comptimes.get(name) {
+            return context.constant(CtValue::IntLiteral(n.clone())).ok();
+        }
+        let literal = self.comptime_literals.get(name)?;
+        let value = self.eval_associated_ct(literal, &HashMap::new()).ok()?;
+        context.constant(value).ok()
+    }
+
     /// The symbolic value of a module constant's initializer that applies a
     /// function: an application of a module `def` with a declared result to
     /// compile-time arguments, a layout query, an earlier applied constant,
@@ -674,12 +707,7 @@ impl Checker {
                     } if def == name && type_params.is_empty() => Some(ret),
                     _ => None,
                 })?;
-                // An `Int` result, the one the pin's probes shape a vector
-                // width with; another result type keeps today's rejection.
-                let meta = match self.ty_from_anno(result).ok()? {
-                    Ty::Int => MetaTy::int(),
-                    _ => return None,
-                };
+                let meta = MetaTy::value(self.ty_from_anno(result).ok()?);
                 let args = args
                     .iter()
                     .map(|argument| self.applied_constant_expr(argument, module))
@@ -688,56 +716,6 @@ impl Checker {
             }
             _ => None,
         }
-    }
-
-    /// The executable check's twin of a validated applied constant: the
-    /// same node with the folded `value` on the application it is, and the
-    /// evaluated twins of earlier constants where their applications occur.
-    /// `None` when an application inside it has no value, so the constant
-    /// stays the folded literal it is today.
-    pub(super) fn evaluated_application(
-        &self,
-        applied: &ParamExpr,
-        value: &mojito_common::literal::IntLiteral,
-        evaluated: &mut HashMap<ParamExpr, ParamExpr>,
-    ) -> Option<ParamExpr> {
-        fn rebuild(
-            context: &ParamContext,
-            node: &ParamExpr,
-            evaluated: &HashMap<ParamExpr, ParamExpr>,
-        ) -> Option<ParamExpr> {
-            if let Some(twin) = evaluated.get(node) {
-                return Some(twin.clone());
-            }
-            match node.kind() {
-                ParamKind::Constant(_) => Some(node.clone()),
-                ParamKind::Op { op, operands } => {
-                    let operands = operands
-                        .iter()
-                        .map(|operand| rebuild(context, operand, evaluated))
-                        .collect::<Option<Vec<_>>>()?;
-                    if op.is_atom() {
-                        context.rebuild(*op, &operands).ok()
-                    } else {
-                        context.op(*op, &operands).ok()
-                    }
-                }
-                _ => None,
-            }
-        }
-        let context = &self.param_context;
-        let folded = CtValue::Int(
-            mojito_types::param_expr::fold::integer_value(&CtValue::IntLiteral(value.clone()))?
-                .to_i64()?,
-        );
-        let twin = match applied.kind() {
-            ParamKind::Apply { function, args, .. } => {
-                context.apply_evaluated(function, args, applied.meta().clone(), folded)
-            }
-            _ => rebuild(context, applied, evaluated)?,
-        };
-        evaluated.insert(applied.clone(), twin.clone());
-        Some(twin)
     }
 
     /// The typed reference a bare name denotes when it is a value parameter
@@ -955,6 +933,17 @@ impl Checker {
                     .map_err(param_error)
             }
             _ if let Some(read) = self.display_read(expr) => read,
+            // An element of a list a constant denotes (`XS[0]` of a module
+            // display constant, `l[i]` of a requested local): `param_list.get`
+            // over the list's expression.
+            ExprKind::Index { object, index }
+                if let Ok(list) = self.compile_dependent_ct_expr(object)
+                    && matches!(list.meta(), mojito_types::param_expr::MetaTy::ParamList(_)) =>
+            {
+                context
+                    .list_get(&list, &self.compile_dependent_ct_expr(index)?)
+                    .map_err(param_error)
+            }
             // The length of a pack that is still a parameter, which the
             // instance's elements fix.
             _ if let Some(pack) = self.pack_length_query(expr) => Ok(pack),
@@ -2070,11 +2059,13 @@ impl Checker {
             ExprKind::Index { .. } if let Some(ty) = self.comptime_type_operand(expr)? => {
                 ConstraintOperand::Type(ty)
             }
-            // Arithmetic over value parameters (`n + 1`), through the same
-            // builder a dependent type argument uses. A name it cannot type —
-            // a parameter whose scope is not open here — is the explicit
+            // Arithmetic over value parameters (`n + 1`), an element of a
+            // compile-time list (`XS[0]`), through the same builder a
+            // dependent type argument uses. A name it cannot type — a
+            // parameter whose scope is not open here — is the explicit
             // unsupported operand, never an untyped symbol.
-            ExprKind::Infix(
+            ExprKind::Index { .. }
+            | ExprKind::Infix(
                 InfixOp::Add
                 | InfixOp::Sub
                 | InfixOp::Mul

@@ -354,10 +354,6 @@ impl Checker {
             name: name.clone(),
             declaration: stmt.span,
         };
-        // In an elaborated program, a declaration source validation already
-        // recorded is that template's trapping stub, not a template.
-        let stub =
-            !self.source_validation && self.template_catalog.borrow().validated(&template_id);
         let site = BodySite {
             display: name.clone(),
             body,
@@ -368,7 +364,7 @@ impl Checker {
                 name: name.clone(),
                 body: None,
             },
-            role: BodyRole::of(module_level && !decls.is_empty(), generated, stub),
+            role: BodyRole::of(module_level && !decls.is_empty(), generated, false),
             decls,
             ret_ty,
             participates: module_level,
@@ -414,8 +410,6 @@ impl Checker {
             name: m.name.clone(),
             declaration: first.span,
         };
-        let stub =
-            !self.source_validation && self.template_catalog.borrow().validated(&template_id);
         let site = BodySite {
             display: format!("{owner}.{}", m.name),
             body: &m.body,
@@ -426,7 +420,7 @@ impl Checker {
                 name: m.name.clone(),
                 body: Some(first.span),
             },
-            role: BodyRole::of(!decls.is_empty(), false, stub),
+            role: BodyRole::of(!decls.is_empty(), false, false),
             decls: &decls,
             ret_ty,
             participates: true,
@@ -474,18 +468,14 @@ impl Checker {
     }
 
     /// Record on the body's transfer frame (pushed by its inner checker
-    /// before the site is entered) whether selections made under source
-    /// validation stand (`TransferFrame::keeps_symbolic_selection`): a
-    /// body no trace covers (a seam without the elaborator's traces) keeps
-    /// them when its name marks it a clone; a traced body keeps them when
-    /// its template was validated.
+    /// before the site is entered) whether selections made with the
+    /// operand's type symbolic stand (`TransferFrame::keeps_symbolic_selection`):
+    /// a body no trace covers (a seam without the elaborator's traces) keeps
+    /// them when its name marks it a clone.
     fn mark_symbolic_selection(&self, site: &BodySite<'_>) {
         let keeps = {
             let catalog = self.template_catalog.borrow();
-            match catalog.trace(&site.instance) {
-                Some(trace) => catalog.validated(&trace.template),
-                None => site.display.contains('$'),
-            }
+            catalog.trace(&site.instance).is_none() && site.display.contains('$')
         };
         if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
             frame.keeps_symbolic_selection = keeps;
@@ -509,7 +499,7 @@ impl Checker {
         let (decls, ret_ty) = (site.decls, site.ret_ty);
         let template = site.role == BodyRole::Template;
         let generated = site.role == BodyRole::Generated;
-        let derived = if site.participates && !self.source_validation {
+        let derived = if site.participates {
             self.derivable_facts(site, param_owners)
         } else {
             None

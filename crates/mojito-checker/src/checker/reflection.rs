@@ -105,16 +105,6 @@ impl Checker {
         }
     }
 
-    /// The runtime type `materialize[names]()` gives a name bound to
-    /// `field_names()`: an `Array` of the names sized by the field count, as
-    /// the pin's `field_names()` returns. `None` for any other operand.
-    pub(super) fn materialized_field_names(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
-        Ok(match self.reflection_list(expr)? {
-            Some((ReflectQuery::FieldNames, list)) => self.reflected_names_array_ty(list),
-            _ => None,
-        })
-    }
-
     /// `materialize[names]()` of a field-name list in the executable check:
     /// the list is over a type parameter (the crossing pass folds a closed
     /// one), so the call is the parameter value MIR carries and the

@@ -182,16 +182,11 @@ pub enum CtMarker {
         id: OriginParamId,
         mutability: Mutability,
     },
-    /// A module constant whose initializer applies a function, carrying the
-    /// `Int` the compile-time route folded it to. A value position reads
-    /// the value; a type argument keeps the constant's name, since its type
-    /// identity is the application (decision D3).
-    Applied(i64),
-    /// A module constant whose initializer is the layout application
-    /// `size_of[T]()`, which only the elaborator answers, under its target.
-    /// A value position reads the application itself; a type argument keeps
-    /// the constant's name, whose identity is the application.
-    Layout(Box<Ty>),
+    /// A module constant whose initializer applies a callable, asks a
+    /// layout, or reads such a constant: its identity is the application
+    /// (decision D3), which the check binds and the elaborator below MIR
+    /// evaluates on first demand. It has no value above the check.
+    Applied,
 }
 
 impl fmt::Display for CtMarker {
@@ -199,8 +194,7 @@ impl fmt::Display for CtMarker {
         match self {
             Self::RuntimeLocal => f.write_str("$local"),
             Self::TypeName => f.write_str("$type"),
-            Self::Applied(value) => write!(f, "{value}"),
-            Self::Layout(ty) => write!(f, "size_of[{ty}]()"),
+            Self::Applied => f.write_str("$applied"),
             Self::TupleOrigin { id, mutability } => {
                 let permission = match mutability {
                     Mutability::Immutable => "imm",
@@ -667,7 +661,6 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()?,
                 kwargs: Vec::new(),
             },
-            Self::Marker(CtMarker::Applied(value)) => return Self::Int(*value).materialize(span),
             Self::Type(_)
             | Self::Reflected(_)
             | Self::Expr(_)

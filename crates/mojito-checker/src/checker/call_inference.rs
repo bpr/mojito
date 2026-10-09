@@ -402,19 +402,11 @@ impl Checker {
                 // A well-formed `rebind` was erased before checking; one
                 // that reaches here is malformed.
                 "rebind" => return Err(Self::rebind_shape_error(param_args, args)),
-                // The runtime crossings the elaborator folds before the
-                // executable check; only source validation types them.
-                "materialize" if self.source_validation && args.is_empty() => {
-                    return self.infer_materialize_crossing(param_args);
-                }
                 // One the elaborator left is over a binder of a template
                 // body (`materialize[names[i]]()`): the runtime value of its
                 // compile-time operand, which MIR lowers in its place.
                 "materialize" if args.is_empty() && kwargs.is_empty() => {
                     return self.infer_template_materialize(&span, param_args);
-                }
-                "comptime" if self.source_validation && args.len() == 1 => {
-                    return self.infer(&args[0]);
                 }
                 // One the elaborator left is over a binder of a template
                 // body (`comptime(len(L))`): the runtime value of its

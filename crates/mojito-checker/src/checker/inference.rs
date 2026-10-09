@@ -1075,6 +1075,17 @@ impl Checker {
                         "variable '{name}' may be uninitialized"
                     )));
                 }
+                // A read of a module constant is the parameter value its
+                // declaration denotes, as upstream's alias reference is.
+                if let Some(value) = self.module_constant_value(name) {
+                    self.operation_adjustments.borrow_mut().insert(
+                        expr.source_span(),
+                        mojito_checked::checked::SemanticAdjustment::ParamValue {
+                            value,
+                            materialized: None,
+                        },
+                    );
+                }
                 self.lookup(name)
                     .map(|ty| match ty {
                         Ty::Ref(reference) => (*reference.referent).clone(),
@@ -1092,18 +1103,17 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-            } => match self
-                .infer_unbound_pack_construction(name, param_args, args, kwargs)
-                .or_else(|| {
-                    self.infer_validated_variadic_construction(expr, name, param_args, args, kwargs)
-                }) {
+            } => match self.infer_unbound_pack_construction(name, param_args, args, kwargs) {
                 Some(constructed) => constructed,
                 None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
             },
             ExprKind::Member { object, field } => {
                 // A field read out of a temporary destroys the rest of it.
                 self.record_unconsumed_temporary(object);
-                self.infer_member(expr.source_span(), object, field)
+                let projected = self.projected_object.replace(Some(object.source_span()));
+                let member = self.infer_member(expr.source_span(), object, field);
+                *self.projected_object.borrow_mut() = projected;
+                member
             }
             ExprKind::MethodCall {
                 object,

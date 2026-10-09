@@ -45,8 +45,6 @@ use mojito_common::token::{Span, SyntaxId};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
-use mojito_vm::backend::VmBackend;
-use mojito_vm::runtime::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -146,8 +144,6 @@ pub enum ComptimeError {
     /// upstream requires `Self.Ts`; the message is upstream's diagnostic, the
     /// same text the checker reports for a non-pack parameter.
     UnqualifiedStructParam(String),
-    /// The compile-time step/iteration quota was exceeded (a likely infinite loop).
-    QuotaExceeded,
 }
 
 impl From<mojito_symbol::symbol::NonConstantSpecialization> for ComptimeError {
@@ -245,26 +241,17 @@ impl std::fmt::Display for ComptimeError {
                 write!(f, "compile-time constraint failed: {message}")
             }
             Self::Type(error) => write!(f, "{error}"),
-            Self::QuotaExceeded => {
-                write!(f, "compile-time execution exceeded the step quota ({FUEL})")
-            }
         }
     }
 }
 
 /// Elaborate all compile-time constructs in a program, returning an ordinary AST.
 ///
-/// The composed-stage seam: prepares the program, validates every
-/// compile-time control-flow construct with the declarations' parameters
-/// symbolic (a rejection is [`ComptimeError::Type`]), and only then selects
-/// arms and unrolls loops — the same contract the compiler driver enforces.
+/// The composed-stage seam: prepares the program and elaborates it, the
+/// same contract the compiler driver enforces.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let prepared = prepare(program)?;
-    let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
-    mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-        .map_err(ComptimeError::Type)?;
-    elaborate_prepared(&prepared, ElaborationInputs::new(&catalog))
-        .map(|elaborated| elaborated.program)
+    elaborate_prepared(&prepared).map(|elaborated| elaborated.program)
 }
 
 /// Prepare a linked program for source validation and elaboration.
@@ -299,26 +286,6 @@ pub struct Elaborated {
     /// consumer asks this list, never a `$` in a name, since a
     /// module-qualified source name carries one too.
     pub generated: GeneratedDeclarations,
-    /// What the checks of this elaboration's VM CTFE subprograms derived
-    /// and inferred, for the compilation's own template statistics.
-    pub ctfe_template_stats: mojito_checked::templates::TemplateStats,
-}
-
-/// What the driver hands the one elaboration of a compilation.
-///
-/// The compilation's checked templates, which VM CTFE's subprogram checks
-/// derive their traced clones from, holding the verdict of the source
-/// validation run every elaboration follows.
-#[derive(Clone, Copy)]
-pub struct ElaborationInputs<'a> {
-    pub templates: &'a mojito_checked::templates::TemplateCatalog,
-}
-
-impl<'a> ElaborationInputs<'a> {
-    /// An elaboration under `templates`.
-    pub const fn new(templates: &'a mojito_checked::templates::TemplateCatalog) -> Self {
-        Self { templates }
-    }
 }
 
 /// The declarations an elaboration generated.
@@ -403,16 +370,11 @@ pub fn generated_names(
     }
 }
 
-/// Elaborate a [`prepare`]d, validated program.
+/// Elaborate a [`prepare`]d program.
 ///
-/// This is the already-validated route: ordinary callers use [`elaborate`],
-/// and the compiler — which validates the prepared program once — enters
-/// here.
-pub fn elaborate_prepared(
-    program: &[Stmt],
-    inputs: ElaborationInputs<'_>,
-) -> Result<Elaborated, ComptimeError> {
-    let ElaborationInputs { templates } = inputs;
+/// Ordinary callers use [`elaborate`]; the compiler, which prepares once,
+/// enters here.
+pub fn elaborate_prepared(program: &[Stmt]) -> Result<Elaborated, ComptimeError> {
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
@@ -442,42 +404,32 @@ pub fn elaborate_prepared(
                 _ => None,
             })
             .collect(),
-        templates,
-        ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
         conformance,
-        fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
         def_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
         top_consts: RefCell::new(HashMap::new()),
-        pending_constants: RefCell::new(HashMap::new()),
-        forced_constants: RefCell::new(HashMap::new()),
-        forcing_constants: RefCell::new(HashSet::new()),
-        evaluating_body: Cell::new(false),
+        applied_displays: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
     };
     drop(indexes);
-    elab.check_default_effects(program)?;
     let mut env = HashMap::new();
     let mut elaborated = elab.block(program, &mut env, false)?;
-    let deferred = elab.request_pending_reads(&mut elaborated);
+    elab.request_display_reads(&mut elaborated);
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
-    // Materialize module-level comptime constants into runtime literals.
-    let failure = RefCell::new(None);
-    let mut materialized = materialize_block(
-        elaborated,
-        &consts,
-        &elab.struct_names,
-        &elab.applied_constants(),
-        &elab.pending_lookup(&failure),
-    );
-    if let Some(error) = failure.into_inner() {
-        return Err(error);
-    }
-    elab.restore_forced_constants(&mut materialized, deferred);
+    // Materialize module-level comptime constants into runtime literals. A
+    // scalar or an applied constant stays a name: the check binds a body's
+    // read of it as the parameter value its declaration denotes (decision
+    // D3).
+    let materialized_consts: HashMap<String, CtValue> = consts
+        .iter()
+        .filter(|(_, value)| !is_scalar_constant(value))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let materialized = materialize_block(elaborated, &materialized_consts, &elab.struct_names);
     // Monomorphize comptime-dependent generic templates against their call sites.
     let mut result = elab.monomorphize(materialized)?.program;
     for statement in &mut result {
@@ -489,12 +441,10 @@ pub fn elaborate_prepared(
         program: result,
         def_traces: elab.def_traces.take(),
         generated: elab.generated.take(),
-        ctfe_template_stats: elab.ctfe_template_stats.take(),
     })
 }
 
 mod crossing;
-mod ctfe_calls;
 mod elab;
 mod pack_qualification;
 mod packs;
@@ -503,8 +453,6 @@ mod requests;
 mod synth;
 mod unparse;
 
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use ctfe_calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use packs::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -608,15 +556,21 @@ fn pack_values_projection(expression: &Expr) -> Option<&str> {
     }
 }
 
-/// Whether a block directly contains a `comptime if`/`comptime for` (not descending
-/// into nested `def`/`struct`, which have their own compile-time scope).
-fn block_has_comptime(stmts: &[Stmt]) -> bool {
-    block_has_statement(stmts, &|kind| {
-        matches!(
-            kind,
-            StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. }
-        )
-    })
+/// Whether a module constant's value is a scalar, or an applied constant,
+/// the check reads as a parameter value where a body names it, rather than
+/// a literal the elaborator spells there.
+const fn is_scalar_constant(value: &CtValue) -> bool {
+    matches!(
+        value,
+        CtValue::Int(_)
+            | CtValue::IntLiteral(_)
+            | CtValue::UInt(_)
+            | CtValue::Float(_)
+            | CtValue::FloatLiteral(_)
+            | CtValue::Bool(_)
+            | CtValue::Str(_)
+            | CtValue::Marker(CtMarker::Applied)
+    )
 }
 
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
@@ -682,41 +636,6 @@ pub(super) fn pack_element_alias(
         }
         _ => None,
     }
-}
-
-/// Whether a block names `rebind[Dest](value)` anywhere below it, a nested
-/// `def` included.
-///
-/// `rebind` asserts that the operand's parametric type resolves to `Dest`
-/// once instantiated. A generator's MIR carries the assertion for the
-/// elaborator to judge per instance; a body that still specializes as a
-/// clone — a nested `def`, or a compile-time evaluation's unelaborated
-/// subprogram — makes it on the clone.
-pub(super) fn block_has_rebind(stmts: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(&expr.kind, ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } if name == "rebind")
-            {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = Finder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, stmts);
-    finder.found
-}
-
-/// Whether a compile-time evaluation's method body can only
-/// check once its own parameters are bound: it holds compile-time control
-/// flow, or a `rebind` assertion over them. Either way the template is
-/// stubbed and every instantiation clones.
-fn block_keys_specialization(stmts: &[Stmt]) -> bool {
-    block_has_comptime(stmts) || block_has_rebind(stmts)
 }
 
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,
@@ -1189,29 +1108,8 @@ impl Elab<'_> {
     }
 }
 
-/// A compile-time value as the runtime value the VM takes
-/// (`mojito_vm::crossing`), a refusal reported as a compile-time error.
-fn ct_to_vm(value: &CtValue) -> Result<Value, ComptimeError> {
-    mojito_vm::crossing::ct_to_vm(value).map_err(crossing_error)
-}
-
-fn crossing_error(error: mojito_vm::runtime::RuntimeError) -> ComptimeError {
-    ComptimeError::NotComptime(match error {
-        mojito_vm::runtime::RuntimeError::Unsupported(text) => text,
-        other => other.to_string(),
-    })
-}
-
-/// A CTFE-callable function: a pure top-level `def`, optionally with compile-time
-/// parameters specialized at the call site.
-struct CtFn<'a> {
-    ct_params: Vec<ParamDecl>,
-    params: Vec<String>,
-    body: &'a [Stmt],
-}
-
-/// Compile-time metadata for a top-level struct, enough for generic CTFE to read
-/// associated facts such as `T.size`.
+/// Compile-time metadata for a top-level struct, enough to read associated
+/// facts such as `T.size`.
 struct CtStruct<'a> {
     decls: Vec<ParamDecl>,
     /// The source parameters `decls` classified from — the fallback for
@@ -1220,11 +1118,6 @@ struct CtStruct<'a> {
     source_params: &'a [TypeParam],
     associated: &'a [StructComptime],
     fields: &'a [mojito_ast::ast::Param],
-    /// Whether instances construct fieldwise (`@fieldwise_init`, or a
-    /// hand-written `__init__` mirroring the fields in declaration order) —
-    /// the precondition for freezing a VM instance into a
-    /// [`CtValue::Struct`] and materializing it back.
-    fieldwise: bool,
 }
 
 /// Whether a declaration must remain a template until a concrete call selects
@@ -1248,18 +1141,13 @@ fn is_specializable_declaration(statement: &Stmt) -> bool {
     }
 }
 
-/// The maximum number of compile-time "steps" (loop iterations, statements
-/// executed, function calls) across a whole program — a hard bound so compile-time
-/// execution can't hang the compiler (cf. Zig's quota).
-const FUEL: usize = mojito_vm::crossing::CTFE_FUEL;
-
 /// The compile-time elaboration engine: the CTFE-callable functions and a shared
 /// fuel budget. `top_consts` captures module-level constants for materialization;
 /// `specializable` holds the comptime-dependent generic `def` templates
 /// (roadmap milestone 6).
 struct Elab<'a> {
     program: &'a [Stmt],
-    fns: HashMap<String, CtFn<'a>>,
+    fns: HashSet<String>,
     structs: HashMap<String, CtStruct<'a>>,
     /// Every declared struct name, for materialization's projection rewrite.
     struct_names: HashSet<String>,
@@ -1277,37 +1165,22 @@ struct Elab<'a> {
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
-    /// The compilation's checked templates, which the checks of a VM-CTFE
-    /// subprogram derive its traced clones from.
-    templates: &'a mojito_checked::templates::TemplateCatalog,
-    /// What those checks derived and inferred.
-    ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
-    fuel: Cell<usize>,
     /// The compile-time parameter names of each generic `def` whose body is
     /// being elaborated as a template, innermost last. A `comptime if`
     /// whose condition names one is kept for the check: its arms are the
     /// template's, and the elaborator below MIR selects.
     template_binders: RefCell<Vec<HashSet<String>>>,
-    /// How many generic bodies the runtime-crossing pass has descended into.
+    /// How many function bodies the runtime-crossing pass has descended into.
     crossing_templates: Cell<usize>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
     /// The `def` clones and per-call method clones generated so far.
     generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
-    /// The module constants evaluated on demand, by name
-    /// ([`Self::defer_constant`]).
-    pending_constants: RefCell<HashMap<String, requests::PendingConstant>>,
-    /// The pending constants a reader above the check forced, with their
-    /// values.
-    forced_constants: RefCell<HashMap<String, CtValue>>,
-    /// The pending constants being forced, which a cycle demands again.
-    forcing_constants: RefCell<HashSet<String>>,
-    /// Whether the expression being evaluated is a function body's: a local
-    /// `comptime` initializer or a `comptime(...)` operand. None reaches
-    /// the AST route ([`Self::ctfe_call`] and the other entries), which
-    /// serves readers above the check alone.
-    evaluating_body: Cell<bool>,
+    /// The module constants whose initializer is a display that applies a
+    /// callable, by name, each as the display spelled where it is read
+    /// (`requests.rs`).
+    applied_displays: RefCell<HashMap<String, Expr>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the
     /// checker's alias registry, but an application inside a `comptime if`
@@ -1529,28 +1402,15 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
     }
 }
 
-fn collect_fns(program: &[Stmt]) -> HashMap<String, CtFn<'_>> {
-    let mut fns = HashMap::new();
-    for s in program {
-        if let StmtKind::Def {
-            name,
-            params,
-            body,
-            type_params,
-            ..
-        } = &s.kind
-        {
-            fns.insert(
-                name.clone(),
-                CtFn {
-                    ct_params: classify_ct_params(type_params, name),
-                    params: params.iter().map(|p| p.name.clone()).collect(),
-                    body,
-                },
-            );
-        }
-    }
-    fns
+/// The names of the module's `def`s, which an application names.
+fn collect_fns(program: &[Stmt]) -> HashSet<String> {
+    program
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StmtKind::Def { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
@@ -1561,20 +1421,9 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
             type_params,
             associated,
             fields,
-            methods,
-            fieldwise_init,
             ..
         } = &s.kind
         {
-            let mirrored_init = methods.iter().any(|method| {
-                method.name == "__init__"
-                    && method.params.len() == fields.len()
-                    && method
-                        .params
-                        .iter()
-                        .zip(fields.iter())
-                        .all(|(parameter, field)| parameter.name == field.name)
-            });
             structs.insert(
                 name.clone(),
                 CtStruct {
@@ -1582,7 +1431,6 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
                     source_params: type_params,
                     associated,
                     fields,
-                    fieldwise: *fieldwise_init || mirrored_init,
                 },
             );
         }
@@ -1713,37 +1561,10 @@ fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-/// Whether a block directly contains a statement `wanted` accepts, under the
-/// same scope rule as `block_has_comptime`.
-fn block_has_statement(stmts: &[Stmt], wanted: &dyn Fn(&StmtKind) -> bool) -> bool {
-    let has = |block: &[Stmt]| block_has_statement(block, wanted);
-    stmts.iter().any(|s| match &s.kind {
-        kind if wanted(kind) => true,
-        StmtKind::If { branches, orelse } => {
-            branches.iter().any(|(_, b)| has(b)) || orelse.as_ref().is_some_and(|b| has(b))
-        }
-        StmtKind::While { body, .. } | StmtKind::For { body, .. } => has(body),
-        StmtKind::With { body, .. } => has(body),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            has(body)
-                || except.as_ref().is_some_and(|(_, b)| has(b))
-                || orelse.as_ref().is_some_and(|b| has(b))
-                || finalbody.as_ref().is_some_and(|b| has(b))
-        }
-        _ => false,
-    })
-}
-
 /// A pending specialization request: template `orig`, specialized for `vals`.
 struct Job {
     orig: String,
     vals: Vec<CtValue>,
-    site: String,
     output_name: String,
     whole_pack_abi: bool,
 }
@@ -1772,14 +1593,6 @@ fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
         )
     })
 }
-
-/// The builtins with an observable effect, which no compile-time evaluation
-/// may reach: everything else the VM executes deterministically.
-fn vm_ctfe_effectful_builtin(name: &str) -> bool {
-    matches!(name, "print" | "input")
-}
-
-mod ctfe;
 
 mod eval;
 
@@ -1900,27 +1713,6 @@ impl<'a> Elab<'a> {
             })
             .collect();
         Type::Named(name, filled)
-    }
-}
-
-#[cfg(test)]
-mod vm_bridge_tests {
-    use super::ct_to_vm;
-    use mojito::{CtValue, Value};
-
-    #[test]
-    fn list_values_cross_vm_ctfe_only_as_explicit_comptime_storage() {
-        let source = CtValue::List(vec![CtValue::Int(1), CtValue::Bool(true)]);
-        let runtime = ct_to_vm(&source).expect("compile-time list crosses into VM CTFE");
-        assert!(matches!(
-            &runtime,
-            Value::ComptimeList(values)
-                if values == &[Value::Int(1), Value::Bool(true)]
-        ));
-        assert_eq!(
-            mojito_vm::crossing::vm_to_ct(runtime).expect("VM CTFE list crosses back to CtValue"),
-            source
-        );
     }
 }
 

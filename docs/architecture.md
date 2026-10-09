@@ -362,8 +362,8 @@ policy or data-model responsibilities to focused children:
 - `comptime.rs` runs elaboration and specialization;
   `comptime/rewrite.rs` owns AST substitution and value materialization, and
   the root's extracted clusters live in
-  `comptime/{elab,synth,ctfe_calls,packs,params}.rs`;
-  the lane-width scan it shares with source validation lives in
+  `comptime/{elab,synth,packs,params,requests,crossing}.rs`;
+  the lane-width scan it shares with the checker lives in
   `mojito-ast/simd_width.rs`.
 
 Child modules expose only the phase-internal operations their coordinator needs.
@@ -459,9 +459,7 @@ Entry points:
 
 ```rust
 comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
-checker::validate_comptime_templates(prepared: &[Stmt]) -> Result<(), TypeError>
-checker::validate_comptime_templates_into(prepared: &[Stmt], catalog: &mut TemplateCatalog) -> Result<(), TypeError>
-comptime::elaborate_prepared(prepared: Vec<Stmt>, …requests) -> Result<Elaborated, ComptimeError>
+comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Elaborated, ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
 
@@ -703,37 +701,27 @@ bound), which only the erased oracle reads, leaves every concrete instance
 (`reification_slots`, `mono/slots.rs`), as Mojo gives a type parameter no
 storage.
 
-**Source validation comes first.** `prepare` normalizes declarations
+**One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
 clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 `SIMD[_, _]` parameter desugar into an infer-only dtype and `SIMDLength`
-binder pair, SIMD alias-bound folding). The checker then
-validates the prepared source (`validate_comptime_templates`,
-`checker/comptime_validation.rs`): every function or method body holding a
-`comptime if`/`comptime for` or a `rebind` over its own parameters is
-checked once with its declaration's parameters left symbolic — each condition typed as a compile-time `Bool`
-(a generic constraint over the parameters in scope, a concrete conformance,
-or a `Bool` value), each arm and loop body in its own scope, no arm assumed
-selected — so a type error in an untaken arm rejects as upstream rejects it,
-a guard such as `T == Int` narrows nothing, and an unused template still
-checks. A `rebind` takes its target on faith here, where the operand's type
-is still symbolic, exactly as upstream does; the equality is asserted per
-instance by the elaborator below MIR. Every method body of a struct keyed on a vector value
-(`value_keyed_struct`), which the elaborator specializes whole and drops, is
-checked the same way, to produce its template only: a body this check cannot
-type gets no verdict, and its specializations keep their own check. A
-`DType`- or lane-keyed `def` (`value_keyed_def`) is checked here too, and
-again as a retained bound generic by the executable pass when its template
-serves it. Bodies
-without such constructs are declared but left to the
-executable check. Validation
-records the applied module constants, and every elaboration — the driver's
-and `comptime::elaborate` alike — follows a validation run. Validation then runs the
-explicit-destruction analysis over exactly those bodies
-(`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
-compile-time-keyed template is a trapping stub by the time the executable
-check sees it, so this is the only place its abandoned values are judged with
-the parameters symbolic. An arm whose condition names one of the body's
+binder pair, SIMD alias-bound folding). The elaborator keeps every
+`comptime if` and `comptime for` of every function body, plain or generic
+(`Elab::def_body` pushes a binder set for every body, empty for a plain
+one), and the one check types every body once with its declaration's
+parameters left symbolic (`checker/comptime_validation.rs`): each condition
+typed as a compile-time `Bool` (a generic constraint over the parameters
+in scope, a concrete conformance, or a `Bool` value; a closed condition
+folds to its verdict, `Checker::fold_closed_constraint`, and one over a
+runtime local is the pin's "cannot use a dynamic value in 'comptime if'
+condition"), each arm and loop body in its own scope, no arm assumed
+selected — so a type error in an untaken arm rejects as upstream rejects
+it, a guard such as `T == Int` narrows nothing, and an unused template
+still checks. A `rebind` takes its target on faith where the operand's
+type is still symbolic, exactly as upstream does; the equality is asserted
+per instance by the elaborator below MIR. The explicit-destruction
+analysis runs over the whole program once (`explicit_destroy::check`): an
+arm whose condition names one of the body's
 parameters may assume nothing about the instantiation, so such arms join as
 `if` branches do: a value one arm alone destroys is abandoned, or
 uninitialized if used afterwards, even when every instantiation selects that
@@ -741,6 +729,9 @@ arm, as upstream (`explicit_destroy::check_comptime_if`,
 `assets/type_error/comptime_if_arm_conditional_destroy.mojo`). A condition
 naming no parameter folds to one arm, and its arms join as alternatives. A
 `comptime for` body must leave every outer obligation as it found it.
+There is no second checker run: source validation and its tolerance for a
+body it could not type (`SymbolicBoundary`) are gone, so a body with no
+symbolic rule is rejected (R519).
 
 **A variadic pack is symbolic too.** A body keyed on a pack — a `def`'s or
 method's own `*Ts`, or any method of a variadic struct — is validated like any
@@ -785,10 +776,8 @@ caller's, the two collectors' ownership must agree (`var` needs the `^`, a
 read pack cannot be transferred), and a result naming the callee's elements
 closes over the caller's pack. Where there is still no symbolic rule — a
 method other than `__len__` on the pack, a spread outside a call argument —
-the checker raises `TypeError::SymbolicBoundary`, and that one body gets
-no verdict (`Checker::symbolic_verdict`, counted as `templates.no_verdict`):
-it keeps its per-instantiation check, leaves the destruction walk, and the
-run goes on. `docs/notes/param-expr-attributes.md` records the design.
+the checker raises `TypeError::SymbolicBoundary`, which rejects the body:
+there is no per-instantiation check to leave it to (R519). `docs/notes/param-expr-attributes.md` records the design.
 
 **A SIMD lane is symbolic too.** A body keyed on a `DType` parameter, or on a
 vector width naming its own parameter (`def total[dt: DType, width:
@@ -883,20 +872,16 @@ fields (`eval_ct` through `ParamContext::answer_reflections`), by the one
 policy the checker applies to a closed subject (`ReflectQuery::answer`), and
 a query with no answer fails the instantiation. A field type never crosses.
 
-**Validation is a template producer.** `Compiler::compile_linked` runs
-validation once, on the prepared program the one elaboration then
-elaborates, and lends it the compilation's `TemplateCatalog`
-(`validate_comptime_templates_into`). A module-level body validation checks
-is retained there as a `CheckedTemplate`: its facts keyed by its own syntax
-occurrences, with a coverage certificate. The elaborator stubs such a
-template, so validation is the only check it gets, and its instances inherit
-the facts of the arms the elaborator selects instead of being inferred
-(Stage 3, *Checked Templates*). A pack-keyed body's certificate is always
-incomplete, and so are a reflection-reading body's and a lane-keyed struct
-member's, so their instances keep the clone check. The verdict-only
-`validate_comptime_templates` remains for clients without a catalog, and
-`comptime::elaborate`, the composed-stage seam, runs the same three steps
-through it.
+**Module constants are parameter expressions.** The elaborator folds a
+closed module constant and keeps its declaration; one whose initializer
+applies a callable, asks a layout, or reads such a constant is marked
+(`CtMarker::Applied`) and kept as written. The check classifies every
+module constant in its declaration pass and records a body's read as a
+`SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), which
+MIR lowers as `Const::Param` and `native::mono` folds or demands
+(`docs/notes/ctfe-request-path.md` §Today, decision D3). The toplevel
+lowers no `comptime` declaration; a non-scalar closed constant is still
+spelled into bodies by `materialize_block` (R517).
 
 Compile-time values are represented by:
 
@@ -1225,113 +1210,50 @@ runtime; it exists to decide `comptime if`, enumerate `comptime for`, resolve
 type-valued compile-time facts, and fold those facts before a CTFE helper is
 lowered to MIR.
 
-### VM-Backed CTFE
+### Compile-Time Calls
 
-When a compile-time expression calls a helper `def`, the elaborator first resolves
-the explicit compile-time arguments into `CtValue`s. Value parameters are passed
-to the VM as reified frame locals; type parameters remain compile-time facts in
-the elaborator's environment.
-
-Before lowering the helper for CTFE, the elaborator walks the transitive helper
-call graph (`vm_ctfe_safe_fn`) and rejects runtime effects: the effectful
-builtins `print` and `input` (`vm_ctfe_effectful_builtin`), and a nested
-`struct`, `trait`, or `import`. Loops, recursion, methods, pointers,
-collections, and `try` are allowed; a raising call is reported only where the
-expression path's typing probe sees it. This whole route is the one
-[`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) replaces. An
-evaluation in a function body that applies a callable — a local `comptime`
-binding, a `comptime if` condition, a `comptime for` range bound, a
-`comptime(e)` operand — is already kept for the check (`applies_callable`,
-one predicate the elaborator and the checker share), lifted by MIR as a
-thunk, and served by the
-elaborator below MIR, which runs the instance's reference closure as concrete
-MIR on the VM. A module constant whose initializer applies a callable is
-evaluated on demand (`comptime/requests.rs`): a body's value read of it is
-such a request, and only a reader above the check — a type, a condition the
-elaborator decides itself, another constant — forces it through this route;
-no evaluation in a body enters it (`Elab::eval_in_body`).
-Entry R9 deletes the route with those readers.
-
-For the accepted call graph, the elaborator clones the needed top-level `def`s.
-In the root helper body it folds compile-time-only expressions into ordinary
-runtime literals:
-
-```mojo
-return T.size
-```
-
-may become:
-
-```mojo
-return 8
-```
-
-for an instantiation such as `capacity[Buffer[8]]()`. Similarly, a type
-comparison `T == Int` is replaced with a `Bool` literal. After this rewrite,
-the cloned helper program is ordinary AST and can be lowered through the same
-HIR/MIR/VM machinery as runtime code.
-
-The helper program is checked (once as a typing probe for a general
-expression, then by `VmBackend::run_function_value`) over a catalog the
-elaborator builds from the compilation's checked templates: the clones the
-subprogram mints are traced like the program's own, and a clone
-of a certified template derives its facts instead of being inferred.
-
-The VM has a narrow CTFE entry point:
-
-```rust
-VmBackend::run_function_value(...)
-```
-
-It executes a named top-level helper without running `__toplevel__` or `main`,
-burns the shared compile-time fuel budget, and returns a runtime `Value` plus the
-remaining fuel. The elaborator converts the result back to `CtValue`. Exact
-`IntLiteral`/`FloatLiteral` values and runtime-materializable `Int`, `UInt`,
-`Float64`, `Bool`, and `String` values can cross that boundary. Compile-time
-lists cross through the CTFE-only `Ty::ComptimeList`/`Value::ComptimeList`
-carrier; compile-time tuples cross through the same private heterogeneous
-`Ty::Tuple`/`Value::Tuple` storage used by specialized runtime packs. Public
-`List` and `Tuple` values are nominal structs and do not use either bridge.
+No call is evaluated above the check. A compile-time position that applies
+a callable — a local `comptime` binding, a `comptime if` condition, a
+`comptime for` bound or sequence, a `comptime(e)` or `materialize[...]()`
+operand, a module constant's initializer — is kept for the check
+(`applies_callable`, one predicate the elaborator and the checker share),
+bound there as a parameter expression (an `Apply` of the callee, or of a
+thunk MIR lifts for a general expression, `ComptimeThunks`), and served by
+the elaborator below MIR, which runs the instance's reference closure as
+concrete MIR on the VM (`Specializer::demand_application`,
+`VmBackend::call_concrete`). The elaborator above the check
+(`comptime/eval.rs`) folds closed values only and refuses a call
+(`not_evaluated_here`); a generic `comptime` alias body that applies one
+is the shape this refuses that the pin evaluates (R518).
 
 ### Fuel
 
 In this codebase, **fuel** means a compile-time step budget. It is not a runtime
-performance mechanism and not user-visible gas. The current budget is a fixed
-program-wide quota:
-
-```rust
-const FUEL: usize = 100_000;
-```
-
-The elaborator burns fuel for expression-level compile-time work and
-`comptime for` unrolling. VM-backed CTFE burns from the same budget for function
-calls, basic-block execution, and instructions. If the budget reaches zero,
-elaboration fails with a compile-time quota error.
+performance mechanism and not user-visible gas. The budget is one fixed
+quota per compilation (`mojito_vm::crossing::CTFE_FUEL`, `Specializer.fuel`),
+burned by the elaborator below MIR for `comptime for` unrolling and for
+every function it runs on the VM (`VmBackend::call_concrete`). If the
+budget reaches zero, elaboration fails with a quota error.
 
 The goal is to prevent compile-time execution from hanging the compiler. A bad
-`while True` in a CTFE function or an enormous generated loop should fail
-deterministically instead of making compilation unbounded. This is similar in
-spirit to Zig's compile-time branch quota, though mojito keeps the mechanism
-small and fixed for now.
+`while True` in a compile-time function or an enormous generated loop should
+fail deterministically instead of making compilation unbounded. This is
+similar in spirit to Zig's compile-time branch quota, though mojito keeps the
+mechanism small and fixed for now.
 
 ### Checker Interaction
 
-The checker still has a narrow constant folder for value-parameter contexts such
-as SIMD widths and simple value-parameterized types. The comptime elaborator now
-runs before the checker, so CTFE-computed values are folded into literals before
-those checks run.
-
-That layering is useful but not final. Today there are two related mechanisms:
-
-- `crates/mojito-comptime/src/comptime.rs` handles language-level `comptime` declarations, branch
-  selection, loop unrolling, materialization, and CTFE.
-- `crates/mojito-checker/src/checker.rs` still validates type/value-parameter positions and folds the
-  small expression subset it needs for those positions.
+The checker owns compile-time typing: value-parameter positions such as
+SIMD widths, the constant folder for closed `Int` expressions
+(`eval_ct`), the constraint compiler, and the parameter expressions every
+compile-time read denotes. The elaborator runs before it and folds closed
+values into literals (`comptime T = Int`, `comptime L = [1, 2]`); every
+other compile-time fact crosses the check as a parameter expression.
 
 `ParamDecl::Value` retains its declared checked type and optional compile-time
 default, a `ParamExpr`. The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
-reflection handles. Both mechanisms fold through `param_expr::fold`.
+reflection handles. Both phases fold through `param_expr::fold`.
 Only literal-shaped values materialize into runtime AST; type and reflection
 handles are consumed and erased during elaboration.
 
@@ -1780,10 +1702,8 @@ and its soundness argument, is
   generic struct. A method has no source range of its own, so it is named by
   its struct and the range of its body's first statement. Both reach the
   mechanism through one `BodySite` (`check_def_body`, `check_method_body`).
-- **One producer per body.** The executable check retains the template of a
-  trait-bound generic that survives elaboration. Source validation retains
-  the template of a body it checks and the elaborator then stubs or drops,
-  a member of a struct keyed on a vector value among them.
+- **One producer per body.** The one check retains the template of every
+  generic body (`TemplateProducer::ExecutableCheck`).
 - **Capture is total or it refuses.** `FactTable` enumerates every
   occurrence-keyed fact table. A body that recorded into a table without a
   derivation recipe, keyed a fact outside its own occurrences, grew a store

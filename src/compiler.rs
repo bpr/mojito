@@ -3,8 +3,7 @@
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, Elaborated, ElaborationInputs, elaborate_prepared, generated_names,
-    instance_traces, prepare,
+    ComptimeError, Elaborated, elaborate_prepared, generated_names, instance_traces, prepare,
 };
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
@@ -308,10 +307,6 @@ impl Compiler {
     /// execution all consume the one cached `MirProgram` lowered here.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        // Source validation checks each `comptime if` arm and `comptime for`
-        // body of the prepared program with its declaration's parameters
-        // symbolic before elaboration selects, so an untaken arm's type
-        // error is reported as the pinned Mojo reports it.
         let prepared = {
             let _prepare = timing::span("prepare");
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
@@ -328,26 +323,21 @@ impl Compiler {
         templates_catalog.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
         }));
-        crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
-            .map_err(CompilerError::Type)?;
-        // One elaboration and one check: every generic body is checked once
-        // with its binders symbolic, and the elaborator below MIR finds the
-        // instances the entries reach. Nothing a check discovers feeds a
-        // second elaboration.
+        // One elaboration and one check: every body is checked once with
+        // every `comptime if` arm and `comptime for` body open and its
+        // binders symbolic, and the elaborator below MIR decides, unrolls,
+        // and finds the instances the entries reach.
         let Elaborated {
             program: elaborated,
             def_traces,
             generated,
-            ctfe_template_stats,
         } = {
             let _elaborate = timing::span("elaborate");
-            elaborate_prepared(&prepared, ElaborationInputs::new(&templates_catalog))
-                .map_err(CompilerError::Comptime)?
+            elaborate_prepared(&prepared).map_err(CompilerError::Comptime)?
         };
         if !self.allow_executable_module_scope {
             validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
         }
-        templates_catalog.stats_mut().absorb(ctfe_template_stats);
         templates_catalog.set_traces(instance_traces(def_traces));
         templates_catalog.set_generated(generated_names(generated));
         let checked = {

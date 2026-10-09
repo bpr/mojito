@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R516**.
+Next free ID: **R521**.
 
 ## Ordered Work
 
@@ -60,41 +60,6 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R9 (P4) Source validation and the executable check are two
-  passes, and the AST evaluates compile-time code above the check**
-
-  Problem: the driver elaborates once and checks once (2026-10-08), but
-  the check is still two checker runs over the prepared program, plain
-  bodies are still selected and unrolled above it, module constants are
-  still materialized into bodies as literals, and CTFE still has an AST
-  route beside the worklist's request path.
-  - Every function body keeps its `comptime if`/`comptime for` to MIR, as
-    generic bodies do: the checker types every arm and loop body once with
-    the index a binder, and `native::mono` decides and unrolls. Every
-    sequence shape the AST unroller accepted needs a checker rule; a shape
-    without one is a checker error, never a silent unroll.
-  - Module-scope `comptime` values follow decision D3: a constant the
-    `ParamExpr` folder closes is `Constant(v)`, one whose initializer
-    applies anything is `Apply(thunk)`, and a body read is a `ParamValue`
-    fact lowered as `Const::Param`. Materialization into bodies, the
-    pending/forced machinery, and `ParamKind::Apply::evaluated` go; R139
-    closes with it.
-  - `validate_comptime_templates_into` merges into the one check: each
-    `source_validation` site becomes unconditional, is deleted, or is
-    unified (the two local `comptime` binding rules); `Checker.source_validation`
-    and `ElaborationInputs` go.
-  - CTFE's AST route is deleted with `VmBackend::run_function_value` and
-    the `mojito-vm → mojito-checker` and `mojito-comptime → mojito-vm`
-    edges; the worklist's request path (`docs/notes/ctfe-request-path.md`)
-    is the only one. It waits for the two bullets above, which remove the
-    last module-scope and signature positions that reach `Elab::eval` with
-    a call.
-  - The plan file of 2026-10-08 (slices 3 to 6) orders the work; its
-    budget rule (D4) holds: no row of `docs/performance.md`'s P4 table may
-    regress past 1.20× peak RSS.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R10 (P5) The replaced mechanisms are still in the tree**
 
   Problem: once R9 lands, the AST cloner's core, template derivation, and
@@ -113,6 +78,41 @@ correctness fix to existing behavior is allowed.
     Each earlier stage updated the pipeline it changed.
   - Depends on R9.
   - Model: Fable, Planned.
+
+- [ ] **R516 An applied module dictionary or set display constant is
+  spelled at each read, not bound as a parameter expression**
+
+  Problem: `comptime D = {"a": f(1), "b": 3}` has no parameter-expression
+  form, so the elaborator spells the display where a body reads it.
+  - A method call or subscript of the constant, `materialize[D]()`, a
+    `comptime for` over it, and another constant's initializer each get the
+    display in place (`Elab::spell_applied_displays`), and a runtime value
+    read becomes the request `comptime(<display>)`
+    (`comptime/requests.rs`).
+  - Decision D3 (`docs/notes/ctfe-request-path.md`) wants the constant
+    bound as `Apply(thunk)` like a list display is
+    (`Checker::module_lifted_application`); a dictionary's compile-time
+    form is what blocks it.
+  - Fixture: `assets/ok/ctfe_module_display_constant_requests.mojo`.
+  - Depends on R196.
+  - Model: Fable, Not Planned.
+
+- [ ] **R517 A closed module constant that is not a scalar is still spelled
+  into bodies as a literal**
+
+  Problem: a module struct value, tuple, vector, `DType`, or closed display
+  constant is substituted into every body by the elaborator
+  (`materialize_block`), while a scalar or applied constant is a checked
+  `ParamValue` fact lowered as `Const::Param`.
+  - The checker's declaration pass classifies only folded `Int`s, literals,
+    and applications (`Checker::module_constant_value`); the rest keep the
+    elaborator's substitution, so their reads carry no parameter-value fact.
+  - A list-valued application read whole in a lifted thunk has no
+    register construction either (`mono::substitute::value_parameter_constant`
+    returns none for a `CtValue::List`), which is why a module list display
+    is read element by element (`ParamKind::ListGet`) or spelled.
+  - Depends on R516.
+  - Model: Fable, Not Planned.
 
 - [ ] **R11 (P6) The standard library is checked again in every
   compilation**
@@ -2353,6 +2353,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R518 A generic `comptime` alias whose body applies a callable is
+  refused**
+
+  Problem: `comptime Twice[n: Int] = f(n)` applied as `Twice[3]` reports
+  "a compile-time call of 'f' is not evaluated above the check", where the
+  pin evaluates the alias body in its elaborator and prints `6`.
+  - The AST route that evaluated the body is gone (R9); the alias body is
+    folded by `Elab::apply_generic_alias` above the check, which folds no
+    call.
+  - The lever is the one the module constants took: the check binds the
+    application as a parameter expression and `native::mono` evaluates it.
+  - A struct's associated `comptime` member that applies a callable
+    (`comptime k = f(1)` inside a struct) was already refused before R9
+    ("not an associated comptime expression") and takes the same lever.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R519 A method of an unbound pack other than `__len__` has no
+  symbolic rule**
+
+  Problem: `a.__getitem__[0]()` over `*a: *Ts` is rejected with "no symbolic
+  rule for an unbound pack or reflected type: method '__getitem__' of an
+  unbound pack", where the pin runs it; `a[0]` is accepted.
+  - Source validation left such a body without a verdict for a
+    per-instantiation check that no longer exists; the one check judges
+    every body with its binders symbolic
+    (`tests/checker_test.rs::a_pack_body_without_a_symbolic_rule_is_rejected`).
+  - The lever is a rule for the explicit dunder spelling beside the
+    subscript's (`Checker::pack_element_type`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R471 A local `comptime` struct binding in a plain `def` is stored
   and destroyed**
 
@@ -3786,29 +3818,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing the register types over parameter expressions
     (2026-10-03). The request path landed with the `comptime if` entry the
     same day (`Specializer::demand_application`).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R139 A module constant applying two functions, or a function with
-  a non-`Int` result, keeps the folded value's identity**
-
-  Problem: `comptime D = g(A) * h(A)` and `comptime E = pick()` returning a
-  `DType` fold to their values before the check, so a type over them
-  matches the folded value, which the pin rejects.
-  - Source validation builds the application for a constant whose
-    initializer applies one module `def` with an `Int` result, or arithmetic
-    over such constants (`Checker::applied_constant_expr`); the executable
-    check attaches the folded value to that one application
-    (`Checker::evaluated_application`), and a node with two applications has
-    no value for either.
-  - The lever is the request path: each application is evaluated by the
-    elaborator, and the fold goes with the AST route.
-  - The elaborator evaluates an application that is a whole operand of a
-    `comptime if` condition (`f(n) == True`, `size_of[T]()`); one nested in
-    an arithmetic operand (`f(n) + 1 > 2`) is a `MonoError`
-    (`Specializer::resolve_application`).
-  - Found while landing the register types over parameter expressions
-    (2026-10-03).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

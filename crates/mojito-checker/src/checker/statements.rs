@@ -46,14 +46,11 @@ impl Checker {
             }
         }
         for statement in stmts {
-            // Source validation sees a type-parameter default still spelled
-            // as the alias it names (`H: Hasher = default_hasher`), which the
-            // elaborator would have substituted; registering module-level
+            // A type-parameter default may still spell the alias it names
+            // (`H: Hasher = default_hasher`): registering module-level
             // aliases in source order beside the shells lets a shell resolve
             // an earlier alias and an alias body an earlier shell.
-            if self.source_validation {
-                self.register_module_alias(statement)?;
-            }
+            self.register_module_alias(statement)?;
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
@@ -64,8 +61,9 @@ impl Checker {
         drop(phase);
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,
-        // which a trait may name wherever they are declared.
-        let mut evaluated_applications = HashMap::new();
+        // which a trait may name wherever they are declared. A constant
+        // whose initializer applies a callable is its application (decision
+        // D3), whose identity a type keeps and a body's read evaluates.
         for statement in stmts {
             let StmtKind::Comptime {
                 name,
@@ -79,39 +77,26 @@ impl Checker {
             if !type_params.is_empty() {
                 continue;
             }
-            if let Ok(constant) = self.eval_ct(value) {
-                self.comptimes.insert(name.clone(), constant.clone());
-                // The elaborator folded an applied constant to this literal;
-                // its identity stays the application (decision D3).
-                let applied = self
-                    .template_catalog
-                    .borrow()
-                    .applied_constants()
-                    .get(name)
-                    .cloned();
-                if let Some(applied) = applied
-                    && let Some(evaluated) =
-                        self.evaluated_application(&applied, &constant, &mut evaluated_applications)
-                {
-                    self.comptime_applied.insert(name.clone(), evaluated);
-                }
-            } else if let Some(applied) = self
-                .template_catalog
-                .borrow()
-                .applied_constants()
-                .get(name)
-                .cloned()
-            {
-                // The elaborator could not fold the application (a layout
-                // query): the constant is the application, evaluated below
-                // MIR.
+            // The constant is bound ahead of its statement, so a body
+            // declared before it reads it; the statement binds it again.
+            let predeclared = if let Ok(constant) = self.eval_ct(value) {
+                self.comptimes.insert(name.clone(), constant);
+                Some(Ty::IntLiteral)
+            } else if let Some(applied) = self.applied_constant_expr(value, stmts) {
+                let ty = applied.meta().as_value().cloned();
                 self.comptime_applied.insert(name.clone(), applied);
+                ty
             } else if super::traits::literal_default(value) {
                 self.comptime_literals.insert(name.clone(), value.clone());
-            } else if self.source_validation
-                && let Some(applied) = self.applied_constant_expr(value, stmts)
+                self.infer(value).ok()
+            } else {
+                None
+            };
+            if let Some(ty) = predeclared
+                && self.lookup(name).is_none()
             {
-                self.comptime_applied.insert(name.clone(), applied);
+                self.declare_immutable(name, ty)?;
+                self.predeclared_constants.insert(name.clone());
             }
         }
         for statement in stmts {
@@ -182,11 +167,9 @@ impl Checker {
             return Ok(());
         }
         // A single-argument type application parses as a subscript
-        // (`AHasher[SIMD[DType.uint64, 4](0)]`); the elaborator folds such an
-        // alias before the executable check, so only source validation
-        // registers the subscript shape, and only over a declared struct.
-        let subscript_application = self.source_validation
-            && matches!(&value.kind, ExprKind::Index { object, .. }
+        // (`AHasher[SIMD[DType.uint64, 4](0)]`): the subscript shape
+        // registers only over a declared struct.
+        let subscript_application = matches!(&value.kind, ExprKind::Index { object, .. }
                 if matches!(&object.kind, ExprKind::Identifier(base)
                     if self.declared_structs.contains(base)));
         if type_params.is_empty()
@@ -213,7 +196,6 @@ impl Checker {
         for stmt in stmts {
             self.check_stmt(stmt, ret, in_loop)?;
             if let StmtKind::Comptime { name, .. } = &stmt.kind
-                && !self.source_validation
                 && let Some(owner) = self.lookup_owner(name)
             {
                 self.comptime_binding_owners.insert(owner);
@@ -1731,26 +1713,14 @@ impl Checker {
                 value,
             } => {
                 let _position = self.comptime_position();
-                // A function-local binding under source validation: the
-                // elaborator substitutes a type alias and consumes a
-                // compile-time-only value before the executable check, so
-                // the validator binds them itself.
-                let local_validation = self.source_validation && type_params.is_empty();
-                if local_validation && self.bind_local_comptime(stmt, name, ty.as_ref(), value)? {
-                    self.mark_compile_time_binding(name);
-                    return Ok(());
-                }
-                if !self.source_validation
-                    && type_params.is_empty()
+                if type_params.is_empty()
                     && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
                 {
-                    self.mark_compile_time_binding(name);
                     return Ok(());
                 }
                 // A type name takes the alias route; an alias of a value
                 // binder (`comptime lane = dt`) is the ordinary path below.
-                if !local_validation
-                    && !self.names_value_binder(value)
+                if !self.names_value_binder(value)
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
                         || matches!(
@@ -1851,7 +1821,6 @@ impl Checker {
                     self.declare_immutable(name, declared)?;
                 }
                 self.record_statement_binding(stmt, name);
-                self.mark_compile_time_binding(name);
                 Ok(())
             }
 
@@ -2357,21 +2326,6 @@ impl Checker {
             ));
         }
         let named_result = out_params.first().copied();
-        // Source validation checks a module-level body when it holds
-        // compile-time control flow, or when the def is value-keyed and so
-        // specialized per call (`value_keyed_def`); every other module-level
-        // body is declared here and checked by the executable pass. A nested
-        // body is always checked with its enclosing validated body.
-        let validated = !self.source_validation
-            || !self.function_bases.is_empty()
-            || validates_body(
-                &[],
-                type_params,
-                body,
-                body_keys_rebind(body, &self.rebind_keyed_bodies),
-            );
-        let value_keyed = !validated && value_keyed_def(stmt);
-        let check_body = validated || value_keyed;
         if named_result.is_some() && ret_anno.is_some() {
             return Err(TypeError::Unsupported(
                 "a function cannot declare both a named result and '->' return type".to_string(),
@@ -2753,8 +2707,7 @@ impl Checker {
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
-        let site =
-            (module_level && check_body && self.carries_bodies()).then(|| stmt.source_span());
+        let site = (module_level && self.carries_bodies()).then(|| stmt.source_span());
         let carried = site.as_ref().is_some_and(|key| self.carry_body(key, name));
         let site_start = if carried {
             None
@@ -2767,11 +2720,6 @@ impl Checker {
             // Value parameters are ordinary `Int` locals in the body.
             for d in &decls {
                 if let ParamDecl::Value { name, ty, .. } = d {
-                    if self.source_validation
-                        && let Some(bindings) = self.compile_time_bindings.last_mut()
-                    {
-                        bindings.insert(name.trim_start_matches('*').to_string());
-                    }
                     result = self.declare_value_parameter(
                         name.trim_start_matches('*'),
                         if matches!(d, ParamDecl::Value { variadic: true, .. }) {
@@ -2934,26 +2882,10 @@ impl Checker {
                 self.return_annotations
                     .push(Self::body_return_annotation(ret_anno.as_ref(), name));
                 self.named_result_context.push(named_result.is_some());
-                if check_body {
-                    let scopes = self.scopes.len();
-                    if module_level {
-                        self.pack_element_views.borrow_mut().clear();
-                    }
-                    let checked = self.check_def_body(stmt, &decls, &ret_ty, module_level);
-                    // A value-keyed def is validated only to produce its
-                    // template: each specialization is still checked, or
-                    // derived, so a body the symbolic check cannot type
-                    // gets no verdict.
-                    let checked = match checked {
-                        Err(error)
-                            if value_keyed && !matches!(error, TypeError::SymbolicBoundary(_)) =>
-                        {
-                            Err(TypeError::SymbolicBoundary(error.to_string()))
-                        }
-                        checked => checked,
-                    };
-                    result = self.symbolic_verdict(name, body, scopes, checked);
+                if module_level {
+                    self.pack_element_views.borrow_mut().clear();
                 }
+                result = self.check_def_body(stmt, &decls, &ret_ty, module_level);
                 self.named_result_context.pop();
                 self.return_annotations.pop();
                 self.return_ref_contracts.pop();
@@ -2979,7 +2911,6 @@ impl Checker {
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
         if result.is_ok()
-            && check_body
             && named_result.is_none()
             && ret_ty != Ty::None
             && !definitely_returns(body)
@@ -2987,7 +2918,6 @@ impl Checker {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
-            && check_body
             && let Some(named_result) = named_result
             && !definitely_initializes_named_result(body, &named_result.name)
         {

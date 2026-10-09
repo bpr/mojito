@@ -289,6 +289,10 @@ impl Flatten<'_> {
         {
             return self.constant(e, Const::Function(name.to_owned()));
         }
+        // A module constant is the parameter value the check recorded.
+        if let Some(value) = self.param_value(e) {
+            return self.param_value_register(e, value);
+        }
         // In a lifted thunk, an enclosing `comptime for` index or local
         // `comptime` binding is the parameter expression it denotes.
         let denoted = self.checked_owner(e).and_then(|owner| {

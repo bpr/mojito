@@ -772,12 +772,7 @@ impl<'a> Specializer<'a> {
                 .type_conforms(&ty, trait_name, &mut HashSet::new())
                 .map(CtValue::Bool));
         }
-        let ParamKind::Apply {
-            function,
-            args,
-            evaluated: None,
-        } = expr.kind()
-        else {
+        let ParamKind::Apply { function, args } = expr.kind() else {
             let answered = self.applied(template, expr, bindings)?;
             return Ok((answered != *expr)
                 .then(|| eval_ct(&answered, bindings).ok())
@@ -825,7 +820,6 @@ impl<'a> Specializer<'a> {
         expr.visit(&mut |node| {
             pending |= matches!(node.kind(), ParamKind::Apply {
                 function,
-                evaluated: None,
                 ..
             } if self.declarations.contains_key(function.as_str()));
         });

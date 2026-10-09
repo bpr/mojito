@@ -379,11 +379,7 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             construct: error.to_string(),
         })?;
     // A layout application the instance's oracle answers under its target.
-    if let ParamKind::Apply {
-        function,
-        args,
-        evaluated: None,
-    } = replaced.kind()
+    if let ParamKind::Apply { function, args } = replaced.kind()
         && function == SIZE_OF_FUNCTION
         && let Some(oracle) = &bindings.layout
         && let [subject] = args.as_slice()

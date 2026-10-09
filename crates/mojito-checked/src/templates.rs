@@ -2326,14 +2326,9 @@ impl CheckedBodyFacts {
     }
 }
 
-/// Which check produced a template's facts.
-///
-/// There is one producer per body: source validation for a body it checks and
-/// the elaborator then stubs, the executable check for a trait-bound body
-/// that survives elaboration.
+/// Which check produced a template's facts: the one executable check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateProducer {
-    SourceValidation,
     ExecutableCheck,
 }
 
@@ -2413,12 +2408,6 @@ pub struct TemplateCatalog {
     /// re-elaborate the same prepared program, so a later round binds them
     /// before its first pass.
     bound_default_arguments: std::collections::HashMap<SyntaxId, BoundDefaultArguments>,
-    /// The module constants whose initializer applies a function, by name,
-    /// as the symbolic application source validation built from the
-    /// unfolded program (decision D3, `docs/notes/ctfe-request-path.md`).
-    /// The executable check, which sees the elaborator's folded literal,
-    /// keeps each constant's identity from here.
-    applied_constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2454,9 +2443,6 @@ pub struct TemplateStats {
     pub verified: Vec<String>,
     /// Traced clones a derivation refused, each with the reason.
     pub refused: Vec<(String, String)>,
-    /// Pack-keyed bodies source validation left to the per-instantiation
-    /// check, each with the use of the unbound pack it has no rule for.
-    pub no_verdict: Vec<(String, String)>,
     /// The generated bodies that were inferred at least once, by identity.
     pub inferred_instances: std::collections::HashSet<InstanceName>,
     /// The generated bodies served from a template at least once.
@@ -2464,21 +2450,6 @@ pub struct TemplateStats {
 }
 
 impl TemplateStats {
-    /// Append what another catalog did: a subprogram checked apart from the
-    /// compilation (the CTFE subprogram) reports through its own catalog.
-    pub fn absorb(&mut self, other: Self) {
-        self.certified.extend(other.certified);
-        self.derived.extend(other.derived);
-        self.reused.extend(other.reused);
-        self.carried.extend(other.carried);
-        self.inferred_clones.extend(other.inferred_clones);
-        self.verified.extend(other.verified);
-        self.refused.extend(other.refused);
-        self.no_verdict.extend(other.no_verdict);
-        self.inferred_instances.extend(other.inferred_instances);
-        self.derived_instances.extend(other.derived_instances);
-    }
-
     /// The generated bodies served from a template and never inferred.
     pub fn derived_only_instances(&self) -> usize {
         self.derived_instances
@@ -2509,33 +2480,6 @@ impl TemplateCatalog {
             param_context: mojito_types::param_expr::ParamContext::new(),
             ..Self::default()
         }
-    }
-
-    /// The catalog of a subprogram checked apart from this compilation (the
-    /// CTFE subprogram): the templates its own clone traces name, under this
-    /// compilation's parameter context and verification mode. Nothing it
-    /// records reaches this catalog, and no previous pass is carried.
-    #[must_use]
-    pub fn for_subprogram(
-        &self,
-        traces: Vec<(InstanceName, InstanceTrace)>,
-        generated: GeneratedNames,
-    ) -> Self {
-        let templates = traces
-            .iter()
-            .filter_map(|(_, trace)| self.templates.get(&trace.template))
-            .map(|template| (template.id.clone(), template.clone()))
-            .collect();
-        let mut catalog = Self {
-            templates,
-            verify: self.verify,
-            body_fact_reuse: false,
-            param_context: self.param_context.clone(),
-            ..Self::default()
-        };
-        catalog.set_traces(traces);
-        catalog.set_generated(generated);
-        catalog
     }
 
     /// Whether a body whose inputs are unchanged since the previous checker
@@ -2570,20 +2514,6 @@ impl TemplateCatalog {
         &self.bound_default_arguments
     }
 
-    pub const fn applied_constants(
-        &self,
-    ) -> &std::collections::HashMap<String, mojito_types::param_expr::ParamExpr> {
-        &self.applied_constants
-    }
-
-    /// Keep the applied module constants source validation found.
-    pub fn set_applied_constants(
-        &mut self,
-        constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
-    ) {
-        self.applied_constants = constants;
-    }
-
     /// Keep the requirement defaults a pass found calls through a bound
     /// leaving out; whether any call was new.
     pub fn record_bound_default_arguments(
@@ -2597,14 +2527,6 @@ impl TemplateCatalog {
                 .or_insert(arguments);
         }
         self.bound_default_arguments.len() != before
-    }
-
-    /// Whether source validation produced the record of `id`: the
-    /// declaration of that identity in an elaborated program is then a
-    /// trapping stub, whose body is not the template.
-    pub fn validated(&self, id: &TemplateId) -> bool {
-        self.template(id)
-            .is_some_and(|template| template.producer == TemplateProducer::SourceValidation)
     }
 
     /// Record a template, replacing an earlier record of the same

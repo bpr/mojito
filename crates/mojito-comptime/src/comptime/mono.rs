@@ -781,7 +781,6 @@ impl Elab<'_> {
                         mono.queue.push_back(Job {
                             orig: original,
                             vals,
-                            site: request_site,
                             output_name: output_name.clone(),
                             whole_pack_abi,
                         });

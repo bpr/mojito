@@ -73,11 +73,11 @@ mojito-native-core native target/layout/rt_abi (below the MIR waist)
 mojito-checker     semantic checking (+ explicit_destroy)
 mojito-mir         MIR lowering, verifier, textual round-trip
 mojito-analysis    ownership/liveness + drop elaboration
-mojito-vm          register VM + Backend enum (re-checks: seam contract)
+mojito-vm          register VM + Backend enum (seam contract)
 mojito-native      the elaborator (mono, for both backends) + mangling;
-                   runs compile-time applications on mojito-vm
+                   runs compile-time applications on mojito-vm (the one CTFE)
 mojito-pliron      Pliron/LLVM backend (only crate that may need LLVM)
-mojito-comptime    elaboration + CTFE (ABOVE the VM: CTFE runs VmBackend)
+mojito-comptime    elaboration above the check (folds closed values, never a call)
 mojito (root)      facade: compiler driver, CLI, re-exports, tests/
 ```
 
@@ -112,8 +112,8 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 3. `Compiler` owns the production pipeline:
 
    ```text
-   source -> lex -> parse -> link -> source validation -> comptime elaboration
-          -> CheckedProgram -> HIR CFG -> MIR -> ownership/liveness
+   source -> lex -> parse -> link -> prepare -> comptime elaboration
+          -> one check (CheckedProgram) -> HIR CFG -> MIR -> ownership/liveness
           -> drop elaboration -> concrete MIR (native::mono) -> VM
    ```
 

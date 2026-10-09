@@ -3315,7 +3315,7 @@ fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() 
     assert!(
         stats.certified.iter().any(|name| name == "Seeded.__init__"),
         "Seeded.__init__ is certified: {:?}",
-        stats.no_verdict
+        stats.certified
     );
     assert!(
         stats

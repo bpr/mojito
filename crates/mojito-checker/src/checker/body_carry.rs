@@ -147,7 +147,6 @@ pub struct InternalStores {
     borrowed_reference_receivers: FactSet<SourceSpan>,
     unconsumed_temporaries: FactSet<SourceSpan>,
     linear_temporaries: FactSet<SourceSpan>,
-    no_verdict_bodies: FactSet<SourceSpan>,
     deletability: CheckedDeletability,
 }
 
@@ -214,7 +213,6 @@ macro_rules! carried_stores {
             internal set borrowed_reference_receivers = borrowed_reference_receivers;
             internal set unconsumed_temporaries = unconsumed_temporaries;
             internal set linear_temporaries = linear_temporaries;
-            internal set no_verdict_bodies = no_verdict_bodies;
         }
     };
 }
@@ -263,18 +261,12 @@ macro_rules! carried {
 /// The checker's own store, borrowed mutably; `no_verdict_bodies` is the
 /// one plain field.
 macro_rules! own_store {
-    ($checker:expr, no_verdict_bodies) => {
-        $checker.no_verdict_bodies
-    };
     ($checker:expr, $field:ident) => {
         *$checker.$field.borrow_mut()
     };
 }
 
 macro_rules! own_mark {
-    ($checker:expr, no_verdict_bodies) => {
-        $checker.no_verdict_bodies.mark()
-    };
     ($checker:expr, $field:ident) => {
         $checker.$field.borrow().mark()
     };
@@ -374,7 +366,6 @@ macro_rules! define_carry_ops {
                     borrowed_reference_receivers: self.borrowed_reference_receivers.into_inner(),
                     unconsumed_temporaries: self.unconsumed_temporaries.into_inner(),
                     linear_temporaries: self.linear_temporaries.into_inner(),
-                    no_verdict_bodies: self.no_verdict_bodies,
                     deletability: self.explicit_destroy_deletability.into_inner(),
                 };
                 let records = self.body_records.into_inner();
@@ -512,7 +503,7 @@ impl Checker {
 
     /// Whether the checker carries bodies at all this pass.
     pub(super) fn carries_bodies(&self) -> bool {
-        !self.source_validation && self.template_catalog.borrow().body_fact_reuse()
+        self.template_catalog.borrow().body_fact_reuse()
     }
 
     fn carry_refusal(&self, key: &SourceSpan) -> Result<(), CarryRefusal> {

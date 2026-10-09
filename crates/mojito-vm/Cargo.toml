@@ -9,7 +9,6 @@ publish = false
 mojito-analysis = { path = "../mojito-analysis" }
 mojito-ast = { path = "../mojito-ast" }
 mojito-checked = { path = "../mojito-checked" }
-mojito-checker = { path = "../mojito-checker" }
 mojito-common = { path = "../mojito-common" }
 mojito-hir = { path = "../mojito-hir" }
 mojito-mir = { path = "../mojito-mir" }

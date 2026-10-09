@@ -4,7 +4,7 @@
 
 use super::{
     BodyDeclaration, BodyShape, BodySite, GrammarNotes, adjustment_derives, bound_binder,
-    callable_binder, closed_scalar, fact_at, grammar_scalar, origin_binder, template_callee,
+    callable_binder, closed_scalar, fact_at, origin_binder, template_callee,
 };
 use crate::checker::Checker;
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
@@ -132,7 +132,7 @@ impl Checker {
                 variadic: false,
                 ..
             } => {
-                matches!(**ty, Ty::Bool | Ty::Int) || (self.source_validation && **ty == Ty::Dtype)
+                matches!(**ty, Ty::Bool | Ty::Int)
             }
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => false,
         });
@@ -145,24 +145,14 @@ impl Checker {
         if crate::checker::comptime_validation::reads_reflection(body) {
             return outside("a body reading a reflection handle keeps its clone check");
         }
-        // One producer per body: source validation owns every body it
-        // checks (keyed by a `comptime for`, a pack, or a `rebind`), the
-        // executable check the surviving ones, a value-keyed body with
-        // neither among them. A `comptime if` keys nothing: the template
-        // keeps the region, and the elaborator below MIR selects.
-        let keyed = self.source_validation;
-        if !keyed && crate::checker::rebind::body_keys_rebind(body, &self.rebind_keyed_bodies) {
-            return outside("a compile-time-keyed body is source validation's to certify");
-        }
         // A `var` or `mut` parameter of a runtime body is bound from its
         // declared convention alone, and is rooted at its own binding under
         // every instance, as a method's is.
         let owned_param = |parameter: &mojito_ast::ast::FnParam| {
-            !keyed
-                && matches!(
-                    parameter.convention,
-                    Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Mut)
-                )
+            matches!(
+                parameter.convention,
+                Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Mut)
+            )
         };
         let plain_params = params.iter().all(|parameter| {
             parameter.kind == mojito_ast::ast::ParamKind::Regular
@@ -187,16 +177,10 @@ impl Checker {
         if captures.is_some() || mojito_ast::ast::has_body_decorator(decorators) {
             return outside("the declaration captures or is decorated");
         }
-        if keyed && (*raises || raises_type.is_some()) {
-            return outside("a keyed body raises");
-        }
         // A body returning nothing falls off its end: the grammar admits no
         // value `return` for it, and a bare `return` only in a runtime body.
         // A runtime body may return a whole value of any type, which every
         // `return` must move or copy at exactly the declared type.
-        if !closed_scalar(ret_ty) && *ret_ty != Ty::None && keyed {
-            return outside("the return type is not a concrete scalar");
-        }
         let desugars = self.with_desugars.borrow();
         let shape = BodyShape {
             origins: &self.syntax_origins,
@@ -230,13 +214,13 @@ impl Checker {
             borrowed_params: mut_params.clone(),
             mut_params,
             deinit_params: Vec::new(),
-            keyed,
+            keyed: false,
             receiver: false,
             self_convention: None,
             // A runtime body may hold a whole value of any type in a local
             // or an argument, and iterate a place, as a method's may
-            // (`FunctionBody`); a keyed body keeps source validation's rules.
-            moved_result: (!keyed).then_some(ret_ty),
+            // (`FunctionBody`).
+            moved_result: Some(ret_ty),
             reference_result: None,
             // A `var` or `mut` parameter makes the body a `FunctionBody`, whose
             // instances owe plain-data arguments.
@@ -388,9 +372,7 @@ impl Checker {
             .chain(&facts.expression_place_types)
             .chain(&facts.binding_types)
             .all(|(_, ty)| !mojito_types::types::is_symbolic(ty));
-        class(if keyed {
-            TemplateClass::ScalarBranches
-        } else if widened {
+        class(if widened {
             TemplateClass::FunctionBody(features)
         } else if !facts.call_parameters.is_empty()
             || !facts.builtin_len_calls.is_empty()
@@ -601,21 +583,6 @@ impl Checker {
     ///   instance's clone of it (`realize_static_overloads`), unless a
     ///   member with binders of its own has one
     ///   (`realize_static_instantiations`).
-    ///
-    /// Any other handle, borrowed receiver, reference result, interior
-    /// reference, or copyable read in the body refuses it
-    /// ([`BodyShape::references_recorded`]).
-    /// The struct binders `select` picks for a member only source
-    /// validation checks: a generator's binders, which each
-    /// per-instantiation clone folds.
-    fn validated_struct_binders(&self, select: fn(&[ParamDecl]) -> Vec<&str>) -> Vec<&str> {
-        if self.source_validation {
-            select(&self.self_decls)
-        } else {
-            Vec::new()
-        }
-    }
-
     fn method_certificate(
         &self,
         method: &mojito_ast::ast::Method,
@@ -724,23 +691,11 @@ impl Checker {
                     callable_bound: None,
                     ..
                 }
-            ) || (self.source_validation
-                && matches!(
-                    decl,
-                    ParamDecl::Type {
-                        variadic: true,
-                        callable_bound: None,
-                        ..
-                    }
-                ))
-                || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
+            ) || matches!(decl, ParamDecl::Value { ty, variadic: false, .. } if closed_scalar(ty))
                 || matches!(decl, ParamDecl::Value { name, ty, variadic: false, .. }
                     if matches!(**ty, Ty::Dtype) && value_binders.contains(&name.as_str()))
                 || matches!(decl, ParamDecl::Value { name, .. }
                     if callable_binders.contains(&name.as_str()))
-                || (self.source_validation
-                    && matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
-                        if matches!(**ty, Ty::Dtype | Ty::Simd { .. })))
         });
         if !plain_struct {
             return outside("a struct parameter is not a plain type or scalar value parameter");
@@ -834,8 +789,9 @@ impl Checker {
             loop_vars: RefCell::new(Vec::new()),
             values: value_binders.clone(),
             struct_values: struct_scalar_binders(&self.self_decls),
-            struct_lanes: self.validated_struct_binders(struct_lane_binders),
-            struct_vectors: self.validated_struct_binders(struct_vector_binders),
+            // No per-instantiation clone folds a generator's binders.
+            struct_lanes: Vec::new(),
+            struct_vectors: Vec::new(),
             print_calls: RefCell::new(Vec::new()),
             runtime_loops: std::cell::Cell::new(0),
             borrowed_params: params_passed(&[ArgConvention::Mut, ArgConvention::Ref]),
@@ -1219,23 +1175,6 @@ fn struct_pack_collectors<'m, 'd>(
     (pack, collectors)
 }
 
-/// The names of a struct's `DType` and `Int` binders, which name its
-/// members' symbolic lane (`Scalar[Self.dtype]`, `SIMD[dt, Self.n]`).
-fn struct_lane_binders(decls: &[ParamDecl]) -> Vec<&str> {
-    decls
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Value {
-                name,
-                ty,
-                variadic: false,
-                ..
-            } if matches!(**ty, Ty::Dtype | Ty::Int) => Some(name.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// A struct's scalar value binders of a closed type (`rows: Int`).
 fn struct_scalar_binders(decls: &[ParamDecl]) -> Vec<&str> {
     decls
@@ -1247,22 +1186,6 @@ fn struct_scalar_binders(decls: &[ParamDecl]) -> Vec<&str> {
                 variadic: false,
                 ..
             } if closed_scalar(ty) => Some(name.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// A struct's vector value binders of a closed type (`key: U256`).
-fn struct_vector_binders(decls: &[ParamDecl]) -> Vec<&str> {
-    decls
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Value {
-                name,
-                ty,
-                variadic: false,
-                ..
-            } if grammar_scalar(ty) && matches!(**ty, Ty::Simd { .. }) => Some(name.as_str()),
             _ => None,
         })
         .collect()

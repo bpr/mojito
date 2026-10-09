@@ -806,15 +806,6 @@ impl Checker {
         for tr in declaration.conforms {
             self.check_trait_name(tr)?;
         }
-        // Source validation checks only the method bodies holding
-        // compile-time control flow; conformance and the other bodies are
-        // the executable pass's.
-        if self.source_validation {
-            let (self_ty, saved) = self.enter_struct_scope(declaration)?;
-            let result = self.validate_comptime_method_bodies(declaration, &self_ty);
-            self.exit_struct_scope(saved);
-            return result;
-        }
         self.reject_value_field_self_containment(declaration.name)?;
         let (self_ty, saved) = self.enter_struct_scope(declaration)?;
         let result = self.verify_conformance_and_bodies(declaration, &self_ty);
@@ -2150,6 +2141,15 @@ impl Checker {
                 constraint_traits(clause, &mut named);
             }
         }
+        // A recorded `comptime if` condition is decided by the elaborator
+        // below MIR from the same rows.
+        for adjustment in self.operation_adjustments.borrow().values() {
+            if let mojito_checked::checked::SemanticAdjustment::ComptimeCondition(condition) =
+                adjustment
+            {
+                constraint_traits(condition, &mut named);
+            }
+        }
         named
     }
 
@@ -3373,9 +3373,10 @@ fn user_lifecycle_defeats(info: &StructInfo, kind: mojito_types::types::TrivialL
     match kind {
         TrivialLifecycle::Movable => info.methods.contains_key("__moveinit__"),
         TrivialLifecycle::Copyable => info.methods.contains_key("__copyinit__"),
-        TrivialLifecycle::Deinitable => {
-            info.methods.contains_key("__deinit__") || !info.explicit_destructors.is_empty()
-        }
+        // A named destructor (`def close(deinit self)`) is a consuming
+        // method beside the compiler-generated `__del__`, which stays
+        // trivial, as the pin reads `MaybeUninit`'s.
+        TrivialLifecycle::Deinitable => info.methods.contains_key("__deinit__"),
     }
 }
 

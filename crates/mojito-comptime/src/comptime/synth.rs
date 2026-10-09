@@ -202,8 +202,6 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
     }
 }
 
-pub(super) use mojito_ast::simd_width::method_constructs_at_own_lane as constructs_at_own_lane;
-
 /// Desugar upstream's `value: SIMD[_, _]` parameter spelling on a `def`, a
 /// struct method, or a trait requirement into the parameters it stands for: an infer-only `DType`
 /// binder and an infer-only width binder of SIMD's own width type, over

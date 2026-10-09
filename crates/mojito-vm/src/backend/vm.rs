@@ -15,7 +15,6 @@ use crate::runtime::{
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use mojito_ast::ast::Stmt;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::{CheckedConst, ComptimeSequence};
 use mojito_common::timing;
@@ -113,39 +112,6 @@ impl VmBackend {
         if let Some(log) = self.lifecycle_log.as_mut() {
             log.push(event);
         }
-    }
-
-    /// Execute a named top-level function and return its value without running the
-    /// program's top-level block or `main`. This is the narrow API used by
-    /// VM-backed CTFE: the caller has already checked that the function is
-    /// compile-time safe and supplied any reified value parameters. The
-    /// program is checked over `templates`, so a clone it traces to a
-    /// certified template derives its facts.
-    pub fn run_function_value(
-        &mut self,
-        program: &[Stmt],
-        templates: &mut mojito_checked::templates::TemplateCatalog,
-        name: &str,
-        args: Vec<Value>,
-        value_params: &[(String, Value)],
-        fuel: usize,
-    ) -> Result<(Value, usize), RuntimeError> {
-        let checked = mojito_checker::checker::check_program_with_templates(program, templates)
-            .map_err(|error| {
-                RuntimeError::TypeError(format!(
-                    "VM compile-time program failed the checked boundary: {error}"
-                ))
-            })?;
-        let prog = build_prog_checked(&checked)?;
-        self.configure_lifecycle(&prog);
-        let idx = prog.index_of(name).ok_or_else(|| {
-            RuntimeError::Unsupported(format!("vm: unknown compile-time function '{name}'"))
-        })?;
-        self.ctfe_fuel = Some(fuel);
-        let result = self.call_function(&prog, idx, args, value_params);
-        let remaining = self.ctfe_fuel.unwrap_or(0);
-        self.ctfe_fuel = None;
-        result.map(|value| (value, remaining))
     }
 
     fn configure_lifecycle(&mut self, prog: &Prog) {
@@ -1825,12 +1791,6 @@ struct HeapAllocation {
     live: bool,
 }
 
-fn build_prog_checked(
-    checked: &mojito_checked::checked::CheckedProgram,
-) -> Result<Prog, RuntimeError> {
-    build_prog_lowered(mojito_mir::mir::lower_checked_program(checked))
-}
-
 fn build_prog_lowered(lowered: mojito_mir::mir::MirProgram) -> Result<Prog, RuntimeError> {
     let mut mir = mojito_analysis::analysis::elaborate_drops_program(lowered);
     // The VM executes the drop-elaborated program, so it is re-verified after
@@ -2729,7 +2689,6 @@ impl VmBackend {
         let mojito_types::param_expr::ParamKind::Apply {
             function: callee,
             args,
-            evaluated: None,
         } = expr.kind()
         else {
             return Ok(None);

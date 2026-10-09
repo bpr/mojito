@@ -7200,12 +7200,7 @@ fn validation_rejects_a_missing_member_of_a_value_keyed_struct() {
     // types with the key symbolic: a member it does not declare is rejected
     // in the arm the instance takes, as at the pin.
     let source = "@fieldwise_init\nstruct Extent(ImplicitlyCopyable, Movable):\n    var rows: Int\n\nstruct Tagged[e: Extent](ImplicitlyCopyable, Movable):\n    var scale: Int\n\n    def __init__(out self, scale: Int):\n        self.scale = scale\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var t = Tagged[Extent(2)](1)\n        return t.rows()\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
-    let linked = mojito::link_source(source, std::path::Path::new("missing_member.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-        .expect_err("`Tagged` declares no `rows`");
+    let error = check_once(source, "missing_member.mojo").expect_err("`Tagged` declares no `rows`");
     assert!(
         matches!(
             &error,
@@ -7218,22 +7213,13 @@ fn validation_rejects_a_missing_member_of_a_value_keyed_struct() {
     // `Tuple(1, "one")` types, the run reaches a verdict, and the invalid
     // untaken arm beside it is reported.
     let complete = "def first[flag: Bool]() -> Int:\n    comptime if flag:\n        var pair = Tuple(1, \"one\")\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
-    let linked = mojito::link_source(complete, std::path::Path::new("complete_validation.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
-    assert!(catalog.stats().no_verdict.is_empty());
+    check_once(complete, "complete_validation.mojo").expect("check");
 
     let invalid = complete.replace(
         "        return 2\n\ndef main",
         "        return \"two\"\n\ndef main",
     );
-    let linked = mojito::link_source(&invalid, std::path::Path::new("invalid_beside_tuple.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+    let error = check_once(&invalid, "invalid_beside_tuple.mojo")
         .expect_err("the untaken arm of `second` is invalid");
     assert!(
         error
@@ -7250,22 +7236,13 @@ fn dtype_keyed_struct_validates_beside_an_invalid_arm() {
     // the run reaches a verdict, and the invalid untaken arm beside it is
     // reported.
     let source = "struct Vec[dt: DType](Movable):\n    var x: Scalar[Self.dt]\n\n    def __init__(out self, x: Scalar[Self.dt]):\n        self.x = x\n\ndef first[flag: Bool]() -> Int:\n    comptime if flag:\n        var v = Vec[DType.float64](1.5)\n        return 1\n    else:\n        return 2\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return 2\n\ndef main():\n    print(first[True]())\n    print(second[False]())\n";
-    let linked = mojito::link_source(source, std::path::Path::new("dtype_validation.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog).expect("validation");
-    assert!(catalog.stats().no_verdict.is_empty());
+    check_once(source, "dtype_validation.mojo").expect("check");
 
     let invalid = source.replace(
         "        return 2\n\ndef main",
         "        return \"two\"\n\ndef main",
     );
-    let linked = mojito::link_source(&invalid, std::path::Path::new("invalid_beside_dtype.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+    let error = check_once(&invalid, "invalid_beside_dtype.mojo")
         .expect_err("the untaken arm of `second` is invalid");
     assert!(
         error
@@ -7280,8 +7257,8 @@ fn a_reflection_body_is_validated_without_instantiation() {
     // `reflect[T].field_count()` is a compile-time `Int` while `T` is
     // symbolic, so the untaken arm is judged from the template.
     let source = "def field_count[T: AnyType]() -> Int:\n    comptime if reflect[T].field_count() == 2:\n        return 2\n    else:\n        var x: Int = \"oops\"\n        return 0\n\ndef main():\n    print(1)\n";
-    let error = validate_prepared(source, "reflection_untaken.mojo")
-        .expect_err("the untaken arm is invalid");
+    let error =
+        check_once(source, "reflection_untaken.mojo").expect_err("the untaken arm is invalid");
     assert!(
         error
             .to_string()
@@ -7295,14 +7272,14 @@ fn a_conforms_to_arm_licenses_its_trait_for_the_arm_alone() {
     // The pin licenses a `conforms_to` proof inside the arm it guards, for a
     // plain parameter, a pack element, and a reflected field type alike.
     let plain = "def show[T: AnyType](x: T):\n    comptime if conforms_to(T, Writable):\n        print(x)\n    else:\n        print(\"?\")\n\ndef main():\n    print(1)\n";
-    validate_prepared(plain, "arm_plain.mojo").expect("a plain parameter is licensed");
+    check_once(plain, "arm_plain.mojo").expect("a plain parameter is licensed");
     let pack = "def show[*Ts: AnyType](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime if conforms_to(Ts[i], Writable):\n            print(args[i])\n\ndef main():\n    print(1)\n";
-    validate_prepared(pack, "arm_pack.mojo").expect("a pack element is licensed");
+    check_once(pack, "arm_pack.mojo").expect("a pack element is licensed");
     let field = "def show[T: AnyType]():\n    comptime r = reflect[T]\n    comptime for i in range(r.field_count()):\n        comptime FT = r.field_at[i].T\n        comptime if conforms_to(FT, Defaultable & Writable):\n            print(FT())\n\ndef main():\n    print(1)\n";
-    validate_prepared(field, "arm_field.mojo").expect("a field type is licensed");
+    check_once(field, "arm_field.mojo").expect("a field type is licensed");
     // The proof ends with the arm.
     let after = "def show[T: AnyType](x: T):\n    comptime if conforms_to(T, Writable):\n        pass\n    print(x)\n\ndef main():\n    print(1)\n";
-    let error = validate_prepared(after, "arm_after.mojo").expect_err("the arm's proof ended");
+    let error = check_once(after, "arm_after.mojo").expect_err("the arm's proof ended");
     assert!(
         error
             .to_string()
@@ -7316,8 +7293,8 @@ fn a_reflected_field_proof_is_keyed_by_its_element() {
     // Proving the first field's type licenses nothing of the field at the
     // loop index, which is the one the arm constructs.
     let source = "def defaults[T: AnyType]():\n    comptime r = reflect[T]\n    comptime types = r.field_types()\n    comptime for i in range(r.field_count()):\n        comptime if conforms_to(types[0], Defaultable & Writable):\n            comptime FT = types[i]\n            print(FT())\n\ndef main():\n    print(1)\n";
-    let error = validate_prepared(source, "proof_positional.mojo")
-        .expect_err("the proof names another element");
+    let error =
+        check_once(source, "proof_positional.mojo").expect_err("the proof names another element");
     assert!(
         error
             .to_string()
@@ -7326,42 +7303,30 @@ fn a_reflected_field_proof_is_keyed_by_its_element() {
     );
 }
 
-/// Source validation of `source` alone, as `Compiler::compile_linked` runs it
-/// before any elaboration.
-fn validate_prepared(source: &str, file: &str) -> Result<(), mojito::error::TypeError> {
+/// The one check of `source`, as `Compiler::compile_linked` runs it: every
+/// `comptime if` arm and `comptime for` body is checked with the
+/// declaration's parameters symbolic.
+fn check_once(source: &str, file: &str) -> Result<(), mojito::error::TypeError> {
     let linked = mojito::link_source(source, std::path::Path::new(file)).expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
+    let program = mojito::elaborate(linked).expect("elaborate");
     let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+    mojito::checker::check_program_with_templates(&program, &mut catalog).map(|_| ())
 }
 
 #[test]
-fn a_pack_body_without_a_symbolic_rule_gets_no_verdict_alone() {
+fn a_pack_body_without_a_symbolic_rule_is_rejected() {
     // A method other than `__len__` on a pack that is still a parameter has
-    // no symbolic rule, so `outer` is left to its per-instantiation check.
-    // That is no verdict on `outer` only: the run continues and still judges
-    // `second`.
-    let source = "def outer[*Ts: Writable](*a: *Ts):\n    print(a.__getitem__[0]())\n\ndef second[flag: Bool]() -> Int:\n    comptime if flag:\n        return 1\n    else:\n        return \"two\"\n\ndef main():\n    outer(1, \"two\")\n";
-    let linked = mojito::link_source(source, std::path::Path::new("pack_no_verdict.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-        .expect_err("`second` is still judged");
+    // no symbolic rule. The one check judges every body with its binders
+    // symbolic, so the body is rejected where source validation once left
+    // it without a verdict for a per-instantiation check that no longer
+    // exists.
+    let source = "def outer[*Ts: Writable](*a: *Ts):\n    print(a.__getitem__[0]())\n\ndef main():\n    outer(1, \"two\")\n";
+    let error = check_once(source, "pack_no_verdict.mojo").expect_err("no symbolic rule");
     assert!(
         error
             .to_string()
-            .contains("expected Int, found StringLiteral"),
+            .contains("method '__getitem__' of an unbound pack"),
         "{error}"
-    );
-    assert_eq!(
-        catalog
-            .stats()
-            .no_verdict
-            .iter()
-            .map(|(body, _)| body.as_str())
-            .collect::<Vec<_>>(),
-        ["outer"]
     );
 }
 
@@ -7371,11 +7336,7 @@ fn a_body_forwarding_its_pack_is_validated_from_its_template() {
     // gets a verdict: the untaken arm after the call is reported from the
     // template, and no body is left to its per-instantiation check.
     let source = "def inner[*Ts: Writable](*a: *Ts):\n    comptime for i in range(a.__len__()):\n        print(a[i])\n\ndef outer[*Ts: Writable](*a: *Ts):\n    inner(*a)\n    comptime if 1 > 2:\n        var x: Int = \"bad\"\n\ndef main():\n    outer(1, \"two\")\n";
-    let linked = mojito::link_source(source, std::path::Path::new("pack_forwarding.mojo"))
-        .expect("link error");
-    let prepared = mojito::comptime::prepare(linked).expect("prepare");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    let error = mojito::checker::validate_comptime_templates_into(&prepared, &mut catalog)
+    let error = check_once(source, "pack_forwarding.mojo")
         .expect_err("the untaken arm of `outer` is invalid");
     assert!(
         error
@@ -7383,7 +7344,6 @@ fn a_body_forwarding_its_pack_is_validated_from_its_template() {
             .contains("expected Int, found StringLiteral"),
         "{error}"
     );
-    assert!(catalog.stats().no_verdict.is_empty());
 }
 
 #[test]

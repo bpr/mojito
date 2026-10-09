@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Source validation and the executable check are one check, every
+  function body keeps its `comptime if` and `comptime for` to MIR, module
+  constants are parameter expressions, and the AST CTFE route is gone
+  (roadmap R9, P4). The check types every arm and loop body once, plain
+  or generic, with its binders symbolic, folds a closed condition to its
+  verdict, and `native::mono` decides and unrolls. A scalar or applied
+  module constant is read as a `ParamValue` fact lowered as `Const::Param`
+  (a lifted display constant as `$comptime$<name>$module`), the toplevel
+  lowers no `comptime` declaration, and the pending/forced machinery,
+  `CtMarker::Layout`, and `ParamKind::Apply::evaluated` (MIR text schema
+  1.38) are deleted with `validate_comptime_templates`,
+  `VmBackend::run_function_value`, and the `mojito-vm → mojito-checker`
+  and `mojito-comptime → mojito-vm` crate edges. A `comptime if` over a
+  runtime local reports the pin's "cannot use a dynamic value in 'comptime
+  if' condition", a named destructor no longer defeats trivial
+  deinitialization, and R139's folded identity is fixed. Residues: R516,
+  R517, R518, R519.
+
 - The compiler driver elaborates once and checks once: the discovery
   rounds that re-elaborated and re-checked every program with the
   instantiations the previous check recorded are gone, with their request

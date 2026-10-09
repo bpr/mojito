@@ -1,122 +1,37 @@
-//! Module constants whose initializer applies a callable (`comptime C =
-//! f(1)`), evaluated on demand: a function body's value read of one is a
-//! `comptime(...)` request the elaborator below MIR serves from its worklist,
-//! and a reader above the check — a type, a compile-time condition, another
-//! constant — forces it here through the compile-time route, once. A
-//! constant nothing forces is never evaluated here.
-//! See `docs/notes/ctfe-request-path.md`.
+//! Module constants whose initializer is a display that applies a callable
+//! (`comptime XS = [1, twice(3), 5]`): a display has no parameter-expression
+//! form, so a read of one is the display itself, spelled where it is read —
+//! a function body's value read as the request `comptime(<display>)` the
+//! elaborator below MIR serves, a compile-time position (a loop header, a
+//! condition, a subscript, a method call, another constant's initializer)
+//! as the display in place. See `docs/notes/ctfe-request-path.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// A module constant awaiting its first demand: its initializer, its
-/// annotation, and the module environment it was declared in.
-pub(super) struct PendingConstant {
-    value: Expr,
-    annotation: Option<Type>,
-    env: HashMap<String, CtValue>,
-}
-
 impl Elab<'_> {
-    /// Record the module constant `name` as pending when its initializer
-    /// applies a callable or reads a pending constant, and no `where`
-    /// clause constrains it. Whether it was recorded.
-    pub(super) fn defer_constant(
-        &self,
-        name: &str,
-        annotation: Option<&Type>,
-        constrained: bool,
-        value: &Expr,
-        env: &HashMap<String, CtValue>,
-    ) -> bool {
-        if constrained {
-            return false;
+    /// `expression` with every applied display constant it names spelled
+    /// by its display ([`Self::applied_displays`]), or `expression` as it
+    /// is when it names none.
+    pub(super) fn spell_applied_displays(&self, expression: &Expr) -> Expr {
+        let displays = self.applied_displays.borrow();
+        if displays.is_empty() {
+            return expression.clone();
         }
-        let reads_pending = {
-            let pending = self.pending_constants.borrow();
-            let names: HashSet<String> = pending.keys().cloned().collect();
-            !names.is_empty() && super::elab::expression_names_any(value, &names)
-        };
-        if !reads_pending && !self.applies_callable(value) {
-            return false;
-        }
-        self.pending_constants.borrow_mut().insert(
-            name.to_string(),
-            PendingConstant {
-                value: value.clone(),
-                annotation: annotation.cloned(),
-                env: env.clone(),
-            },
-        );
-        true
+        let mut spelled = expression.clone();
+        replace_identifiers(&mut spelled, &displays);
+        spelled
     }
 
-    /// The value of the pending module constant `name`, evaluated now on its
-    /// first demand and kept; `None` for any other name. A constant whose
-    /// evaluation demands itself is a cycle in the parameter domain.
-    pub(super) fn force_constant(&self, name: &str) -> Result<Option<CtValue>, ComptimeError> {
-        if let Some(value) = self.forced_constants.borrow().get(name) {
-            return Ok(Some(value.clone()));
-        }
-        let pending = self.pending_constants.borrow().get(name).map(|pending| {
-            (
-                pending.value.clone(),
-                pending.annotation.clone(),
-                pending.env.clone(),
-            )
-        });
-        let Some((value, annotation, env)) = pending else {
-            return Ok(None);
-        };
-        if !self.forcing_constants.borrow_mut().insert(name.to_string()) {
-            return Err(ComptimeError::NotComptime(format!(
-                "function instantiation in parameter domain that recursively requires itself: \
-                 the initializer of '{name}' reads '{name}'"
-            )));
-        }
-        // A body's demand of a module constant is a reader above the check.
-        let in_body = self.evaluating_body.replace(false);
-        let forced = self.eval(&value, &env);
-        self.evaluating_body.set(in_body);
-        self.forcing_constants.borrow_mut().remove(name);
-        let forced = match &annotation {
-            Some(annotation) => self.typed_by_annotation(forced?, annotation, &env),
-            None => forced?,
-        };
-        self.forced_constants
-            .borrow_mut()
-            .insert(name.to_string(), forced.clone());
-        self.top_consts
-            .borrow_mut()
-            .insert(name.to_string(), forced.clone());
-        Ok(Some(forced))
-    }
-
-    /// What a materializing rewrite reads a pending constant as: the value
-    /// forced now, a failure kept in `failure` for the caller to report.
-    pub(super) fn pending_lookup<'s>(
-        &'s self,
-        failure: &'s RefCell<Option<ComptimeError>>,
-    ) -> impl Fn(&str) -> Option<CtValue> + 's {
-        move |name| match self.force_constant(name) {
-            Ok(value) => value,
-            Err(error) => {
-                failure.borrow_mut().get_or_insert(error);
-                None
-            }
-        }
-    }
-
-    /// Rewrite each value read of a pending constant in a function body of
-    /// the elaborated `program` to the request `comptime(<initializer>)`, and
-    /// take every pending declaration out of it, each with its position: a
-    /// reader above the check forces the constant through the
-    /// materializing rewrite ([`Self::pending_lookup`]), and
-    /// [`Self::restore_forced_constants`] puts back the ones it forced.
-    pub(super) fn request_pending_reads(&self, program: &mut Vec<Stmt>) -> Vec<(usize, Stmt)> {
-        let expansions = self.pending_expansions();
+    /// Rewrite each value read of an applied display constant in a
+    /// function body of the elaborated `program` to the request
+    /// `comptime(<display>)`. A read in a type, a compile-time argument, or
+    /// a compile-time statement is spelled where it is read, as is a name
+    /// shadowed by a parameter or a local the body binds.
+    pub(super) fn request_display_reads(&self, program: &mut [Stmt]) {
+        let expansions = self.applied_displays.borrow();
         if expansions.is_empty() {
-            return Vec::new();
+            return;
         }
         for statement in program.iter_mut() {
             match &mut statement.kind {
@@ -142,71 +57,6 @@ impl Elab<'_> {
                 _ => {}
             }
         }
-        let mut deferred = Vec::new();
-        let mut kept = Vec::with_capacity(program.len());
-        for (position, statement) in program.drain(..).enumerate() {
-            if matches!(&statement.kind, StmtKind::Comptime { name, type_params, .. }
-                if type_params.is_empty() && expansions.contains_key(name))
-            {
-                deferred.push((position, statement));
-            } else {
-                kept.push(statement);
-            }
-        }
-        *program = kept;
-        deferred
-    }
-
-    /// Put each `deferred` declaration a reader forced back at its
-    /// position, its value the forced one; one nothing forced is dropped.
-    pub(super) fn restore_forced_constants(
-        &self,
-        program: &mut Vec<Stmt>,
-        deferred: Vec<(usize, Stmt)>,
-    ) {
-        let forced = self.forced_constants.borrow();
-        let mut dropped = 0;
-        for (position, statement) in deferred {
-            let StmtKind::Comptime {
-                name,
-                type_params,
-                ty,
-                where_clauses,
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            let Some(value) = forced
-                .get(name)
-                .filter(|value| !value.is_runtime_collection())
-                .and_then(|value| value.materialize(statement.span))
-            else {
-                dropped += 1;
-                continue;
-            };
-            let kind = StmtKind::Comptime {
-                name: name.clone(),
-                type_params: type_params.clone(),
-                ty: ty.clone(),
-                where_clauses: where_clauses.clone(),
-                value,
-            };
-            program.insert(position - dropped, rebuilt(&statement, kind));
-        }
-    }
-
-    /// Each pending constant's initializer with every pending constant it
-    /// reads replaced by that one's own, so that it stands alone in a body.
-    pub(super) fn pending_expansions(&self) -> HashMap<String, Expr> {
-        let pending = self.pending_constants.borrow();
-        let mut expansions: HashMap<String, Expr> = HashMap::new();
-        let mut names: Vec<&String> = pending.keys().collect();
-        names.sort();
-        for name in names {
-            expand_constant(name, &pending, &mut expansions, &mut HashSet::new());
-        }
-        expansions
     }
 }
 
@@ -226,87 +76,6 @@ impl mojito_ast::visit::Visitor for ExprAddresses<'_> {
     fn visit_expr(&mut self, expr: &Expr) {
         self.0.insert(std::ptr::from_ref(expr) as usize);
     }
-}
-
-/// The names `statements` read: identifiers and type names, anywhere.
-#[derive(Default)]
-struct NamesRead(HashSet<String>);
-
-impl mojito_ast::visit::Visitor for NamesRead {
-    fn visit_expr(&mut self, expr: &Expr) {
-        if let ExprKind::Identifier(name) = &expr.kind {
-            self.0.insert(name.clone());
-        }
-    }
-
-    fn visit_type(&mut self, ty: &Type) {
-        if let Type::Named(name, _) = ty {
-            self.0.insert(name.clone());
-        }
-    }
-}
-
-/// The expansion of the pending constant `name` ([`Elab::pending_expansions`]).
-/// A constant whose expansion reaches itself keeps the name it reads there,
-/// which forcing reports as a cycle.
-fn expand_constant(
-    name: &str,
-    pending: &HashMap<String, PendingConstant>,
-    expansions: &mut HashMap<String, Expr>,
-    visiting: &mut HashSet<String>,
-) -> Option<Expr> {
-    if let Some(expansion) = expansions.get(name) {
-        return Some(expansion.clone());
-    }
-    let constant = pending.get(name)?;
-    if !visiting.insert(name.to_string()) {
-        return None;
-    }
-    let mut expansion = constant.value.clone();
-    let mut reads = Vec::new();
-    collect_identifier_reads(&expansion, pending, &mut reads);
-    let replacements: HashMap<String, Expr> = reads
-        .into_iter()
-        .filter_map(|read| {
-            let inner = expand_constant(&read, pending, expansions, visiting)?;
-            Some((read, inner))
-        })
-        .collect();
-    replace_identifiers(&mut expansion, &replacements);
-    // An annotation other than `Int` or `Bool` converts the value, which
-    // the check proved implicit where the constant is declared.
-    if let Some(Type::Named(annotation, param_args)) = &constant.annotation
-        && !matches!(annotation.as_str(), "Int" | "Bool")
-    {
-        expansion = Expr {
-            kind: ExprKind::Call {
-                name: annotation.clone(),
-                param_args: param_args.clone(),
-                args: vec![expansion.clone()],
-                kwargs: Vec::new(),
-            },
-            ..expansion
-        };
-    }
-    visiting.remove(name);
-    expansions.insert(name.to_string(), expansion.clone());
-    Some(expansion)
-}
-
-/// The pending constants `expression` reads by name.
-fn collect_identifier_reads(
-    expression: &Expr,
-    pending: &HashMap<String, PendingConstant>,
-    reads: &mut Vec<String>,
-) {
-    let mut names = NamesRead::default();
-    mojito_ast::visit::walk_expr(&mut names, expression);
-    reads.extend(
-        names
-            .0
-            .into_iter()
-            .filter(|name| pending.contains_key(name)),
-    );
 }
 
 /// Replace each identifier of `expression` that `replacements` names by
@@ -382,7 +151,7 @@ fn request_value_reads(
                 ExprKind::Index { object, index }
                     if matches!(&object.kind, ExprKind::Identifier(name)
                         if self.elab.structs.contains_key(name.as_str())
-                            || self.elab.fns.contains_key(name.as_str())) =>
+                            || self.elab.fns.contains(name.as_str())) =>
                 {
                     self.skip_expr(index);
                 }

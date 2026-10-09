@@ -1,5 +1,7 @@
 # Deriving instantiations from checked templates
 
+> **2026-10-09 (roadmap R9).** Source validation is gone: the one check types every body, plain or generic, with its binders symbolic, and retains every template (`TemplateProducer::ExecutableCheck`). Where this note says "source validation", read the one check; the discovery rounds it mentions are gone too.
+
 Mojo checks a parametric body once, with its parameters symbolic, and
 instantiation substitutes into the checked result. Mojito used to do the
 reverse: the elaborator cloned a body per instantiation and the checker

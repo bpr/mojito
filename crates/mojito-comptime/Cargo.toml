@@ -12,7 +12,6 @@ mojito-checker = { path = "../mojito-checker" }
 mojito-common = { path = "../mojito-common" }
 mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
-mojito-vm = { path = "../mojito-vm" }
 
 [dev-dependencies]
 mojito = { path = "../.." }

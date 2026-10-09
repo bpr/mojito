@@ -27,23 +27,6 @@ pub struct CheckedDeletability {
     pub linear_bindings: FactSet<SourceSpan>,
 }
 
-/// Which declarations [`check`] walks.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DestroyScope<'a> {
-    /// Every function and method of the elaborated program.
-    Program,
-    /// Only the template bodies source validation checked with the
-    /// declaration's parameters symbolic (`validates_body`), which needs the
-    /// bodies a `rebind` keys, less the pack-keyed bodies it reached no
-    /// verdict on. Every other body is left to the executable check, whose
-    /// facts this run does not have. Both sets key a body at its first
-    /// statement.
-    ValidatedTemplates {
-        rebind_keyed: &'a HashSet<SourceSpan>,
-        no_verdict: &'a HashSet<SourceSpan>,
-    },
-}
-
 /// Per-expression facts the checker recorded for one program, carried on
 /// every environment this analysis builds.
 #[derive(Default)]
@@ -73,7 +56,6 @@ pub fn check(
     deletability: &CheckedDeletability,
     types: &HashMap<String, ExplicitDestroyInfo>,
     spans: SpanFacts,
-    scope: DestroyScope<'_>,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
         return Ok(());
@@ -84,9 +66,7 @@ pub fn check(
     };
     for statement in statements {
         match &statement.kind {
-            StmtKind::Def {
-                type_params, body, ..
-            } if walks_body(scope, &[], type_params, body) => check_def(
+            StmtKind::Def { .. } => check_def(
                 statement,
                 binding_types,
                 comprehension_bindings,
@@ -94,7 +74,6 @@ pub fn check(
                 types,
                 &root,
             )?,
-            StmtKind::Def { .. } => {}
             StmtKind::Struct {
                 name,
                 type_params,
@@ -103,9 +82,6 @@ pub fn check(
             } => {
                 let owner = root.function_env(type_params);
                 for (method_index, method) in methods.iter().enumerate() {
-                    if !walks_body(scope, type_params, &method.type_params, &method.body) {
-                        continue;
-                    }
                     let mut params = method
                         .params
                         .iter()
@@ -1318,29 +1294,6 @@ fn check_def(
         types,
         outer.function_env(type_params),
     )
-}
-
-/// Whether `scope` walks a declaration with these parameters and body. Source
-/// validation checked exactly the bodies `validates_body` selects; the facts
-/// this pass reads exist for no other body in that run.
-fn walks_body(
-    scope: DestroyScope<'_>,
-    enclosing: &[mojito_ast::ast::TypeParam],
-    type_params: &[mojito_ast::ast::TypeParam],
-    body: &[Stmt],
-) -> bool {
-    match scope {
-        DestroyScope::Program => true,
-        DestroyScope::ValidatedTemplates {
-            rebind_keyed,
-            no_verdict,
-        } => {
-            crate::checker::validates_comptime_body(enclosing, type_params, body, rebind_keyed)
-                && !body
-                    .first()
-                    .is_some_and(|first| no_verdict.contains(&first.source_span()))
-        }
-    }
 }
 
 /// Check one conceptual comprehension iteration. Each generator introduces a

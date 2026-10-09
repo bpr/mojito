@@ -844,22 +844,16 @@ impl Decoder {
                         .iter()
                         .map(|arg| self.param_expr(arg))
                         .collect::<Option<_>>()?;
-                    let evaluated = self.required(value, fields, "evaluated")?;
-                    let evaluated = self
-                        .option_value(Some(evaluated))
-                        .map(|inner| self.ct_value(inner));
-                    let evaluated = match evaluated {
-                        Some(None) => return None,
-                        Some(Some(evaluated)) => Some(evaluated),
-                        None => None,
-                    };
+                    // Schema 1.37 and earlier wrote the value a compile-time
+                    // route had established for the application; the
+                    // application's identity never carried it.
+                    if let Ok(evaluated) = self.field(fields, "evaluated")
+                        && let Some(inner) = self.option_value(Some(evaluated))
+                    {
+                        self.ct_value(inner)?;
+                    }
                     self.unknown(fields, &["function", "type", "args", "evaluated"]);
-                    Some(match evaluated {
-                        Some(evaluated) => self
-                            .context
-                            .apply_evaluated(&function, &args, meta, evaluated),
-                        None => self.context.apply(&function, &args, meta),
-                    })
+                    Some(self.context.apply(&function, &args, meta))
                 }
                 // A hole is a boundary error at MIR, never a parsed form.
                 "param_hole" => {
@@ -1109,11 +1103,14 @@ impl Decoder {
                     mutability,
                 })
             }
+            ValueKind::Atom(tag) if tag == "marker_applied" => Some(CtMarker::Applied),
+            // Schema 1.37 and earlier carried the folded value of an applied
+            // constant, and spelled a layout constant apart.
             ValueKind::Positional(tag, inner) if tag == "marker_applied" => {
-                self.int64(inner).map(CtMarker::Applied)
+                self.int64(inner).map(|_| CtMarker::Applied)
             }
             ValueKind::Positional(tag, inner) if tag == "marker_layout" => {
-                self.ty(inner).map(|ty| CtMarker::Layout(Box::new(ty)))
+                self.ty(inner).map(|_| CtMarker::Applied)
             }
             _ => {
                 self.error(value.span, "expected compile-time marker");

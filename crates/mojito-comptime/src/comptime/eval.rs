@@ -27,9 +27,6 @@ impl Elab<'_> {
                 if let Some(value) = scope.get(name) {
                     return Ok(value.clone());
                 }
-                if let Some(value) = self.force_constant(name)? {
-                    return Ok(value);
-                }
                 self.type_value(name, &[], scope)
             }
             ExprKind::TypeValue(ty) => Ok(CtValue::Type(Box::new(
@@ -131,18 +128,6 @@ impl Elab<'_> {
                     ))),
                 }
             }
-            // A call or subscript chained onto another call over a
-            // compile-time value (`M.get("a").value()`) evaluates as one VM
-            // entry: the intermediate result need not have a compile-time
-            // form of its own.
-            ExprKind::MethodCall { object, kwargs, .. }
-                if kwargs.is_empty() && self.chained_on_value(object, scope) =>
-            {
-                self.ctfe_expr_entry(e, scope)
-            }
-            ExprKind::Index { object, .. } if self.chained_on_value(object, scope) => {
-                self.ctfe_expr_entry(e, scope)
-            }
             ExprKind::Index { object, index } => {
                 // `IsTriviallyCopyable[Plain]`: a single non-scalar bracket
                 // argument parses as runtime indexing, so the predicate is
@@ -202,9 +187,9 @@ impl Elab<'_> {
                 }
                 let container = self.eval(object, scope)?;
                 // A dictionary subscript is the raising `__getitem__`, which
-                // the checked entry reports as upstream does.
+                // only the check binds and the elaborator below MIR runs.
                 if matches!(container, CtValue::Dict { .. }) {
-                    return self.ctfe_expr_entry(e, scope);
+                    return Err(not_evaluated_here("a compile-time dictionary subscript"));
                 }
                 let seq = container.as_sequence("indexing a comptime collection")?;
                 let i = self.eval(index, scope)?.as_int("comptime index")?;
@@ -244,7 +229,7 @@ impl Elab<'_> {
                     CtValue::Dtype(dtype) if let Some(answer) = dtype.predicate(method) => {
                         Ok(CtValue::Bool(answer))
                     }
-                    receiver => self.comptime_value_method(e, &receiver, method, args, scope),
+                    receiver => self.comptime_value_method(&receiver, method, args, scope),
                 }
             }
             // An immediately invoked lambda whose body is a single `return`
@@ -591,7 +576,7 @@ impl Elab<'_> {
             } if kwargs.is_empty()
                 && param_args.is_empty()
                 && args.len() <= 1
-                && !self.fns.contains_key(name.as_str())
+                && !self.fns.contains(name.as_str())
                 && !self.structs.contains_key(name.as_str())
                 && matches!(
                     scalar_type_name(name),
@@ -618,70 +603,24 @@ impl Elab<'_> {
                     ))
                 })
             }
-            // Constructing a struct at compile time → VM CTFE through a
-            // synthesized entry, freezing the resulting instance.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if kwargs.is_empty()
-                && param_args.is_empty()
-                && !self.fns.contains_key(name.as_str())
-                && self.structs.contains_key(name.as_str()) =>
-            {
-                let literal_args = self.eval_to_literals(args, e.span, scope)?;
-                self.ctfe_struct_entry(name, None, literal_args, e.span)
-            }
-            // A call into a type-parameterized top-level function
-            // (`hash[default_comp_time_hasher](Int(1))`) → VM CTFE through a
-            // synthesized entry: the checked boundary selects the overload,
-            // infers the type parameters, and binds the hasher type.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if kwargs.is_empty()
-                && self.fns.get(name.as_str()).is_some_and(|f| {
-                    f.ct_params
-                        .iter()
-                        .any(mojito_types::types::constructible_type_parameter)
-                }) =>
-            {
-                self.ctfe_generic_def_entry(name, param_args, args, e.span, scope)
-            }
-            // A call into a pure top-level function → CTFE.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                ..
-            } => {
-                let argv = self.eval_all(args, scope)?;
-                // A collection argument crosses only as its display inside a
-                // synthesized entry.
-                if argv.iter().any(CtValue::is_runtime_collection) {
-                    return self.ctfe_expr_entry(e, scope);
-                }
-                self.ctfe_call(name, param_args, argv, scope)
-            }
-            // A static method on a struct (`Extent.square(4)`) → the
-            // same synthesized-entry CTFE.
+            // A call — of a function, a struct constructor, or a static
+            // method — is an application only the check binds and the
+            // elaborator below MIR evaluates: this evaluator folds no call.
+            ExprKind::Call { name, .. } => Err(not_evaluated_here(&format!(
+                "a compile-time call of '{name}'"
+            ))),
             ExprKind::MethodCall {
                 object,
                 method,
-                args,
                 kwargs,
+                ..
             } if kwargs.is_empty()
                 && matches!(&object.kind, ExprKind::Identifier(name)
                     if self.structs.contains_key(name.as_str())) =>
             {
-                let ExprKind::Identifier(struct_name) = &object.kind else {
-                    unreachable!("guard established an identifier receiver");
-                };
-                let literal_args = self.eval_to_literals(args, e.span, scope)?;
-                self.ctfe_struct_entry(struct_name, Some(method), literal_args, e.span)
+                Err(not_evaluated_here(&format!(
+                    "a compile-time call of the static method '{method}'"
+                )))
             }
             // A method call on a compile-time value with a runtime form.
             ExprKind::MethodCall {
@@ -691,7 +630,7 @@ impl Elab<'_> {
                 kwargs,
             } if kwargs.is_empty() => {
                 let receiver = self.eval(object, scope)?;
-                self.comptime_value_method(e, &receiver, method, args, scope)
+                self.comptime_value_method(&receiver, method, args, scope)
             }
             _ => Err(ComptimeError::NotComptime(
                 "unsupported compile-time expression".to_string(),
@@ -699,49 +638,12 @@ impl Elab<'_> {
         }
     }
 
-    /// Whether `object` is itself a call or subscript whose receiver chain is
-    /// rooted at a compile-time value (the receiver of a chained call).
-    fn chained_on_value(&self, object: &Expr, scope: &HashMap<String, CtValue>) -> bool {
-        matches!(
-            object.kind,
-            ExprKind::MethodCall { .. } | ExprKind::Index { .. } | ExprKind::Invoke { .. }
-        ) && self.chain_root_is_value(object, scope)
-    }
-
-    /// Whether a receiver chain (`a.b(...)[i].c(...)`) is rooted at a binding
-    /// of a compile-time value with a runtime form (not a type or reflection
-    /// handle).
-    #[allow(
-        clippy::self_only_used_in_recursion,
-        reason = "TODO: lift out of the impl or use the receiver"
-    )]
-    fn chain_root_is_value(&self, expr: &Expr, scope: &HashMap<String, CtValue>) -> bool {
-        match &expr.kind {
-            ExprKind::MethodCall { object, .. }
-            | ExprKind::Index { object, .. }
-            | ExprKind::Member { object, .. } => self.chain_root_is_value(object, scope),
-            ExprKind::Invoke { callee, .. } => self.chain_root_is_value(callee, scope),
-            ExprKind::Identifier(name) => scope.get(name).is_some_and(|value| {
-                !matches!(
-                    value,
-                    CtValue::Type(_)
-                        | CtValue::Reflected(_)
-                        | CtValue::Expr(_)
-                        | CtValue::Deferred(_)
-                        | CtValue::Marker(_)
-                )
-            }),
-            _ => false,
-        }
-    }
-
-    /// A method call on a compile-time collection or struct value. The
+    /// A method call on a compile-time collection or struct value: the
     /// structural folds (`keys`, `values`, `__len__`, `__contains__`) read
-    /// the value directly; everything else runs through a synthesized
-    /// VM-CTFE entry over the materialized receiver.
+    /// the value directly; any other method is an application only the
+    /// check binds.
     fn comptime_value_method(
         &self,
-        call: &Expr,
         receiver: &CtValue,
         method: &str,
         args: &[Expr],
@@ -772,7 +674,9 @@ impl Elab<'_> {
             ) => Err(ComptimeError::NotComptime(format!(
                 "compile-time method '{method}' needs a value receiver"
             ))),
-            _ => self.ctfe_expr_entry(call, scope),
+            _ => Err(not_evaluated_here(&format!(
+                "a compile-time call of the method '{method}'"
+            ))),
         }
     }
 
@@ -823,7 +727,6 @@ impl Elab<'_> {
         name: &str,
         values: Vec<CtValue>,
     ) -> Result<CtValue, ComptimeError> {
-        self.burn()?;
         let (params, body) = self
             .generic_aliases
             .borrow()
@@ -948,25 +851,6 @@ impl Elab<'_> {
                 "unsupported TypeList member '{field}'"
             ))),
         }
-    }
-
-    pub(super) fn eval_to_literals(
-        &self,
-        exprs: &[Expr],
-        span: Span,
-        scope: &HashMap<String, CtValue>,
-    ) -> Result<Vec<Expr>, ComptimeError> {
-        exprs
-            .iter()
-            .map(|argument| {
-                let value = self.eval(argument, scope)?;
-                value.materialize(span).ok_or_else(|| {
-                    ComptimeError::NotComptime(format!(
-                        "compile-time argument {value} has no runtime form"
-                    ))
-                })
-            })
-            .collect()
     }
 
     pub(super) fn eval_all(
@@ -1319,42 +1203,16 @@ impl Elab<'_> {
             op, &left, &right,
         )?)
     }
+}
 
-    /// Evaluate a `comptime for` / CTFE `for` iterable to the sequence of loop
-    /// values: a `range(...)` of `Int`s, or any compile-time tuple/list.
-    pub(super) fn eval_iter(
-        &self,
-        iter: &Expr,
-        scope: &HashMap<String, CtValue>,
-    ) -> Result<Vec<CtValue>, ComptimeError> {
-        if let ExprKind::Call { name, args, .. } = &iter.kind
-            && name == "range"
-        {
-            let vals: Vec<i64> = args
-                .iter()
-                .map(|a| self.eval(a, scope)?.as_int("range argument"))
-                .collect::<Result<_, _>>()?;
-            let (start, stop, step) = match vals.as_slice() {
-                [stop] => (0, *stop, 1),
-                [start, stop] => (*start, *stop, 1),
-                [start, stop, step] => (*start, *stop, *step),
-                _ => {
-                    return Err(ComptimeError::BadRange(
-                        "range takes 1-3 arguments".to_string(),
-                    ));
-                }
-            };
-            let mut out = Vec::new();
-            let mut i = start;
-            while (step > 0 && i < stop) || (step < 0 && i > stop) {
-                out.push(CtValue::Int(i));
-                i += step;
-            }
-            return Ok(out);
-        }
-        self.eval(iter, scope)?
-            .as_sequence("a range(...), tuple, or list")
-    }
+/// The refusal of an application this evaluator does not fold: the check
+/// binds it where it stands, and the elaborator below MIR evaluates it on
+/// first demand; a module-scope position with no such binding reports it.
+fn not_evaluated_here(what: &str) -> ComptimeError {
+    ComptimeError::NotComptime(format!(
+        "{what} is not evaluated above the check; bind it as a module constant or a function \
+         body's `comptime` binding, which the elaborator evaluates on demand"
+    ))
 }
 
 /// Wrap element types as the compile-time `TypeList` value: a marker struct

@@ -81,7 +81,6 @@ pub(in crate::checker) struct LiftedApplication {
     expression: Expr,
     binders: Vec<ParamExpr>,
     bindings: Vec<Option<mojito_types::origin::OwnerId>>,
-    validated: bool,
     application: ParamExpr,
 }
 
@@ -200,93 +199,6 @@ pub(super) fn applicable_functions(
 }
 
 impl Checker {
-    /// Check the method bodies of a struct that hold compile-time control
-    /// flow, each with `self` bound at the struct's own parameters, and every
-    /// body constructing a vector at a lane its method's own binders spell
-    /// (`method_constructs_at_own_lane`).
-    pub(super) fn validate_comptime_method_bodies(
-        &mut self,
-        declaration: &StructDeclaration<'_>,
-        self_ty: &Ty,
-    ) -> Result<(), TypeError> {
-        let mut overload_indices = HashMap::<String, usize>::new();
-        for (method_index, m) in declaration.methods.iter().enumerate() {
-            let method_name = lifecycle_method_name(m).to_string();
-            let overload_index = *overload_indices.entry(method_name.clone()).or_default();
-            *overload_indices
-                .get_mut(&method_name)
-                .expect("inserted above") += 1;
-            let validated = validates_body(
-                declaration.type_params,
-                &m.type_params,
-                &m.body,
-                body_keys_rebind(&m.body, &self.rebind_keyed_bodies),
-            );
-            let own_lane = mojito_ast::simd_width::method_constructs_at_own_lane(m);
-            if !(validated || own_lane) {
-                continue;
-            }
-            let scopes = self.scopes.len();
-            self.pack_element_views.borrow_mut().clear();
-            let checked = self.check_method(
-                self_ty,
-                m,
-                declaration.module.clone().as_ref(),
-                declaration.name,
-                method_index,
-                overload_index,
-            );
-            // A method constructing a vector at a lane of its own binders is
-            // validated only to produce its template: each per-call clone is
-            // still checked, or derived, so a body the symbolic check cannot
-            // type gets no verdict.
-            let checked = match checked {
-                Err(error) if !validated && !matches!(error, TypeError::SymbolicBoundary(_)) => {
-                    Err(TypeError::SymbolicBoundary(error.to_string()))
-                }
-                checked => checked,
-            };
-            self.symbolic_verdict(
-                &format!("{}.{method_name}", declaration.name),
-                &m.body,
-                scopes,
-                checked,
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Keep a body's validation result, unless it ended at a use of an
-    /// unbound pack or a reflected symbolic type with no symbolic rule: that
-    /// is no verdict, so the body is recorded and left to its
-    /// per-instantiation check. `scopes` is the scope depth before the body,
-    /// restored past the abandoned check.
-    pub(super) fn symbolic_verdict(
-        &mut self,
-        name: &str,
-        body: &[Stmt],
-        scopes: usize,
-        checked: Result<(), TypeError>,
-    ) -> Result<(), TypeError> {
-        match checked {
-            Err(TypeError::SymbolicBoundary(what)) if self.source_validation => {
-                while self.scopes.len() > scopes {
-                    self.pop_scope();
-                }
-                timing::count("templates.no_verdict", 1);
-                self.no_verdict_bodies
-                    .extend(body.first().map(Stmt::source_span));
-                self.template_catalog
-                    .borrow_mut()
-                    .stats_mut()
-                    .no_verdict
-                    .push((name.to_string(), what));
-                Ok(())
-            }
-            checked => checked,
-        }
-    }
-
     /// A `comptime if` condition must be a compile-time `Bool`: a generic
     /// constraint over the parameters in scope (`T == Int`, `n == 0`,
     /// `conforms_to(T, Copyable)`, a `TypeList` proposition, a predicate
@@ -366,8 +278,21 @@ impl Checker {
                 // index) conforms per instance: the condition is the
                 // conjunction of its conformance propositions, which the
                 // elaborator below MIR decides once the element is closed.
-                let Some(Ty::Dependent(dependent)) = self.comptime_type_operand(&args[0])? else {
-                    return Ok(None);
+                // A concrete type's conformance is a fact decided here.
+                let operand = self.comptime_type_operand(&args[0])?;
+                let Some(Ty::Dependent(dependent)) = operand else {
+                    let Some(operand) = operand else {
+                        return Ok(None);
+                    };
+                    let conforms = trait_names.iter().all(|trait_name| {
+                        self.conforms_to(
+                            &operand,
+                            mojito_ast::ast::canonical_trait_name(trait_name),
+                        )
+                    });
+                    let constraint = GenericConstraint::Bool(conforms);
+                    self.record_comptime_condition(cond, &constraint);
+                    return Ok(Some(constraint));
                 };
                 let mut propositions = Vec::with_capacity(trait_names.len());
                 for trait_name in trait_names {
@@ -427,14 +352,19 @@ impl Checker {
             // e = L[1]`) is no parameter: the condition runs with it.
             Ok(constraint) if self.names_evaluated_binding(&constraint) => {
                 self.expect_bool(cond, "comptime if condition")?;
+                self.reject_dynamic_condition(cond)?;
                 Ok(None)
             }
             Ok(constraint) => {
+                let constraint = self.fold_closed_constraint(constraint);
                 self.record_comptime_condition(cond, &constraint);
                 Ok(Some(constraint))
             }
             Err(constraint_error) => match self.expect_bool(cond, "comptime if condition") {
-                Ok(()) => Ok(None),
+                Ok(()) => {
+                    self.reject_dynamic_condition(cond)?;
+                    Ok(None)
+                }
                 // A condition over types or a `TypeList` has no value
                 // reading; its constraint diagnosis is the one that names
                 // the problem.
@@ -442,6 +372,36 @@ impl Checker {
                 Err(error) => Err(error),
             },
         }
+    }
+
+    /// A condition over no parameter is a fact: the closed verdict of
+    /// `constraint`, as the pin folds a constant parameter expression, or
+    /// the constraint itself while a leaf stays open for the elaborator.
+    fn fold_closed_constraint(&self, constraint: GenericConstraint) -> GenericConstraint {
+        if !constraint_is_closed(&constraint) {
+            return constraint;
+        }
+        match self.constraint_verdict(&constraint, &ConstraintEnvironment::default()) {
+            Ok(mojito_types::param_expr::ConstraintVerdict::Proven) => {
+                GenericConstraint::Bool(true)
+            }
+            Ok(mojito_types::param_expr::ConstraintVerdict::Disproven) => {
+                GenericConstraint::Bool(false)
+            }
+            _ => constraint,
+        }
+    }
+
+    /// A `comptime if` condition the constraint compiler does not close
+    /// runs in a function the elaborator evaluates, so it reads compile-time
+    /// bindings alone; one over a runtime local is the pin's rejection.
+    fn reject_dynamic_condition(&self, cond: &Expr) -> Result<(), TypeError> {
+        if self.reads_compile_time_alone(cond) {
+            return Ok(());
+        }
+        Err(TypeError::Unsupported(
+            "cannot use a dynamic value in 'comptime if' condition".to_string(),
+        ))
     }
 
     /// The conformances a `comptime if` condition proves of its operands for
@@ -513,10 +473,7 @@ impl Checker {
         let iter = self.inline_local_comptime_values(iter);
         // A local binding of an evaluated display is iterated where it is
         // declared.
-        let bound = self
-            .bound_display(&iter)
-            .filter(|_| !self.source_validation)
-            .cloned();
+        let bound = self.bound_display(&iter).cloned();
         // A reflected field-name list is its own sequence of strings: the
         // names of a registered struct, or the query over a subject that is
         // still a parameter.
@@ -568,7 +525,6 @@ impl Checker {
         let applied = sequence.is_none()
             && !evaluated
             && bound.is_none()
-            && !self.source_validation
             && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
             && self.applies_callable(&iter)
             && self.reads_compile_time_alone(&iter);
@@ -584,9 +540,8 @@ impl Checker {
         };
         let binds_index =
             element == Ty::Int || sequence.is_some() || evaluated || applied || bound.is_some();
-        // The executable check sees only a loop the elaborator kept, whose
-        // variable must be a binder MIR carries.
-        if !binds_index && !self.source_validation {
+        // The loop's variable must be a binder MIR carries.
+        if !binds_index {
             return Err(TypeError::Unsupported(format!(
                 "'comptime for' over elements of type '{element}' in a generic body: its \
                  variable binds an 'Int', 'Float64', 'Bool', or 'String' element, or a \
@@ -692,8 +647,7 @@ impl Checker {
         // A bound the compiler does not close that reads compile-time
         // bindings alone (`len(L)` over a local display binding) is
         // evaluated per instance.
-        if !self.source_validation
-            && (1..=3).contains(&args.len())
+        if (1..=3).contains(&args.len())
             && bounds.iter().any(Result::is_err)
             && bounds
                 .iter()
@@ -707,7 +661,6 @@ impl Checker {
         }
         let bounds = match bounds.into_iter().collect::<Result<Vec<_>, _>>() {
             Ok(bounds) => bounds,
-            Err(_) if self.source_validation => return Ok(()),
             Err(error) => {
                 return Err(TypeError::Unsupported(format!(
                     "comptime for bound is not a parameter expression: {error}"
@@ -819,14 +772,7 @@ impl Checker {
             return called;
         }
         let names = names_read(expr);
-        let symbolic = names.iter().any(|name| {
-            name == "Self"
-                || self.binding_scope(name).is_some_and(|scope| scope > 0)
-                || self.value_parameter_in_scope(name).is_some()
-        });
-        if called.is_none()
-            && ((!symbolic && self.source_validation) || !self.reads_compile_time_alone(expr))
-        {
+        if called.is_none() && !self.reads_compile_time_alone(expr) {
             return None;
         }
         // The expression's own arguments are typed where they stand.
@@ -845,11 +791,9 @@ impl Checker {
             Some(application) => application,
             None => self.named_application(expr, &names, ty)?,
         };
-        if !self.source_validation {
-            self.lifted_expressions
-                .borrow_mut()
-                .insert(expr.source_span(), application.clone());
-        }
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(expr.source_span(), application.clone());
         Some(application)
     }
 
@@ -1104,27 +1048,19 @@ impl Checker {
             });
         }
         let bindings: Vec<_> = names.iter().map(|name| self.lookup_owner(name)).collect();
-        let validated = self.source_validation;
         let known = self
             .lifted_applications
             .borrow()
             .iter()
             .find(|known| {
-                known.validated == validated
-                    && known.expression == *expr
-                    && known.binders == binders
-                    && known.bindings == bindings
+                known.expression == *expr && known.binders == binders && known.bindings == bindings
             })
             .map(|known| known.application.clone());
         known.or_else(|| {
             // An identity of its own names the function, as a binding's
             // names its display's; the empty owner keeps the name apart
             // from one MIR gives a function it lifts itself.
-            let name = if validated {
-                format!("$comptime$$at{}", expr.span.0)
-            } else {
-                format!("$comptime$${}", self.fresh_owner().ok()?.0)
-            };
+            let name = format!("$comptime$${}", self.fresh_owner().ok()?.0);
             let application = self.param_context.apply(
                 &name,
                 &binders,
@@ -1136,7 +1072,6 @@ impl Checker {
                     expression: expr.clone(),
                     binders,
                     bindings,
-                    validated,
                     application: application.clone(),
                 });
             Some(application)
@@ -1350,10 +1285,19 @@ impl Checker {
             // A body with no binders keeps a binding only when it applies a
             // callable (`comptime x = f(1)`): its reads in a compile-time
             // position are the application, and the rest of the statement
-            // is typed as any binding is.
+            // is typed as any binding is. A module constant's lifted
+            // function is named by the constant, the same in every pass.
+            // A module dictionary or set display has no compile-time form
+            // to lift (roadmap R196): the elaborator spells it where it is
+            // read.
+            let module_display =
+                self.function_bases.is_empty() && matches!(value.kind, ExprKind::BraceLit(_));
             let expression = match self.comptime_value_expression(value) {
                 Some(expression) => Some(expression),
-                None => self.requested_binding(value)?,
+                None if module_display => None,
+                None => self
+                    .requested_binding(value)?
+                    .map(|application| self.module_lifted_application(name, value, application)),
             };
             if let Some(expression) = expression
                 && let Some(scope) = self.local_comptime_parameters.last_mut()
@@ -1456,7 +1400,7 @@ impl Checker {
     /// demands and runs once per instance. `None` for any other
     /// initializer.
     fn requested_binding(&self, value: &Expr) -> Result<Option<ParamExpr>, TypeError> {
-        if self.source_validation || !self.applies_callable(value) {
+        if !self.applies_callable(value) {
             return Ok(None);
         }
         if let ExprKind::Call { name, .. } = &value.kind
@@ -1515,9 +1459,51 @@ impl Checker {
     }
 
     /// Whether `value` applies a callable ([`super::applies_callable`]), as
-    /// the elaborator keeps a binding of one for the check.
+    /// the elaborator keeps a binding of one for the check, or reads a
+    /// module constant that does.
     fn applies_callable(&self, value: &Expr) -> bool {
         super::applies_callable(value, self)
+            || names_read(value).iter().any(|name| {
+                self.binding_scope(name) == Some(0) && self.module_constant_value(name).is_some()
+            })
+    }
+
+    /// `application`, the function lifted for the module constant `name`'s
+    /// initializer `value`, renamed by the constant: a body's facts carried
+    /// from an earlier pass name it, and MIR lifts it from the toplevel
+    /// under that name. A function-local binding keeps the pass's name.
+    fn module_lifted_application(
+        &self,
+        name: &str,
+        value: &Expr,
+        application: ParamExpr,
+    ) -> ParamExpr {
+        if !self.function_bases.is_empty() {
+            return application;
+        }
+        let mojito_types::param_expr::ParamKind::Apply { args, .. } = application.kind() else {
+            return application;
+        };
+        // A display constant is a parameter list, which a subscript or a
+        // loop header reads element by element.
+        let meta = match &value.kind {
+            ExprKind::ListLit(_) | ExprKind::TupleLit(_) => {
+                match self.comptime_iteration_element(value) {
+                    Ok(element) => mojito_types::param_expr::MetaTy::ParamList(Box::new(
+                        mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
+                    )),
+                    Err(_) => application.meta().clone(),
+                }
+            }
+            _ => application.meta().clone(),
+        };
+        let renamed = self
+            .param_context
+            .apply(&format!("$comptime${name}$module"), args, meta);
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(value.source_span(), renamed.clone());
+        renamed
     }
 
     /// What the value of a local `comptime` binding over a template body's
@@ -1614,42 +1600,6 @@ impl Checker {
             &self.binders_in_scope(),
             MetaTy::ParamList(Box::new(MetaTy::value(element.clone()))),
         )
-    }
-
-    /// Under source validation, note that the local `comptime` binding
-    /// `name` holds a display the elaborator evaluates per instance, for
-    /// the types and parameter arguments that read an element or the
-    /// length. The binding itself stays the ordinary path's; the executable
-    /// check binds the display ([`Self::bind_template_comptime`]).
-    fn note_validated_display(&mut self, name: &str, value: &Expr) {
-        if self.tparams.is_empty() {
-            return;
-        }
-        if let Some((_, display)) = self.aliased_display(value) {
-            if let Some(scope) = self.local_comptime_displays.last_mut() {
-                scope.insert(name.to_string(), display);
-            }
-            return;
-        }
-        let Some((element, ty)) = self
-            .comptime_iteration_element(value)
-            .ok()
-            .filter(|element| self.evaluated_display(value, element))
-            .zip(self.infer(value).ok())
-        else {
-            return;
-        };
-        let element = string_element_binder(element);
-        let display = BoundDisplay {
-            span: value.source_span(),
-            sequence: self.display_sequence(name, format_args!("at{}", value.span.0), &element),
-            element,
-            ty,
-            positional: matches!(value.kind, ExprKind::ListLit(_)),
-        };
-        if let Some(scope) = self.local_comptime_displays.last_mut() {
-            scope.insert(name.to_string(), display);
-        }
     }
 
     /// The display binding a local `comptime` alias's `value` names
@@ -1755,6 +1705,11 @@ impl Checker {
         if !self.crosses_to_runtime() {
             return Ok(());
         }
+        // A field read of a compile-time value is a projection, as at the
+        // pin: the value itself never crosses.
+        if self.projected_object.borrow().as_ref() == Some(&expr.source_span()) {
+            return Ok(());
+        }
         if let Some(display) = self.bound_display(expr) {
             return Err(TypeError::ComptimeCrossing(
                 materialized_collection_spelling(&display.ty),
@@ -1775,113 +1730,15 @@ impl Checker {
                 self.lookup(name) == Some(ty)
                     && (mojito_types::types::list_element(ty).is_some()
                         || mojito_types::types::set_element(ty).is_some()
-                        || mojito_types::types::dict_elements(ty).is_some())
+                        || mojito_types::types::dict_elements(ty).is_some()
+                        || !self.is_implicitly_copyable(ty))
             });
         match requested {
-            Some(ty) => Err(TypeError::ComptimeCrossing(ty.to_string())),
+            Some(ty) => Err(TypeError::ComptimeCrossing(
+                materialized_collection_spelling(&ty),
+            )),
             None => Ok(()),
         }
-    }
-
-    /// Bind a `comptime NAME = value` constant under source validation. A
-    /// type-valued binding becomes a scoped type alias; an annotated
-    /// binding takes its annotation; a compile-time-only value the checker
-    /// cannot type as a runtime value (a `TypeList` construction) is
-    /// recorded for inlining at its compile-time uses. Returns `false` when
-    /// the ordinary binding path — a compile-time `Int` or an inferable
-    /// runtime value — applies.
-    pub(super) fn bind_local_comptime(
-        &mut self,
-        stmt: &Stmt,
-        name: &str,
-        annotation: Option<&SourceType>,
-        value: &Expr,
-    ) -> Result<bool, TypeError> {
-        let value = self.inline_local_comptime_values(value);
-        if self.comptime_aliases.contains_key(name) {
-            return Ok(true);
-        }
-        // A module constant that applies a callable waits for its first
-        // demand, which may never come: its initializer is typed here,
-        // against its annotation, as the pin types every declaration.
-        if self.function_bases.is_empty() && self.applies_callable(&value) {
-            match annotation
-                .filter(|annotation| !super::declarations::is_string_literal_annotation(annotation))
-            {
-                Some(annotation) => {
-                    let expected = self.ty_from_anno(annotation)?;
-                    let found = self.infer_with_expected(&value, &expected, true)?;
-                    if !self.record_implicit_conversion(&value, &found, &expected)? {
-                        return Err(TypeError::TypeMismatch {
-                            expected: expected.to_string(),
-                            found: found.to_string(),
-                            context: format!("comptime '{name}'"),
-                        });
-                    }
-                }
-                None => {
-                    self.infer(&value)?;
-                }
-            }
-        }
-        if let Some(annotation) = annotation
-            && !super::declarations::is_string_literal_annotation(annotation)
-        {
-            let ty = self.ty_from_anno(annotation)?;
-            self.declare_immutable(name, ty)?;
-            self.record_statement_binding(stmt, name);
-            return Ok(true);
-        }
-        if let Some(ty) = self.comptime_type_operand(&value)? {
-            self.local_type_aliases
-                .last_mut()
-                .ok_or_else(|| {
-                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
-                })?
-                .insert(name.to_string(), ty);
-            self.record_statement_binding(stmt, name);
-            return Ok(true);
-        }
-        if self.eval_ct(&value).is_ok() {
-            return Ok(false);
-        }
-        // A value over the body's binders (`comptime n = Self.Ts.length`)
-        // names its parameter expression in a compile-time position, as it
-        // does in the executable check ([`Self::bind_template_comptime`]).
-        if let Some(level) = self.tparams.len().checked_sub(1)
-            && let Some(expression) = self.comptime_value_expression(&value)
-            && let Some(scope) = self.local_comptime_parameters.last_mut()
-        {
-            scope.insert(name.to_string(), (level, expression));
-        }
-        if self.infer(&value).is_ok() {
-            self.note_validated_display(name, &value);
-            return Ok(false);
-        }
-        // A nominal construction the elaborator evaluates itself (a
-        // compile-time `Dict[K, V, H](keys, values, None)`) has the
-        // constructed type whether or not its arguments type as a runtime
-        // call; the binding takes that type and the elaborator checks the
-        // construction.
-        if let ExprKind::Call {
-            name: callee,
-            param_args,
-            ..
-        } = &value.kind
-            && self.structs.contains_key(callee)
-        {
-            let ty = self.ty_from_anno(&SourceType::Named(callee.clone(), param_args.clone()))?;
-            self.declare_immutable(name, ty)?;
-            self.record_statement_binding(stmt, name);
-            return Ok(true);
-        }
-        self.local_comptime_values
-            .last_mut()
-            .ok_or_else(|| {
-                TypeError::InvariantViolation("checker scope stack is empty".to_string())
-            })?
-            .insert(name.to_string(), value);
-        Ok(true)
     }
 
     /// The type an expression denotes in a compile-time position: a type
@@ -2046,42 +1903,6 @@ impl Checker {
         )
     }
 
-    /// `materialize[X]()` under source validation: upstream's
-    /// `materialize[value: T]() -> T`, so the runtime value has the type of
-    /// its compile-time operand — a binding's own checked type (a bound
-    /// `field_names()` list is no declared binding), or that of a
-    /// compile-time expression over the bindings in scope (`names[i]`). The
-    /// elaborator materializes the operand's display the same way.
-    pub(super) fn infer_materialize_crossing(
-        &self,
-        param_args: &[ParamArg],
-    ) -> Result<Ty, TypeError> {
-        let _position = self.comptime_position();
-        match param_args {
-            [
-                ParamArg::Value(
-                    operand @ Expr {
-                        kind: ExprKind::Identifier(name),
-                        ..
-                    },
-                ),
-            ] => match self.lookup(name) {
-                Some(ty) => Ok(ty.clone()),
-                None => self
-                    .materialized_field_names(operand)?
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone())),
-            },
-            [ParamArg::Type(SourceType::Named(name, _))] => self
-                .lookup(name)
-                .cloned()
-                .ok_or_else(|| TypeError::UndefinedVariable(name.clone())),
-            [ParamArg::Value(operand)] => self.infer(operand),
-            _ => Err(TypeError::Unsupported(
-                "materialize[...]() takes one compile-time value".to_string(),
-            )),
-        }
-    }
-
     /// `materialize[X]()` in the executable check: the crossing pass folds
     /// every operand it evaluates, so `X` is over a binder of a template
     /// body, and the call is the runtime value of that operand at its type.
@@ -2116,20 +1937,14 @@ impl Checker {
         }
         // An operand that applies a callable is the application MIR lifts,
         // which the elaborator below MIR evaluates.
-        if !self.source_validation
-            && self.applies_callable(operand)
-            && self.lifted_application(operand).is_none()
-        {
+        if self.applies_callable(operand) && self.lifted_application(operand).is_none() {
             self.requested_binding(operand)?;
         }
         let ty = {
             let _position = self.comptime_position();
             self.infer(operand)?
         };
-        if let Some(display) = self
-            .bound_display(operand)
-            .filter(|_| !self.source_validation)
-        {
+        if let Some(display) = self.bound_display(operand) {
             return Err(TypeError::ComptimeCrossing(
                 materialized_collection_spelling(&display.ty),
             ));
@@ -2703,44 +2518,6 @@ impl Checker {
         )
     }
 
-    /// A public `Tuple` constructed inside a validated body types as the
-    /// tuple it spells — a bare `Tuple(1, "one")` as the display it is, an
-    /// explicit `Tuple[Int, String](1, "one")` against its element list —
-    /// because its checked identity is the element-by-element nominal
-    /// spelling, not the template's bound pack. Every other variadic struct
-    /// (`Pair[Int, Bool](1, True)`) is matched against its template's
-    /// constructor with the pack bound from the `[...]` arguments, the path
-    /// a bare construction takes once its pack is solved, as is a
-    /// construction spreading a forwarded pack. `None` outside validation
-    /// and for every callee this does not type.
-    pub(super) fn infer_validated_variadic_construction(
-        &self,
-        call: &Expr,
-        name: &str,
-        param_args: &[ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Option<Result<Ty, TypeError>> {
-        if !self.source_validation
-            || self.lookup(name).is_some()
-            || !kwargs.is_empty()
-            || !self.structs.contains_key(name)
-            || (name != mojito_types::types::TUPLE_TYPE_NAME
-                && name != mojito_types::types::TSTRING_TYPE_NAME)
-            || args
-                .iter()
-                .any(|argument| self.forwarded_pack(argument).is_some())
-        {
-            return None;
-        }
-        if !param_args.is_empty() {
-            return Some(self.infer_tuple_construction(param_args, args));
-        }
-        let mut display = Expr::new(ExprKind::TupleLit(args.to_vec()), call.span);
-        display.source.clone_from(&call.source);
-        Some(self.infer(&display))
-    }
-
     /// Close the pack elements a callee's type names (`Self.Ts[index]`)
     /// under a use's arguments: a value argument binds its parameter, a
     /// concrete pack its list, and a pack forwarded as a spread the caller's
@@ -3088,81 +2865,39 @@ impl Checker {
     }
 }
 
-/// How the pipeline checks one parameterized module-level declaration's
-/// body, as the predicates below decide it. A class belongs to a declaration,
-/// never to a name: overloads of one name can sit in different classes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TemplateClass {
-    /// Checked abstractly by the executable pass and kept as an erased body.
-    SurvivingTraitBound,
-    /// Checked symbolically by source validation, then stubbed.
-    ValidatedKeyed,
-    /// Checked only per specialization.
-    ConcreteOnly,
-}
-
-impl TemplateClass {
-    pub(super) const fn counter(self) -> &'static str {
-        match self {
-            Self::SurvivingTraitBound => "templates.surviving_trait_bound",
-            Self::ValidatedKeyed => "templates.validated_keyed",
-            Self::ConcreteOnly => "templates.concrete_only",
+/// Whether `constraint` names no parameter: every operand is a value or a
+/// concrete type, and no leaf asks a binder or a pack.
+fn constraint_is_closed(constraint: &GenericConstraint) -> bool {
+    let operand = |operand: &ConstraintOperand| match operand {
+        ConstraintOperand::Value(mojito_types::ct::CtValue::Expr(_))
+        | ConstraintOperand::Param(_)
+        | ConstraintOperand::PackLength(_)
+        | ConstraintOperand::Expr(_) => false,
+        ConstraintOperand::Value(mojito_types::ct::CtValue::Type(ty)) => {
+            !mojito_types::types::is_symbolic(ty)
         }
-    }
-}
-
-/// Report the template classes of a prepared program's module-level
-/// declarations (a generic struct counts once per method) as timing counters.
-pub(super) fn count_template_classes(stmts: &[Stmt], rebind_keyed: &HashSet<SourceSpan>) {
-    if !timing::enabled() {
-        return;
-    }
-    let body_class = |enclosing: &[mojito_ast::ast::TypeParam],
-                      type_params: &[mojito_ast::ast::TypeParam],
-                      body: &[Stmt]| {
-        let keys_rebind = body_keys_rebind(body, rebind_keyed);
-        if validates_body(enclosing, type_params, body, keys_rebind) {
-            TemplateClass::ValidatedKeyed
-        } else if keys_rebind || block_has_comptime(body) {
-            TemplateClass::ConcreteOnly
-        } else {
-            TemplateClass::SurvivingTraitBound
-        }
+        ConstraintOperand::Value(_) => true,
+        ConstraintOperand::Type(ty) => !mojito_types::types::is_symbolic(ty),
     };
-    for statement in stmts {
-        match &statement.kind {
-            StmtKind::Def {
-                name,
-                type_params,
-                body,
-                ..
-            } if !type_params.is_empty() => {
-                let class = if value_keyed_def(statement) {
-                    TemplateClass::ValidatedKeyed
-                } else {
-                    body_class(&[], type_params, body)
-                };
-                timing::count(class.counter(), 1);
-                timing::note(class.counter(), || name.clone());
-            }
-            StmtKind::Struct {
-                name,
-                type_params,
-                methods,
-                ..
-            } if !type_params.is_empty() => {
-                for method in methods {
-                    let class = if mojito_ast::simd_width::method_constructs_at_own_lane(method) {
-                        TemplateClass::ValidatedKeyed
-                    } else {
-                        body_class(type_params, &method.type_params, &method.body)
-                    };
-                    timing::count(class.counter(), 1);
-                    timing::note(class.counter(), || format!("{name}.{}", method.name));
-                }
-            }
-            _ => {}
+    match constraint {
+        GenericConstraint::Bool(_) => true,
+        GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {
+            constraint_is_closed(inner)
         }
+        GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
+            constraint_is_closed(left) && constraint_is_closed(right)
+        }
+        GenericConstraint::Conforms { .. }
+        | GenericConstraint::ConformsPack { .. }
+        | GenericConstraint::PackPredicate { .. }
+        | GenericConstraint::PackContains { .. } => false,
+        GenericConstraint::Trivial(_, value) => operand(value),
+        GenericConstraint::Eq(left, right)
+        | GenericConstraint::Ne(left, right)
+        | GenericConstraint::Lt(left, right)
+        | GenericConstraint::Le(left, right)
+        | GenericConstraint::Gt(left, right)
+        | GenericConstraint::Ge(left, right) => operand(left) && operand(right),
     }
 }
 
@@ -3216,42 +2951,6 @@ pub(super) fn positional_pack_binding(
                 TyArg::Val(CtValue::Tuple(types)),
             )
         })
-}
-
-/// Whether source validation checks a declaration's body: one holding
-/// compile-time control flow, a `rebind` over the declaration's own
-/// parameters (`keys_rebind`, from `rebind::rebind_keyed_bodies`), keyed
-/// on a variadic pack — the declaration's own, or that of the struct
-/// `enclosing` it — each leaves the template stubbed, so validation is the
-/// only check it gets.
-pub(super) fn validates_body(
-    enclosing: &[mojito_ast::ast::TypeParam],
-    type_params: &[mojito_ast::ast::TypeParam],
-    body: &[Stmt],
-    keys_rebind: bool,
-) -> bool {
-    block_has_comptime(body)
-        || keys_rebind
-        || is_variadic_template(type_params)
-        || is_variadic_template(enclosing)
-}
-
-/// Whether a module-level `def` keys a lane on a `DType` binder of its own
-/// or uses a parameter as a lane width (`Scalar[dt](v)`, `SIMD[DType.int32,
-/// w]`): the elaborator specializes such a def per call and drops its
-/// template, so source validation checks its body with the parameters
-/// symbolic.
-pub(super) fn value_keyed_def(statement: &Stmt) -> bool {
-    matches!(&statement.kind, StmtKind::Def { type_params, .. }
-    if type_params.iter().any(|parameter| {
-        matches!(parameter.bounds.as_slice(), [only] if only == "DType")
-    })) || mojito_ast::simd_width::def_uses_layout_dependent_param(statement)
-}
-
-/// Whether a block holds a `comptime if`/`comptime for` anywhere below it,
-/// nested function bodies included.
-pub(super) fn block_has_comptime(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(stmt_has_comptime)
 }
 
 /// Whether a block names `reflect[...]` anywhere below it. Such a body is
@@ -3353,36 +3052,6 @@ impl mojito_ast::visit::Visitor for ReflectionFinder {
         {
             self.found = true;
         }
-    }
-}
-
-fn stmt_has_comptime(stmt: &Stmt) -> bool {
-    match &stmt.kind {
-        StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => true,
-        StmtKind::If { branches, orelse } => {
-            branches.iter().any(|(_, body)| block_has_comptime(body))
-                || orelse.as_ref().is_some_and(|body| block_has_comptime(body))
-        }
-        StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-            block_has_comptime(body) || orelse.as_ref().is_some_and(|body| block_has_comptime(body))
-        }
-        StmtKind::With { body, .. } | StmtKind::Def { body, .. } => block_has_comptime(body),
-        StmtKind::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } => {
-            block_has_comptime(body)
-                || except
-                    .as_ref()
-                    .is_some_and(|(_, body)| block_has_comptime(body))
-                || orelse.as_ref().is_some_and(|body| block_has_comptime(body))
-                || finalbody
-                    .as_ref()
-                    .is_some_and(|body| block_has_comptime(body))
-        }
-        _ => false,
     }
 }
 
